@@ -1,0 +1,1 @@
+DELETE FROM public.icd_codings WHERE visit_type = 'opd';

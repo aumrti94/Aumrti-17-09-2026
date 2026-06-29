@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "lib": ["deno.window", "deno.ns", "deno.unstable"],
+    "strict": false,
+    "noImplicitAny": false
+  },
+  "imports": {
+    "jsr:": "https://jsr.io/",
+    "https://deno.land/std@0.168.0/http/server.ts": "https://deno.land/std@0.168.0/http/server.ts",
+    "https://esm.sh/@supabase/supabase-js@2": "https://esm.sh/@supabase/supabase-js@2",
+    "https://esm.sh/jose@5.2.4": "https://esm.sh/jose@5.2.4"
+  }
+}

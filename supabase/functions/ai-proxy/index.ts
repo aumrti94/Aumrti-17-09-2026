@@ -1,0 +1,419 @@
+// @ts-nocheck
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { resolveAiConfig, resolveAiConfigFromEnv } from "../_shared/ai-config.ts";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+const PROVIDER_TO_SERVICE_KEY: Record<string, string> = {
+  claude: "anthropic",
+  openai: "openai",
+  gemini: "gemini",
+  perplexity: "perplexity",
+  azure_openai: "azure_openai",
+  openrouter: "openrouter",
+};
+
+// Azure Responses API returns output as typed items rather than choices[0].message.content.
+const extractResponsesOutputText = (data: Record<string, unknown>): string => {
+  if (typeof data.output_text === "string") return data.output_text;
+  const output = Array.isArray(data.output) ? data.output : [];
+  const parts: string[] = [];
+  for (const item of output as Record<string, unknown>[]) {
+    if (item?.type !== "message" || !Array.isArray(item.content)) continue;
+    for (const c of item.content as Record<string, unknown>[]) {
+      if (c?.type === "output_text" && typeof c.text === "string") parts.push(c.text);
+    }
+  }
+  return parts.join("");
+};
+
+const ENV_KEY_NAMES: Record<string, string> = {
+  claude: "ANTHROPIC_API_KEY",
+  openai: "OPENAI_API_KEY",
+  gemini: "GEMINI_API_KEY",
+  perplexity: "PERPLEXITY_API_KEY",
+  azure_openai: "AZURE_OPENAI_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
+};
+
+// USD cost per 1000 tokens (approximate, Claude Sonnet 4 pricing)
+const COST_PER_1K: Record<string, { input: number; output: number; cache_write: number; cache_read: number }> = {
+  "claude-sonnet-4-6":            { input: 0.003,   output: 0.015,  cache_write: 0.00375, cache_read: 0.0003 },
+  "claude-sonnet-4-20250514":     { input: 0.003,   output: 0.015,  cache_write: 0.00375, cache_read: 0.0003 },
+  "claude-3-5-sonnet-20241022":   { input: 0.003,   output: 0.015,  cache_write: 0.00375, cache_read: 0.0003 },
+  "claude-3-5-haiku-20241022":    { input: 0.0008,  output: 0.004,  cache_write: 0.001,   cache_read: 0.00008 },
+  "claude-3-opus-20240229":       { input: 0.015,   output: 0.075,  cache_write: 0.01875, cache_read: 0.0015 },
+  "gpt-4o":                       { input: 0.005,   output: 0.015,  cache_write: 0,       cache_read: 0.0025 },
+  "gpt-4o-mini":                  { input: 0.00015, output: 0.0006, cache_write: 0,       cache_read: 0.000075 },
+  "gemini-2.0-flash":             { input: 0.0001,  output: 0.0004, cache_write: 0,       cache_read: 0 },
+};
+
+const estimateCost = (
+  model: string,
+  tokensInput: number,
+  tokensOutput: number,
+  cacheCreationTokens: number,
+  cacheReadTokens: number,
+): number => {
+  const pricing = COST_PER_1K[model] ?? { input: 0.003, output: 0.015, cache_write: 0.00375, cache_read: 0.0003 };
+  return (
+    (tokensInput / 1000) * pricing.input +
+    (tokensOutput / 1000) * pricing.output +
+    (cacheCreationTokens / 1000) * pricing.cache_write +
+    (cacheReadTokens / 1000) * pricing.cache_read
+  );
+};
+
+serve(async (req: Request) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+
+  const safeParseJson = async (res: Response, provider: string): Promise<any> => {
+    const text = await res.text();
+    if (!text) {
+      if (!res.ok) return { error: `${provider} error (${res.status} ${res.statusText})` };
+      return { error: `${provider} returned an empty response` };
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      if (!res.ok) return { error: `${provider} error (${res.status}): ${text.substring(0, 100)}...` };
+      return { error: `${provider} returned malformed JSON: ${text.substring(0, 100)}...` };
+    }
+  };
+
+  const startTime = Date.now();
+
+  try {
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) return json({ error: "Unauthorized" }, 401);
+
+    const anonClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { Authorization: authHeader } } }
+    );
+    const { data: { user } } = await anonClient.auth.getUser();
+    if (!user) return json({ error: "Unauthorized" }, 401);
+
+    const {
+      provider, model, prompt, systemPrompt: incomingSystemPrompt, maxTokens, temperature,
+      hospitalId, featureKey, patientId, encounterId,
+    } = await req.json() as {
+      provider: string;
+      model: string;
+      prompt: string;
+      systemPrompt?: string;
+      maxTokens?: number;
+      temperature?: number;
+      hospitalId: string;
+      featureKey?: string;
+      patientId?: string;
+      encounterId?: string;
+    };
+
+    const adminClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+
+    // Resolve system prompt: registry takes precedence over inline when featureKey matches
+    let systemPrompt = incomingSystemPrompt;
+    if (featureKey && !systemPrompt) {
+      const { data: reg } = await adminClient
+        .from("prompt_registry")
+        .select("system_prompt")
+        .eq("feature_key", featureKey)
+        .eq("is_active", true)
+        .maybeSingle();
+      if (reg?.system_prompt) {
+        systemPrompt = reg.system_prompt;
+      }
+    }
+
+    let resolvedProvider = provider;
+    let resolvedModel = model;
+    let apiKey: string | undefined;
+    let usedPlatformDefault = false;
+
+    if (provider === "auto") {
+      // Client has no hospital-specific ai_provider_config row. Re-check server-side
+      // (covers stale client cache) then fall back to the platform-default key from
+      // Supabase secrets — mirrors the pattern already used by ai-clinical-voice.
+      const hospitalCfg = hospitalId && featureKey
+        ? await resolveAiConfig(hospitalId, featureKey, maxTokens || 600)
+        : null;
+      const cfg = hospitalCfg ?? resolveAiConfigFromEnv(maxTokens || 600);
+
+      if (!cfg) {
+        return json({
+          error: "AI service temporarily unavailable. Configure your own provider key in Settings → API Hub or contact Aumrti support.",
+        }, 503);
+      }
+      resolvedProvider = cfg.provider;
+      resolvedModel = cfg.model;
+      apiKey = cfg.apiKey;
+      usedPlatformDefault = !hospitalCfg;
+    } else {
+      // Keys are global (platform-controlled) — not per hospital.
+      const serviceKey = PROVIDER_TO_SERVICE_KEY[provider];
+      if (serviceKey) {
+        const { data } = await adminClient
+          .from("platform_ai_keys")
+          .select("config")
+          .eq("service_key", serviceKey)
+          .eq("is_active", true)
+          .maybeSingle();
+        apiKey = (data?.config as Record<string, string>)?.api_key;
+      }
+
+      if (!apiKey) {
+        apiKey = Deno.env.get(ENV_KEY_NAMES[provider] || "") || undefined;
+      }
+    }
+
+    if (!apiKey) {
+      return json({
+        error: `No API key configured for ${resolvedProvider}. Add it in Settings → API Hub → ${resolvedProvider.toUpperCase()}.`,
+      }, 400);
+    }
+
+    const maxTok = maxTokens || 600;
+    const temp = temperature ?? 0.3;
+    let text = "";
+    let tokensInput = 0;
+    let tokensOutput = 0;
+    let cacheCreationTokens = 0;
+    let cacheReadTokens = 0;
+    let cacheHit = false;
+
+    if (resolvedProvider === "claude") {
+      // Wrap system prompt with cache_control so Anthropic caches it for 5 minutes (ephemeral TTL).
+      // This eliminates re-sending the same large system prompt on every call — saves ~40% cost.
+      const systemBlock = systemPrompt
+        ? [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }]
+        : undefined;
+
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-beta": "prompt-caching-2024-07-31",
+        },
+        body: JSON.stringify({
+          model: resolvedModel,
+          max_tokens: maxTok,
+          temperature: temp,
+          ...(systemBlock ? { system: systemBlock } : {}),
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      const data = await safeParseJson(res, "Claude");
+      if (data.error) return json({ error: data.error }, 400);
+      text = data.content?.[0]?.text || "";
+      tokensInput = data.usage?.input_tokens || 0;
+      tokensOutput = data.usage?.output_tokens || 0;
+      cacheCreationTokens = data.usage?.cache_creation_input_tokens || 0;
+      cacheReadTokens = data.usage?.cache_read_input_tokens || 0;
+      cacheHit = cacheReadTokens > 0;
+
+    } else if (resolvedProvider === "openai") {
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: resolvedModel,
+          max_tokens: maxTok,
+          temperature: temp,
+          messages: [
+            ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
+            { role: "user", content: prompt },
+          ],
+        }),
+      });
+      const data = await safeParseJson(res, "OpenAI");
+      if (data.error) return json({ error: data.error }, 400);
+      text = data.choices?.[0]?.message?.content || "";
+      tokensInput = data.usage?.prompt_tokens || 0;
+      tokensOutput = data.usage?.completion_tokens || 0;
+      // OpenAI prompt caching is automatic for repeated prompts >1024 tokens
+      cacheReadTokens = data.usage?.prompt_tokens_details?.cached_tokens || 0;
+      cacheHit = cacheReadTokens > 0;
+
+    } else if (resolvedProvider === "gemini") {
+      // v1beta supports thinkingConfig; thinkingBudget:0 disables Gemini "thinking"
+      // (otherwise the model is slow and truncates output at MAX_TOKENS).
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${resolvedModel}:generateContent?key=${apiKey}`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...(systemPrompt ? { system_instruction: { parts: [{ text: systemPrompt }] } } : {}),
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { maxOutputTokens: maxTok, temperature: temp, thinkingConfig: { thinkingBudget: 0 } },
+        }),
+      });
+      if (res.status === 429) return json({ error: "AI quota exceeded — the AI provider key has hit its rate limit / quota. Check provider billing." }, 429);
+      const data = await safeParseJson(res, "Gemini");
+      if (data.error) return json({ error: data.error }, 400);
+      text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      tokensInput = data.usageMetadata?.promptTokenCount || 0;
+      tokensOutput = data.usageMetadata?.candidatesTokenCount || 0;
+
+    } else if (resolvedProvider === "perplexity") {
+      const res = await fetch("https://api.perplexity.ai/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: resolvedModel,
+          max_tokens: maxTok,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      const data = await safeParseJson(res, "Perplexity");
+      if (data.error) return json({ error: data.error }, 400);
+      text = data.choices?.[0]?.message?.content || "";
+
+    } else if (resolvedProvider === "openrouter") {
+      // OpenRouter: one key, OpenAI-compatible API, vendor-namespaced models
+      // (e.g. google/gemini-2.5-flash, anthropic/claude-3.7-sonnet).
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}`, "X-Title": "Aumrti HMS" },
+        body: JSON.stringify({
+          model: resolvedModel,
+          max_tokens: maxTok,
+          temperature: temp,
+          messages: [
+            ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
+            { role: "user", content: prompt },
+          ],
+        }),
+      });
+      if (res.status === 429) return json({ error: "AI quota exceeded — the AI provider key has hit its rate limit / quota. Check provider billing." }, 429);
+      const data = await safeParseJson(res, "OpenRouter");
+      if (data.error) return json({ error: data.error.message || data.error }, 400);
+      text = data.choices?.[0]?.message?.content || "";
+      tokensInput = data.usage?.prompt_tokens || 0;
+      tokensOutput = data.usage?.completion_tokens || 0;
+
+    } else if (resolvedProvider === "azure_openai") {
+      // Endpoint / deployment / version / style live in the global platform_ai_keys config.
+      const { data: azData } = await adminClient
+        .from("platform_ai_keys")
+        .select("config")
+        .eq("service_key", "azure_openai")
+        .eq("is_active", true)
+        .maybeSingle();
+      const ac = (azData?.config as Record<string, string>) || {};
+      const endpoint = (ac.endpoint || "").replace(/\/$/, "");
+      const deployment = ac.deployment || resolvedModel;
+      if (!endpoint || !deployment) {
+        return json({ error: "Azure OpenAI: set Endpoint URL and Deployment Name at /platform → API Hub." }, 400);
+      }
+      const useV1 = !ac.api_version;
+      const useResponses = useV1 && ac.api_style === "responses";
+      const url = useResponses
+        ? `${endpoint}/openai/v1/responses`
+        : useV1
+        ? `${endpoint}/openai/v1/chat/completions`
+        : `${endpoint}/openai/deployments/${deployment}/chat/completions?api-version=${ac.api_version}`;
+      const body = useResponses
+        ? {
+            model: deployment,
+            input: prompt,
+            ...(systemPrompt ? { instructions: systemPrompt } : {}),
+            max_output_tokens: maxTok,
+            temperature: temp,
+          }
+        : {
+            ...(useV1 ? { model: deployment } : {}),
+            messages: [
+              ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
+              { role: "user", content: prompt },
+            ],
+            max_tokens: maxTok,
+            temperature: temp,
+          };
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "api-key": apiKey },
+        body: JSON.stringify(body),
+      });
+      const data = await safeParseJson(res, "Azure OpenAI");
+      if (data.error) return json({ error: data.error.message || data.error }, 400);
+      text = useResponses ? extractResponsesOutputText(data) : (data.choices?.[0]?.message?.content || "");
+      tokensInput = data.usage?.prompt_tokens ?? data.usage?.input_tokens ?? 0;
+      tokensOutput = data.usage?.completion_tokens ?? data.usage?.output_tokens ?? 0;
+
+    } else {
+      return json({ error: `Unknown provider: ${resolvedProvider}` }, 400);
+    }
+
+    const latencyMs = Date.now() - startTime;
+    const costUsd = estimateCost(resolvedModel, tokensInput, tokensOutput, cacheCreationTokens, cacheReadTokens);
+    const fKey = featureKey || "global_default";
+
+    // Fire-and-forget: log to ai_usage_logs and roll up ai_cost_daily
+    (async () => {
+      try {
+        await adminClient.from("ai_usage_logs").insert({
+          hospital_id: hospitalId,
+          feature_key: fKey,
+          provider: resolvedProvider,
+          model_name: resolvedModel,
+          tokens_input: tokensInput,
+          tokens_output: tokensOutput,
+          cache_creation_tokens: cacheCreationTokens,
+          cache_read_tokens: cacheReadTokens,
+          cache_hit: cacheHit,
+          estimated_cost_usd: costUsd,
+          latency_ms: latencyMs,
+          success: true,
+          patient_id: patientId || null,
+          encounter_id: encounterId || null,
+          used_platform_default: usedPlatformDefault,
+        });
+
+        await adminClient.rpc("upsert_ai_cost_daily", {
+          p_hospital_id:       hospitalId,
+          p_date:              new Date().toISOString().split("T")[0],
+          p_feature_key:       fKey,
+          p_provider:          resolvedProvider,
+          p_tokens_input:      tokensInput,
+          p_tokens_output:     tokensOutput,
+          p_cache_read_tokens: cacheReadTokens,
+          p_cache_hit:         cacheHit,
+          p_cost_usd:          costUsd,
+        });
+      } catch (logErr) {
+        console.warn("ai-proxy: failed to log usage:", logErr);
+      }
+    })();
+
+    return json({
+      text,
+      tokens_used: tokensInput + tokensOutput,
+      cache_hit: cacheHit,
+      cache_read_tokens: cacheReadTokens,
+      estimated_cost_usd: costUsd,
+    });
+
+  } catch (err) {
+    // Sanitize before logging in case error text contains prompt fragments with PHI
+    console.error("ai-proxy error:", sanitizeForLog(err instanceof Error ? err.message : String(err)));
+    return json({ error: err instanceof Error ? err.message : "Unknown error" }, 500);
+  }
+});

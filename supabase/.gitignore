@@ -1,0 +1,17 @@
+# Supabase CLI scratch / local state — must NOT be committed.
+# (Created during `supabase link`; rewritten on every re-link.)
+.branches
+.temp
+
+# Local env / secrets
+.env
+.credentials.local
+
+# Supabase
+.branches
+.temp
+
+# dotenvx
+.env.keys
+.env.local
+.env.*.local

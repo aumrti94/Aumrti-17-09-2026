@@ -1,0 +1,1 @@
+ALTER TABLE public.admissions ADD COLUMN IF NOT EXISTS discharge_ordered_at timestamptz;

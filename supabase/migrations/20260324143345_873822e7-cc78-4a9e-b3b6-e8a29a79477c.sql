@@ -1,0 +1,2 @@
+ALTER TABLE public.staff_attendance DROP CONSTRAINT staff_attendance_status_check;
+ALTER TABLE public.staff_attendance ADD CONSTRAINT staff_attendance_status_check CHECK (status = ANY (ARRAY['present','absent','leave','half_day','late','on_leave','holiday']));

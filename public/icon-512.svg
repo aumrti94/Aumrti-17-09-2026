@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="80" fill="#1A2F5A"/>
+  <!-- Cross symbol -->
+  <rect x="204" y="116" width="104" height="280" rx="20" fill="#ffffff"/>
+  <rect x="116" y="204" width="280" height="104" rx="20" fill="#ffffff"/>
+  <!-- Pulse line accent -->
+  <polyline points="60,400 130,400 160,355 195,445 225,315 255,400 295,400 320,368 350,400 452,400"
+    fill="none" stroke="#4FACDE" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

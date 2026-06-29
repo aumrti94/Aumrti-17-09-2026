@@ -1,0 +1,1 @@
+ALTER TABLE public.hospitals ADD COLUMN announcement_text text;

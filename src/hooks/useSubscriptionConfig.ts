@@ -1,0 +1,405 @@
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { useHospitalId } from "@/hooks/useHospitalId";
+import { ALL_MODULES } from "@/lib/modules";
+
+// ─────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────
+
+export interface SubscriptionPlan {
+  id: string;
+  name: string;
+  slug: string;
+  price_monthly: number;
+  price_yearly: number;
+  max_beds: number | null;
+  max_staff: number | null;
+  trial_days: number;
+  is_custom_price: boolean;
+  badge_text: string | null;
+  description: string | null;
+}
+
+export interface HospitalSubscription {
+  id: string;
+  hospital_id: string;
+  plan_id: string;
+  status: "trial" | "active" | "past_due" | "suspended" | "cancelled";
+  trial_ends_at: string | null;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  razorpay_subscription_id: string | null;
+  discount_code_applied: string | null;
+  discount_pct: number | null;
+}
+
+export interface SubscriptionConfig {
+  plan: SubscriptionPlan | null;
+  subscription: HospitalSubscription | null;
+  /** 'no_subscription' means the hospital has no row yet — treated as trial */
+  status: HospitalSubscription["status"] | "no_subscription";
+  trialDaysLeft: number | null;
+  /** Trial expired OR cancelled */
+  isExpired: boolean;
+  /** Suspended or payment past due */
+  isSuspended: boolean;
+  /** Final resolved list of accessible module keys */
+  enabledModules: string[];
+  /** Override price if set by CEO, otherwise plan price */
+  effectiveMonthlyPrice: number;
+  effectiveYearlyPrice: number;
+  isLoading: boolean;
+  error: string | null;
+  refetch: () => void;
+}
+
+// ─────────────────────────────────────────────────────────────
+// All module keys derived directly from ALL_MODULES — single source of truth
+// ─────────────────────────────────────────────────────────────
+
+const ALL_MODULE_KEYS: string[] = ALL_MODULES.map((m) => {
+  // Derive key from route: /blood-bank → blood_bank, /pharmacy?mode=retail → pharmacy_retail
+  const base = m.route.split("?")[0].replace(/^\//, "");
+  return base
+    .replace(/-/g, "_")
+    .replace(/\//g, "_")
+    .replace(/specialty_/g, "");          // /specialty/anc → anc (obstetric_anc etc)
+});
+
+// Override the derived keys for specialty routes to match migration module keys exactly
+const ROUTE_TO_MODULE_KEY: Record<string, string> = {
+  "/opd":                    "opd",
+  "/ipd":                    "ipd",
+  "/ipd/day-care":           "day_care",
+  "/emergency":              "emergency",
+  "/ot":                     "ot",
+  "/nursing":                "nursing",
+  "/telemedicine":           "telemedicine",
+  "/packages":               "health_packages",
+  "/lab":                    "lab",
+  "/radiology":              "radiology",
+  "/blood-bank":             "blood_bank",
+  "/cssd":                   "cssd",
+  "/pharmacy":               "pharmacy",
+  "/pharmacy?mode=retail":   "pharmacy_retail",
+  "/billing":                "billing",
+  "/billing/closure":        "day_closure",
+  "/insurance":              "insurance",
+  "/payments":               "payments",
+  "/accounts":               "accounts",
+  "/assets":                 "assets",
+  "/pmjay":                  "pmjay",
+  "/hr":                     "hr",
+  "/inventory":              "inventory",
+  "/quality":                "quality",
+  "/nabh/compliance":        "quality",
+  "/teleconsult":            "telemedicine",
+  "/dialysis":               "dialysis",
+  "/oncology":               "oncology",
+  "/physio":                 "physio",
+  "/mortuary":               "mortuary",
+  "/vaccination":            "vaccination",
+  "/ambulance":              "ambulance",
+  "/home-care":              "home_care",
+  "/dental":                 "dental",
+  "/ayush":                  "ayush",
+  "/ivf":                    "ivf",
+  "/specialty/anc":          "obstetric_anc",
+  "/specialty/neonatal":     "neonatal",
+  "/specialty/anaesthesia":  "anaesthesia",
+  "/specialty/ophthalmology":"ophthalmology",
+  "/specialty/partograph":   "partograph",
+  "/mental-health":          "mental_health",
+  "/chronic-disease":        "chronic_disease",
+  "/mrd":                    "mrd",
+  "/biomedical":             "biomedical",
+  "/housekeeping":           "housekeeping",
+  "/hmis":                   "hmis",
+  "/dietetics":              "dietetics",
+  "/lms":                    "lms",
+  "/crm":                    "crm",
+  "/abdm":                   "abdm",
+  "/portal":                 "patient_portal",
+  "/pro":                    "patient_relations",
+  "/inbox":                  "inbox",
+  "/analytics":              "analytics",
+  "/hod-dashboard":          "hod_dashboard",
+  "/tv-display":             "tv_display",
+  "/settings":               "settings",
+  // ── Module-specific Settings sub-pages ──────────────────────────────────────
+  // Gated by their module (same as the module itself). Longest-prefix matching means
+  // these win over "/settings", while every other "/settings/*" page falls back to
+  // "settings" (ALWAYS_ENABLED) and stays usable on every plan. Cards remain visible;
+  // the central ModuleGate shows "Module Not Enabled" on click when the plan lacks it.
+  "/settings/services":          "billing",
+  "/settings/bank-accounts":     "accounts",
+  "/settings/payer-masters":     "insurance",
+  "/settings/lab-tests":         "lab",
+  "/settings/drugs":             "pharmacy",
+  "/settings/ot-checklist":      "ot",
+  "/settings/radiology":         "radiology",
+  "/settings/day-care-procedures":"day_care",
+  "/settings/discharge-workflow":"ipd",
+  "/settings/opd-workflow":      "opd",
+  "/settings/razorpay":          "payments",
+  "/settings/hmis-portal":       "hmis",
+  "/settings/abdm":              "abdm",
+  "/settings/gst":               "billing",
+  "/settings/inventory":         "inventory",
+  "/settings/tv-display":        "tv_display",
+};
+
+export const CANONICAL_MODULE_KEYS: string[] = [
+  ...new Set(Object.values(ROUTE_TO_MODULE_KEY)),
+];
+
+// These are always accessible regardless of plan (core UX)
+const ALWAYS_ENABLED = new Set(["settings", "inbox", "dashboard"]);
+
+// ─────────────────────────────────────────────────────────────
+// Fetcher — runs all 4 Supabase queries in parallel
+// ─────────────────────────────────────────────────────────────
+
+async function fetchSubscriptionConfig(hospitalId: string): Promise<Omit<SubscriptionConfig, "isLoading" | "error" | "refetch">> {
+  const [subResult, overridesResult, pricingResult] = await Promise.all([
+    (supabase as any)
+      .from("hospital_subscriptions")
+      .select(`
+        id, hospital_id, plan_id, status,
+        trial_ends_at, current_period_start, current_period_end,
+        razorpay_subscription_id, discount_code_applied, discount_pct
+      `)
+      .eq("hospital_id", hospitalId)
+      .maybeSingle(),
+
+    (supabase as any)
+      .from("hospital_feature_overrides")
+      .select("module_key, is_enabled")
+      .eq("hospital_id", hospitalId),
+
+    (supabase as any)
+      .from("hospital_pricing_overrides")
+      .select("monthly_price, yearly_price, valid_until")
+      .eq("hospital_id", hospitalId)
+      .maybeSingle(),
+  ]);
+
+  if (subResult.error) throw subResult.error;
+
+  const subscription = subResult.data as HospitalSubscription | null;
+
+  // ── No subscription yet ── treat as trial with all modules open
+  if (!subscription) {
+    return {
+      plan: null,
+      subscription: null,
+      status: "no_subscription",
+      trialDaysLeft: 30,
+      isExpired: false,
+      isSuspended: false,
+      enabledModules: CANONICAL_MODULE_KEYS, // fully permissive until CEO assigns a plan
+      effectiveMonthlyPrice: 0,
+      effectiveYearlyPrice: 0,
+    };
+  }
+
+  // ── Fetch plan features for their plan ──
+  const { data: planFeatures } = await (supabase as any)
+    .from("plan_features")
+    .select("module_key, is_enabled")
+    .eq("plan_id", subscription.plan_id);
+
+  // ── Fetch plan details ──
+  const { data: planData } = await (supabase as any)
+    .from("subscription_plans")
+    .select("id, name, slug, price_monthly, price_yearly, max_beds, max_staff, trial_days, is_custom_price, badge_text, description")
+    .eq("id", subscription.plan_id)
+    .maybeSingle();
+
+  const plan = planData as SubscriptionPlan | null;
+
+  // ── Resolve enabled modules ──
+  // Priority: hospital_feature_overrides > plan_features > ALWAYS_ENABLED
+  const planMap = new Map<string, boolean>(
+    (planFeatures || []).map((f: any) => [f.module_key as string, f.is_enabled as boolean])
+  );
+  const overrideMap = new Map<string, boolean>(
+    (overridesResult.data || []).map((o: any) => [o.module_key as string, o.is_enabled as boolean])
+  );
+
+  const enabledModules: string[] = [];
+  for (const key of CANONICAL_MODULE_KEYS) {
+    if (ALWAYS_ENABLED.has(key)) {
+      enabledModules.push(key);
+      continue;
+    }
+    if (overrideMap.has(key)) {
+      if (overrideMap.get(key)) enabledModules.push(key);
+    } else if (planMap.size === 0) {
+      // No plan_features rows → treat as fully open (legacy hospital)
+      enabledModules.push(key);
+    } else if (planMap.get(key) === true) {
+      enabledModules.push(key);
+    }
+  }
+
+  // ── Resolve pricing ──
+  let effectiveMonthlyPrice = plan?.price_monthly ?? 0;
+  let effectiveYearlyPrice = plan?.price_yearly ?? 0;
+  const pricing = pricingResult.data;
+  if (pricing) {
+    const validUntil = pricing.valid_until ? new Date(pricing.valid_until) : null;
+    if (!validUntil || validUntil > new Date()) {
+      if (pricing.monthly_price != null) effectiveMonthlyPrice = pricing.monthly_price;
+      if (pricing.yearly_price != null) effectiveYearlyPrice = pricing.yearly_price;
+    }
+  }
+
+  // ── Trial days left ──
+  let trialDaysLeft: number | null = null;
+  if (subscription.status === "trial" && subscription.trial_ends_at) {
+    const msLeft = new Date(subscription.trial_ends_at).getTime() - Date.now();
+    trialDaysLeft = Math.max(0, Math.ceil(msLeft / 86_400_000));
+  }
+
+  const isExpired =
+    (subscription.status === "trial" && trialDaysLeft === 0) ||
+    subscription.status === "cancelled";
+  const isSuspended =
+    subscription.status === "suspended" ||
+    subscription.status === "past_due";
+
+  return {
+    plan,
+    subscription,
+    status: subscription.status,
+    trialDaysLeft,
+    isExpired,
+    isSuspended,
+    enabledModules,
+    effectiveMonthlyPrice,
+    effectiveYearlyPrice,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// useSubscriptionConfig — main hook
+// Uses TanStack Query so multiple components calling this hook
+// share a single cached fetch per hospitalId (no duplicate RPCs).
+// staleTime: 5 minutes — subscription data changes rarely.
+// Fail-open: on DB error, all modules remain accessible.
+// ─────────────────────────────────────────────────────────────
+
+export function useSubscriptionConfig(): SubscriptionConfig {
+  const { hospitalId } = useHospitalId();
+
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ["subscription-config", hospitalId],
+    queryFn: () => fetchSubscriptionConfig(hospitalId!),
+    enabled: !!hospitalId,
+    staleTime: 5 * 60 * 1000,       // 5 minutes
+    gcTime: 10 * 60 * 1000,         // 10 minutes
+    retry: 2,
+    // Fail-open: on error return all modules so hospital is never locked out
+    // due to a transient DB issue
+  });
+
+  if (!hospitalId || isLoading) {
+    return {
+      plan: null,
+      subscription: null,
+      status: "no_subscription",
+      trialDaysLeft: null,
+      isExpired: false,
+      isSuspended: false,
+      enabledModules: CANONICAL_MODULE_KEYS,
+      effectiveMonthlyPrice: 0,
+      effectiveYearlyPrice: 0,
+      isLoading: true,
+      error: null,
+      refetch,
+    };
+  }
+
+  if (error || !data) {
+    return {
+      plan: null,
+      subscription: null,
+      status: "no_subscription",
+      trialDaysLeft: null,
+      isExpired: false,
+      isSuspended: false,
+      enabledModules: CANONICAL_MODULE_KEYS, // fail-open
+      effectiveMonthlyPrice: 0,
+      effectiveYearlyPrice: 0,
+      isLoading: false,
+      error: error instanceof Error ? error.message : "Failed to load subscription",
+      refetch,
+    };
+  }
+
+  return { ...data, isLoading: false, error: null, refetch };
+}
+
+// ─────────────────────────────────────────────────────────────
+// useModuleAccess — thin wrapper for per-module gate checks
+// Usage: const canAccessOncology = useModuleAccess("oncology");
+// Returns true while loading (optimistic) so UI doesn't flash locked.
+// TanStack Query deduplicates — calling this in 50 components = 1 fetch.
+// ─────────────────────────────────────────────────────────────
+
+export function useModuleAccess(moduleKey: string): boolean {
+  const { enabledModules, isLoading } = useSubscriptionConfig();
+  if (isLoading) return true;
+  return enabledModules.includes(moduleKey);
+}
+
+// ─────────────────────────────────────────────────────────────
+// getModuleKeyFromRoute — utility for guards and nav
+// Usage: getModuleKeyFromRoute("/oncology") → "oncology"
+// ─────────────────────────────────────────────────────────────
+
+export function getModuleKeyFromRoute(route: string): string | null {
+  const base = route.split("?")[0];
+  return ROUTE_TO_MODULE_KEY[base] ?? null;
+}
+
+// ─────────────────────────────────────────────────────────────
+// getModuleKeyForPath — resolve the gateable module key for an arbitrary
+// pathname (handles sub-routes and params via longest segment-prefix match).
+// e.g. "/quality/events" → "quality", "/ipd/icu/123" → "ipd",
+//      "/billing/closure" → "day_closure" (exact). Returns null for paths that
+// aren't gateable modules (dashboard, schedule, settings/*, patients, …).
+// Used by the central <ModuleGate> so EVERY route is enforced, not just the
+// ones that remembered to wrap themselves.
+// ─────────────────────────────────────────────────────────────
+
+export function getModuleKeyForPath(pathname: string): string | null {
+  const path = pathname.split("?")[0].replace(/\/+$/, "") || "/";
+  let bestKey: string | null = null;
+  let bestLen = -1;
+  for (const route of Object.keys(ROUTE_TO_MODULE_KEY)) {
+    const base = route.split("?")[0];
+    if (!base.startsWith("/")) continue;
+    // Segment-aware match: exact, or pathname is a sub-path of base.
+    if (path === base || path.startsWith(base + "/")) {
+      if (base.length > bestLen) {
+        bestLen = base.length;
+        bestKey = ROUTE_TO_MODULE_KEY[route];
+      }
+    }
+  }
+  return bestKey;
+}
+
+// ─────────────────────────────────────────────────────────────
+// isModuleKeyAllowed — shared subscription-level allow decision.
+// Untracked keys (not in the plan catalog) and ALWAYS_ENABLED are always allowed.
+// ─────────────────────────────────────────────────────────────
+
+export function isModuleKeyAllowed(moduleKey: string, enabledModules: string[]): boolean {
+  if (ALWAYS_ENABLED.has(moduleKey)) return true;
+  const isTracked = CANONICAL_MODULE_KEYS.includes(moduleKey);
+  return !isTracked || enabledModules.includes(moduleKey);
+}

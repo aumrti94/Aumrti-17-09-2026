@@ -1,0 +1,2 @@
+ALTER TABLE public.bill_line_items DROP CONSTRAINT IF EXISTS bill_line_items_item_type_check;
+ALTER TABLE public.bill_line_items ADD CONSTRAINT bill_line_items_item_type_check CHECK (item_type IN ('consultation','procedure','room_charge','lab','radiology','pharmacy','surgery','package','nursing','consumable','blood','oxygen','other','service'));
