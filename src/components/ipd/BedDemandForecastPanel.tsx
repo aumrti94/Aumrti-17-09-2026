@@ -37,7 +37,7 @@ const BedDemandForecastPanel: React.FC<Props> = ({ hospitalId }) => {
   const [loading, setLoading] = useState(false);
   const [forecasts, setForecasts] = useState<DayForecast[]>([]);
   const [lastGenerated, setLastGenerated] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const runForecast = useCallback(async () => {
@@ -128,7 +128,9 @@ Return ONLY valid JSON:
         featureKey: "bed_demand_forecaster",
         hospitalId,
         prompt,
-        maxTokens: 800,
+        // Needs to fit ~7 days × every ward as JSON — too low a cap truncates the
+        // response mid-object and JSON.parse fails ("unexpected format").
+        maxTokens: 4000,
       });
 
       if (response.error || !response.text) {
@@ -138,9 +140,14 @@ Return ONLY valid JSON:
 
       let parsed: any;
       try {
-        const clean = response.text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+        let clean = response.text.replace(/```json\n?/gi, "").replace(/```\n?/g, "").trim();
+        // Extract the JSON object even if the model wrapped it in prose.
+        const start = clean.indexOf("{");
+        const end = clean.lastIndexOf("}");
+        if (start >= 0 && end > start) clean = clean.slice(start, end + 1);
         parsed = JSON.parse(clean);
       } catch {
+        console.warn("Bed forecast: unparseable AI response:", response.text?.slice(0, 400));
         setError("AI returned unexpected format. Please retry.");
         return;
       }
@@ -192,13 +199,14 @@ Return ONLY valid JSON:
 
       // Persist to bed_demand_forecasts
       if (upsertRows.length > 0) {
-        await (supabase as any)
+        const { error: upsertErr } = await (supabase as any)
           .from("bed_demand_forecasts")
           .upsert(upsertRows, { onConflict: "hospital_id,ward_id,forecast_date" });
+        if (upsertErr) console.error("Bed forecast persist failed:", upsertErr.message);
       }
 
       // Log AI feature usage
-      await (supabase as any).from("ai_feature_logs").insert({
+      const { error: aiLogErr } = await (supabase as any).from("ai_feature_logs").insert({
         hospital_id: hospitalId,
         module: "ipd",
         feature_key: "bed_demand_forecaster",
@@ -207,6 +215,7 @@ Return ONLY valid JSON:
         output_summary: `${upsertRows.length} ward-day predictions generated`,
         tokens_used: (response as any).tokens_used ?? null,
       });
+      if (aiLogErr) console.error("Bed forecast AI-usage log failed:", aiLogErr.message);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("Bed demand forecast error:", msg);

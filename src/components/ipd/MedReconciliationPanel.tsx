@@ -70,6 +70,25 @@ const SOURCES = [
   { value: "gp_letter", label: "GP / Referral letter" },
 ];
 
+const ROUTES = [
+  "Oral", "IV", "IM", "SC", "Sublingual", "Topical", "Inhalation",
+  "Rectal", "Nasal", "Ophthalmic", "Otic", "Transdermal",
+];
+
+const FREQUENCIES = [
+  { value: "OD", label: "OD — once daily" },
+  { value: "BD", label: "BD — twice daily" },
+  { value: "TDS", label: "TDS — thrice daily" },
+  { value: "QID", label: "QID — four times daily" },
+  { value: "HS", label: "HS — at bedtime" },
+  { value: "SOS", label: "SOS — as needed" },
+  { value: "STAT", label: "STAT — immediately" },
+  { value: "Q6H", label: "Q6H — every 6 hours" },
+  { value: "Q8H", label: "Q8H — every 8 hours" },
+  { value: "Q12H", label: "Q12H — every 12 hours" },
+  { value: "Weekly", label: "Weekly" },
+];
+
 const HIGH_ALERT_DRUGS = ["insulin", "heparin", "kcl", "potassium chloride", "methotrexate", "lithium", "warfarin", "chemotherapy"];
 
 export default function MedReconciliationPanel({
@@ -281,11 +300,17 @@ export default function MedReconciliationPanel({
                       </div>
                       <div>
                         <label className="text-[11px] text-muted-foreground">Route</label>
-                        <Input value={newDrug.route} onChange={e => setNewDrug(p => ({ ...p, route: e.target.value }))} className="h-9 mt-1 text-[12px]" placeholder="Oral" />
+                        <Select value={newDrug.route} onValueChange={v => setNewDrug(p => ({ ...p, route: v }))}>
+                          <SelectTrigger className="h-9 mt-1 text-[12px]"><SelectValue placeholder="Select route" /></SelectTrigger>
+                          <SelectContent>{ROUTES.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
+                        </Select>
                       </div>
                       <div>
                         <label className="text-[11px] text-muted-foreground">Frequency</label>
-                        <Input value={newDrug.frequency} onChange={e => setNewDrug(p => ({ ...p, frequency: e.target.value }))} className="h-9 mt-1 text-[12px]" placeholder="BD" />
+                        <Select value={newDrug.frequency || undefined} onValueChange={v => setNewDrug(p => ({ ...p, frequency: v }))}>
+                          <SelectTrigger className="h-9 mt-1 text-[12px]"><SelectValue placeholder="Select frequency" /></SelectTrigger>
+                          <SelectContent>{FREQUENCIES.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}</SelectContent>
+                        </Select>
                       </div>
                       <div className="col-span-3">
                         <label className="text-[11px] text-muted-foreground">Indication</label>
@@ -478,7 +503,10 @@ function HighAlertCheckRow({ med, hospitalId, admissionId, userId }: {
     (supabase as any).from("high_alert_double_checks")
       .select("*").eq("admission_id", admissionId).eq("drug_name", med.drug_name)
       .order("created_at", { ascending: false }).limit(1).maybeSingle()
-      .then(({ data }: any) => setCheck(data));
+      .then(({ data, error }: any) => {
+        if (error) console.error("MedRecon: high-alert double-check fetch failed:", error.message);
+        setCheck(data);
+      });
   }, [admissionId, med.drug_name]);
 
   const startFirstCheck = async () => {
