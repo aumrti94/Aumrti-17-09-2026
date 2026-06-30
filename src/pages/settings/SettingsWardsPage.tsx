@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, Plus, X, BedDouble } from "lucide-react";
+import { ArrowLeft, Plus, X, BedDouble, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { Constants } from "@/integrations/supabase/types";
@@ -32,7 +32,9 @@ const SettingsWardsPage: React.FC = () => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", type: "general", total_beds: "10", rate_per_day: "", bed_prefix: "", bed_start: "1" });
   const [selectedTemplates, setSelectedTemplates] = useState<Set<number>>(new Set());
+  const [templateBeds, setTemplateBeds] = useState<Record<number, string>>({});
   const [managingWard, setManagingWard] = useState<{ id: string; name: string } | null>(null);
+  const [addCount, setAddCount] = useState("1");
 
   const { data: wards, isLoading } = useQuery({
     queryKey: ["settings-wards"],
@@ -133,11 +135,14 @@ const SettingsWardsPage: React.FC = () => {
   const bulkTemplates = useMutation({
     mutationFn: async () => {
       const hid = await getHospitalId();
-      const selected = Array.from(selectedTemplates).map((i) => TEMPLATES[i]);
-      for (const t of selected) {
-        await createWardWithBeds(hid, t.label, t.type, t.beds);
+      const selectedIdx = Array.from(selectedTemplates);
+      for (const i of selectedIdx) {
+        const t = TEMPLATES[i];
+        const n = parseInt(templateBeds[i] ?? "", 10);
+        const count = !n || n < 1 ? t.beds : n;
+        await createWardWithBeds(hid, t.label, t.type, count);
       }
-      return selected.length;
+      return selectedIdx.length;
     },
     onSuccess: (count) => {
       toast({ title: `${count} wards created with beds` });
@@ -198,6 +203,23 @@ const SettingsWardsPage: React.FC = () => {
     },
   });
 
+  const deleteBed = useMutation({
+    mutationFn: async (bed: { id: string; status: string }) => {
+      if (!managingWard) return;
+      if (bed.status === "occupied") throw new Error("Cannot delete an occupied bed.");
+      await (supabase as any).from("beds").delete().eq("id", bed.id);
+      const remaining = Math.max((wardBeds?.length || 1) - 1, 0);
+      await supabase.from("wards").update({ total_beds: remaining }).eq("id", managingWard.id);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["settings-ward-beds"] });
+      qc.invalidateQueries({ queryKey: ["settings-wards"] });
+      qc.invalidateQueries({ queryKey: ["settings-bed-stats"] });
+      toast({ title: "Bed deleted" });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Could not delete bed", variant: "destructive" }),
+  });
+
   const openDrawer = (ward?: any) => {
     if (ward) {
       setEditingId(ward.id);
@@ -237,10 +259,29 @@ const SettingsWardsPage: React.FC = () => {
               <p className="text-xs text-muted-foreground">Settings › Wards › {managingWard.name}</p>
             </div>
           </div>
-          <button onClick={() => addMoreBeds.mutate(5)} disabled={addMoreBeds.isPending}
-            className="flex items-center gap-1.5 bg-[hsl(222,55%,23%)] text-white px-4 py-2 rounded-lg text-sm font-medium hover:opacity-90 active:scale-[0.97]">
-            <Plus size={14} /> Add 5 More Beds
-          </button>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={1}
+              value={addCount}
+              onChange={(e) => setAddCount(e.target.value)}
+              className="h-9 w-20 rounded-lg border border-input bg-background px-2 text-sm"
+              placeholder="Qty"
+            />
+            <button
+              onClick={() => {
+                const n = parseInt(addCount, 10);
+                if (!n || n < 1) {
+                  toast({ title: "Enter a valid number of beds", variant: "destructive" });
+                  return;
+                }
+                addMoreBeds.mutate(n);
+              }}
+              disabled={addMoreBeds.isPending}
+              className="flex items-center gap-1.5 bg-[hsl(222,55%,23%)] text-white px-4 py-2 rounded-lg text-sm font-medium hover:opacity-90 active:scale-[0.97]">
+              <Plus size={14} /> Add Beds
+            </button>
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto p-6">
           <div className="grid grid-cols-3 gap-3">
@@ -255,7 +296,25 @@ const SettingsWardsPage: React.FC = () => {
               };
               return (
                 <div key={bed.id} className={cn("rounded-lg border-[1.5px] p-3 space-y-2", statusColor)}>
-                  <p className="text-sm font-semibold text-foreground">{bed.bed_number}</p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-foreground">{bed.bed_number}</p>
+                    <button
+                      onClick={() => {
+                        if (bed.status === "occupied") {
+                          toast({ title: "Cannot delete an occupied bed", variant: "destructive" });
+                          return;
+                        }
+                        if (window.confirm(`Delete bed ${bed.bed_number}? This cannot be undone.`)) {
+                          deleteBed.mutate({ id: bed.id, status: bed.status });
+                        }
+                      }}
+                      disabled={deleteBed.isPending}
+                      className="text-muted-foreground hover:text-red-600 active:scale-95"
+                      title="Delete bed"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                   <select value={bed.status} onChange={(e) => updateBedStatus.mutate({ id: bed.id, status: e.target.value })}
                     className="h-7 w-full rounded border border-input bg-background px-2 text-xs">
                     <option value="available">Available</option>
@@ -334,17 +393,26 @@ const SettingsWardsPage: React.FC = () => {
           <p className="text-[13px] text-red-800 font-medium mb-3">No wards configured — IPD bed map will be empty</p>
           <div className="grid grid-cols-2 gap-2 mb-3">
             {TEMPLATES.map((t, i) => (
-              <button key={i} onClick={() => toggleTemplate(i)}
+              <div key={i} onClick={() => toggleTemplate(i)}
                 className={cn(
-                  "flex items-center gap-2.5 px-3 py-2.5 rounded-lg border-[1.5px] text-left transition-colors active:scale-[0.98]",
+                  "flex items-center gap-2.5 px-3 py-2.5 rounded-lg border-[1.5px] text-left transition-colors active:scale-[0.98] cursor-pointer",
                   selectedTemplates.has(i) ? "border-[hsl(222,55%,23%)] bg-blue-50" : "border-border bg-card hover:border-muted-foreground/30"
                 )}>
                 <span className="text-lg">{t.icon}</span>
-                <div>
+                <div className="flex-1">
                   <p className="text-[13px] font-medium text-foreground">{t.label}</p>
-                  <p className="text-[11px] text-muted-foreground">{t.beds} beds</p>
+                  <div className="flex items-center gap-1 mt-0.5" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="number"
+                      min={1}
+                      value={templateBeds[i] ?? String(t.beds)}
+                      onChange={(e) => setTemplateBeds((prev) => ({ ...prev, [i]: e.target.value }))}
+                      className="h-6 w-14 rounded border border-input bg-background px-1.5 text-[11px]"
+                    />
+                    <span className="text-[11px] text-muted-foreground">beds</span>
+                  </div>
                 </div>
-              </button>
+              </div>
             ))}
           </div>
           <button onClick={() => bulkTemplates.mutate()} disabled={selectedTemplates.size === 0 || bulkTemplates.isPending}
