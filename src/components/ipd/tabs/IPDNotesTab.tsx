@@ -2,9 +2,12 @@ import React, { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { toast } from "@/hooks/use-toast";
-import { Printer } from "lucide-react";
+import { Printer, RefreshCw, LayoutTemplate, Plus, Trash2 } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { printDocument, printHeader } from "@/lib/printUtils";
+import { useNoteTemplates } from "@/hooks/useNoteTemplates";
 
 interface Props {
   admissionId: string;
@@ -19,6 +22,50 @@ const IPDNotesTab: React.FC<Props> = ({ admissionId, hospitalId, userId, patient
   const [draft, setDraft] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Personal (per-nurse) note templates + inline "save as template" form
+  const { mine: myTemplates, shared: sharedTemplates, saveTemplate, deleteTemplate } = useNoteTemplates("nursing");
+  const [showSaveTpl, setShowSaveTpl] = useState(false);
+  const [tplName, setTplName] = useState("");
+  const [tplShare, setTplShare] = useState(false);
+
+  // Copy Previous — pre-fill the draft from the most recent note (a fresh, editable note).
+  const handleCopyPrevious = () => {
+    if (notes.length === 0) {
+      toast({ title: "No previous notes found" });
+      return;
+    }
+    setShowForm(true);
+    setDraft(notes[0].text || "");
+    toast({ title: "Copied from previous note" });
+  };
+
+  const applyTemplate = (t: any) => {
+    setShowForm(true);
+    setDraft(t.body?.text || "");
+    toast({ title: `Template '${t.name}' applied` });
+  };
+
+  const handleSaveTemplate = async () => {
+    const name = tplName.trim();
+    if (!name) {
+      toast({ title: "Enter a template name", variant: "destructive" });
+      return;
+    }
+    if (!draft.trim()) {
+      toast({ title: "Template needs content", description: "Type a note first", variant: "destructive" });
+      return;
+    }
+    try {
+      await saveTemplate({ name, body: { text: draft }, isShared: tplShare });
+      toast({ title: tplShare ? "Template saved & shared with hospital" : "Template saved" });
+      setShowSaveTpl(false);
+      setTplName("");
+      setTplShare(false);
+    } catch (e: any) {
+      toast({ title: "Failed to save template", description: e?.message, variant: "destructive" });
+    }
+  };
 
   const fetchNotes = React.useCallback(async () => {
     if (!admissionId) return;
@@ -98,6 +145,62 @@ const IPDNotesTab: React.FC<Props> = ({ admissionId, hospitalId, userId, patient
 
       {showForm && (
         <div className="flex-shrink-0 bg-white border border-slate-200 rounded-lg p-3 mb-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">New Note</span>
+            <div className="flex gap-2">
+              <Button size="sm" variant="ghost" onClick={handleCopyPrevious} className="h-6 text-[10px] px-2 text-[#1A2F5A] hover:bg-[#1A2F5A]/5">
+                <RefreshCw className="h-3 w-3 mr-1" /> Copy Previous
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant="outline" className="h-6 text-[10px] px-2">
+                    <LayoutTemplate className="h-3 w-3 mr-1" /> Templates
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuItem onClick={() => setShowSaveTpl(true)} className="text-xs font-bold text-[#1A2F5A]">
+                    <Plus className="h-3 w-3 mr-1" /> Save Current as Template
+                  </DropdownMenuItem>
+                  {myTemplates.length > 0 && (
+                    <>
+                      <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-slate-400">My Templates</DropdownMenuLabel>
+                      {myTemplates.map(t => (
+                        <DropdownMenuItem key={t.id} onClick={() => applyTemplate(t)} className="text-xs flex items-center justify-between gap-2">
+                          <span className="truncate">{t.name}</span>
+                          <span role="button" onClick={(e) => { e.stopPropagation(); e.preventDefault(); deleteTemplate(t.id); }}
+                            className="text-slate-400 hover:text-red-600 shrink-0">
+                            <Trash2 className="h-3 w-3" />
+                          </span>
+                        </DropdownMenuItem>
+                      ))}
+                    </>
+                  )}
+                  {sharedTemplates.length > 0 && (
+                    <>
+                      <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-slate-400">Hospital Templates</DropdownMenuLabel>
+                      {sharedTemplates.map(t => (
+                        <DropdownMenuItem key={t.id} onClick={() => applyTemplate(t)} className="text-xs">
+                          {t.name}
+                        </DropdownMenuItem>
+                      ))}
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+
+          {showSaveTpl && (
+            <div className="flex items-center gap-2 mb-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
+              <Input value={tplName} onChange={(e) => setTplName(e.target.value)} placeholder="Template name" className="h-7 text-xs flex-1" />
+              <label className="flex items-center gap-1 text-[11px] text-slate-600 whitespace-nowrap cursor-pointer">
+                <input type="checkbox" checked={tplShare} onChange={(e) => setTplShare(e.target.checked)} /> Share with hospital
+              </label>
+              <Button size="sm" onClick={handleSaveTemplate} className="h-7 text-[10px] px-3">Save</Button>
+              <Button size="sm" variant="ghost" onClick={() => { setShowSaveTpl(false); setTplName(""); setTplShare(false); }} className="h-7 text-[10px] px-2">Cancel</Button>
+            </div>
+          )}
+
           <Textarea value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Type your note..." className="h-20 text-xs resize-none" />
           <div className="flex justify-end mt-2">
             <Button size="sm" onClick={addNote} disabled={loading} className="bg-emerald-600 hover:bg-emerald-700 text-xs h-7">
