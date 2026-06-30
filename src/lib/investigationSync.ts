@@ -18,6 +18,15 @@ function randomChars(n: number) {
 }
 
 /**
+ * Heuristic: does an investigation name look like a radiology / imaging study
+ * (as opposed to a lab test)? Single source for the keyword regex previously
+ * duplicated in IPDWorkspace and OPD ConsultationWorkspace.
+ */
+export function isRadiologyKeyword(name: string): boolean {
+  return /\bx[\s-]?ray\b|\bcect\b|\bhrct\b|\bct\b|\bmri\b|\busg\b|\bultrasound\b|\bultrasonography\b|\becg\b|\belectrocardiogram\b|\becho\b|\b2d\s*echo\b|\bechocardiography\b|\bdexa\b|\bmammograph|\bfluoroscop|\bpet\b/i.test(name);
+}
+
+/**
  * Sync prescription lab_orders JSON → real lab_orders / lab_order_items / lab_samples rows.
  * Skips duplicates by checking existing orders for the same encounter/admission + test.
  */

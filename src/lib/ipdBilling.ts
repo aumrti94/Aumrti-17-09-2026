@@ -10,6 +10,31 @@ export interface AutoPullResult {
 }
 
 /**
+ * Static per-category bed-rate fallbacks used ONLY for the live IPD ledger ESTIMATE
+ * shown before a bill exists. Kept here (next to the authoritative bill logic) so the
+ * UI no longer hardcodes rates. Once a real bill exists the ledger reads bill_line_items.
+ */
+export const IPD_FALLBACK_BED_RATES: Record<string, number> = {
+  icu: 5000, sicu: 5000, picu: 4500, nicu: 4500,
+  hdu: 3000, isolation: 2500,
+  private: 2000, semi_private: 1200, general: 600,
+};
+
+/**
+ * Resolve the room rate/day for the ledger estimate: prefer the ward's configured
+ * Rate Per Day (Settings → Wards & Beds); otherwise fall back to the category default.
+ * Mirrors the precedence the UI ledger used previously (no amount change).
+ */
+export function resolveRoomRateFallback(
+  wardRatePerDay: number | null | undefined,
+  bedCategory: string | null | undefined
+): number {
+  const wardRate = Number(wardRatePerDay) || 0;
+  if (wardRate > 0) return wardRate;
+  return IPD_FALLBACK_BED_RATES[bedCategory || "general"] ?? 600;
+}
+
+/**
  * Auto-pull all admission-linked charges into a draft IPD bill.
  * Idempotent: uses dedupe keys based on source_module + source_dedupe_key so
  * repeated calls do not create duplicates. Room charges are recomputed each call

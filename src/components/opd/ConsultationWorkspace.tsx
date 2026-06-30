@@ -25,6 +25,7 @@ import NeonatalSheet from "@/components/specialty/NeonatalSheet";
 import AnaesthesiaSheet from "@/components/specialty/AnaesthesiaSheet";
 import OphthalmologySheet from "@/components/specialty/OphthalmologySheet";
 import { sendWhatsApp } from "@/lib/whatsapp-send";
+import { isRadiologyKeyword } from "@/lib/investigationSync";
 import { printDocument, printHeader } from "@/lib/printUtils";
 import { logRecordAccess } from "@/lib/ims";
 import { translateText, getHospitalLanguages, ALL_PATIENT_LANGUAGES, buildBilingualHtml } from "@/lib/translateUtils";
@@ -242,7 +243,7 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
       }));
       const isRadiology = (name: string) =>
         radStudyNamesRef.current.has(name.toLowerCase()) ||
-        /\bx[\s-]?ray\b|\bcect\b|\bhrct\b|\bct\b|\bmri\b|\busg\b|\bultrasound\b|\bultrasonography\b|\becg\b|\belectrocardiogram\b|\becho\b|\b2d\s*echo\b|\bechocardiography\b|\bdexa\b|\bmammograph|\bfluoroscop|\bpet\b/i.test(name);
+        isRadiologyKeyword(name);
 
       const labOrders: { test_name: string; urgency: string; clinical_indication: string }[] = [];
       const radOrders: { study_name: string; urgency: string; clinical_indication: string }[] = [];
