@@ -1,13 +1,16 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
-import { ChevronDown, ChevronUp, Mic, AlertTriangle, FlaskConical, PillBottle, RefreshCw, LayoutTemplate, Plus } from "lucide-react";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { ChevronDown, ChevronUp, Mic, AlertTriangle, FlaskConical, PillBottle, RefreshCw, LayoutTemplate, Plus, Trash2 } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import VoiceDictationButton from "@/components/voice/VoiceDictationButton";
 import { useVoiceScribe } from "@/contexts/VoiceScribeContext";
+import { useNoteTemplates } from "@/hooks/useNoteTemplates";
 
 interface Props {
   admissionId: string;
@@ -41,6 +44,12 @@ const IPDWardRoundTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pat
   const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [templates, setTemplates] = useState<any[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
+
+  // Personal (per-doctor) SOAP templates + inline "save as template" form
+  const { mine: myTemplates, shared: sharedTemplates, saveTemplate, deleteTemplate } = useNoteTemplates("ward_round");
+  const [showSaveTpl, setShowSaveTpl] = useState(false);
+  const [tplName, setTplName] = useState("");
+  const [tplShare, setTplShare] = useState(false);
 
   // Voice-detected extras
   const [medChanges, setMedChanges] = useState<MedChange[]>([]);
@@ -161,32 +170,31 @@ const IPDWardRoundTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pat
     toast({ title: `Template '${template.name}' applied` });
   };
 
-  const handleSaveAsTemplate = async () => {
-    if (!hospitalId || !form.s) {
-      toast({ title: "Template needs content", description: "Fill Subjective at least", variant: "destructive" });
+  // Apply a personal/shared SOAP template (body = { s, o, a, p }) into the editable form.
+  const applyPersonal = (t: any) => {
+    const b = t.body || {};
+    setForm({ s: b.s || "", o: b.o || "", a: b.a || "", p: b.p || "" });
+    toast({ title: `Template '${t.name}' applied` });
+  };
+
+  const handleSavePersonalTemplate = async () => {
+    const name = tplName.trim();
+    if (!name) {
+      toast({ title: "Enter a template name", variant: "destructive" });
       return;
     }
-    const name = prompt("Enter template name:");
-    if (!name) return;
-
-    // @ts-ignore - case_sheet_templates is a new table
-    const { error } = await (supabase as any).from("case_sheet_templates").insert({
-      hospital_id: hospitalId,
-      name,
-      fields: [
-        { label: "Subjective", value: form.s },
-        { label: "Objective", value: form.o },
-        { label: "Assessment", value: form.a },
-        { label: "Plan", value: form.p },
-      ],
-      is_active: true,
-    });
-
-    if (error) {
-      toast({ title: "Failed to save template", description: error.message, variant: "destructive" });
-    } else {
-      toast({ title: "Template saved successfully" });
-      fetchTemplates();
+    if (!form.s && !form.o && !form.a && !form.p) {
+      toast({ title: "Template needs content", description: "Fill at least one SOAP field", variant: "destructive" });
+      return;
+    }
+    try {
+      await saveTemplate({ name, body: { s: form.s, o: form.o, a: form.a, p: form.p }, isShared: tplShare });
+      toast({ title: tplShare ? "Template saved & shared with hospital" : "Template saved" });
+      setShowSaveTpl(false);
+      setTplName("");
+      setTplShare(false);
+    } catch (e: any) {
+      toast({ title: "Failed to save template", description: e?.message, variant: "destructive" });
     }
   };
 
@@ -214,6 +222,15 @@ const IPDWardRoundTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pat
     setSaving(false);
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
     toast({ title: "Ward round note saved" });
+
+    // NABH COP.3 — daily progress / continuity-of-care documentation evidence.
+    if (hospitalId) {
+      void logNABHEvidence(
+        hospitalId,
+        "COP.3",
+        `Ward round progress note (SOAP) recorded on ${new Date().toLocaleDateString("en-IN")}.`
+      );
+    }
 
     // Auto-capture consultant opinion fee if rounding doctor != admitting doctor
     try {
@@ -323,28 +340,64 @@ const IPDWardRoundTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pat
               <RefreshCw className="h-3 w-3 mr-1" /> Copy Previous
             </Button>
             
-            {templates.length > 0 && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="sm" variant="outline" className="h-6 text-[10px] px-2">
-                    <LayoutTemplate className="h-3 w-3 mr-1" /> Templates
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-48">
-                  <DropdownMenuItem onClick={handleSaveAsTemplate} className="text-xs font-bold text-primary">
-                    <Plus className="h-3 w-3 mr-1" /> Save Current as Template
-                  </DropdownMenuItem>
-                  <div className="h-px bg-slate-100 my-1" />
-                  {templates.map(t => (
-                    <DropdownMenuItem key={t.id} onClick={() => applyTemplate(t)} className="text-xs">
-                      {t.name}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline" className="h-6 text-[10px] px-2">
+                  <LayoutTemplate className="h-3 w-3 mr-1" /> Templates
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuItem onClick={() => setShowSaveTpl(true)} className="text-xs font-bold text-primary">
+                  <Plus className="h-3 w-3 mr-1" /> Save Current as Template
+                </DropdownMenuItem>
+
+                {myTemplates.length > 0 && (
+                  <>
+                    <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-slate-400">My Templates</DropdownMenuLabel>
+                    {myTemplates.map(t => (
+                      <DropdownMenuItem key={t.id} onClick={() => applyPersonal(t)} className="text-xs flex items-center justify-between gap-2">
+                        <span className="truncate">{t.name}</span>
+                        <span role="button" onClick={(e) => { e.stopPropagation(); e.preventDefault(); deleteTemplate(t.id); }}
+                          className="text-slate-400 hover:text-red-600 shrink-0">
+                          <Trash2 className="h-3 w-3" />
+                        </span>
+                      </DropdownMenuItem>
+                    ))}
+                  </>
+                )}
+
+                {(templates.length > 0 || sharedTemplates.length > 0) && (
+                  <>
+                    <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-slate-400">Hospital Templates</DropdownMenuLabel>
+                    {sharedTemplates.map(t => (
+                      <DropdownMenuItem key={t.id} onClick={() => applyPersonal(t)} className="text-xs">
+                        {t.name}
+                      </DropdownMenuItem>
+                    ))}
+                    {templates.map(t => (
+                      <DropdownMenuItem key={t.id} onClick={() => applyTemplate(t)} className="text-xs">
+                        {t.name}
+                      </DropdownMenuItem>
+                    ))}
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
+
+        {/* Inline "save as template" row */}
+        {showSaveTpl && (
+          <div className="flex items-center gap-2 mb-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
+            <Input value={tplName} onChange={(e) => setTplName(e.target.value)} placeholder="Template name"
+              className="h-7 text-xs flex-1" />
+            <label className="flex items-center gap-1 text-[11px] text-slate-600 whitespace-nowrap cursor-pointer">
+              <input type="checkbox" checked={tplShare} onChange={(e) => setTplShare(e.target.checked)} /> Share with hospital
+            </label>
+            <Button size="sm" onClick={handleSavePersonalTemplate} className="h-7 text-[10px] px-3">Save</Button>
+            <Button size="sm" variant="ghost" onClick={() => { setShowSaveTpl(false); setTplName(""); setTplShare(false); }} className="h-7 text-[10px] px-2">Cancel</Button>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="text-[10px] font-bold text-slate-400 uppercase">S — Subjective</label>

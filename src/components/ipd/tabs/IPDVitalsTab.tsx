@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
@@ -104,6 +105,15 @@ const IPDVitalsTab: React.FC<Props> = ({ admissionId, hospitalId, userId, patien
     });
     setSaving(false);
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
+
+    // NABH AAC.4 — patient reassessment (vital signs monitoring) evidence.
+    if (hospitalId) {
+      void logNABHEvidence(
+        hospitalId,
+        "AAC.4",
+        `Vital signs recorded (NEWS2 ${news2}) on ${new Date().toLocaleDateString("en-IN")}.`
+      );
+    }
 
     // Threshold-based alerts
     const thresholdAlerts = checkVitalsThresholds({
