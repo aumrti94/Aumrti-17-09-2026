@@ -25,8 +25,6 @@ import WoundCareTab from "./tabs/WoundCareTab";
 import BedTransferModal from "./BedTransferModal";
 import AdmitPatientModal from "./AdmitPatientModal";
 import MLCDetailsModal from "@/components/emergency/MLCDetailsModal";
-import NewLabOrderModal from "@/components/lab/NewLabOrderModal";
-import NewRadiologyOrderModal from "@/components/radiology/NewRadiologyOrderModal";
 import { useWhatsAppNotification } from "@/components/whatsapp/WhatsAppNotificationCard";
 import { sendDischargeSummaryNotif, sendFeedbackRequest } from "@/lib/whatsapp-notifications";
 import { getSpecialtySheet, specialtyTabMeta } from "@/lib/specialtyDetection";
@@ -34,7 +32,7 @@ import ObstetricSheet from "@/components/specialty/ObstetricSheet";
 import NeonatalSheet from "@/components/specialty/NeonatalSheet";
 import AnaesthesiaSheet from "@/components/specialty/AnaesthesiaSheet";
 import OphthalmologySheet from "@/components/specialty/OphthalmologySheet";
-import { AlertTriangle, FlaskConical, ScanLine, Pill, Microphone, ClipboardList, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, ClipboardList } from "lucide-react";
 import { getNEWS2BadgeClasses, getNEWS2Level } from "@/lib/news2";
 import ABDMCareContextsPanel from "@/components/abdm/ABDMCareContextsPanel";
 import ConsentStatusBanner from "@/components/abdm/ConsentStatusBanner";
@@ -47,7 +45,7 @@ import VoiceDictationButton from "@/components/voice/VoiceDictationButton";
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { autoPostJournalEntry } from "@/lib/accounting";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
-import { syncLabOrders, syncRadiologyOrders } from "@/lib/investigationSync";
+import { syncLabOrders, syncRadiologyOrders, isRadiologyKeyword } from "@/lib/investigationSync";
 import { autoPullAdmissionCharges } from "@/lib/ipdBilling";
 
 interface Props {
@@ -97,8 +95,6 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
   const [deptName, setDeptName] = useState<string | null>(null);
   const [showTransfer, setShowTransfer] = useState(false);
   const [highlightDischarge, setHighlightDischarge] = useState(false);
-  const [showLabModal, setShowLabModal] = useState(false);
-  const [showRadiologyModal, setShowRadiologyModal] = useState(false);
   const [latestNews2, setLatestNews2] = useState<number | null>(null);
   const [prescription, setPrescription] = useState<PrescriptionData>(emptyPrescription);
   const [savingOrders, setSavingOrders] = useState(false);
@@ -124,7 +120,10 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
     const admData = bed.admission as any;
     if (admData.department_id) {
       supabase.from('departments').select('name').eq('id', admData.department_id).maybeSingle()
-        .then(({ data }) => setDeptName(data?.name || null));
+        .then(({ data, error }) => {
+          if (error) console.error("IPD: department fetch failed:", error.message);
+          setDeptName(data?.name || null);
+        });
     } else {
       setDeptName(null);
     }
@@ -138,7 +137,8 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
     supabase.from("patients").select("*")
       .eq("id", admissionData.patient_id || "")
       .maybeSingle()
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        if (error) console.error("IPD: patient fetch failed:", error.message);
         if (data) setPatient(data as unknown as PatientDetails);
       });
   }, [bed]);
@@ -153,7 +153,10 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle()
-      .then(({ data }: any) => setEstimate(data || null));
+      .then(({ data, error }: any) => {
+        if (error) console.error("IPD: estimate fetch failed:", error.message);
+        setEstimate(data || null);
+      });
   }, [bed, showEstimateModal]);
 
   // Fetch MLC case status when admission has is_mlc=true
@@ -163,7 +166,11 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
     (supabase as any).from("mlc_cases")
       .select("id", { count: "exact", head: true })
       .eq("admission_id", admData.id)
-      .then(({ count }: any) => setMlcCaseStatus((count ?? 0) > 0));
+      .then(({ count, error }: any) => {
+        // On error, preserve the conservative default (treat as undocumented → blocks discharge).
+        if (error) console.error("IPD: MLC case-status check failed:", error.message);
+        setMlcCaseStatus((count ?? 0) > 0);
+      });
   }, [bed, showMlcModal]);
 
   // Fetch latest NEWS2 + MEWS scores from nursing_vitals (auto-calculated on each entry)
@@ -176,7 +183,8 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
       .order("recorded_at", { ascending: false })
       .limit(1)
       .maybeSingle()
-      .then(({ data }: any) => {
+      .then(({ data, error }: any) => {
+        if (error) console.error("IPD: NEWS2/MEWS fetch failed:", error.message);
         setLatestNews2(data?.news2_score ?? null);
         setLatestMews(data?.mews_score ?? null);
       });
@@ -195,7 +203,10 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
       .select("id", { count: "exact", head: true })
       .eq("admission_id", admData.id)
       .eq("status", "approved")
-      .then(({ count }: any) => setPreAuthNeeded((count ?? 0) === 0));
+      .then(({ count, error }: any) => {
+        if (error) console.error("IPD: pre-auth check failed:", error.message);
+        setPreAuthNeeded((count ?? 0) === 0);
+      });
   }, [bed]);
 
   // Voice Scribe Integration
@@ -212,8 +223,7 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
         is_stat: false,
       }));
 
-      const isRadiology = (name: string) =>
-        /\bx[\s-]?ray\b|\bcect\b|\bhrct\b|\bct\b|\bmri\b|\busg\b|\bultrasound\b|\bultrasonography\b|\becg\b|\belectrocardiogram\b|\becho\b|\b2d\s*echo\b|\bechocardiography\b|\bdexa\b|\bmammograph|\bfluoroscop|\bpet\b/i.test(name);
+      const isRadiology = (name: string) => isRadiologyKeyword(name);
 
       const labOrders: LabOrder[] = [];
       const radOrders: RadiologyOrder[] = [];
@@ -243,7 +253,8 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
   React.useEffect(() => {
     if (!bed?.ward_id) { setIsIcuWard(false); return; }
     (supabase as any).from("wards").select("type").eq("id", bed.ward_id).maybeSingle()
-      .then(({ data }: any) => {
+      .then(({ data, error }: any) => {
+        if (error) console.error("IPD: ward-type fetch failed:", error.message);
         setIsIcuWard(["icu", "nicu", "picu", "hdu"].includes(data?.type || ""));
       });
   }, [bed?.ward_id]);
@@ -263,7 +274,8 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
       .eq("consent_given", true)
       .order("consented_at", { ascending: false })
       .limit(1)
-      .then(({ data }: any) => {
+      .then(({ data, error }: any) => {
+        if (error) console.error("IPD: consent-status fetch failed:", error.message);
         if (!data || data.length === 0) { setConsentStatus("none"); return; }
         const record = data[0];
         if (!record.patient_signature) { setConsentStatus("none"); return; }
@@ -771,7 +783,7 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
             <IPDNotesTab admissionId={admissionId} hospitalId={hospitalId} userId={userId} patientId={patient?.id} />
           </TabsContent>
           <TabsContent value="documents" className="h-full m-0">
-            <IPDDocumentsTab admissionId={admissionId} hospitalId={hospitalId} patientId={patient?.id || null} />
+            <IPDDocumentsTab admissionId={admissionId} hospitalId={hospitalId} userId={userId} patientId={patient?.id || null} />
           </TabsContent>
           <TabsContent value="financial" className="h-full m-0">
             {hospitalId && patient && (
@@ -891,6 +903,14 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
                   toast({ title: "Cannot discharge — MLC details not documented", variant: "destructive" });
                   return;
                 }
+                // NABH: informed consent should be on file. Confirm (not hard-block) so
+                // discharge is never prevented, but the gap is surfaced to the user.
+                if (consentStatus === "none" || consentStatus === "expired") {
+                  const msg = consentStatus === "expired"
+                    ? "Informed consent has expired for this admission. Continue with discharge anyway?"
+                    : "Informed consent is not on file for this admission. Continue with discharge anyway?";
+                  if (!window.confirm(msg)) return;
+                }
                 handleInitiateDischarge();
               }}
             >
@@ -908,29 +928,6 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
         </div>
       </div>
     </div>
-
-    {/* Lab Order Modal */}
-    {showLabModal && hospitalId && patient && (
-      <NewLabOrderModal
-        hospitalId={hospitalId}
-        preselectedPatient={{ id: patient.id, full_name: patient.full_name, uhid: patient.uhid, gender: patient.gender, dob: patient.dob }}
-        linkedAdmissionId={admissionId}
-        onClose={() => setShowLabModal(false)}
-        onCreated={() => { setShowLabModal(false); toast({ title: "Lab order created" }); }}
-      />
-    )}
-
-    {/* Radiology Order Modal */}
-    {showRadiologyModal && hospitalId && patient && (
-      <NewRadiologyOrderModal
-        hospitalId={hospitalId}
-        modalities={[]}
-        preselectedPatient={{ id: patient.id, full_name: patient.full_name, uhid: patient.uhid, gender: patient.gender, dob: patient.dob }}
-        linkedAdmissionId={admissionId}
-        onClose={() => setShowRadiologyModal(false)}
-        onCreated={() => { setShowRadiologyModal(false); toast({ title: "Radiology order created" }); }}
-      />
-    )}
 
     {/* Transfer Modal */}
     {showTransfer && hospitalId && patient && (
