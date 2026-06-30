@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, LayoutGrid } from "lucide-react";
+import { Search, LayoutGrid, Lock } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
@@ -14,12 +14,30 @@ import {
 } from "@/lib/modules";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { hasAccess } from "@/lib/routeRoles";
+import {
+  useSubscriptionConfig,
+  getModuleKeyForPath,
+  isModuleKeyAllowed,
+} from "@/hooks/useSubscriptionConfig";
+import { useProductMode } from "@/contexts/ProductModeContext";
 
 const ModulesPage: React.FC = () => {
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<ModuleCategory | "All">("All");
   const { role, permissions } = useHospitalId();
+  const { enabledModules, isLoading: subLoading } = useSubscriptionConfig();
+  const { isModuleEnabled, loadingMode } = useProductMode();
+
+  // Mirror the central <ModuleGate> decision so a locked badge matches exactly
+  // what happens on click (plan/subscription + product-mode). Optimistic (unlocked)
+  // while access data is still loading, to avoid a flash of lock icons.
+  const isModuleLocked = (route: string): boolean => {
+    if (subLoading || loadingMode) return false;
+    const key = getModuleKeyForPath(route);
+    if (!key) return false; // non-gateable module → never locked
+    return !(isModuleKeyAllowed(key, enabledModules) && isModuleEnabled(key));
+  };
 
   const recentModuleRoutes = getRecentModules();
   const recentModules = ALL_MODULES.filter((m) => recentModuleRoutes.includes(m.route) && hasAccess(m.route, role, permissions));
@@ -125,8 +143,13 @@ const ModulesPage: React.FC = () => {
                   onClick={() => handleNav(m.route)}
                   className="flex flex-col items-center gap-1.5 w-20 shrink-0 group"
                 >
-                  <div className="w-12 h-12 rounded-xl bg-card border border-border flex items-center justify-center text-xl group-hover:border-primary group-hover:shadow-md transition-all">
-                    {m.icon}
+                  <div className="relative w-12 h-12 rounded-xl bg-card border border-border flex items-center justify-center text-xl group-hover:border-primary group-hover:shadow-md transition-all">
+                    <span className={cn(isModuleLocked(m.route) && "opacity-40")}>{m.icon}</span>
+                    {isModuleLocked(m.route) && (
+                      <span className="absolute -top-1 -right-1 bg-card border border-border rounded-full p-0.5 text-muted-foreground">
+                        <Lock size={10} />
+                      </span>
+                    )}
                   </div>
                   <span className="text-[11px] text-foreground font-medium text-center leading-tight line-clamp-2">
                     {m.name}
@@ -152,7 +175,7 @@ const ModulesPage: React.FC = () => {
             </h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
               {grouped.get(cat)!.map((m) => (
-                <ModuleCard key={m.route + m.name} module={m} onClick={() => handleNav(m.route)} />
+                <ModuleCard key={m.route + m.name} module={m} locked={isModuleLocked(m.route)} onClick={() => handleNav(m.route)} />
               ))}
             </div>
           </div>
@@ -162,8 +185,9 @@ const ModulesPage: React.FC = () => {
   );
 };
 
-const ModuleCard: React.FC<{ module: ModuleDefinition; onClick: () => void }> = ({
+const ModuleCard: React.FC<{ module: ModuleDefinition; locked?: boolean; onClick: () => void }> = ({
   module,
+  locked = false,
   onClick,
 }) => {
   const bgColor = CATEGORY_COLORS[module.category] || "#64748B";
@@ -171,21 +195,27 @@ const ModuleCard: React.FC<{ module: ModuleDefinition; onClick: () => void }> = 
   return (
     <button
       onClick={onClick}
-      className="bg-card border border-border rounded-xl px-4 py-5 flex flex-col items-center gap-2.5 text-center cursor-pointer transition-all hover:border-primary hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 active:shadow-none"
+      title={locked ? "Not included in your current plan" : undefined}
+      className="relative bg-card border border-border rounded-xl px-4 py-5 flex flex-col items-center gap-2.5 text-center cursor-pointer transition-all hover:border-primary hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 active:shadow-none"
     >
+      {locked && (
+        <span className="absolute top-2 right-2 text-muted-foreground/70" aria-label="Locked">
+          <Lock size={14} />
+        </span>
+      )}
       <div
-        className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
+        className={cn("w-12 h-12 rounded-xl flex items-center justify-center text-2xl", locked && "opacity-40")}
         style={{ backgroundColor: `${bgColor}15` }}
       >
         {module.icon}
       </div>
-      <span className="text-[13px] font-semibold text-foreground leading-tight">
+      <span className={cn("text-[13px] font-semibold leading-tight", locked ? "text-muted-foreground" : "text-foreground")}>
         {module.name}
       </span>
       <span className="text-[11px] text-muted-foreground leading-snug line-clamp-2">
         {module.desc}
       </span>
-      {module.isNew && (
+      {module.isNew && !locked && (
         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700">
           NEW
         </span>

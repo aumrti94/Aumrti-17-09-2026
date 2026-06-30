@@ -68,7 +68,7 @@ const ALL_MODULE_KEYS: string[] = ALL_MODULES.map((m) => {
 });
 
 // Override the derived keys for specialty routes to match migration module keys exactly
-const ROUTE_TO_MODULE_KEY: Record<string, string> = {
+export const ROUTE_TO_MODULE_KEY: Record<string, string> = {
   "/opd":                    "opd",
   "/ipd":                    "ipd",
   "/ipd/day-care":           "day_care",
@@ -123,6 +123,10 @@ const ROUTE_TO_MODULE_KEY: Record<string, string> = {
   "/portal":                 "patient_portal",
   "/pro":                    "patient_relations",
   "/inbox":                  "inbox",
+  "/ipc/dashboard":            "ipc",
+  "/fms/dashboard":            "fms",
+  "/ai/clinical-intelligence": "ai_clinical",
+  "/research":                 "research",
   "/analytics":              "analytics",
   "/hod-dashboard":          "hod_dashboard",
   "/tv-display":             "tv_display",

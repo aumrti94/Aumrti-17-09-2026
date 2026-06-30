@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Plus, Edit2, Save, X, Loader2, Check, Users } from "lucide-react";
 import { toast } from "sonner";
 import { ALL_MODULES } from "@/lib/modules";
+import { ROUTE_TO_MODULE_KEY, CANONICAL_MODULE_KEYS } from "@/hooks/useSubscriptionConfig";
 import { getErrorMessage } from "@/lib/errorMessage";
 import { FormError } from "@/components/ui/FormError";
 
@@ -41,26 +42,11 @@ interface Plan {
   razorpay_plan_id: string | null;
 }
 
-const ROUTE_KEY: Record<string, string> = {
-  "/opd":"opd","/ipd":"ipd","/ipd/day-care":"day_care","/emergency":"emergency",
-  "/ot":"ot","/nursing":"nursing","/telemedicine":"telemedicine","/packages":"health_packages",
-  "/lab":"lab","/radiology":"radiology","/blood-bank":"blood_bank","/cssd":"cssd",
-  "/pharmacy":"pharmacy","/pharmacy?mode=retail":"pharmacy_retail","/billing":"billing",
-  "/billing/closure":"day_closure","/insurance":"insurance","/payments":"payments",
-  "/accounts":"accounts","/assets":"assets","/pmjay":"pmjay","/hr":"hr",
-  "/inventory":"inventory","/quality":"quality","/dialysis":"dialysis","/oncology":"oncology",
-  "/physio":"physio","/mortuary":"mortuary","/vaccination":"vaccination","/ambulance":"ambulance",
-  "/home-care":"home_care","/dental":"dental","/ayush":"ayush","/ivf":"ivf",
-  "/specialty/anc":"obstetric_anc","/specialty/neonatal":"neonatal",
-  "/specialty/anaesthesia":"anaesthesia","/specialty/ophthalmology":"ophthalmology",
-  "/specialty/partograph":"partograph","/mental-health":"mental_health",
-  "/chronic-disease":"chronic_disease","/mrd":"mrd","/biomedical":"biomedical",
-  "/housekeeping":"housekeeping","/hmis":"hmis","/dietetics":"dietetics","/lms":"lms",
-  "/crm":"crm","/abdm":"abdm","/portal":"patient_portal","/pro":"patient_relations",
-  "/inbox":"inbox","/analytics":"analytics","/hod-dashboard":"hod_dashboard",
-  "/tv-display":"tv_display","/settings":"settings",
-};
-const ALL_KEYS = [...new Set(Object.values(ROUTE_KEY))];
+// Single source of truth — shared with the runtime module gate (useSubscriptionConfig).
+// Keeping these in sync guarantees that every module a CEO can toggle here is the same
+// set the app gates with the "Module Not Enabled" lock screen.
+const ROUTE_KEY = ROUTE_TO_MODULE_KEY;
+const ALL_KEYS = CANONICAL_MODULE_KEYS;
 
 async function fetchPlans() {
   const [pRes, fRes] = await Promise.all([
