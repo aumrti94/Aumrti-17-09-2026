@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, BedDouble } from "lucide-react";
 import BedMap from "@/components/ipd/BedMap";
 import IPDWorkspace from "@/components/ipd/IPDWorkspace";
 import WardStats from "@/components/ipd/WardStats";
@@ -158,14 +158,25 @@ const IPDPage: React.FC = () => {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Coalesce bursts of realtime changes into a single refetch. Kept short (≤500ms)
+  // so the bed board never goes stale enough to risk double-booking.
+  const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleRefetch = useCallback(() => {
+    if (refetchTimer.current) clearTimeout(refetchTimer.current);
+    refetchTimer.current = setTimeout(() => { fetchData(); }, 400);
+  }, [fetchData]);
+
   useEffect(() => {
     if (!hospitalId) return;
     const ch = supabase.channel("ipd-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "beds", filter: `hospital_id=eq.${hospitalId}` }, () => fetchData())
-      .on("postgres_changes", { event: "*", schema: "public", table: "admissions", filter: `hospital_id=eq.${hospitalId}` }, () => fetchData())
+      .on("postgres_changes", { event: "*", schema: "public", table: "beds", filter: `hospital_id=eq.${hospitalId}` }, scheduleRefetch)
+      .on("postgres_changes", { event: "*", schema: "public", table: "admissions", filter: `hospital_id=eq.${hospitalId}` }, scheduleRefetch)
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [hospitalId, fetchData]);
+    return () => {
+      if (refetchTimer.current) clearTimeout(refetchTimer.current);
+      supabase.removeChannel(ch);
+    };
+  }, [hospitalId, scheduleRefetch]);
 
   const isMobile = useIsMobile();
   const selectedBed = beds.find((b) => b.id === selectedBedId) || null;
@@ -191,8 +202,9 @@ const IPDPage: React.FC = () => {
       {/* Left / main column: forecast + bed map (hidden on mobile when workspace is open) */}
       {(!isMobile || !selectedBedId) && (
         <div className="flex flex-col flex-1 overflow-hidden">
-          {hospitalId && totalBeds > 0 && (
-            <div className="flex-shrink-0 p-3 border-b border-border space-y-2">
+          {/* Mobile: forecast above the bed map when no patient is selected */}
+          {isMobile && hospitalId && totalBeds > 0 && !selectedBedId && (
+            <div className="flex-shrink-0 p-3 border-b border-border">
               <BedDemandForecastPanel hospitalId={hospitalId} />
             </div>
           )}
@@ -201,9 +213,23 @@ const IPDPage: React.FC = () => {
               <BedMap beds={beds} selectedBedId={selectedBedId} onSelectBed={handleBedSelect}
                 hospitalId={hospitalId} loading={loading} onRefresh={fetchData} onNewAdmission={handleNewAdmission} />
             </CollapsiblePanel>
-            {/* Desktop: workspace beside bed map */}
+            {/* Desktop: when a patient is selected show the workspace; otherwise show the
+                AI forecast centred in the middle (with the "click a bed" hint below). */}
             {!isMobile && (
-              <IPDWorkspace bed={selectedBed} hospitalId={hospitalId} userId={userId} onRefresh={fetchData} />
+              selectedBedId ? (
+                <IPDWorkspace bed={selectedBed} hospitalId={hospitalId} userId={userId} onRefresh={fetchData} />
+              ) : (
+                <div className="flex-1 bg-muted/30 overflow-y-auto flex justify-center">
+                  <div className="w-full max-w-2xl px-6 pt-[8vh] pb-6">
+                    {hospitalId && totalBeds > 0 && <BedDemandForecastPanel hospitalId={hospitalId} />}
+                    <div className="flex flex-col items-center justify-center text-center mt-10">
+                      <BedDouble className="h-12 w-12 text-muted-foreground/30 mb-3" />
+                      <p className="text-base text-muted-foreground">Click a bed to view patient details</p>
+                      <p className="text-[13px] text-muted-foreground/60 mt-1">or click an available bed to admit a new patient</p>
+                    </div>
+                  </div>
+                </div>
+              )
             )}
           </div>
         </div>
