@@ -79,6 +79,29 @@ const SettingsWardsPage: React.FC = () => {
     return data.hospital_id;
   };
 
+  // Room billing mode (hospitals.room_billing_mode): 'calendar_day' (default) or 'prorata_hourly'.
+  const { data: roomBillingMode } = useQuery({
+    queryKey: ["settings-room-billing-mode"],
+    queryFn: async () => {
+      const hid = await getHospitalId();
+      const { data } = await (supabase as any).from("hospitals").select("room_billing_mode").eq("id", hid).maybeSingle();
+      return ((data?.room_billing_mode as string) || "calendar_day");
+    },
+  });
+
+  const setRoomBillingMode = useMutation({
+    mutationFn: async (mode: "calendar_day" | "prorata_hourly") => {
+      const hid = await getHospitalId();
+      const { error } = await (supabase as any).from("hospitals").update({ room_billing_mode: mode }).eq("id", hid);
+      if (error) throw error;
+    },
+    onSuccess: (_d, mode) => {
+      qc.invalidateQueries({ queryKey: ["settings-room-billing-mode"] });
+      toast({ title: mode === "prorata_hourly" ? "Room billing set to hourly pro-rata" : "Room billing set to whole day" });
+    },
+    onError: (e: any) => toast({ title: "Failed to update", description: e?.message, variant: "destructive" }),
+  });
+
   const createWardWithBeds = async (hid: string, name: string, type: string, bedCount: number, ratePerDay?: number, bedPrefix?: string, bedStart?: number) => {
     const wardPayload: any = { hospital_id: hid, name, type: type as any, total_beds: bedCount };
     if (ratePerDay && ratePerDay > 0) wardPayload.rate_per_day = ratePerDay;
@@ -385,6 +408,36 @@ const SettingsWardsPage: React.FC = () => {
             <p className="text-2xl font-bold text-foreground tabular-nums mt-0.5">{s.value}</p>
           </div>
         ))}
+      </div>
+
+      {/* ROOM BILLING MODE */}
+      <div className="flex-shrink-0 mx-6 mt-2 bg-card border border-border rounded-lg px-4 py-3">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-[13px] font-semibold text-foreground">Room Charge Billing</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {roomBillingMode === "prorata_hourly"
+                ? "Hourly pro-rata — a 26-hour stay bills as 1.08 days."
+                : "Whole day — any part of a day counts as a full day (26 hours = 2 days)."}
+            </p>
+          </div>
+          <div className="flex-shrink-0 inline-flex rounded-lg border border-border overflow-hidden text-xs font-medium">
+            <button
+              onClick={() => roomBillingMode !== "calendar_day" && setRoomBillingMode.mutate("calendar_day")}
+              disabled={setRoomBillingMode.isPending}
+              className={cn("px-3 py-1.5 transition-colors", roomBillingMode === "calendar_day" ? "bg-[hsl(222,55%,23%)] text-white" : "bg-card text-muted-foreground hover:bg-muted/50")}
+            >
+              Whole Day
+            </button>
+            <button
+              onClick={() => roomBillingMode !== "prorata_hourly" && setRoomBillingMode.mutate("prorata_hourly")}
+              disabled={setRoomBillingMode.isPending}
+              className={cn("px-3 py-1.5 transition-colors border-l border-border", roomBillingMode === "prorata_hourly" ? "bg-[hsl(222,55%,23%)] text-white" : "bg-card text-muted-foreground hover:bg-muted/50")}
+            >
+              Hourly Pro-rata
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* QUICK ADD BANNER */}
