@@ -295,9 +295,36 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
       return;
     }
 
-    // Get bed for housekeeping + patient_id for ABHA linking
+    // Get bed for housekeeping + patient_id for ABHA linking (+ death routing fields)
     const { data: adm } = await supabase.from("admissions")
-      .select("bed_id, ward_id, patient_id").eq("id", admissionId).maybeSingle();
+      .select("bed_id, ward_id, patient_id, is_mlc, admitting_diagnosis").eq("id", admissionId).maybeSingle();
+
+    // Death case: route the body into the Mortuary pipeline (mirrors Emergency).
+    // The formal MCCD is completed in the Mortuary module; here we just register the body.
+    if (dischargeType === "expired" && adm?.patient_id) {
+      const bodyNum = `BODY-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 9000) + 1000).padStart(4, "0")}`;
+      const { error: mortErr } = await (supabase as any).from("mortuary_admissions").insert({
+        hospital_id: hospitalId,
+        patient_id: adm.patient_id,
+        admission_id: admissionId,
+        body_number: bodyNum,
+        time_of_death: now,
+        pronounced_by: dbUserId,
+        cause_of_death: (adm as any).admitting_diagnosis || "Under evaluation",
+        manner_of_death: "undetermined",
+        is_mlc: (adm as any).is_mlc || false,
+        status: "in_mortuary",
+        notes: "Patient expired during IPD admission. Complete MCCD in the Mortuary module.",
+      });
+      if (mortErr) {
+        console.error("Mortuary admission failed:", mortErr.message);
+        toast.error("Discharge recorded, but mortuary registration failed — register the body manually in Mortuary.");
+      } else {
+        toast.success(`Body registered to Mortuary — Body No: ${bodyNum}. Complete the MCCD in the Mortuary module.`);
+      }
+      logNABHEvidence(hospitalId, "COP.10",
+        `IPD death — body registered to mortuary (${bodyNum}) for admission ${admissionId}${(adm as any).is_mlc ? " [MLC]" : ""}.`);
+    }
 
     if (adm?.bed_id) {
       await supabase.from("beds").update({ status: "cleaning" as any }).eq("id", adm.bed_id);
