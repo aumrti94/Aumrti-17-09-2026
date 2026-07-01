@@ -296,7 +296,7 @@ const IPDWardRoundTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pat
   };
 
   return (
-    <div className="h-full flex flex-col overflow-hidden p-4">
+    <div className="h-full flex flex-col overflow-y-auto p-4">
       {/* Voice scribe hint */}
       <div className="flex-shrink-0 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mb-3 flex items-center gap-2">
         <Mic className="h-3.5 w-3.5 text-primary" />
@@ -481,8 +481,8 @@ const IPDWardRoundTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pat
         </div>
       </div>
 
-      {/* Previous rounds */}
-      <div className="flex-1 overflow-y-auto space-y-1.5">
+      {/* Previous rounds — flow naturally; the whole tab scrolls as one region */}
+      <div className="space-y-1.5 mt-4">
         <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Previous Rounds</p>
         {notes.map((n) => (
           <div key={n.id} className="bg-white border border-slate-200 rounded-lg overflow-hidden">
