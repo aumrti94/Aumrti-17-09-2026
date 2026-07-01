@@ -243,6 +243,20 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
       return;
     }
 
+    // Diagnosis gate (Radha's rule) — no IPD discharge / bill finalisation without a
+    // provisional diagnosis or a coded ICD-10. Scoped to IPD; fails fast before signing.
+    {
+      const { data: dxRow } = await supabase.from("admissions")
+        .select("admitting_diagnosis").eq("id", admissionId).maybeSingle();
+      const hasDiagnosis =
+        !!(dxRow?.admitting_diagnosis && String(dxRow.admitting_diagnosis).trim()) ||
+        !!icdStatus?.primary_icd_code;
+      if (!hasDiagnosis) {
+        toast.error("Add a provisional diagnosis or ICD-10 code before finalising discharge & billing.");
+        return;
+      }
+    }
+
     // Run completeness check (only once — skip if already acknowledged)
     if (!warningsAcknowledged) {
       const warnings = await checkDischargeCompleteness();
