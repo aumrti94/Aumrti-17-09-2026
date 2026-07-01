@@ -232,23 +232,27 @@ const IPDWardRoundTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pat
       );
     }
 
-    // Auto-capture consultant opinion fee if rounding doctor != admitting doctor
+    // Auto-capture IPD consultation fee for the rounding doctor
     try {
-      const { data: admission } = await (supabase as any)
-        .from("admissions")
-        .select("admitting_doctor_id")
-        .eq("id", admissionId)
+      // Find doctor's IPD consultation fee
+      const { data: docSvc } = await (supabase as any)
+        .from("service_master")
+        .select("ipd_consultation_fee, fee")
+        .eq("hospital_id", hospitalId)
+        .eq("doctor_id", userId)
+        .eq("item_type", "consultation")
         .maybeSingle();
-      if (admission?.admitting_doctor_id && userId !== admission.admitting_doctor_id) {
-        const { data: fee } = await (supabase as any)
-          .from("service_master")
-          .select("fee")
-          .eq("hospital_id", hospitalId)
-          .or("name.ilike.%consult%opinion%,name.ilike.%consulting%")
-          .limit(1)
-          .maybeSingle();
-        const consultFee = fee?.fee ? Number(fee.fee) : 500;
+        
+      // Use ipd_consultation_fee if it is set (even if 0). Otherwise, fallback to regular fee.
+      let consultFee = 0;
+      if (docSvc?.ipd_consultation_fee !== null && docSvc?.ipd_consultation_fee !== undefined) {
+        consultFee = Number(docSvc.ipd_consultation_fee);
+      } else if (docSvc?.fee !== null && docSvc?.fee !== undefined) {
+        consultFee = Number(docSvc.fee);
+      }
 
+      // Only charge if the fee is strictly greater than 0
+      if (consultFee > 0) {
         // Find active IPD bill
         const { data: ipdBill } = await (supabase as any)
           .from("bills")
@@ -258,36 +262,24 @@ const IPDWardRoundTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pat
           .order("created_at", { ascending: false })
           .limit(1)
           .maybeSingle();
+          
         if (ipdBill?.id) {
-          const { data: docInfo } = await supabase
-            .from("users")
-            .select("full_name")
-            .eq("id", userId)
-            .maybeSingle();
-          await (supabase as any).from("bill_line_items").insert({
-            hospital_id: hospitalId,
-            bill_id: ipdBill.id,
-            item_type: "consultant_opinion",
-            description: `Consultant Opinion: ${docInfo?.full_name || "Doctor"}`,
-            quantity: 1,
-            unit_rate: consultFee,
-            taxable_amount: consultFee,
-            gst_percent: 0,
-            gst_amount: 0,
-            total_amount: consultFee,
-            source_module: "ipd",
-          });
-
-          const result = await recalculateBillTotalsSafe(ipdBill.id);
-          if (!result.ok) {
-            console.error("Consultant opinion bill recalculation failed:", result.error);
+          const { autoPullAdmissionCharges } = await import("@/lib/ipdBilling");
+          const pullResult = await autoPullAdmissionCharges(ipdBill.id, admissionId, hospitalId);
+          
+          if (pullResult.ok) {
+            const result = await recalculateBillTotalsSafe(ipdBill.id);
+            if (!result.ok) {
+              console.error("Consultation bill recalculation failed:", result.error);
+            }
+            toast({ title: `IPD Consultation fee auto-captured: ₹${consultFee.toLocaleString("en-IN")}` });
+          } else {
+            console.error("Failed to auto-pull admission charges:", pullResult.error);
           }
-
-          toast({ title: `Consultant opinion fee auto-captured: ₹${consultFee.toLocaleString("en-IN")}` });
         }
       }
     } catch (err) {
-      console.error("Consultant fee capture (non-blocking):", err);
+      console.error("Consultation fee capture (non-blocking):", err);
     }
 
     setForm({ s: "", o: "", a: "", p: "" });
@@ -514,7 +506,7 @@ const IPDWardRoundTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pat
                 ].map((s) => (
                   <div key={s.l}>
                     <p className="text-[10px] font-bold text-slate-400 uppercase">{s.l}</p>
-                    <p className="text-xs text-slate-700 mt-0.5">{s.v || "—"}</p>
+                    <p className="text-xs text-slate-700 mt-0.5 whitespace-pre-wrap break-words">{s.v || "—"}</p>
                   </div>
                 ))}
               </div>

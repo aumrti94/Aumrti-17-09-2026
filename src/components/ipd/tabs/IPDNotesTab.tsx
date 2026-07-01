@@ -217,7 +217,7 @@ const IPDNotesTab: React.FC<Props> = ({ admissionId, hospitalId, userId, patient
               <span className="text-[11px] text-slate-400">{n.time}</span>
               <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-px rounded">{n.role}</span>
             </div>
-            <p className="text-xs text-slate-700">{n.text}</p>
+            <p className="text-xs text-slate-700 whitespace-pre-wrap break-words">{n.text}</p>
           </div>
         ))}
         {notes.length === 0 && !showForm && (
