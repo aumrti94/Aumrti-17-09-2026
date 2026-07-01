@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { syncAdvanceToBill } from "@/lib/advanceBillSync";
-import { resolveRoomRateFallback } from "@/lib/ipdBilling";
+import { resolveRoomRateFallback, computeRoomUnits, normalizeRoomBillingMode } from "@/lib/ipdBilling";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -96,7 +96,7 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
     // pharmacy etc. are already priced and deduped server-side by autoPullAdmissionCharges.
     const { data: ipdBill, error: billErr } = await (supabase as any)
       .from("bills")
-      .select("id")
+      .select("id, payment_status, bill_status")
       .eq("hospital_id", hospitalId)
       .eq("admission_id", admissionId)
       .eq("bill_type", "ipd")
@@ -107,6 +107,16 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
     if (billErr) console.error("IPD ledger: bill lookup failed:", billErr.message);
 
     if (ipdBill?.id) {
+      // If the bill is still a draft, auto-pull the latest room/lab/pharmacy charges
+      // before rendering so the ledger stays accurate.
+      if (!ipdBill.bill_status || ipdBill.bill_status === "draft") {
+        const { autoPullAdmissionCharges } = await import("@/lib/ipdBilling");
+        const result = await autoPullAdmissionCharges(ipdBill.id, admissionId, hospitalId);
+        if (!result.ok) {
+          toast.error("Auto-pull failed: " + result.error);
+        }
+      }
+
       // ── Authoritative path: render the real bill's line items ──
       const { data: lineItems, error: liErr } = await (supabase as any)
         .from("bill_line_items")
@@ -128,16 +138,18 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
       setIsEstimate(true);
 
       if (adm?.admitted_at) {
-        const days = Math.max(1, Math.ceil(
-          (Date.now() - new Date(adm.admitted_at).getTime()) / 86400000
-        ));
+        // Same room-billing mode as the authoritative bill so estimate == bill.
+        const { data: hosp } = await (supabase as any)
+          .from("hospitals").select("room_billing_mode").eq("id", hospitalId).maybeSingle();
+        const roomBillingMode = normalizeRoomBillingMode(hosp?.room_billing_mode);
+        const days = computeRoomUnits(new Date(adm.admitted_at).getTime(), Date.now(), roomBillingMode);
         const cat = adm.beds?.bed_category || "general";
         // Ward's configured Rate Per Day (Settings → Wards & Beds), else the category
         // default — shared with ipdBilling.ts so the estimate matches the eventual bill.
         const rate = resolveRoomRateFallback(adm.wards?.rate_per_day, cat);
         charges.push({
           date: new Date(adm.admitted_at).toISOString().split("T")[0],
-          description: `Room — ${cat.replace("_", " ")} × ${days} day${days !== 1 ? "s" : ""} @ ₹${rate.toLocaleString("en-IN")}`,
+          description: `Room — ${cat.replace("_", " ")} × ${days} day${days !== 1 ? "s" : ""}${roomBillingMode === "prorata_hourly" ? " (pro-rata)" : ""} @ ₹${rate.toLocaleString("en-IN")}`,
           amount: rate * days,
           category: "room",
         });

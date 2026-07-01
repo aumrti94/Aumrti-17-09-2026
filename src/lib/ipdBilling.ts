@@ -34,6 +34,34 @@ export function resolveRoomRateFallback(
   return IPD_FALLBACK_BED_RATES[bedCategory || "general"] ?? 600;
 }
 
+// Hospital room-billing modes. 'calendar_day' is the legacy default (whole days,
+// rounded up); 'prorata_hourly' bills the fractional day from admission time.
+export type RoomBillingMode = "calendar_day" | "prorata_hourly";
+
+/**
+ * Number of billable room "day units" between admission and discharge/now.
+ * - calendar_day (default): Math.max(1, ceil(diff/24h)) — unchanged legacy behaviour.
+ * - prorata_hourly: fractional days (min 1 hour), 2-decimal rounded.
+ * Shared by the authoritative bill (ipdBilling) and the live ledger estimate so they match.
+ */
+export function computeRoomUnits(
+  admittedAtMs: number,
+  endMs: number,
+  mode: RoomBillingMode = "calendar_day"
+): number {
+  const diff = Math.max(0, endMs - admittedAtMs);
+  if (mode === "prorata_hourly") {
+    const days = diff / 86400000;
+    return Math.max(1 / 24, Math.round(days * 100) / 100);
+  }
+  return Math.max(1, Math.ceil(diff / 86400000));
+}
+
+/** Normalise a raw hospitals.room_billing_mode value to a known mode. */
+export function normalizeRoomBillingMode(raw: unknown): RoomBillingMode {
+  return raw === "prorata_hourly" ? "prorata_hourly" : "calendar_day";
+}
+
 /**
  * Auto-pull all admission-linked charges into a draft IPD bill.
  * Idempotent: uses dedupe keys based on source_module + source_dedupe_key so
@@ -318,24 +346,25 @@ export async function autoPullAdmissionCharges(
     .eq("admission_id", admissionId);
 
   if (visits?.length) {
-    const visitRate = await getServiceRate("consultation", 300);
-
-    // Group visits: one per (doctor_id, date)
-    const visitMap = new Map<string, { doctorId: string; date: string }>();
+    // Group visits: count per (doctor_id, date)
+    const visitMap = new Map<string, { doctorId: string; date: string; count: number }>();
     for (const v of visits) {
       if (!v?.doctor_id || !v?.created_at) continue;
       const date = new Date(v.created_at).toISOString().slice(0, 10);
       const key = `${v.doctor_id}:${date}`;
-      if (!visitMap.has(key)) {
-        visitMap.set(key, { doctorId: v.doctor_id, date });
+      const existing = visitMap.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        visitMap.set(key, { doctorId: v.doctor_id, date, count: 1 });
       }
     }
 
-    // Look up each doctor's name once
-    const uniqueDoctorIds = [
-      ...new Set([...visitMap.values()].map((v) => v.doctorId)),
-    ];
+    // Look up each doctor's name and specific fee once
+    const uniqueDoctorIds = [...new Set([...visitMap.values()].map((v) => v.doctorId))];
     const doctorNameById = new Map<string, string>();
+    const doctorFeeById = new Map<string, { fee: number, gstPct: number, hsn: string }>();
+    
     if (uniqueDoctorIds.length > 0) {
       const { data: doctors } = await supabase
         .from("users")
@@ -344,27 +373,83 @@ export async function autoPullAdmissionCharges(
       (doctors || []).forEach((d: any) =>
         doctorNameById.set(d.id, d.full_name || "Doctor")
       );
+      
+      const { data: docServices } = await supabase
+        .from("service_master")
+        .select("doctor_id, fee, ipd_consultation_fee, gst_percent, gst_applicable, hsn_code")
+        .eq("hospital_id", hospitalId)
+        .in("doctor_id", uniqueDoctorIds)
+        .ilike("item_type", "consultation%");
+        
+      (docServices || []).forEach((s: any) => {
+        if (!s.doctor_id) return;
+        let consultFee = 0;
+        if (s.ipd_consultation_fee !== null && s.ipd_consultation_fee !== undefined) {
+          consultFee = Number(s.ipd_consultation_fee);
+        } else if (s.fee) {
+          consultFee = Number(s.fee);
+        }
+        
+        if (!doctorFeeById.has(s.doctor_id)) {
+          doctorFeeById.set(s.doctor_id, {
+            fee: consultFee,
+            gstPct: s.gst_applicable ? (Number(s.gst_percent) || 0) : 0,
+            hsn: s.hsn_code || "999312"
+          });
+        }
+      });
     }
 
-    for (const { doctorId, date } of visitMap.values()) {
+    for (const { doctorId, date, count } of visitMap.values()) {
       const doctorName = doctorNameById.get(doctorId) || "Doctor";
-      const fee = visitRate.fee;
-      const gst = calcGST(fee, visitRate.gstPct);
+      
+      // If doctor has a specific rate, use it. Otherwise fallback to generic consultation rate.
+      let unitFee = 300;
+      let gstPct = 0;
+      let hsn = "999312";
+      
+      if (doctorFeeById.has(doctorId)) {
+        const docRate = doctorFeeById.get(doctorId)!;
+        unitFee = docRate.fee;
+        gstPct = docRate.gstPct;
+        hsn = docRate.hsn;
+      } else {
+        const genericRate = await getServiceRate("consultation", 300);
+        unitFee = genericRate.fee;
+        gstPct = genericRate.gstPct;
+        hsn = genericRate.hsn || "999312";
+      }
+      
+      const totalFee = unitFee * count;
+      const totalGst = calcGST(totalFee, gstPct);
+      const visitDedupeKey = `ipd_visit:${doctorId}:${date}`;
+      
+      // Remove old dedupe lines for this doctor so we can insert the newly pulled one and prevent race condition duplicates
+      await (supabase as any)
+        .from("bill_line_items")
+        .delete()
+        .eq("bill_id", billId)
+        .eq("source_dedupe_key", visitDedupeKey);
+        
+      existingKeys.delete(
+        buildKey({ source_module: "ipd_visit", source_dedupe_key: visitDedupeKey })
+      );
+      
       addUniqueItem({
         hospital_id: hospitalId,
         bill_id: billId,
         item_type: "consultation",
-        description: `Consultation: Dr. ${doctorName} (${date})`,
-        quantity: 1,
-        unit_rate: fee,
-        taxable_amount: fee,
-        gst_percent: visitRate.gstPct,
-        gst_amount: gst,
-        total_amount: fee + gst,
-        hsn_code: visitRate.hsn || "999312",
+        description: count > 1 ? `Consultation: Dr. ${doctorName} (${date}) — ${count} visits` : `Consultation: Dr. ${doctorName} (${date})`,
+        quantity: count,
+        unit_rate: unitFee,
+        taxable_amount: totalFee,
+        gst_percent: gstPct,
+        gst_amount: totalGst,
+        total_amount: totalFee + totalGst,
+        hsn_code: hsn,
         source_module: "ipd_visit",
         source_record_id: doctorId, // real UUID
-        source_dedupe_key: `ipd_visit:${doctorId}:${date}`,
+        source_dedupe_key: visitDedupeKey,
         ordered_by: doctorId,
         service_date: date,
       });
@@ -471,10 +556,11 @@ export async function autoPullAdmissionCharges(
     const dischDate = admission.discharged_at
       ? new Date(admission.discharged_at)
       : new Date();
-    const days = Math.max(
-      1,
-      Math.ceil((dischDate.getTime() - admitDate.getTime()) / 86400000)
-    );
+    // Opt-in room billing mode (default 'calendar_day' = unchanged whole-day billing).
+    const { data: hosp } = await (supabase as any)
+      .from("hospitals").select("room_billing_mode").eq("id", hospitalId).maybeSingle();
+    const roomBillingMode = normalizeRoomBillingMode(hosp?.room_billing_mode);
+    const days = computeRoomUnits(admitDate.getTime(), dischDate.getTime(), roomBillingMode);
     const wardName = (admission as any).wards?.name || "Ward";
     const wardType = (admission as any).wards?.type || "general";
     const bedNum = (admission as any).beds?.bed_number || "";
@@ -482,15 +568,21 @@ export async function autoPullAdmissionCharges(
     const bedCategory: string = (admission as any).beds?.bed_category || wardType;
 
     // Priority 1: service_rates table with bed_category match (most specific)
-    const { data: categoryRate } = await (supabase as any)
+    const { data: categoryRateRaw } = await (supabase as any)
       .from("service_rates")
-      .select("rate, gst_percent, gst_applicable")
+      .select("default_rate, gst_rate")
       .eq("hospital_id", hospitalId)
       .eq("bed_category", bedCategory)
       .eq("is_active", true)
       .ilike("item_type", "%room%")
       .limit(1)
       .maybeSingle();
+      
+    const categoryRate = categoryRateRaw ? {
+      rate: categoryRateRaw.default_rate,
+      gst_percent: categoryRateRaw.gst_rate,
+      gst_applicable: !!categoryRateRaw.gst_rate
+    } : null;
 
     // Priority 2: service_master by ward name / ward type
     const { data: roomRate } = categoryRate ? { data: null } : await supabase
@@ -540,7 +632,7 @@ export async function autoPullAdmissionCharges(
       hospital_id: hospitalId,
       bill_id: billId,
       item_type: "room_charge",
-      description: `Room: ${wardName} - Bed ${bedNum} (${days} days)`,
+      description: `Room: ${wardName} - Bed ${bedNum} (${days} day${days === 1 ? "" : "s"}${roomBillingMode === "prorata_hourly" ? ", pro-rata" : ""})`,
       quantity: days,
       unit_rate: ratePerDay,
       taxable_amount: roomTotal,
