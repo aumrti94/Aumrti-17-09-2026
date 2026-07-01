@@ -89,6 +89,9 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
   } | null>(null);
   const [dischargeWarnings, setDischargeWarnings] = useState<string[]>([]);
   const [warningsAcknowledged, setWarningsAcknowledged] = useState(false);
+  // Inter-hospital transfer-out (only used when dischargeType === "transfer")
+  const [referredToFacility, setReferredToFacility] = useState("");
+  const [referralReason, setReferralReason] = useState("");
   const [showSigModal, setShowSigModal] = useState(false);
   const [sigDataUrl, setSigDataUrl] = useState<string | null>(null);
   const [sigClearCount, setSigClearCount] = useState(0);
@@ -103,6 +106,62 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
       .maybeSingle()
       .then(({ data }: any) => setIcdStatus(data || null));
   }, [admissionId]);
+
+  // Prefill transfer-out fields if previously captured for this admission.
+  useEffect(() => {
+    if (dischargeType !== "transfer") return;
+    (supabase as any)
+      .from("admissions")
+      .select("referred_to_facility, referral_reason")
+      .eq("id", admissionId)
+      .maybeSingle()
+      .then(({ data }: any) => {
+        if (data?.referred_to_facility) setReferredToFacility(data.referred_to_facility);
+        if (data?.referral_reason) setReferralReason(data.referral_reason);
+      });
+  }, [admissionId, dischargeType]);
+
+  const handlePrintTransfer = async () => {
+    // Persist the referral fields, then print a branded transfer / referral summary.
+    await (supabase as any).from("admissions")
+      .update({ referred_to_facility: referredToFacility || null, referral_reason: referralReason || null })
+      .eq("id", admissionId);
+    logRecordAccess({ hospitalId, recordType: "IPD_Record", recordId: admissionId, action: "print" });
+
+    const { data: hospital } = await supabase.from("hospitals").select("name, address").eq("id", hospitalId).maybeSingle();
+    const { data: patient } = await supabase.from("admissions")
+      .select("patients(full_name, uhid, dob, gender)")
+      .eq("id", admissionId).maybeSingle();
+    const p = patient?.patients as any;
+
+    const body = `
+      ${printHeader(hospital?.name || "Hospital", "TRANSFER / REFERRAL SUMMARY")}
+      <div style="display:flex;justify-content:space-between;border-bottom:1px solid #e2e8f0;padding-bottom:10px;margin-bottom:16px;">
+        <div>
+          <div><span class="label">Patient:</span> <b>${p?.full_name || "—"}</b></div>
+          <div><span class="label">UHID:</span> <b>${p?.uhid || "—"}</b></div>
+          <div><span class="label">Age/Sex:</span> <span>${p?.dob ? Math.floor((Date.now() - new Date(p.dob).getTime()) / 31557600000) : "—"}y / ${p?.gender || "—"}</span></div>
+        </div>
+        <div style="text-align:right">
+          <div><span class="label">Date:</span> <b>${new Date().toLocaleDateString("en-IN")}</b></div>
+          <div><span class="label">Referred To:</span> <b>${referredToFacility || "—"}</b></div>
+        </div>
+      </div>
+      <div style="margin-bottom:14px;"><span class="label">Reason for Transfer / Referral:</span> <span>${referralReason || "—"}</span></div>
+      <div class="section-title">Clinical Summary (Continuity of Care)</div>
+      <div style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:#1e293b;">
+        ${summary || "—"}
+      </div>
+      <div style="margin-top:60px;display:flex;justify-content:flex-end;">
+        <div style="text-align:center;width:200px;border-top:1px solid #1e293b;padding-top:8px;">
+          <p style="margin:0;font-weight:bold;">Treating Consultant</p>
+          <p style="margin:0;font-size:10px;color:#64748b;">Hospital ID: ${hospitalId.slice(0, 8)}</p>
+        </div>
+      </div>
+    `;
+    printDocument(`TransferSummary_${p?.uhid || "IPD"}`, body);
+    toast.success("Transfer summary generated");
+  };
 
   const generate = async () => {
     setGenerating(true);
@@ -309,6 +368,13 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
       return;
     }
 
+    // Persist transfer-out details so the referral is recorded on the admission.
+    if (dischargeType === "transfer") {
+      await (supabase as any).from("admissions")
+        .update({ referred_to_facility: referredToFacility || null, referral_reason: referralReason || null })
+        .eq("id", admissionId);
+    }
+
     // Get bed for housekeeping + patient_id for ABHA linking (+ death routing fields)
     const { data: adm } = await supabase.from("admissions")
       .select("bed_id, ward_id, patient_id, is_mlc, admitting_diagnosis").eq("id", admissionId).maybeSingle();
@@ -426,7 +492,7 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
       `Discharge summary signed and patient discharged: ${admissionId}, signatureHash: ${signatureHash}, AI-assisted: ${summary ? "Yes" : "No"}`);
 
     onSummaryDone();
-  }, [sigDataUrl, summary, dischargeType, admissionId, hospitalId, onSummaryDone]);
+  }, [sigDataUrl, summary, dischargeType, admissionId, hospitalId, onSummaryDone, referredToFacility, referralReason]);
 
   const handlePrint = async () => {
     if (!summary) return;
@@ -550,6 +616,28 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
               Acknowledge & Proceed
             </Button>
           </div>
+        </div>
+      )}
+
+      {dischargeType === "transfer" && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 space-y-2">
+          <p className="text-xs font-bold text-blue-800">Transfer / Referral Details</p>
+          <input
+            value={referredToFacility}
+            onChange={(e) => setReferredToFacility(e.target.value)}
+            placeholder="Referred to (hospital / facility name)"
+            className="w-full text-xs border border-blue-200 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
+          <textarea
+            value={referralReason}
+            onChange={(e) => setReferralReason(e.target.value)}
+            placeholder="Reason for transfer / referral"
+            rows={2}
+            className="w-full text-xs border border-blue-200 rounded px-2 py-1.5 bg-white resize-none focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
+          <Button size="sm" variant="outline" onClick={handlePrintTransfer} className="h-8 text-xs border-blue-300 text-blue-700 hover:bg-blue-100">
+            <Printer className="h-3 w-3 mr-1" /> Print Transfer Summary
+          </Button>
         </div>
       )}
 
