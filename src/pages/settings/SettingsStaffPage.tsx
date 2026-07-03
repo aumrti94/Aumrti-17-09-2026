@@ -44,6 +44,9 @@ interface StaffForm {
   follow_up_fee: string;
   validity_days: string;
   emergency_fee: string;
+  ipd_consultation_fee: string;
+  ot_surgeon_fee: string;
+  ot_anaesthetist_fee: string;
 }
 
 const EMPTY_FORM: StaffForm = {
@@ -53,7 +56,8 @@ const EMPTY_FORM: StaffForm = {
   hra_percent: "20", da_percent: "10", conveyance: "1600", medical_allowance: "1250",
   pf_applicable: true, esic_applicable: false, uan_number: "", pan_number: "", esi_ip_number: "", license_expiry_date: "",
   hpr_id: "",
-  consultation_fee: "", follow_up_fee: "", validity_days: "7", emergency_fee: "",
+  consultation_fee: "", follow_up_fee: "", validity_days: "7", emergency_fee: "", ipd_consultation_fee: "",
+  ot_surgeon_fee: "", ot_anaesthetist_fee: "",
 };
 
 /* ─── Role config ─── */
@@ -259,6 +263,31 @@ const SettingsStaffPage: React.FC = () => {
     is_active: true,
   });
 
+  // Per-doctor OT contract rate (surgeon_fee / anaesthesia_fee) — same mechanism as
+  // the consultation fee above: a service_master row scoped by doctor_id, resolved
+  // ahead of the hospital-wide default by chargeOTCase's rate lookup (serviceBilling.ts).
+  const saveOtFeeRow = async (hid: string, doctorId: string, itemType: "surgeon_fee" | "anaesthesia_fee", label: string, feeValue: string) => {
+    if (!feeValue) return;
+    const { data: existing } = await (supabase as any).from("service_master")
+      .select("id")
+      .eq("hospital_id", hid).eq("doctor_id", doctorId).eq("item_type", itemType)
+      .maybeSingle();
+    const payload = {
+      hospital_id: hid,
+      name: `${label} - Dr. ${form.full_name}`,
+      category: itemType,
+      item_type: itemType,
+      doctor_id: doctorId,
+      fee: parseFloat(feeValue),
+      is_active: true,
+    };
+    if (existing?.id) {
+      await (supabase as any).from("service_master").update(payload).eq("id", existing.id);
+    } else {
+      await (supabase as any).from("service_master").insert(payload);
+    }
+  };
+
   const saveStaff = useMutation({
     mutationFn: async () => {
       // Guard: role must be a valid Postgres app_role enum value
@@ -340,9 +369,14 @@ const SettingsStaffPage: React.FC = () => {
             follow_up_fee: form.follow_up_fee ? parseFloat(form.follow_up_fee) : null,
             validity_days: parseInt(form.validity_days) || 7,
             emergency_fee: form.emergency_fee ? parseFloat(form.emergency_fee) : null,
+            ipd_consultation_fee: form.ipd_consultation_fee ? parseFloat(form.ipd_consultation_fee) : null,
             is_active: true,
           });
           if (feeErr) console.error("Fee save error:", feeErr);
+        }
+        if (form.role === "doctor") {
+          await saveOtFeeRow(hid, newId, "surgeon_fee", "OT Surgeon Fee", form.ot_surgeon_fee);
+          await saveOtFeeRow(hid, newId, "anaesthesia_fee", "OT Anaesthetist Fee", form.ot_anaesthetist_fee);
         }
       }
 
@@ -368,6 +402,7 @@ const SettingsStaffPage: React.FC = () => {
           follow_up_fee: form.follow_up_fee ? parseFloat(form.follow_up_fee) : null,
           validity_days: parseInt(form.validity_days) || 7,
           emergency_fee: form.emergency_fee ? parseFloat(form.emergency_fee) : null,
+          ipd_consultation_fee: form.ipd_consultation_fee ? parseFloat(form.ipd_consultation_fee) : null,
           is_active: true,
         };
 
@@ -380,6 +415,10 @@ const SettingsStaffPage: React.FC = () => {
             .insert(feePayload);
           if (feeErr) console.error("Fee insert error:", feeErr);
         }
+      }
+      if (editingId && form.role === "doctor") {
+        await saveOtFeeRow(hid, editingId, "surgeon_fee", "OT Surgeon Fee", form.ot_surgeon_fee);
+        await saveOtFeeRow(hid, editingId, "anaesthesia_fee", "OT Anaesthetist Fee", form.ot_anaesthetist_fee);
       }
     },
     onSuccess: () => {
@@ -588,15 +627,23 @@ const SettingsStaffPage: React.FC = () => {
       // Fetch staff_profiles data for salary fields
       const { data: profile } = await (supabase as any)
         .from("staff_profiles").select("*").eq("user_id", user.id).maybeSingle();
-      // Fetch service_master for doctor consultation pricing
+      // Fetch service_master for doctor consultation pricing + OT contract rates
       let svcRow: any = null;
+      let otSurgeonRow: any = null;
+      let otAnaesRow: any = null;
       if (user.role === "doctor") {
         const hid = await getHospitalId();
         const { data } = await (supabase as any).from("service_master")
-          .select("fee, follow_up_fee, validity_days, emergency_fee")
+          .select("fee, follow_up_fee, validity_days, emergency_fee, ipd_consultation_fee")
           .eq("hospital_id", hid).eq("doctor_id", user.id)
           .eq("item_type", "consultation").maybeSingle();
         svcRow = data;
+        const { data: otRows } = await (supabase as any).from("service_master")
+          .select("fee, item_type")
+          .eq("hospital_id", hid).eq("doctor_id", user.id)
+          .in("item_type", ["surgeon_fee", "anaesthesia_fee"]);
+        otSurgeonRow = (otRows || []).find((r: any) => r.item_type === "surgeon_fee");
+        otAnaesRow = (otRows || []).find((r: any) => r.item_type === "anaesthesia_fee");
       }
       setForm({
         full_name: user.full_name, phone: user.phone ?? "", email: user.email,
@@ -619,6 +666,9 @@ const SettingsStaffPage: React.FC = () => {
         follow_up_fee: svcRow?.follow_up_fee?.toString() ?? "",
         validity_days: svcRow?.validity_days?.toString() ?? "7",
         emergency_fee: svcRow?.emergency_fee?.toString() ?? "",
+        ipd_consultation_fee: svcRow?.ipd_consultation_fee?.toString() ?? "",
+        ot_surgeon_fee: otSurgeonRow?.fee?.toString() ?? "",
+        ot_anaesthetist_fee: otAnaesRow?.fee?.toString() ?? "",
       });
     } else {
       setEditingId(null);
@@ -988,14 +1038,38 @@ const SettingsStaffPage: React.FC = () => {
                       <Input type="number" value={form.follow_up_fee} onChange={(e) => setForm({ ...form, follow_up_fee: e.target.value })} placeholder="200" className="h-10" />
                     </div>
                     <div>
-                      <label className="text-[14px] font-medium text-muted-foreground mb-1 block">Emergency Fee (₹)</label>
-                      <Input type="number" value={form.emergency_fee} onChange={(e) => setForm({ ...form, emergency_fee: e.target.value })} placeholder="1500" className="h-10" />
-                      <p className="text-[10px] text-muted-foreground mt-0.5">Charged for emergency visits (optional)</p>
+                      <label className="text-[14px] font-medium text-muted-foreground mb-1 block">IPD Consultation Fee (₹)</label>
+                      <Input type="number" value={form.ipd_consultation_fee} onChange={(e) => setForm({ ...form, ipd_consultation_fee: e.target.value })} placeholder="800" className="h-10" />
+                      <p className="text-[10px] text-muted-foreground mt-0.5">Charged for IPD ward rounds (optional)</p>
                     </div>
                     <div>
                       <label className="text-[14px] font-medium text-muted-foreground mb-1 block">Validity (days)</label>
                       <Input type="number" value={form.validity_days} onChange={(e) => setForm({ ...form, validity_days: e.target.value })} placeholder="7" className="h-10" />
                       <p className="text-[10px] text-muted-foreground mt-0.5">Follow-up valid within these many days</p>
+                    </div>
+                    <div>
+                      <label className="text-[14px] font-medium text-muted-foreground mb-1 block">Emergency Fee (₹)</label>
+                      <Input type="number" value={form.emergency_fee} onChange={(e) => setForm({ ...form, emergency_fee: e.target.value })} placeholder="1500" className="h-10" />
+                      <p className="text-[10px] text-muted-foreground mt-0.5">Charged for emergency visits (optional)</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* OT Fees — doctor only, optional per-doctor contract rate */}
+              {form.role === "doctor" && (
+                <div className="space-y-3">
+                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">OT Fees</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[14px] font-medium text-muted-foreground mb-1 block">Surgeon Fee (₹)</label>
+                      <Input type="number" value={form.ot_surgeon_fee} onChange={(e) => setForm({ ...form, ot_surgeon_fee: e.target.value })} placeholder="Hospital default" className="h-10" />
+                      <p className="text-[10px] text-muted-foreground mt-0.5">Overrides the hospital-wide OT surgeon fee when this doctor operates</p>
+                    </div>
+                    <div>
+                      <label className="text-[14px] font-medium text-muted-foreground mb-1 block">Anaesthetist Fee (₹)</label>
+                      <Input type="number" value={form.ot_anaesthetist_fee} onChange={(e) => setForm({ ...form, ot_anaesthetist_fee: e.target.value })} placeholder="Hospital default" className="h-10" />
+                      <p className="text-[10px] text-muted-foreground mt-0.5">Overrides the hospital-wide OT anaesthesia fee when this doctor administers</p>
                     </div>
                   </div>
                 </div>
