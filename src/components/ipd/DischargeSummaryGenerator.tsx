@@ -10,6 +10,7 @@ import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { logRecordAccess } from "@/lib/ims";
 import { logAudit } from "@/lib/auditLog";
 import { formatDateIST } from "@/lib/dateUtils";
+import { computePendingDoses } from "@/lib/marPending";
 
 // ── SHA-256 of a string ──────────────────────────────────────────────────────
 async function sha256(text: string): Promise<string> {
@@ -89,9 +90,6 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
   } | null>(null);
   const [dischargeWarnings, setDischargeWarnings] = useState<string[]>([]);
   const [warningsAcknowledged, setWarningsAcknowledged] = useState(false);
-  // Inter-hospital transfer-out (only used when dischargeType === "transfer")
-  const [referredToFacility, setReferredToFacility] = useState("");
-  const [referralReason, setReferralReason] = useState("");
   const [showSigModal, setShowSigModal] = useState(false);
   const [sigDataUrl, setSigDataUrl] = useState<string | null>(null);
   const [sigClearCount, setSigClearCount] = useState(0);
@@ -106,62 +104,6 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
       .maybeSingle()
       .then(({ data }: any) => setIcdStatus(data || null));
   }, [admissionId]);
-
-  // Prefill transfer-out fields if previously captured for this admission.
-  useEffect(() => {
-    if (dischargeType !== "transfer") return;
-    (supabase as any)
-      .from("admissions")
-      .select("referred_to_facility, referral_reason")
-      .eq("id", admissionId)
-      .maybeSingle()
-      .then(({ data }: any) => {
-        if (data?.referred_to_facility) setReferredToFacility(data.referred_to_facility);
-        if (data?.referral_reason) setReferralReason(data.referral_reason);
-      });
-  }, [admissionId, dischargeType]);
-
-  const handlePrintTransfer = async () => {
-    // Persist the referral fields, then print a branded transfer / referral summary.
-    await (supabase as any).from("admissions")
-      .update({ referred_to_facility: referredToFacility || null, referral_reason: referralReason || null })
-      .eq("id", admissionId);
-    logRecordAccess({ hospitalId, recordType: "IPD_Record", recordId: admissionId, action: "print" });
-
-    const { data: hospital } = await supabase.from("hospitals").select("name, address").eq("id", hospitalId).maybeSingle();
-    const { data: patient } = await supabase.from("admissions")
-      .select("patients(full_name, uhid, dob, gender)")
-      .eq("id", admissionId).maybeSingle();
-    const p = patient?.patients as any;
-
-    const body = `
-      ${printHeader(hospital?.name || "Hospital", "TRANSFER / REFERRAL SUMMARY")}
-      <div style="display:flex;justify-content:space-between;border-bottom:1px solid #e2e8f0;padding-bottom:10px;margin-bottom:16px;">
-        <div>
-          <div><span class="label">Patient:</span> <b>${p?.full_name || "—"}</b></div>
-          <div><span class="label">UHID:</span> <b>${p?.uhid || "—"}</b></div>
-          <div><span class="label">Age/Sex:</span> <span>${p?.dob ? Math.floor((Date.now() - new Date(p.dob).getTime()) / 31557600000) : "—"}y / ${p?.gender || "—"}</span></div>
-        </div>
-        <div style="text-align:right">
-          <div><span class="label">Date:</span> <b>${new Date().toLocaleDateString("en-IN")}</b></div>
-          <div><span class="label">Referred To:</span> <b>${referredToFacility || "—"}</b></div>
-        </div>
-      </div>
-      <div style="margin-bottom:14px;"><span class="label">Reason for Transfer / Referral:</span> <span>${referralReason || "—"}</span></div>
-      <div class="section-title">Clinical Summary (Continuity of Care)</div>
-      <div style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:#1e293b;">
-        ${summary || "—"}
-      </div>
-      <div style="margin-top:60px;display:flex;justify-content:flex-end;">
-        <div style="text-align:center;width:200px;border-top:1px solid #1e293b;padding-top:8px;">
-          <p style="margin:0;font-weight:bold;">Treating Consultant</p>
-          <p style="margin:0;font-size:10px;color:#64748b;">Hospital ID: ${hospitalId.slice(0, 8)}</p>
-        </div>
-      </div>
-    `;
-    printDocument(`TransferSummary_${p?.uhid || "IPD"}`, body);
-    toast.success("Transfer summary generated");
-  };
 
   const generate = async () => {
     setGenerating(true);
@@ -264,7 +206,7 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
     const warnings: string[] = [];
     const now = new Date();
     const since24h = new Date(now.getTime() - 24 * 3600 * 1000).toISOString();
-    const since2h = new Date(now.getTime() - 2 * 3600 * 1000).toISOString();
+    const since2h = new Date(now.getTime() - 2 * 3600 * 1000);
 
     // Check: at least 1 nursing vitals entry in last 24h
     const { count: vitalsCount } = await (supabase as any)
@@ -277,16 +219,33 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
       warnings.push("No nursing vitals recorded in the last 24 hours.");
     }
 
-    // Check: no pending MAR entries older than 2 hours
-    const { count: pendingMar } = await (supabase as any)
-      .from("med_admin_records")
-      .select("id", { count: "exact", head: true })
-      .eq("admission_id", admissionId)
-      .eq("status", "pending")
-      .lt("scheduled_time", since2h);
+    // Check: no pending MAR doses older than 2 hours. nursing_mar only has a persisted row once
+    // a nurse has recorded a real outcome or Kardex pre-generated a "pending" placeholder — so
+    // "pending" doses are computed virtually from today's active medication schedule, same as
+    // NursingPage.tsx's task queue.
+    const today = now.toISOString().slice(0, 10);
+    const [{ data: activeMeds }, { data: recordedMar }] = await Promise.all([
+      (supabase as any)
+        .from("ipd_medications")
+        .select("id, admission_id, drug_name, dose, route, frequency")
+        .eq("admission_id", admissionId)
+        .eq("is_active", true),
+      (supabase as any)
+        .from("nursing_mar")
+        .select("medication_id, scheduled_date, scheduled_time")
+        .eq("admission_id", admissionId)
+        .eq("scheduled_date", today),
+    ]);
+    const recordedKeys = new Set(
+      (recordedMar || []).map((r: any) => `${r.medication_id}_${r.scheduled_date}_${r.scheduled_time}`)
+    );
+    const pendingDoses = computePendingDoses(activeMeds || [], recordedKeys, today);
+    const overdueCount = pendingDoses.filter(
+      (p) => new Date(`${p.scheduledDate}T${p.scheduledTime}:00`) < since2h
+    ).length;
 
-    if ((pendingMar ?? 0) > 0) {
-      warnings.push(`${pendingMar} medication dose(s) are overdue (pending for more than 2 hours).`);
+    if (overdueCount > 0) {
+      warnings.push(`${overdueCount} medication dose(s) are overdue (pending for more than 2 hours).`);
     }
 
     return warnings;
@@ -300,20 +259,6 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
     if (!billingCleared) {
       toast.error("Cannot discharge — billing not cleared");
       return;
-    }
-
-    // Diagnosis gate (Radha's rule) — no IPD discharge / bill finalisation without a
-    // provisional diagnosis or a coded ICD-10. Scoped to IPD; fails fast before signing.
-    {
-      const { data: dxRow } = await supabase.from("admissions")
-        .select("admitting_diagnosis").eq("id", admissionId).maybeSingle();
-      const hasDiagnosis =
-        !!(dxRow?.admitting_diagnosis && String(dxRow.admitting_diagnosis).trim()) ||
-        !!icdStatus?.primary_icd_code;
-      if (!hasDiagnosis) {
-        toast.error("Add a provisional diagnosis or ICD-10 code before finalising discharge & billing.");
-        return;
-      }
     }
 
     // Run completeness check (only once — skip if already acknowledged)
@@ -368,43 +313,9 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
       return;
     }
 
-    // Persist transfer-out details so the referral is recorded on the admission.
-    if (dischargeType === "transfer") {
-      await (supabase as any).from("admissions")
-        .update({ referred_to_facility: referredToFacility || null, referral_reason: referralReason || null })
-        .eq("id", admissionId);
-    }
-
-    // Get bed for housekeeping + patient_id for ABHA linking (+ death routing fields)
+    // Get bed for housekeeping + patient_id for ABHA linking
     const { data: adm } = await supabase.from("admissions")
-      .select("bed_id, ward_id, patient_id, is_mlc, admitting_diagnosis").eq("id", admissionId).maybeSingle();
-
-    // Death case: route the body into the Mortuary pipeline (mirrors Emergency).
-    // The formal MCCD is completed in the Mortuary module; here we just register the body.
-    if (dischargeType === "expired" && adm?.patient_id) {
-      const bodyNum = `BODY-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 9000) + 1000).padStart(4, "0")}`;
-      const { error: mortErr } = await (supabase as any).from("mortuary_admissions").insert({
-        hospital_id: hospitalId,
-        patient_id: adm.patient_id,
-        admission_id: admissionId,
-        body_number: bodyNum,
-        time_of_death: now,
-        pronounced_by: dbUserId,
-        cause_of_death: (adm as any).admitting_diagnosis || "Under evaluation",
-        manner_of_death: "undetermined",
-        is_mlc: (adm as any).is_mlc || false,
-        status: "in_mortuary",
-        notes: "Patient expired during IPD admission. Complete MCCD in the Mortuary module.",
-      });
-      if (mortErr) {
-        console.error("Mortuary admission failed:", mortErr.message);
-        toast.error("Discharge recorded, but mortuary registration failed — register the body manually in Mortuary.");
-      } else {
-        toast.success(`Body registered to Mortuary — Body No: ${bodyNum}. Complete the MCCD in the Mortuary module.`);
-      }
-      logNABHEvidence(hospitalId, "COP.10",
-        `IPD death — body registered to mortuary (${bodyNum}) for admission ${admissionId}${(adm as any).is_mlc ? " [MLC]" : ""}.`);
-    }
+      .select("bed_id, ward_id, patient_id").eq("id", admissionId).maybeSingle();
 
     if (adm?.bed_id) {
       await supabase.from("beds").update({ status: "cleaning" as any }).eq("id", adm.bed_id);
@@ -492,7 +403,7 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
       `Discharge summary signed and patient discharged: ${admissionId}, signatureHash: ${signatureHash}, AI-assisted: ${summary ? "Yes" : "No"}`);
 
     onSummaryDone();
-  }, [sigDataUrl, summary, dischargeType, admissionId, hospitalId, onSummaryDone, referredToFacility, referralReason]);
+  }, [sigDataUrl, summary, dischargeType, admissionId, hospitalId, onSummaryDone]);
 
   const handlePrint = async () => {
     if (!summary) return;
@@ -616,28 +527,6 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
               Acknowledge & Proceed
             </Button>
           </div>
-        </div>
-      )}
-
-      {dischargeType === "transfer" && (
-        <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 space-y-2">
-          <p className="text-xs font-bold text-blue-800">Transfer / Referral Details</p>
-          <input
-            value={referredToFacility}
-            onChange={(e) => setReferredToFacility(e.target.value)}
-            placeholder="Referred to (hospital / facility name)"
-            className="w-full text-xs border border-blue-200 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-          />
-          <textarea
-            value={referralReason}
-            onChange={(e) => setReferralReason(e.target.value)}
-            placeholder="Reason for transfer / referral"
-            rows={2}
-            className="w-full text-xs border border-blue-200 rounded px-2 py-1.5 bg-white resize-none focus:outline-none focus:ring-1 focus:ring-blue-400"
-          />
-          <Button size="sm" variant="outline" onClick={handlePrintTransfer} className="h-8 text-xs border-blue-300 text-blue-700 hover:bg-blue-100">
-            <Printer className="h-3 w-3 mr-1" /> Print Transfer Summary
-          </Button>
         </div>
       )}
 

@@ -68,7 +68,7 @@ const ReadmissionRiskPanel: React.FC<Props> = ({ admissionId, patientId, hospita
           .select("admitting_diagnosis, admission_type, admitted_at, insurance_type, must_score, must_risk_level")
           .eq("id", admissionId).maybeSingle(),
         (supabase as any).from("nursing_vitals")
-          .select("systolic_bp, diastolic_bp, heart_rate, spo2, temperature, news2_score")
+          .select("bp_systolic, bp_diastolic, pulse, spo2, temperature, news2_score")
           .eq("admission_id", admissionId)
           .order("recorded_at", { ascending: false }).limit(5),
         (supabase as any).from("ipd_medications")
@@ -104,7 +104,7 @@ PATIENT CLINICAL DATA:
 - Prior admissions (last 3): ${priorAdmissions} admission(s)
 ${priorAdmissions > 0 ? `- Last admission diagnosis: ${prevAdm[0]?.admitting_diagnosis || "Unknown"}` : ""}
 - Latest NEWS2 score: ${latestVitals.news2_score ?? "Not recorded"}
-- Latest vitals: BP ${latestVitals.systolic_bp ?? "?"}/${latestVitals.diastolic_bp ?? "?"}, HR ${latestVitals.heart_rate ?? "?"}, SpO2 ${latestVitals.spo2 ?? "?"}%, Temp ${latestVitals.temperature ?? "?"}
+- Latest vitals: BP ${latestVitals.bp_systolic ?? "?"}/${latestVitals.bp_diastolic ?? "?"}, HR ${latestVitals.pulse ?? "?"}, SpO2 ${latestVitals.spo2 ?? "?"}%, Temp ${latestVitals.temperature ?? "?"}
 - Active medications: ${meds.length} drugs (${highAlertMeds} high-alert)
 
 Assess 30-day readmission risk. Respond ONLY with valid JSON:

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { syncAdvanceToBill } from "@/lib/advanceBillSync";
-import { resolveRoomRateFallback, computeRoomUnits, normalizeRoomBillingMode } from "@/lib/ipdBilling";
+import { resolveRoomRateFallback } from "@/lib/ipdBilling";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -67,6 +67,9 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
   const [advanceTxns, setAdvanceTxns] = useState<AdvanceTx[]>([]);
   const [totalDeposited, setTotalDeposited] = useState(0);
   const [totalDebited, setTotalDebited] = useState(0);
+  const [totalRefunded, setTotalRefunded] = useState(0);
+  const [discountAmount, setDiscountAmount] = useState(0);
+  const [directCashPaid, setDirectCashPaid] = useState(0);
   const [loading, setLoading] = useState(true);
   // true = charges shown are a pre-bill estimate; false = read from the real IPD bill.
   const [isEstimate, setIsEstimate] = useState(false);
@@ -84,117 +87,24 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
     setLoading(true);
     let charges: LedgerLine[] = [];
 
-    // Admission meta — room-rate inputs + diagnosis (for the soft pre-billing warning)
-    const { data: adm } = await (supabase as any)
-      .from("admissions")
-      .select("admitted_at, admitting_diagnosis, wards(rate_per_day), beds!admissions_bed_id_fkey(bed_category)")
-      .eq("id", admissionId)
-      .maybeSingle();
-    setNoDiagnosis(!adm?.admitting_diagnosis);
-
-    // Authoritative IPD bill? If one exists, the ledger mirrors it exactly — room, lab,
-    // pharmacy etc. are already priced and deduped server-side by autoPullAdmissionCharges.
-    const { data: ipdBill, error: billErr } = await (supabase as any)
-      .from("bills")
-      .select("id, payment_status, bill_status")
-      .eq("hospital_id", hospitalId)
-      .eq("admission_id", admissionId)
-      .eq("bill_type", "ipd")
-      .neq("payment_status", "cancelled")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (billErr) console.error("IPD ledger: bill lookup failed:", billErr.message);
-
-    if (ipdBill?.id) {
-      // If the bill is still a draft, auto-pull the latest room/lab/pharmacy charges
-      // before rendering so the ledger stays accurate.
-      if (!ipdBill.bill_status || ipdBill.bill_status === "draft") {
-        const { autoPullAdmissionCharges } = await import("@/lib/ipdBilling");
-        const result = await autoPullAdmissionCharges(ipdBill.id, admissionId, hospitalId);
-        if (!result.ok) {
-          toast.error("Auto-pull failed: " + result.error);
-        }
-      }
-
-      // ── Authoritative path: render the real bill's line items ──
-      const { data: lineItems, error: liErr } = await (supabase as any)
-        .from("bill_line_items")
-        .select("description, total_amount, item_type, created_at")
-        .eq("bill_id", ipdBill.id)
-        .order("created_at", { ascending: true });
-      if (liErr) console.error("IPD ledger: bill line items failed:", liErr.message);
-      charges = (lineItems || [])
-        .filter((li: any) => Number(li.total_amount))
-        .map((li: any) => ({
-          date: (li.created_at || "").split("T")[0],
-          description: li.description || "Service charge",
-          amount: Number(li.total_amount),
-          category: categorizeItem(li.item_type),
-        }));
-      setIsEstimate(false);
-    } else {
-      // ── Estimate path (no bill yet): live estimate; labs are priced at billing ──
-      setIsEstimate(true);
-
-      if (adm?.admitted_at) {
-        // Same room-billing mode as the authoritative bill so estimate == bill.
-        const { data: hosp } = await (supabase as any)
-          .from("hospitals").select("room_billing_mode").eq("id", hospitalId).maybeSingle();
-        const roomBillingMode = normalizeRoomBillingMode(hosp?.room_billing_mode);
-        const days = computeRoomUnits(new Date(adm.admitted_at).getTime(), Date.now(), roomBillingMode);
-        const cat = adm.beds?.bed_category || "general";
-        // Ward's configured Rate Per Day (Settings → Wards & Beds), else the category
-        // default — shared with ipdBilling.ts so the estimate matches the eventual bill.
-        const rate = resolveRoomRateFallback(adm.wards?.rate_per_day, cat);
-        charges.push({
-          date: new Date(adm.admitted_at).toISOString().split("T")[0],
-          description: `Room — ${cat.replace("_", " ")} × ${days} day${days !== 1 ? "s" : ""}${roomBillingMode === "prorata_hourly" ? " (pro-rata)" : ""} @ ₹${rate.toLocaleString("en-IN")}`,
-          amount: rate * days,
-          category: "room",
-        });
-      }
-
-      // Pharmacy
-      const { data: pharm } = await (supabase as any)
-        .from("pharmacy_dispensing_records")
-        .select("total_amount, dispensed_at, notes")
+    // Phase 1: All independent queries in parallel — admission meta, bill, and all
+    // advance data fetched simultaneously so nothing waits on autoPull.
+    const [admRes, billRes, balRes, txRes, receiptsRes, ipdAdvRefs] = await Promise.all([
+      (supabase as any)
+        .from("admissions")
+        .select("admitted_at, admitting_diagnosis, wards(rate_per_day), beds!admissions_bed_id_fkey(bed_category)")
+        .eq("id", admissionId)
+        .maybeSingle(),
+      (supabase as any)
+        .from("bills")
+        .select("id, payment_status, bill_status, discount_amount")
+        .eq("hospital_id", hospitalId)
         .eq("admission_id", admissionId)
-        .order("dispensed_at", { ascending: true });
-
-      (pharm || []).forEach((r: any) => {
-        if (r.total_amount) {
-          charges.push({
-            date: (r.dispensed_at || "").split("T")[0],
-            description: `Pharmacy${r.notes ? ` — ${r.notes}` : ""}`,
-            amount: Number(r.total_amount),
-            category: "pharmacy",
-          });
-        }
-      });
-
-      // Lab orders — priced when the IPD bill is generated
-      const { data: labs } = await (supabase as any)
-        .from("lab_orders")
-        .select("order_date, id")
-        .eq("admission_id", admissionId)
-        .neq("status", "cancelled");
-
-      (labs || []).forEach((l: any) => {
-        charges.push({
-          date: l.order_date,
-          description: `Lab Order — ${l.id.slice(0, 8).toUpperCase()}`,
-          amount: 0,
-          category: "lab",
-        });
-      });
-    }
-
-    charges.sort((a, b) => a.date.localeCompare(b.date));
-    setChargeLines(charges);
-
-    // Advances — ipd_advances (primary) + unmirrored advance_receipts (legacy)
-    const [balRes, txRes, receiptsRes, ipdAdvRefs] = await Promise.all([
+        .eq("bill_type", "ipd")
+        .neq("payment_status", "cancelled")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
       (supabase as any)
         .from("ipd_advance_balances")
         .select("balance, total_deposited, total_debited")
@@ -218,6 +128,96 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
         .not("reference_no", "is", null),
     ]);
 
+    const adm = admRes.data;
+    const ipdBill = billRes.data;
+    if (billRes.error) console.error("IPD ledger: bill lookup failed:", billRes.error.message);
+    setNoDiagnosis(!adm?.admitting_diagnosis);
+    setDiscountAmount(Number(ipdBill?.discount_amount || 0));
+
+    if (ipdBill?.id) {
+      // ── Authoritative path: show existing line items immediately (no waiting for autoPull) ──
+      const [{ data: lineItems, error: liErr }, { data: cashPmts }] = await Promise.all([
+        (supabase as any)
+          .from("bill_line_items")
+          .select("description, total_amount, item_type, created_at")
+          .eq("bill_id", ipdBill.id)
+          .order("created_at", { ascending: true }),
+        (supabase as any)
+          .from("bill_payments")
+          .select("amount")
+          .eq("bill_id", ipdBill.id)
+          .eq("is_advance", false),
+      ]);
+      if (liErr) console.error("IPD ledger: bill line items failed:", liErr.message);
+      setDirectCashPaid((cashPmts || []).reduce((s: number, p: any) => s + Number(p.amount || 0), 0));
+      charges = (lineItems || [])
+        .filter((li: any) => Number(li.total_amount))
+        .map((li: any) => ({
+          date: (li.created_at || "").split("T")[0],
+          description: li.description || "Service charge",
+          amount: Number(li.total_amount),
+          category: categorizeItem(li.item_type),
+        }));
+      setIsEstimate(false);
+    } else {
+      // ── Estimate path (no bill yet): live estimate; labs are priced at billing ──
+      setIsEstimate(true);
+
+      if (adm?.admitted_at) {
+        const days = Math.max(1, Math.ceil(
+          (Date.now() - new Date(adm.admitted_at).getTime()) / 86400000
+        ));
+        const cat = adm.beds?.bed_category || "general";
+        // Ward's configured Rate Per Day (Settings → Wards & Beds), else the category
+        // default — shared with ipdBilling.ts so the estimate matches the eventual bill.
+        const rate = resolveRoomRateFallback(adm.wards?.rate_per_day, cat);
+        charges.push({
+          date: new Date(adm.admitted_at).toISOString().split("T")[0],
+          description: `Room — ${cat.replace("_", " ")} × ${days} day${days !== 1 ? "s" : ""} @ ₹${rate.toLocaleString("en-IN")}`,
+          amount: rate * days,
+          category: "room",
+        });
+      }
+
+      // Pharmacy + labs in parallel for the estimate path
+      const [pharmRes, labsRes] = await Promise.all([
+        (supabase as any)
+          .from("pharmacy_dispensing_records")
+          .select("total_amount, dispensed_at, notes")
+          .eq("admission_id", admissionId)
+          .order("dispensed_at", { ascending: true }),
+        (supabase as any)
+          .from("lab_orders")
+          .select("order_date, id")
+          .eq("admission_id", admissionId)
+          .neq("status", "cancelled"),
+      ]);
+
+      (pharmRes.data || []).forEach((r: any) => {
+        if (r.total_amount) {
+          charges.push({
+            date: (r.dispensed_at || "").split("T")[0],
+            description: `Pharmacy${r.notes ? ` — ${r.notes}` : ""}`,
+            amount: Number(r.total_amount),
+            category: "pharmacy",
+          });
+        }
+      });
+
+      (labsRes.data || []).forEach((l: any) => {
+        charges.push({
+          date: l.order_date,
+          description: `Lab Order — ${l.id.slice(0, 8).toUpperCase()}`,
+          amount: 0,
+          category: "lab",
+        });
+      });
+    }
+
+    charges.sort((a, b) => a.date.localeCompare(b.date));
+    setChargeLines(charges);
+
+    // Process advances (already fetched in Phase 1 above)
     const ipdTxns: AdvanceTx[] = (txRes.data || []).map((t: any) => ({
       id: t.id,
       transaction_type: t.transaction_type,
@@ -251,15 +251,48 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
     );
     const ipdDeposited = Number(balRes.data?.total_deposited) || 0;
     const ipdDebited   = Number(balRes.data?.total_debited)   || 0;
+    const ipdRefunds   = (txRes.data || []).reduce(
+      (s: number, t: any) => t.transaction_type === 'refund' ? s + Number(t.amount || 0) : s, 0
+    );
 
     setTotalDeposited(ipdDeposited + unmirroredTotal);
     setTotalDebited(ipdDebited);
+    setTotalRefunded(ipdRefunds);
 
     const all = [...ipdTxns, ...receiptTxns].sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
     setAdvanceTxns(all);
-    setLoading(false);
+    setLoading(false);  // ← Data visible immediately; autoPull runs in background below
+
+    // Fire autoPull in background for draft bills — never blocks the UI.
+    // When it completes, silently refresh the charge list in place.
+    if (ipdBill?.id && (!ipdBill.bill_status || ipdBill.bill_status === "draft")) {
+      const billId = ipdBill.id;
+      import("@/lib/ipdBilling").then(({ autoPullAdmissionCharges }) => {
+        autoPullAdmissionCharges(billId, admissionId, hospitalId).then(result => {
+          if (!result.ok) return;
+          (supabase as any)
+            .from("bill_line_items")
+            .select("description, total_amount, item_type, created_at")
+            .eq("bill_id", billId)
+            .order("created_at", { ascending: true })
+            .then(({ data: refreshed }: any) => {
+              if (!refreshed) return;
+              const updated = (refreshed as any[])
+                .filter((li: any) => Number(li.total_amount))
+                .map((li: any) => ({
+                  date: (li.created_at || "").split("T")[0],
+                  description: li.description || "Service charge",
+                  amount: Number(li.total_amount),
+                  category: categorizeItem(li.item_type),
+                }));
+              updated.sort((a: any, b: any) => a.date.localeCompare(b.date));
+              setChargeLines(updated);
+            });
+        });
+      });
+    }
   }, [admissionId, patientId, hospitalId]);
 
   useEffect(() => { load(); }, [load]);
@@ -304,9 +337,11 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
     }
   };
 
-  const totalCharges  = chargeLines.reduce((s, l) => s + l.amount, 0);
-  const balanceDue    = totalCharges - totalDeposited;
-  const isRefund      = balanceDue < 0;
+  const totalCharges   = chargeLines.reduce((s, l) => s + l.amount, 0);
+  const effectiveCharges = Math.max(0, totalCharges - discountAmount);
+  const netAdvance     = totalDeposited - totalRefunded;
+  const balanceDue     = effectiveCharges - netAdvance - directCashPaid;
+  const isRefund       = balanceDue < 0;
   const balanceColor  = balanceDue > 0 ? "text-amber-700" : isRefund ? "text-blue-700" : "text-emerald-700";
   const balanceBg     = balanceDue > 0 ? "bg-amber-50"   : isRefund ? "bg-blue-50"    : "bg-emerald-50";
 
@@ -317,14 +352,25 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
       <div className="grid grid-cols-3 gap-3 flex-shrink-0">
         <div className="bg-muted/50 rounded-lg p-3">
           <p className="text-[11px] text-muted-foreground">Total Charges</p>
-          <p className="text-lg font-bold">{fmt(totalCharges)}</p>
+          <p className="text-lg font-bold">{fmt(effectiveCharges)}</p>
+          {discountAmount > 0 && (
+            <p className="text-[10px] text-destructive mt-0.5">Discount: −{fmt(discountAmount)}</p>
+          )}
+          {directCashPaid > 0 && (
+            <p className="text-[10px] text-emerald-700 mt-0.5">Cash/UPI paid: {fmt(directCashPaid)}</p>
+          )}
         </div>
         <div className="bg-emerald-50 rounded-lg p-3">
           <p className="text-[11px] text-emerald-700">Advance Paid</p>
           <p className="text-lg font-bold text-emerald-700">{fmt(totalDeposited)}</p>
+          {totalRefunded > 0 && (
+            <p className="text-[10px] text-blue-600 mt-0.5">
+              Refunded: −{fmt(totalRefunded)} · Net: {fmt(netAdvance)}
+            </p>
+          )}
           {totalDebited > 0 && (
             <p className="text-[10px] text-muted-foreground mt-0.5">
-              Applied: {fmt(totalDebited)} · Balance: {fmt(totalDeposited - totalDebited)}
+              Applied: {fmt(totalDebited)} · Balance: {fmt(netAdvance - totalDebited)}
             </p>
           )}
         </div>
@@ -476,6 +522,12 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
               <span>Total Deposited</span>
               <span className="font-semibold text-emerald-700">{fmt(totalDeposited)}</span>
             </div>
+            {totalRefunded > 0 && (
+              <div className="flex justify-between text-[10px] text-muted-foreground">
+                <span>Refunded to Patient</span>
+                <span className="font-semibold text-blue-600">−{fmt(totalRefunded)}</span>
+              </div>
+            )}
             {totalDebited > 0 && (
               <div className="flex justify-between text-[10px] text-muted-foreground">
                 <span>Applied to Bill</span>
@@ -484,8 +536,8 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
             )}
             <div className="flex justify-between text-[11px] font-bold border-t border-border/60 pt-1 mt-1">
               <span>Advance Balance</span>
-              <span className={totalDeposited - totalDebited >= 0 ? "text-emerald-700" : "text-red-600"}>
-                {fmt(totalDeposited - totalDebited)}
+              <span className={netAdvance - totalDebited >= 0 ? "text-emerald-700" : "text-red-600"}>
+                {fmt(Math.max(0, netAdvance - totalDebited))}
               </span>
             </div>
           </div>

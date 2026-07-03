@@ -19,6 +19,8 @@ interface Props {
   diagnosis?: string;
   doctorName?: string;
   encounterId?: string;
+  /** Optional: fired after the referral letter is printed (e.g. to mark ED disposition). */
+  onReferred?: () => void;
 }
 
 const URGENCY_OPTIONS = [
@@ -29,7 +31,7 @@ const URGENCY_OPTIONS = [
 
 const ReferralLetterModal: React.FC<Props> = ({
   open, onClose, hospitalId, patientName, patientUhid,
-  chiefComplaint = "", diagnosis = "", doctorName = "", encounterId,
+  chiefComplaint = "", diagnosis = "", doctorName = "", encounterId, onReferred,
 }) => {
   const [toDoctor, setToDoctor] = useState("");
   const [toHospitalDept, setToHospitalDept] = useState("");
@@ -112,6 +114,7 @@ ${printHeader(hospitalName, "REFERRAL LETTER", `<p style="font-size:11px;color:#
 </div>`;
 
     printDocument(`Referral Letter — ${patientName}`, body, { width: 700, height: 800 });
+    onReferred?.();
   };
 
   if (!open) return null;

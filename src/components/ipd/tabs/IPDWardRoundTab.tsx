@@ -209,11 +209,17 @@ const IPDWardRoundTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pat
       return;
     }
     setSaving(true);
+    const _now = new Date();
+    const _pad = (n: number) => String(n).padStart(2, "0");
+    const roundDate = `${_now.getFullYear()}-${_pad(_now.getMonth() + 1)}-${_pad(_now.getDate())}`;
+    const roundTime = `${_pad(_now.getHours())}:${_pad(_now.getMinutes())}:${_pad(_now.getSeconds())}`;
     const { error } = await supabase.from("ward_round_notes").insert({
       admission_id: admissionId,
       hospital_id: hospitalId,
       doctor_id: userId,
       patient_id: patientId,
+      round_date: roundDate,
+      round_time: roundTime,
       subjective: form.s || null,
       objective: form.o || null,
       assessment: form.a || null,

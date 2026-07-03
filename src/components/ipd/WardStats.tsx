@@ -1,12 +1,22 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { X, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { supabase } from "@/integrations/supabase/client";
 import type { AdmissionRow } from "@/pages/ipd/IPDPage";
 
 interface Props {
   admissions: AdmissionRow[];
   onSelectBed: (bedId: string) => void;
   onClose: () => void;
+  hospitalId?: string | null;
+}
+
+interface ReservationToday {
+  id: string;
+  bedNumber: string;
+  wardName: string;
+  patientName: string;
+  doctorName: string;
 }
 
 const typeBorder: Record<string, string> = {
@@ -16,9 +26,29 @@ const typeBorder: Record<string, string> = {
   transfer: "border-l-amber-500",
 };
 
-const WardStats: React.FC<Props> = ({ admissions, onSelectBed, onClose }) => {
+const WardStats: React.FC<Props> = ({ admissions, onSelectBed, onClose, hospitalId }) => {
   const [search, setSearch] = useState("");
+  const [reservationsToday, setReservationsToday] = useState<ReservationToday[]>([]);
   const today = new Date().toISOString().split("T")[0];
+
+  useEffect(() => {
+    if (!hospitalId) return;
+    (supabase as any)
+      .from("bed_reservations")
+      .select("id, beds(bed_number, wards(name)), patients(full_name), users!bed_reservations_doctor_id_fkey(full_name)")
+      .eq("hospital_id", hospitalId)
+      .eq("planned_admission_date", today)
+      .eq("status", "reserved")
+      .then(({ data }: any) => {
+        setReservationsToday((data || []).map((r: any) => ({
+          id: r.id,
+          bedNumber: r.beds?.bed_number || "—",
+          wardName: r.beds?.wards?.name || "—",
+          patientName: r.patients?.full_name || "—",
+          doctorName: r.users?.full_name || "—",
+        })));
+      });
+  }, [hospitalId, today]);
   const dischargeToday = admissions.filter((a) => a.expected_discharge_date === today);
 
   const q = search.trim().toLowerCase();
@@ -122,6 +152,24 @@ const WardStats: React.FC<Props> = ({ admissions, onSelectBed, onClose }) => {
           </div>
         )}
       </div>
+
+      {/* Reservations today */}
+      {reservationsToday.length > 0 && (
+        <div className="flex-shrink-0 border-t border-slate-100 p-4">
+          <label className="text-[11px] font-bold text-blue-400 uppercase tracking-wider block mb-2">
+            🔵 Reservations Today ({reservationsToday.length})
+          </label>
+          <div className="space-y-1.5">
+            {reservationsToday.map((r) => (
+              <div key={r.id} className="bg-blue-50 border border-blue-200 rounded-lg p-2.5">
+                <p className="text-xs font-bold text-slate-900">{r.patientName}</p>
+                <p className="text-[11px] text-slate-500">{r.wardName} — Bed {r.bedNumber}</p>
+                {r.doctorName !== "—" && <p className="text-[11px] text-slate-400">Dr. {r.doctorName}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

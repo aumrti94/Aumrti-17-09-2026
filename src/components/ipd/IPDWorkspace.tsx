@@ -23,6 +23,7 @@ import PalliativeCareTab from "./tabs/PalliativeCareTab";
 import NutritionDieteticsTab from "./tabs/NutritionDieteticsTab";
 import WoundCareTab from "./tabs/WoundCareTab";
 import BedTransferModal from "./BedTransferModal";
+import BloodRequestModal from "./BloodRequestModal";
 import AdmitPatientModal from "./AdmitPatientModal";
 import MLCDetailsModal from "@/components/emergency/MLCDetailsModal";
 import { useWhatsAppNotification } from "@/components/whatsapp/WhatsAppNotificationCard";
@@ -114,6 +115,10 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
 
   // Insurance pre-auth banner: undefined=loading, false=not needed, true=needed
   const [preAuthNeeded, setPreAuthNeeded] = useState<boolean>(false);
+
+  // Blood request state
+  const [showBloodRequest, setShowBloodRequest] = useState(false);
+  const [pendingBloodCount, setPendingBloodCount] = useState(0);
 
   useEffect(() => {
     if (!bed?.admission) { setDeptName(null); return; }
@@ -208,6 +213,21 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
         setPreAuthNeeded((count ?? 0) === 0);
       });
   }, [bed]);
+
+  // Pending blood requests badge
+  useEffect(() => {
+    const admData = bed?.admission as any;
+    if (!admData?.id) { setPendingBloodCount(0); return; }
+    (supabase as any)
+      .from("blood_requests")
+      .select("id", { count: "exact", head: true })
+      .eq("admission_id", admData.id)
+      .in("status", ["pending", "processing"])
+      .then(({ count, error }: any) => {
+        if (error) console.error("IPD: blood request count failed:", error.message);
+        setPendingBloodCount(count ?? 0);
+      });
+  }, [bed, showBloodRequest]);
 
   // Voice Scribe Integration
   useEffect(() => {
@@ -885,6 +905,14 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
               <ArrowUpRight size={14} className="mr-1" /> Refer Physio
             </Button>
           )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-xs h-8 border-red-200 text-red-700 hover:bg-red-50"
+            onClick={() => setShowBloodRequest(true)}
+          >
+            🩸 Request Blood{pendingBloodCount > 0 ? ` (${pendingBloodCount})` : ""}
+          </Button>
           {patient && (
             <button onClick={() => navigate(`/patients?id=${patient.id}`)}
               className="flex items-center gap-1 text-[12px] text-primary font-medium hover:underline h-8 px-2">
@@ -985,6 +1013,18 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
           setShowConsentModal(false);
           setConsentStatus("valid");
         }}
+      />
+    )}
+
+    {showBloodRequest && patient && hospitalId && (
+      <BloodRequestModal
+        open={showBloodRequest}
+        onClose={() => setShowBloodRequest(false)}
+        admissionId={admissionId}
+        patientId={patient.id}
+        hospitalId={hospitalId}
+        patientBloodGroup={patient.blood_group}
+        onRequested={() => setPendingBloodCount(c => c + 1)}
       />
     )}
     </>

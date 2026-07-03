@@ -6,9 +6,12 @@ import BedMap from "@/components/ipd/BedMap";
 import IPDWorkspace from "@/components/ipd/IPDWorkspace";
 import WardStats from "@/components/ipd/WardStats";
 import AdmitPatientModal from "@/components/ipd/AdmitPatientModal";
+import BedReservationModal from "@/components/ipd/BedReservationModal";
 import BedDemandForecastPanel from "@/components/ipd/BedDemandForecastPanel";
 import { useHospitalContext } from "@/contexts/HospitalContext";
 import CollapsiblePanel from "@/components/layout/CollapsiblePanel";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 export interface BedData {
   id: string;
@@ -56,6 +59,11 @@ const IPDPage: React.FC = () => {
   const [selectedBedId, setSelectedBedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [admitModal, setAdmitModal] = useState<{ open: boolean; bedId?: string; wardId?: string; bedNumber?: string }>({ open: false });
+  const [reserveModal, setReserveModal] = useState<{ open: boolean; bedId?: string; wardId?: string; bedNumber?: string }>({ open: false });
+  const [reservedBedInfo, setReservedBedInfo] = useState<{
+    open: boolean; bedId: string; bedNumber: string;
+    patientName: string; plannedDate: string; doctorName: string; reservationId: string;
+  } | null>(null);
 
   const fetchData = useCallback(async () => {
     if (!hospitalId) return;
@@ -171,6 +179,7 @@ const IPDPage: React.FC = () => {
     const ch = supabase.channel("ipd-realtime")
       .on("postgres_changes", { event: "*", schema: "public", table: "beds", filter: `hospital_id=eq.${hospitalId}` }, scheduleRefetch)
       .on("postgres_changes", { event: "*", schema: "public", table: "admissions", filter: `hospital_id=eq.${hospitalId}` }, scheduleRefetch)
+      .on("postgres_changes", { event: "*", schema: "public", table: "bed_reservations", filter: `hospital_id=eq.${hospitalId}` }, scheduleRefetch)
       .subscribe();
     return () => {
       if (refetchTimer.current) clearTimeout(refetchTimer.current);
@@ -188,6 +197,53 @@ const IPDPage: React.FC = () => {
     } else {
       setSelectedBedId(bedId);
     }
+  };
+
+  const handleReservedBedClick = async (bedId: string) => {
+    const bed = beds.find((b) => b.id === bedId);
+    if (!bed || !hospitalId) return;
+    const { data } = await (supabase as any)
+      .from("bed_reservations")
+      .select("id, planned_admission_date, patients(full_name), users!bed_reservations_doctor_id_fkey(full_name)")
+      .eq("bed_id", bedId)
+      .eq("hospital_id", hospitalId)
+      .eq("status", "reserved")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (data) {
+      setReservedBedInfo({
+        open: true,
+        bedId,
+        bedNumber: `${bed.ward_name} - ${bed.bed_number}`,
+        patientName: (data.patients as any)?.full_name || "Unknown patient",
+        plannedDate: data.planned_admission_date,
+        doctorName: (data.users as any)?.full_name || "—",
+        reservationId: data.id,
+      });
+    }
+  };
+
+  const handleCancelReservation = async () => {
+    if (!reservedBedInfo) return;
+    await (supabase as any).from("bed_reservations").update({
+      status: "cancelled", cancelled_at: new Date().toISOString(),
+    }).eq("id", reservedBedInfo.reservationId);
+    await supabase.from("beds").update({ status: "available" as any }).eq("id", reservedBedInfo.bedId);
+    setReservedBedInfo(null);
+    fetchData();
+  };
+
+  const handleCheckIn = () => {
+    if (!reservedBedInfo) return;
+    const bed = beds.find((b) => b.id === reservedBedInfo.bedId);
+    setReservedBedInfo(null);
+    setAdmitModal({
+      open: true,
+      bedId: reservedBedInfo.bedId,
+      wardId: bed?.ward_id,
+      bedNumber: reservedBedInfo.bedNumber,
+    });
   };
 
   const handleNewAdmission = () => {
@@ -211,7 +267,9 @@ const IPDPage: React.FC = () => {
           <div className="flex flex-row flex-1 overflow-hidden">
             <CollapsiblePanel panelKey="ipd_bedmap" title="Bed Map" side="left" expandedWidth="w-[300px]">
               <BedMap beds={beds} selectedBedId={selectedBedId} onSelectBed={handleBedSelect}
-                hospitalId={hospitalId} loading={loading} onRefresh={fetchData} onNewAdmission={handleNewAdmission} />
+                hospitalId={hospitalId} loading={loading} onRefresh={fetchData} onNewAdmission={handleNewAdmission}
+                onReserveBed={() => setReserveModal({ open: true })}
+                onReservedBedClick={handleReservedBedClick} />
             </CollapsiblePanel>
             {/* Desktop: when a patient is selected show the workspace; otherwise show the
                 AI forecast centred in the middle (with the "click a bed" hint below). */}
@@ -257,7 +315,7 @@ const IPDPage: React.FC = () => {
           expandedWidth="w-[260px]"
           defaultCollapsed={false}
         >
-          <WardStats admissions={admissions} onSelectBed={setSelectedBedId} onClose={() => {}} />
+          <WardStats admissions={admissions} onSelectBed={setSelectedBedId} onClose={() => {}} hospitalId={hospitalId} />
         </CollapsiblePanel>
       )}
 
@@ -270,6 +328,58 @@ const IPDPage: React.FC = () => {
         preselectedBedNumber={admitModal.bedNumber || null}
         onAdmitted={fetchData}
       />
+
+      {hospitalId && (
+        <BedReservationModal
+          open={reserveModal.open}
+          onClose={() => setReserveModal({ open: false })}
+          hospitalId={hospitalId}
+          preselectedBedId={reserveModal.bedId || null}
+          preselectedWardId={reserveModal.wardId || null}
+          preselectedBedNumber={reserveModal.bedNumber || null}
+          onReserved={fetchData}
+        />
+      )}
+
+      {reservedBedInfo && (
+        <Dialog open={reservedBedInfo.open} onOpenChange={(v) => { if (!v) setReservedBedInfo(null); }}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                🔵 Reserved Bed — {reservedBedInfo.bedNumber}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3 py-2">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 space-y-1.5">
+                <p className="text-sm font-semibold text-blue-900">{reservedBedInfo.patientName}</p>
+                <p className="text-xs text-blue-700">
+                  Planned admission: <strong>{new Date(reservedBedInfo.plannedDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</strong>
+                </p>
+                {reservedBedInfo.doctorName !== "—" && (
+                  <p className="text-xs text-blue-600">Dr. {reservedBedInfo.doctorName}</p>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  className="flex-1 bg-[#1A2F5A] hover:bg-[#152647] text-white"
+                  onClick={handleCheckIn}
+                >
+                  ✅ Check In Patient
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1 border-red-300 text-red-600 hover:bg-red-50"
+                  onClick={handleCancelReservation}
+                >
+                  ✕ Cancel Reservation
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 };

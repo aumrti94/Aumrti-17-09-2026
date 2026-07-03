@@ -50,7 +50,7 @@ const ADRDetectorPanel: React.FC<Props> = ({ admissionId, hospitalId }) => {
           .eq("is_active", true),
         supabase
           .from("ipd_vitals")
-          .select("bp_systolic, bp_diastolic, pulse, temperature, spo2, rr, news2_score, recorded_at")
+          .select("bp_systolic, bp_diastolic, pulse, temperature, spo2, respiratory_rate, news2_score, recorded_at")
           .eq("admission_id", admissionId)
           .order("recorded_at", { ascending: false })
           .limit(1),
@@ -63,7 +63,7 @@ const ADRDetectorPanel: React.FC<Props> = ({ admissionId, hospitalId }) => {
       }
 
       const vitalsLine = vitals?.[0]
-        ? `BP: ${vitals[0].bp_systolic}/${vitals[0].bp_diastolic} | Pulse: ${vitals[0].pulse} bpm | Temp: ${vitals[0].temperature}°F | SpO2: ${vitals[0].spo2}% | RR: ${vitals[0].rr} | NEWS2: ${vitals[0].news2_score}`
+        ? `BP: ${vitals[0].bp_systolic}/${vitals[0].bp_diastolic} | Pulse: ${vitals[0].pulse} bpm | Temp: ${vitals[0].temperature}°F | SpO2: ${vitals[0].spo2}% | RR: ${vitals[0].respiratory_rate} | NEWS2: ${vitals[0].news2_score}`
         : "Not available";
 
       const prompt = `Analyze the following active medications and recent vitals for an inpatient in an Indian hospital. Identify potential adverse drug reactions (ADRs), drug-drug interactions, or drug-disease interactions.

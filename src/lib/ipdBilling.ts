@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { calcGST } from "@/lib/currency";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
+import { buildOTChargeLineItems, recordOTServiceCharges } from "@/lib/serviceBilling";
 
 export interface AutoPullResult {
   ok: boolean;
@@ -34,34 +35,6 @@ export function resolveRoomRateFallback(
   return IPD_FALLBACK_BED_RATES[bedCategory || "general"] ?? 600;
 }
 
-// Hospital room-billing modes. 'calendar_day' is the legacy default (whole days,
-// rounded up); 'prorata_hourly' bills the fractional day from admission time.
-export type RoomBillingMode = "calendar_day" | "prorata_hourly";
-
-/**
- * Number of billable room "day units" between admission and discharge/now.
- * - calendar_day (default): Math.max(1, ceil(diff/24h)) — unchanged legacy behaviour.
- * - prorata_hourly: fractional days (min 1 hour), 2-decimal rounded.
- * Shared by the authoritative bill (ipdBilling) and the live ledger estimate so they match.
- */
-export function computeRoomUnits(
-  admittedAtMs: number,
-  endMs: number,
-  mode: RoomBillingMode = "calendar_day"
-): number {
-  const diff = Math.max(0, endMs - admittedAtMs);
-  if (mode === "prorata_hourly") {
-    const days = diff / 86400000;
-    return Math.max(1 / 24, Math.round(days * 100) / 100);
-  }
-  return Math.max(1, Math.ceil(diff / 86400000));
-}
-
-/** Normalise a raw hospitals.room_billing_mode value to a known mode. */
-export function normalizeRoomBillingMode(raw: unknown): RoomBillingMode {
-  return raw === "prorata_hourly" ? "prorata_hourly" : "calendar_day";
-}
-
 /**
  * Auto-pull all admission-linked charges into a draft IPD bill.
  * Idempotent: uses dedupe keys based on source_module + source_dedupe_key so
@@ -71,13 +44,26 @@ export function normalizeRoomBillingMode(raw: unknown): RoomBillingMode {
  * Note: `source_record_id` is a UUID column, so it must always receive a real
  * UUID (or null). Composite logical keys live in `source_dedupe_key` (text).
  */
+
+// Prevents concurrent calls for the same bill from racing on the delete-then-reinsert
+// pattern used for consultation and room charges, which causes charges to disappear.
+const _inFlightPulls = new Set<string>();
+
 export async function autoPullAdmissionCharges(
   billId: string,
   admissionId: string,
   hospitalId: string
 ): Promise<AutoPullResult> {
+  const _guardKey = `${billId}:${admissionId}`;
+  if (_inFlightPulls.has(_guardKey)) {
+    return { ok: true, insertedCount: 0, usedFallbackRate: false };
+  }
+  _inFlightPulls.add(_guardKey);
+  try {
   const items: any[] = [];
   const nursingProcedureIdsToMark: string[] = [];
+  const implantIdsToMark: string[] = [];
+  const otServiceChargeItems: any[] = [];
   let usedFallbackRate = false;
 
   // ----- Existing items for dedupe (scoped to this bill only) -----
@@ -173,23 +159,30 @@ export async function autoPullAdmissionCharges(
       .select("*, lab_test_master(test_name)")
       .in("lab_order_id", mergedLabOrderIds);
 
-    const labRate = await getServiceRate("lab_test", 200);
+    const labItemsArr = labItems || [];
+    const [labRate, ...labItemRates] = await Promise.all([
+      getServiceRate("lab_test", 200),
+      ...labItemsArr.map((li: any) =>
+        supabase
+          .from("service_master")
+          .select("fee")
+          .eq("hospital_id", hospitalId)
+          .ilike("name", `%${li.lab_test_master?.test_name || ""}%`)
+          .eq("item_type", "lab_test")
+          .maybeSingle()
+      ),
+    ]);
 
-    for (const li of labItems || []) {
-      const { data: testRate } = await supabase
-        .from("service_master")
-        .select("fee")
-        .eq("hospital_id", hospitalId)
-        .ilike("name", `%${(li as any).lab_test_master?.test_name || ""}%`)
-        .eq("item_type", "lab_test")
-        .maybeSingle();
-      const finalRate = testRate?.fee ? Number(testRate.fee) : labRate.fee;
+    labItemsArr.forEach((li: any, i: number) => {
+      const finalRate = (labItemRates[i] as any)?.data?.fee
+        ? Number((labItemRates[i] as any).data.fee)
+        : labRate.fee;
       const labGst = calcGST(finalRate, labRate.gstPct);
       addUniqueItem({
         hospital_id: hospitalId,
         bill_id: billId,
         item_type: "lab",
-        description: `Lab: ${(li as any).lab_test_master?.test_name || "Test"}`,
+        description: `Lab: ${li.lab_test_master?.test_name || "Test"}`,
         quantity: 1,
         unit_rate: finalRate,
         taxable_amount: finalRate,
@@ -201,7 +194,7 @@ export async function autoPullAdmissionCharges(
         source_record_id: li.id,
         source_dedupe_key: `lab:${li.id}`,
       });
-    }
+    });
   }
 
   // ----- Radiology charges -----
@@ -223,15 +216,21 @@ export async function autoPullAdmissionCharges(
   [...(radByAdmission || []), ...(radByPatient || [])].forEach((o) => radOrderMap.set(o.id, o));
   const radOrders = Array.from(radOrderMap.values());
 
-  const radRate = await getServiceRate("radiology", 500);
+  const radOrdersArr = radOrders || [];
+  const [radRate, ...radStudyRates] = await Promise.all([
+    getServiceRate("radiology", 500),
+    ...radOrdersArr.map((ro: any) =>
+      supabase
+        .from("service_master")
+        .select("fee, gst_percent, gst_applicable")
+        .eq("hospital_id", hospitalId)
+        .ilike("name", `%${ro.study_name || ""}%`)
+        .maybeSingle()
+    ),
+  ]);
 
-  for (const ro of radOrders || []) {
-    const { data: studyRate } = await supabase
-      .from("service_master")
-      .select("fee, gst_percent, gst_applicable")
-      .eq("hospital_id", hospitalId)
-      .ilike("name", `%${(ro as any).study_name || ""}%`)
-      .maybeSingle();
+  radOrdersArr.forEach((ro: any, i: number) => {
+    const studyRate = (radStudyRates[i] as any)?.data;
     const radFee = studyRate?.fee ? Number(studyRate.fee) : radRate.fee;
     const radGstPct = studyRate?.gst_applicable
       ? Number(studyRate.gst_percent) || 0
@@ -241,7 +240,7 @@ export async function autoPullAdmissionCharges(
       hospital_id: hospitalId,
       bill_id: billId,
       item_type: "radiology",
-      description: `Radiology: ${(ro as any).study_name}`,
+      description: `Radiology: ${ro.study_name}`,
       quantity: 1,
       unit_rate: radFee,
       taxable_amount: radFee,
@@ -253,7 +252,7 @@ export async function autoPullAdmissionCharges(
       source_record_id: ro.id,
       source_dedupe_key: `radiology:${ro.id}`,
     });
-  }
+  });
 
   // ----- Pharmacy IP dispenses -----
   const { data: pharma } = await supabase
@@ -296,20 +295,23 @@ export async function autoPullAdmissionCharges(
     .eq("billed", false);
 
   if (nursingProcs?.length) {
-    const nursingRate = await getServiceRate("nursing_procedure", 150);
-    for (const np of nursingProcs) {
-      const { data: procRate } = await supabase
-        .from("service_master")
-        .select("fee, gst_percent, gst_applicable")
-        .eq("hospital_id", hospitalId)
-        .ilike(
-          "name",
-          `%${(np.procedure_name || "").split(" ").slice(0, 2).join("%")}%`
-        )
-        .eq("item_type", "nursing_procedure")
-        .eq("is_active", true)
-        .limit(1)
-        .maybeSingle();
+    const [nursingRate, ...procRates] = await Promise.all([
+      getServiceRate("nursing_procedure", 150),
+      ...nursingProcs.map((np: any) =>
+        supabase
+          .from("service_master")
+          .select("fee, gst_percent, gst_applicable")
+          .eq("hospital_id", hospitalId)
+          .ilike("name", `%${(np.procedure_name || "").split(" ").slice(0, 2).join("%")}%`)
+          .eq("item_type", "nursing_procedure")
+          .eq("is_active", true)
+          .limit(1)
+          .maybeSingle()
+      ),
+    ]);
+
+    nursingProcs.forEach((np: any, i: number) => {
+      const procRate = (procRates[i] as any)?.data;
       const fee = procRate?.fee ? Number(procRate.fee) : nursingRate.fee;
       const qty = Number(np.quantity) || 1;
       const total = fee * qty;
@@ -335,7 +337,7 @@ export async function autoPullAdmissionCharges(
         },
         np.id
       );
-    }
+    });
   }
 
   // ----- Doctor visit / consultation charges -----
@@ -432,7 +434,7 @@ export async function autoPullAdmissionCharges(
         .eq("source_dedupe_key", visitDedupeKey);
         
       existingKeys.delete(
-        buildKey({ source_module: "ipd_visit", source_dedupe_key: visitDedupeKey })
+        buildKey({ source_module: "ipd_visit", source_dedupe_key: visitDedupeKey, item_type: "consultation" })
       );
       
       addUniqueItem({
@@ -459,85 +461,23 @@ export async function autoPullAdmissionCharges(
   // ----- OT charges (completed surgeries) -----
   const { data: otSchedules } = await (supabase as any)
     .from("ot_schedules")
-    .select("id, surgery_name, anaesthesia_type, anaesthetist_id, surgeon_id, implants_consumables, actual_start_time, actual_end_time, estimated_duration_minutes")
+    .select("id, surgery_name, anaesthesia_type, anaesthetist_id, surgeon_id, actual_start_time, actual_end_time, estimated_duration_minutes")
     .eq("hospital_id", hospitalId)
     .eq("admission_id", admissionId)
     .eq("status", "completed");
 
   if ((otSchedules as any[])?.length) {
-    const otRate = await getServiceRate("ot_charge", 2000);
-    const surgRate = await getServiceRate("surgeon_fee", 5000);
-    const anaesRate = await getServiceRate("anaesthesia_fee", 1500);
-
     for (const ot of otSchedules as any[]) {
-      const actualDuration =
-        ot.actual_start_time && ot.actual_end_time
-          ? Math.ceil((new Date(ot.actual_end_time).getTime() - new Date(ot.actual_start_time).getTime()) / 3600000)
-          : Math.ceil((ot.estimated_duration_minutes || 60) / 60);
-      const hours = Math.max(1, actualDuration);
-      const otFee = hours * otRate.fee;
-      const otGst = calcGST(otFee, otRate.gstPct);
-
-      addUniqueItem({
-        hospital_id: hospitalId, bill_id: billId,
-        item_type: "ot_charge",
-        description: `OT Charges: ${ot.surgery_name} (${hours} hr)`,
-        quantity: hours, unit_rate: otRate.fee,
-        taxable_amount: otFee, gst_percent: otRate.gstPct,
-        gst_amount: otGst, total_amount: otFee + otGst,
-        hsn_code: otRate.hsn || "999315", source_module: "ot",
-        source_record_id: ot.id,
-        source_dedupe_key: `ot:${ot.id}:ot_charge`,
-      });
-
-      if (ot.surgeon_id) {
-        const surgGst = calcGST(surgRate.fee, surgRate.gstPct);
-        addUniqueItem({
-          hospital_id: hospitalId, bill_id: billId,
-          item_type: "surgeon_fee",
-          description: `Surgeon Fee: ${ot.surgery_name}`,
-          quantity: 1, unit_rate: surgRate.fee,
-          taxable_amount: surgRate.fee, gst_percent: surgRate.gstPct,
-          gst_amount: surgGst, total_amount: surgRate.fee + surgGst,
-          hsn_code: surgRate.hsn || "999316", source_module: "ot",
-          source_record_id: ot.id,
-          source_dedupe_key: `ot:${ot.id}:surgeon_fee`,
-        });
-      }
-
-      if (ot.anaesthetist_id) {
-        const anaGst = calcGST(anaesRate.fee, anaesRate.gstPct);
-        addUniqueItem({
-          hospital_id: hospitalId, bill_id: billId,
-          item_type: "anaesthesia_fee",
-          description: `Anaesthesia: ${ot.anaesthesia_type || "General"}`,
-          quantity: 1, unit_rate: anaesRate.fee,
-          taxable_amount: anaesRate.fee, gst_percent: anaesRate.gstPct,
-          gst_amount: anaGst, total_amount: anaesRate.fee + anaGst,
-          hsn_code: anaesRate.hsn || "999317", source_module: "ot",
-          source_record_id: ot.id,
-          source_dedupe_key: `ot:${ot.id}:anaesthesia_fee`,
-        });
-      }
-
-      const implants = (ot.implants_consumables as any[]) || [];
-      implants.forEach((imp: any, idx: number) => {
-        const cost = Number(imp.cost || imp.price || 0);
-        if (cost <= 0) return;
-        const qty = Number(imp.quantity || 1);
-        const total = cost * qty;
-        const impGst = calcGST(total, 12);
-        addUniqueItem({
-          hospital_id: hospitalId, bill_id: billId,
-          item_type: "implant",
-          description: `Implant: ${imp.name || imp.item_name || "Surgical Consumable"}`,
-          quantity: qty, unit_rate: cost,
-          taxable_amount: total, gst_percent: 12,
-          gst_amount: impGst, total_amount: total + impGst,
-          hsn_code: "9021", source_module: "ot",
-          source_record_id: ot.id,
-          source_dedupe_key: `ot:${ot.id}:implant:${idx}`,
-        });
+      const { items: otItems, implantIds } = await buildOTChargeLineItems(hospitalId, billId, ot);
+      otItems.forEach((item) => {
+        const added = addUniqueItem(item);
+        if (added) {
+          otServiceChargeItems.push(item);
+          if (item.item_type === "implant") {
+            const implantId = implantIds.find((id) => item.source_dedupe_key === `ot:${ot.id}:implant:${id}`);
+            if (implantId) implantIdsToMark.push(implantId);
+          }
+        }
       });
     }
   }
@@ -556,11 +496,10 @@ export async function autoPullAdmissionCharges(
     const dischDate = admission.discharged_at
       ? new Date(admission.discharged_at)
       : new Date();
-    // Opt-in room billing mode (default 'calendar_day' = unchanged whole-day billing).
-    const { data: hosp } = await (supabase as any)
-      .from("hospitals").select("room_billing_mode").eq("id", hospitalId).maybeSingle();
-    const roomBillingMode = normalizeRoomBillingMode(hosp?.room_billing_mode);
-    const days = computeRoomUnits(admitDate.getTime(), dischDate.getTime(), roomBillingMode);
+    const days = Math.max(
+      1,
+      Math.ceil((dischDate.getTime() - admitDate.getTime()) / 86400000)
+    );
     const wardName = (admission as any).wards?.name || "Ward";
     const wardType = (admission as any).wards?.type || "general";
     const bedNum = (admission as any).beds?.bed_number || "";
@@ -632,7 +571,7 @@ export async function autoPullAdmissionCharges(
       hospital_id: hospitalId,
       bill_id: billId,
       item_type: "room_charge",
-      description: `Room: ${wardName} - Bed ${bedNum} (${days} day${days === 1 ? "" : "s"}${roomBillingMode === "prorata_hourly" ? ", pro-rata" : ""})`,
+      description: `Room: ${wardName} - Bed ${bedNum} (${days} days)`,
       quantity: days,
       unit_rate: ratePerDay,
       taxable_amount: roomTotal,
@@ -739,6 +678,28 @@ export async function autoPullAdmissionCharges(
         .update({ billed: true, bill_id: billId })
         .in("id", nursingProcedureIdsToMark);
     }
+
+    if (implantIdsToMark.length > 0) {
+      await (supabase as any)
+        .from("ot_implants")
+        .update({ billed: true })
+        .in("id", implantIdsToMark);
+    }
+
+    if (otServiceChargeItems.length > 0 && admPatientId) {
+      const byCase = new Map<string, any[]>();
+      otServiceChargeItems.forEach((item) => {
+        const arr = byCase.get(item.source_record_id) || [];
+        arr.push(item);
+        byCase.set(item.source_record_id, arr);
+      });
+      for (const [scheduleId, caseItems] of byCase) {
+        await recordOTServiceCharges({
+          hospitalId, patientId: admPatientId, admissionId,
+          scheduleId, billId, items: caseItems,
+        });
+      }
+    }
   }
 
   const result = await recalculateBillTotalsSafe(billId);
@@ -753,4 +714,7 @@ export async function autoPullAdmissionCharges(
   }
 
   return { ok: true, insertedCount, usedFallbackRate };
+  } finally {
+    _inFlightPulls.delete(_guardKey);
+  }
 }

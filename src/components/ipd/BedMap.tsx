@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,6 +17,8 @@ interface Props {
   loading: boolean;
   onRefresh: () => void;
   onNewAdmission: () => void;
+  onReserveBed?: () => void;
+  onReservedBedClick?: (bedId: string) => void;
 }
 
 const statusColors: Record<string, { bg: string; border: string; hoverBorder: string }> = {
@@ -27,8 +29,9 @@ const statusColors: Record<string, { bg: string; border: string; hoverBorder: st
   maintenance: { bg: "bg-slate-100", border: "border-slate-300", hoverBorder: "" },
 };
 
-const BedMap: React.FC<Props> = ({ beds, selectedBedId, onSelectBed, hospitalId, loading, onRefresh, onNewAdmission }) => {
+const BedMap: React.FC<Props> = ({ beds, selectedBedId, onSelectBed, hospitalId, loading, onRefresh, onNewAdmission, onReserveBed, onReservedBedClick }) => {
   const { permissions, role } = useHospitalContext();
+  const navigate = useNavigate();
   const [wards, setWards] = useState<{ id: string; name: string }[]>([]);
   const [activeWard, setActiveWard] = useState<string>("all");
   const [activeDept, setActiveDept] = useState<string>("all");
@@ -174,10 +177,19 @@ const BedMap: React.FC<Props> = ({ beds, selectedBedId, onSelectBed, hospitalId,
             {filtered.map((bed) => {
               const colors = statusColors[bed.status] || statusColors.maintenance;
               const isSelected = bed.id === selectedBedId;
+              const handleClick = () => {
+                if (bed.status === "cleaning") {
+                  navigate("/housekeeping");
+                } else if (bed.status === "reserved" && onReservedBedClick) {
+                  onReservedBedClick(bed.id);
+                } else {
+                  onSelectBed(bed.id);
+                }
+              };
               return (
                 <button
                   key={bed.id}
-                  onClick={() => onSelectBed(bed.id)}
+                  onClick={handleClick}
                   className={cn(
                     "h-14 rounded-lg border-[1.5px] flex flex-col items-center justify-center transition-all relative",
                     colors.bg, colors.border, colors.hoverBorder,
@@ -235,10 +247,15 @@ const BedMap: React.FC<Props> = ({ beds, selectedBedId, onSelectBed, hospitalId,
 
       {/* Footer */}
       {hasActionAccess("ipd", "new_admission", permissions, role) && (
-        <div className="flex-shrink-0 border-t border-slate-100 p-2">
+        <div className="flex-shrink-0 border-t border-slate-100 p-2 space-y-1.5">
           <button onClick={onNewAdmission} className="w-full h-9 bg-[#1A2F5A] text-white rounded-lg text-[13px] font-semibold hover:bg-[#152647] active:scale-[0.98] transition-all">
             + New Admission
           </button>
+          {onReserveBed && (
+            <button onClick={onReserveBed} className="w-full h-8 border border-blue-300 text-blue-700 rounded-lg text-[12px] font-semibold hover:bg-blue-50 active:scale-[0.98] transition-all">
+              🔵 Reserve a Bed
+            </button>
+          )}
         </div>
       )}
     </div>
