@@ -49,9 +49,12 @@ const OT_CHARGE_TYPES = [
 ];
 
 // Emergency charge. item_type matches getEdChargeRate() so the casualty fee flows
-// into ED / IPD bills from the Emergency workspace.
+// into ED / IPD bills from the Emergency workspace. ed_observation / ed_specialist_consult
+// are read by getEdItemRate() for the itemized ED charges panel (quick-charge shortcuts).
 const ED_CHARGE_TYPES = [
   { item_type: "ed_consultation", label: "Casualty / Emergency Fee", fallback: 300 },
+  { item_type: "ed_observation", label: "Observation / ED Bed (per hour)", fallback: 200 },
+  { item_type: "ed_specialist_consult", label: "Specialist Consult (in ED)", fallback: 500 },
 ];
 
 // Common item codes used by modules (OT, Dialysis, IPD, etc.) for fallback billing rates.

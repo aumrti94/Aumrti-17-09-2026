@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Plus, X, ChevronDown, ChevronUp, Sparkles, RefreshCw, AlertTriangle, ShieldAlert, RotateCw, Package, CheckCircle2, Ban } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { BillRecord } from "@/pages/billing/BillingPage";
-import type { LineItem } from "@/components/billing/BillEditor";
+import type { LineItem, PaymentRecord } from "@/components/billing/BillEditor";
 import LeakageScanner from "@/components/billing/LeakageScanner";
 import UnbilledServicesModal from "@/components/billing/UnbilledServicesModal";
 import EnhancementRequestModal from "@/components/billing/EnhancementRequestModal";
@@ -42,6 +42,7 @@ interface Props {
   hospitalId: string | null;
   lineItems: LineItem[];
   loading: boolean;
+  payments?: PaymentRecord[];
   onRefresh: () => void;
 }
 
@@ -55,7 +56,7 @@ const ITEM_TYPE_COLORS: Record<string, string> = {
   nursing: "bg-success/10 text-success",
 };
 
-const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, onRefresh }) => {
+const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, payments = [], onRefresh }) => {
   const { toast } = useToast();
   const [serviceSearch, setServiceSearch] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -75,6 +76,10 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, o
   // Package inclusion guard
   const [packageCtx, setPackageCtx] = useState<PackageContext | null>(null);
 
+  // Net advance balance for IPD bills — fetched from ipd_advance_balances view
+  // so the footer "Refund Due" stays in sync with the Advance tab.
+  const [netAdvance, setNetAdvance] = useState<number | null>(null);
+
   const refreshCeiling = async () => {
     if (!bill.admission_id || !hospitalId) return;
     setRefreshingCeiling(true);
@@ -87,11 +92,37 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, o
     if (!bill.admission_id || !hospitalId) return;
     if (bill.bill_type === "ipd") {
       fetchPreAuthCeiling(bill.admission_id, hospitalId).then(setPreAuthCeiling);
+      // Fetch net advance balance — same formula as AdvanceApplicationTab:
+      // viewBalance (ipd_advances net) + unmirroredTotal (legacy advance_receipts)
+      Promise.all([
+        (supabase as any)
+          .from("ipd_advance_balances")
+          .select("balance")
+          .eq("admission_id", bill.admission_id)
+          .eq("hospital_id", hospitalId)
+          .maybeSingle(),
+        (supabase as any)
+          .from("advance_receipts")
+          .select("amount, receipt_number")
+          .eq("hospital_id", hospitalId)
+          .eq("patient_id", bill.patient_id),
+        (supabase as any)
+          .from("ipd_advances")
+          .select("reference_no")
+          .eq("admission_id", bill.admission_id)
+          .not("reference_no", "is", null),
+      ]).then(([advRes, receiptsRes, refsRes]: any[]) => {
+        const mirroredRefs = new Set((refsRes.data || []).map((r: any) => r.reference_no));
+        const unmirroredTotal = (receiptsRes.data || [])
+          .filter((r: any) => !mirroredRefs.has(r.receipt_number))
+          .reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
+        setNetAdvance(Number(advRes.data?.balance || 0) + unmirroredTotal);
+      });
     }
     if (bill.bill_type === "ipd" || bill.bill_type === "daycare") {
       fetchPackageContext(bill.admission_id).then(setPackageCtx);
     }
-  }, [bill.admission_id, hospitalId, bill.bill_type]);
+  }, [bill.admission_id, hospitalId, bill.bill_type, bill.id]);
 
   const handleRecalcIPD = async () => {
     if (!hospitalId || !bill.admission_id) return;
@@ -308,14 +339,15 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, o
     gstBreakdown[i.gst_percent] = (gstBreakdown[i.gst_percent] || 0) + gst;
   });
   const totalGst = Object.values(gstBreakdown).reduce((a, b) => a + b, 0);
-  const grossTotal = subtotal + totalGst;
-  // paid_amount includes advance deposits (via bill_payments) + direct cash/card payments.
-  // advance_applied tracks the advance portion for display only — do NOT subtract it again.
+  const grossTotal = Math.max(0, subtotal + totalGst - Number(bill.discount_amount || 0));
   const patientPayable = grossTotal - bill.insurance_amount;
-  const balanceDue = patientPayable - bill.paid_amount;
-  // Advance paid = the portion of paid_amount that came from advance
-  const advancePaid = Math.min(bill.paid_amount, bill.advance_received || 0);
-  const directPaid  = Math.max(0, bill.paid_amount - advancePaid);
+  // For IPD bills use the live net advance balance (deposits − refunds) from the view.
+  // bill.paid_amount is inflated by syncAdvanceToBill auto-syncs and can diverge.
+  const totalDirectCashPaid = payments.reduce((s, p) => s + p.amount, 0);
+  const advancePaid = (bill.bill_type === "ipd" && netAdvance !== null) ? netAdvance : Math.min(bill.paid_amount, bill.advance_received || 0);
+  const directPaid  = (bill.bill_type === "ipd") ? totalDirectCashPaid : Math.max(0, bill.paid_amount - advancePaid);
+  const effectivePaid = advancePaid + directPaid;
+  const balanceDue  = patientPayable - effectivePaid;
 
   // Ceiling meter (derived from live lineItems to stay in sync)
   const ceilingRunningTotal = roundCurrency(lineItems.reduce((s, i) => s + Number(i.total_amount), 0));
@@ -511,27 +543,15 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, o
               </div>
 
               <div className="flex justify-center">
-                {isEditable
-                  ? <Input type="number" min={0.5} step={0.5} value={item.quantity}
-                      onChange={(e) => updateItem(item.id, "quantity", Number(e.target.value))}
-                      className="h-7 w-16 text-center text-xs" />
-                  : <span className="text-sm text-center">{item.quantity}</span>}
+                <span className="text-sm text-center">{item.quantity}</span>
               </div>
 
               <div className="flex justify-center">
-                {isEditable
-                  ? <Input type="number" min={0} value={item.unit_rate}
-                      onChange={(e) => updateItem(item.id, "unit_rate", Number(e.target.value))}
-                      className="h-7 w-20 text-center text-xs" />
-                  : <span className="text-sm text-center">{formatINR(item.unit_rate)}</span>}
+                <span className="text-sm text-center">{formatINR(item.unit_rate)}</span>
               </div>
 
               <div className="flex justify-center">
-                {isEditable
-                  ? <Input type="number" min={0} max={100} value={item.discount_percent}
-                      onChange={(e) => updateItem(item.id, "discount_percent", Number(e.target.value))}
-                      className="h-7 w-14 text-center text-xs" />
-                  : <span className="text-sm text-center">{item.discount_percent}%</span>}
+                <span className="text-sm text-center">{item.discount_percent}%</span>
               </div>
 
               <span className="text-xs text-center">{item.gst_percent}%</span>
@@ -643,7 +663,7 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, o
 
             {advancePaid > 0 && (
               <div className="flex justify-between text-emerald-600 text-xs">
-                <span>└ Advance paid</span>
+                <span>└ Net Advance</span>
                 <span>-{formatINR(advancePaid)}</span>
               </div>
             )}
@@ -653,10 +673,10 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, o
                 <span>-{formatINR(directPaid)}</span>
               </div>
             )}
-            {bill.paid_amount > 0 && (
+            {effectivePaid > 0 && (
               <div className="flex justify-between text-emerald-700 font-semibold">
                 <span>Total Paid</span>
-                <span>{formatINR(bill.paid_amount)}</span>
+                <span>{formatINR(effectivePaid)}</span>
               </div>
             )}
             {balanceDue > 0 && (
@@ -671,7 +691,7 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, o
                 <span>{formatINR(Math.abs(balanceDue))}</span>
               </div>
             )}
-            {balanceDue === 0 && bill.paid_amount > 0 && (
+            {balanceDue === 0 && effectivePaid > 0 && (
               <div className="flex justify-between text-emerald-700 font-semibold border-t border-border pt-1">
                 <span>✓ Fully Settled</span>
                 <span>Nil</span>

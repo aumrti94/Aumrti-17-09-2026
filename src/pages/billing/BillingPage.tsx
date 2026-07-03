@@ -75,6 +75,7 @@ const BillingPage: React.FC = () => {
   const [dateFilter, setDateFilter] = useState("today");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [patientSearch, setPatientSearch] = useState("");
   const [dischargeBillCreated, setDischargeBillCreated] = useState(false);
   const [activeTab, setActiveTab] = useState("bills");
   const [pendingDiscountCount, setPendingDiscountCount] = useState(0);
@@ -241,12 +242,21 @@ const BillingPage: React.FC = () => {
 
     let query = supabase
       .from("bills")
-      .select("*, patients!inner(full_name, uhid), admission:admissions(is_mlc, payer_type)")
+      .select("*, patients!inner(full_name, uhid, phone, abha_id), admission:admissions(is_mlc, payer_type)")
       .eq("hospital_id", hospitalId)
-      .gte("bill_date", dateStart)
-      .lte("bill_date", dateEnd)
       .gt("total_amount", 0)
       .order("created_at", { ascending: false });
+
+    if (patientSearch.trim()) {
+      // Search mode: ignore date filter, match across name / UHID / phone / ABHA ID
+      const term = patientSearch.trim();
+      query = (query as any).or(
+        `full_name.ilike.%${term}%,uhid.ilike.%${term}%,phone.ilike.%${term}%,abha_id.ilike.%${term}%`,
+        { foreignTable: "patients" }
+      );
+    } else {
+      query = query.gte("bill_date", dateStart).lte("bill_date", dateEnd);
+    }
 
     if (statusFilter !== "all") {
       query = query.eq("payment_status", statusFilter);
@@ -345,7 +355,7 @@ const BillingPage: React.FC = () => {
 
     setBills([...virtualBills, ...realBills]);
     setLoading(false);
-  }, [hospitalId, statusFilter, dateFilter, startDate, endDate]);
+  }, [hospitalId, statusFilter, dateFilter, startDate, endDate, patientSearch]);
 
   useEffect(() => {
     fetchBills();
@@ -461,6 +471,8 @@ const BillingPage: React.FC = () => {
             todayCollection={todayCollection}
             pendingAmount={pendingAmount}
             billCount={bills.length}
+            patientSearch={patientSearch}
+            onPatientSearch={setPatientSearch}
           />
           <div className="flex-1 bg-muted/20 flex flex-col items-center justify-center gap-3 text-muted-foreground select-none">
             <Receipt size={48} className="opacity-15" />
@@ -494,7 +506,7 @@ const BillingPage: React.FC = () => {
 
       {/* ── Bill Editor Modal ── */}
       <Dialog open={!!selectedBillId && !!selectedBill} onOpenChange={(open) => { if (!open) setSelectedBillId(null); }}>
-        <DialogContent className="max-w-[96vw] w-[1400px] h-[92vh] p-0 gap-0 flex flex-col overflow-hidden">
+        <DialogContent className="max-w-[96vw] w-[1400px] h-[92vh] p-0 gap-0 flex flex-col overflow-hidden [&>button.absolute]:hidden">
           {/* Close button row */}
           <div className="flex-shrink-0 flex items-center justify-between px-4 py-2 border-b border-border bg-muted/40">
             <div className="flex items-center gap-2">

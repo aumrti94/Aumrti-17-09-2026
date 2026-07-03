@@ -11,6 +11,7 @@ import { Plus, X } from "lucide-react";
 import type { BillRecord } from "@/pages/billing/BillingPage";
 import type { PaymentRecord } from "@/components/billing/BillEditor";
 import { sendWhatsApp } from "@/lib/whatsapp-send";
+import RefundModal from "@/components/billing/RefundModal";
 
 const PAYMENT_MODES = [
   { value: "cash", label: "💵 Cash" },
@@ -33,14 +34,32 @@ interface Props {
   bill: BillRecord;
   hospitalId: string | null;
   payments: PaymentRecord[];
+  netAdvanceBalance?: number | null;
   onRefresh: () => void;
 }
 
-const PaymentsTab: React.FC<Props> = ({ bill, hospitalId, payments, onRefresh }) => {
+const PaymentsTab: React.FC<Props> = ({ bill, hospitalId, payments, netAdvanceBalance, onRefresh }) => {
+  // Sum of non-advance cash payments already recorded (from Payment History)
+  const totalDirectPaid = payments.reduce((s, p) => s + p.amount, 0);
+
+  // Discount is stored separately; subtract it from patient_payable to get true payable
+  const netPatientPayable = Math.max(0, (bill.patient_payable || bill.total_amount) - Number(bill.discount_amount || 0));
+
+  // For IPD bills: patient_payable − advance − cash already paid
+  const effectiveBalanceDue = (bill.bill_type === "ipd" && netAdvanceBalance != null)
+    ? Math.max(0, netPatientPayable - netAdvanceBalance - totalDirectPaid)
+    : bill.balance_due;
+
   const { toast } = useToast();
-  const [rows, setRows] = useState<PayRow[]>([{ mode: "cash", amount: String(bill.balance_due), reference: "" }]);
+  const [rows, setRows] = useState<PayRow[]>([{ mode: "cash", amount: String(effectiveBalanceDue || ""), reference: "" }]);
   const [submitting, setSubmitting] = useState(false);
   const [autoReceipt, setAutoReceipt] = useState(true);
+  const [showRefundModal, setShowRefundModal] = useState(false);
+
+  // Re-sync rows when advance balance loads asynchronously
+  React.useEffect(() => {
+    setRows([{ mode: "cash", amount: String(effectiveBalanceDue > 0 ? effectiveBalanceDue : ""), reference: "" }]);
+  }, [effectiveBalanceDue]);
 
   const addRow = () => setRows([...rows, { mode: "cash", amount: "", reference: "" }]);
   const removeRow = (i: number) => setRows(rows.filter((_, idx) => idx !== i));
@@ -89,7 +108,10 @@ const PaymentsTab: React.FC<Props> = ({ bill, hospitalId, payments, onRefresh })
     }
 
     const newPaid = bill.paid_amount + totalCollecting;
-    const newBalance = Math.max(0, bill.patient_payable - newPaid);
+    // For IPD bills, advance + all direct cash payments determine true balance
+    const advanceCovered = (bill.bill_type === "ipd" && netAdvanceBalance != null) ? netAdvanceBalance : 0;
+    const allDirectPaid = totalDirectPaid + totalCollecting;
+    const newBalance = Math.max(0, netPatientPayable - advanceCovered - allDirectPaid);
     const newStatus = newBalance <= 0 ? "paid" : "partial";
 
     await supabase.from("bills").update({
@@ -124,10 +146,20 @@ const PaymentsTab: React.FC<Props> = ({ bill, hospitalId, payments, onRefresh })
 
   return (
     <div className="space-y-6">
+      {/* Advance-settled notice for IPD bills */}
+      {bill.bill_type === "ipd" && netAdvanceBalance != null && effectiveBalanceDue === 0 && bill.balance_due > 0 && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+          <p className="text-[13px] font-semibold text-emerald-800">Bill settled via advance</p>
+          <p className="text-[12px] text-emerald-600 mt-0.5">
+            Net Advance Balance (₹{netAdvanceBalance.toLocaleString("en-IN")}) covers the full bill. No cash collection needed.
+          </p>
+        </div>
+      )}
+
       {/* Collect payment form */}
-      {bill.balance_due > 0 && (
+      {effectiveBalanceDue > 0 && (
         <div className="bg-card border border-border rounded-lg p-4">
-          <p className="text-base font-bold mb-3">Amount to Collect: ₹{bill.balance_due.toLocaleString("en-IN")}</p>
+          <p className="text-base font-bold mb-3">Amount to Collect: ₹{effectiveBalanceDue.toLocaleString("en-IN")}</p>
 
           <div className="space-y-2">
             {rows.map((row, i) => (
@@ -171,8 +203,8 @@ const PaymentsTab: React.FC<Props> = ({ bill, hospitalId, payments, onRefresh })
             <div className="flex justify-between items-center">
               <span className="text-sm text-muted-foreground">
                 Collecting: ₹{totalCollecting.toLocaleString("en-IN")}
-                {totalCollecting > bill.balance_due && (
-                  <span className="text-success ml-2">Change: ₹{(totalCollecting - bill.balance_due).toLocaleString("en-IN")}</span>
+                {totalCollecting > effectiveBalanceDue && (
+                  <span className="text-success ml-2">Change: ₹{(totalCollecting - effectiveBalanceDue).toLocaleString("en-IN")}</span>
                 )}
               </span>
               <Button onClick={handleCollect} disabled={submitting || totalCollecting <= 0} className="h-10">
@@ -218,6 +250,36 @@ const PaymentsTab: React.FC<Props> = ({ bill, hospitalId, payments, onRefresh })
           </table>
         )}
       </div>
+
+      {/* Refund section — shown when patient has overpaid and refund not yet processed */}
+      {bill.paid_amount > Math.max(0, bill.patient_payable) && bill.payment_status !== 'refunded' && (
+        <>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center justify-between">
+            <div>
+              <p className="text-[13px] font-semibold text-blue-800">Refund Due to Patient</p>
+              <p className="text-[12px] text-blue-600 mt-0.5">
+                ₹{(bill.paid_amount - Math.max(0, bill.patient_payable))
+                    .toLocaleString("en-IN", { minimumFractionDigits: 2 })} to be returned
+              </p>
+            </div>
+            <Button size="sm" className="h-8 text-xs" onClick={() => setShowRefundModal(true)}>
+              Process Refund
+            </Button>
+          </div>
+          {showRefundModal && (
+            <RefundModal
+              open={showRefundModal}
+              onClose={() => setShowRefundModal(false)}
+              billId={bill.id}
+              patientId={bill.patient_id}
+              admissionId={(bill as any).admission_id ?? null}
+              hospitalId={hospitalId ?? ""}
+              refundAmount={bill.paid_amount - Math.max(0, bill.patient_payable)}
+              onRefunded={() => { setShowRefundModal(false); onRefresh(); }}
+            />
+          )}
+        </>
+      )}
     </div>
   );
 };

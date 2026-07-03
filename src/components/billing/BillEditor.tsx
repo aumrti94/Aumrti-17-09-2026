@@ -95,6 +95,7 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
   const [showPaymentLink, setShowPaymentLink] = useState(false);
   const [hospitalInfo, setHospitalInfo] = useState<any>(null);
   const [estimateData, setEstimateData] = useState<AdmissionEstimate | null>(null);
+  const [netAdvanceBalance, setNetAdvanceBalance] = useState<number | null>(null);
   const [discountApprovals, setDiscountApprovals] = useState<DiscountApproval[]>([]);
 
   useEffect(() => {
@@ -103,9 +104,11 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
       .then(({ data }) => setHospitalInfo(data));
   }, [hospitalId]);
 
-  // Fetch admission estimate for IPD bills
+  // Fetch admission estimate + net advance balance for IPD bills
   useEffect(() => {
-    if (!bill || bill.bill_type !== "ipd" || !bill.admission_id) { setEstimateData(null); return; }
+    if (!bill || bill.bill_type !== "ipd" || !bill.admission_id || !hospitalId) {
+      setEstimateData(null); setNetAdvanceBalance(null); return;
+    }
     (supabase as any)
       .from("admission_estimates")
       .select("estimated_days, estimated_amount, deposit_required, remarks")
@@ -114,7 +117,48 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
       .limit(1)
       .maybeSingle()
       .then(({ data }: any) => setEstimateData(data || null));
-  }, [bill?.id, bill?.admission_id]);
+
+    Promise.all([
+      (supabase as any)
+        .from("ipd_advance_balances")
+        .select("balance")
+        .eq("admission_id", bill.admission_id)
+        .eq("hospital_id", hospitalId)
+        .maybeSingle(),
+      (supabase as any)
+        .from("advance_receipts")
+        .select("amount, receipt_number")
+        .eq("hospital_id", hospitalId)
+        .eq("patient_id", bill.patient_id),
+      (supabase as any)
+        .from("ipd_advances")
+        .select("reference_no")
+        .eq("admission_id", bill.admission_id)
+        .not("reference_no", "is", null),
+    ]).then(([advRes, receiptsRes, refsRes]: any[]) => {
+      const mirroredRefs = new Set((refsRes.data || []).map((r: any) => r.reference_no));
+      const unmirroredTotal = (receiptsRes.data || [])
+        .filter((r: any) => !mirroredRefs.has(r.receipt_number))
+        .reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
+      setNetAdvanceBalance(Number(advRes.data?.balance || 0) + unmirroredTotal);
+    });
+  }, [bill?.id, bill?.admission_id, hospitalId]);
+
+  // Auto-reconcile DB when advance + cash fully cover the bill but DB still shows partial/unpaid.
+  // This corrects stale balance_due/payment_status written before the fix was in place.
+  useEffect(() => {
+    if (!bill || bill.bill_type !== "ipd" || netAdvanceBalance === null || payments.length === 0 && netAdvanceBalance === 0) return;
+    if (bill.payment_status === "paid" || bill.payment_status === "refunded") return;
+    const patientPayable = Math.max(0, (bill.patient_payable ?? bill.total_amount) - Number(bill.discount_amount || 0));
+    const directCashPaid = payments.reduce((s, p) => s + p.amount, 0);
+    const effectiveBalance = Math.max(0, patientPayable - netAdvanceBalance - directCashPaid);
+    if (effectiveBalance === 0 && patientPayable > 0) {
+      (supabase as any).from("bills").update({
+        balance_due: 0,
+        payment_status: "paid",
+      }).eq("id", bill.id).then(() => onRefresh());
+    }
+  }, [netAdvanceBalance, payments, bill?.id, bill?.payment_status]);
 
   const fetchLineItems = useCallback(async () => {
     if (!bill) return;
@@ -150,14 +194,16 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
       .eq("bill_id", bill.id)
       .order("created_at", { ascending: true });
     setPayments(
-      (data || []).map((p: any) => ({
-        id: p.id,
-        payment_mode: p.payment_mode,
-        amount: Number(p.amount),
-        payment_date: p.payment_date,
-        transaction_id: p.transaction_id,
-        notes: p.notes,
-      }))
+      (data || [])
+        .filter((p: any) => !p.is_advance)
+        .map((p: any) => ({
+          id: p.id,
+          payment_mode: p.payment_mode,
+          amount: Number(p.amount),
+          payment_date: p.payment_date,
+          transaction_id: p.transaction_id,
+          notes: p.notes,
+        }))
     );
   }, [bill]);
 
@@ -221,14 +267,23 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
     }
 
     // GST compliance: check HSN codes
+    // Hard-block only if hospital has a GSTIN (formal GST invoice required).
+    // Without GSTIN, show a warning but allow finalisation.
     const missingHSN = validateGSTLineItems(lineItems);
     if (missingHSN.length > 0) {
-      toast({
-        title: "HSN code missing",
-        description: `HSN code missing for: ${missingHSN.join(", ")}. Add HSN codes in Settings → Service Rates before finalising.`,
-        variant: "destructive",
-      });
-      return;
+      if (hospitalInfo?.gstin) {
+        toast({
+          title: "HSN code missing",
+          description: `HSN code missing for: ${[...new Set(missingHSN)].join(", ")}. Add HSN codes in Settings → Service Rates before finalising.`,
+          variant: "destructive",
+        });
+        return;
+      } else {
+        toast({
+          title: "HSN codes not set",
+          description: `${[...new Set(missingHSN)].join(", ")} — add HSN codes in Settings → Service Rates for GST invoicing.`,
+        });
+      }
     }
 
     await supabase.from("bills").update({ bill_status: "final" }).eq("id", bill.id);
@@ -428,7 +483,7 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
 
       {/* Estimate vs Actual comparison (IPD bills only) */}
       {estimateData && bill.bill_type === "ipd" && (() => {
-        const actual = bill.total_amount || 0;
+        const actual = Math.max(0, bill.patient_payable ?? bill.total_amount);
         const estimated = estimateData.estimated_amount || 0;
         const overrun = estimated > 0 ? ((actual - estimated) / estimated) * 100 : 0;
         const isOverBudget = overrun > 20;
@@ -450,10 +505,12 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
                   ₹{actual.toLocaleString("en-IN")}
                 </p>
               </div>
-              <div>
-                <p className="text-[10px] text-slate-500">Deposit Required</p>
-                <p className="text-sm font-bold text-slate-700">₹{(estimateData.deposit_required || 0).toLocaleString("en-IN")}</p>
-              </div>
+              {netAdvanceBalance !== null && (
+                <div>
+                  <p className="text-[10px] text-slate-500">Net Advance Balance</p>
+                  <p className="text-sm font-bold text-emerald-700">₹{netAdvanceBalance.toLocaleString("en-IN")}</p>
+                </div>
+              )}
               {estimated > 0 && (
                 <div className="ml-auto">
                   <span className={cn(
@@ -501,35 +558,39 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
             hospitalId={hospitalId}
             lineItems={lineItems}
             loading={loadingItems}
+            payments={payments}
             onRefresh={() => { fetchLineItems(); recalcBillTotals(); }}
           />
         </TabsContent>
-        <TabsContent value="payments" className="flex-1 overflow-auto mt-0 p-5 min-h-0">
+        <TabsContent value="payments" className="overflow-auto max-h-full mt-0 p-5">
           <PaymentsTab
             bill={bill}
             hospitalId={hospitalId}
             payments={payments}
+            netAdvanceBalance={netAdvanceBalance}
             onRefresh={() => { fetchPayments(); onRefresh(); }}
           />
         </TabsContent>
-        <TabsContent value="insurance" className="flex-1 overflow-auto mt-0 p-5 min-h-0">
+        <TabsContent value="insurance" className="overflow-auto max-h-full mt-0 p-5">
           <InsuranceTab bill={bill} hospitalId={hospitalId} onRefresh={onRefresh} />
         </TabsContent>
         {bill.bill_type === "ipd" && bill.admission_id && (
-          <TabsContent value="advance" className="flex-1 overflow-auto mt-0 p-5 min-h-0">
+          <TabsContent value="advance" className="overflow-auto max-h-full mt-0 p-5">
             <AdvanceApplicationTab
               billId={bill.id}
               admissionId={bill.admission_id}
               patientId={bill.patient_id}
               hospitalId={hospitalId}
-              totalAmount={bill.total_amount}
+              totalAmount={Math.max(0, (bill.patient_payable ?? bill.total_amount) - Number(bill.discount_amount || 0))}
               advanceApplied={(bill as any).advance_applied ?? bill.advance_received ?? 0}
               paidAmount={bill.paid_amount}
+              paymentStatus={bill.payment_status}
+              directCashPaid={payments.reduce((s, p) => s + p.amount, 0)}
               onRefresh={onRefresh}
             />
           </TabsContent>
         )}
-        <TabsContent value="discount" className="flex-1 overflow-auto mt-0 p-5 min-h-0">
+        <TabsContent value="discount" className="overflow-auto max-h-full mt-0 p-5">
           {hospitalId && (
             <DiscountTab
               bill={bill}

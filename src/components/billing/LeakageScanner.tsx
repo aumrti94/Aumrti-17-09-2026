@@ -4,6 +4,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Sparkles, Plus, X, FlaskConical, Radio, Pill, Scissors, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { chargeOTCase } from "@/lib/serviceBilling";
 import type { BillRecord } from "@/pages/billing/BillingPage";
 import type { LineItem } from "@/components/billing/BillEditor";
 
@@ -16,6 +17,7 @@ interface LeakageItem {
   itemType: string;
   hsnCode: string;
   gstPercent: number;
+  otSchedule?: any; // full ot_schedules row — present only for type "surgery"
 }
 
 interface Props {
@@ -167,6 +169,7 @@ const LeakageScanner: React.FC<Props> = ({ bill, hospitalId, lineItems, onRefres
               itemType: "surgery",
               hsnCode: "999315",
               gstPercent: 5,
+              otSchedule: ot,
             });
           }
         });
@@ -182,6 +185,23 @@ const LeakageScanner: React.FC<Props> = ({ bill, hospitalId, lineItems, onRefres
 
   const addToBill = async (item: LeakageItem) => {
     if (!hospitalId) return;
+
+    if (item.type === "surgery" && item.otSchedule) {
+      // Route through the real OT billing path (ot_charge + surgeon_fee + anaesthesia_fee +
+      // implants, correct GST, correct dedupe keys) instead of a single flat guess-rate line
+      // item — chargeOTCase is also safe to call even if this scan's "unbilled" heuristic was
+      // wrong, since it dedupes against existing bill_line_items itself.
+      const result = await chargeOTCase({ hospitalId, billId: bill.id, schedule: item.otSchedule });
+      setLeakageItems((prev) => prev.filter((l) => l !== item));
+      onRefresh();
+      toast({
+        title: result.itemsAdded > 0
+          ? `OT charges added to bill (₹${result.total.toLocaleString("en-IN")})`
+          : "OT charges already on this bill",
+      });
+      return;
+    }
+
     const taxable = item.suggestedRate;
     const gstAmt = taxable * item.gstPercent / 100;
     await supabase.from("bill_line_items").insert({

@@ -116,11 +116,15 @@ async function scanHospital(sb: ReturnType<typeof createClient>, hospitalId: str
     const billedAdmissionIds = new Set<string>();
 
     if (billIds.length > 0) {
+      // NOTE: real OT billing (serviceBilling.ts chargeOTCase/buildOTChargeLineItems) tags
+      // every OT line item with source_module='ot' — 'surgery' was a stale value that never
+      // matched, which meant this scan flagged every completed OT case as unbilled leakage
+      // regardless of actual billing status.
       const { data: surgeryLineItems } = await sb
         .from('bill_line_items')
         .select('bill_id')
         .in('bill_id', billIds)
-        .eq('source_module', 'surgery');
+        .eq('source_module', 'ot');
 
       for (const li of (surgeryLineItems || [])) {
         const admId = billIdToAdmission.get(li.bill_id);

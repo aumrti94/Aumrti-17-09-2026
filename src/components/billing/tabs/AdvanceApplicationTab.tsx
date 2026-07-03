@@ -18,16 +18,19 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, Wallet, AlertCircle, Loader2, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import RefundModal from "@/components/billing/RefundModal";
 
 interface Props {
-  billId:        string;
-  admissionId:   string | null;
-  patientId:     string;
-  hospitalId:    string;
-  totalAmount:   number;
-  advanceApplied: number;   // current bill.advance_applied
-  paidAmount:    number;
-  onRefresh:     () => void;
+  billId:          string;
+  admissionId:     string | null;
+  patientId:       string;
+  hospitalId:      string;
+  totalAmount:     number;
+  advanceApplied:  number;   // current bill.advance_applied
+  paidAmount:      number;
+  paymentStatus:   string;
+  directCashPaid?: number;   // sum of non-advance cash payments already collected
+  onRefresh:       () => void;
 }
 
 interface AdvanceBalance {
@@ -50,7 +53,7 @@ const inr = (n: number) =>
 
 const AdvanceApplicationTab: React.FC<Props> = ({
   billId, admissionId, patientId, hospitalId,
-  totalAmount, advanceApplied, paidAmount, onRefresh,
+  totalAmount, advanceApplied, paidAmount, paymentStatus, directCashPaid = 0, onRefresh,
 }) => {
   const { toast } = useToast();
   const [balance, setBalance]           = useState<AdvanceBalance | null>(null);
@@ -58,6 +61,8 @@ const AdvanceApplicationTab: React.FC<Props> = ({
   const [loading, setLoading]           = useState(true);
   const [applyAmount, setApplyAmount]   = useState("");
   const [applying, setApplying]         = useState(false);
+
+  const [showRefundModal, setShowRefundModal] = useState(false);
 
   // New deposit form
   const [showDeposit, setShowDeposit] = useState(false);
@@ -116,11 +121,12 @@ const AdvanceApplicationTab: React.FC<Props> = ({
       (s: number, r: any) => s + Number(r.amount || 0), 0
     );
 
-    const ipdDeposited = Number(balRes.data?.total_deposited || 0);
-    const ipdDebited   = Number(balRes.data?.total_debited   || 0);
+    const viewBalance  = Number(balRes.data?.balance          || 0);
+    const ipdDeposited = Number(balRes.data?.total_deposited  || 0);
+    const ipdDebited   = Number(balRes.data?.total_debited    || 0);
 
     setBalance({
-      balance:         ipdDeposited + unmirroredTotal - ipdDebited,
+      balance:         viewBalance + unmirroredTotal,  // view already subtracts refunds & service_debits
       total_deposited: ipdDeposited + unmirroredTotal,
       total_debited:   ipdDebited,
     });
@@ -143,9 +149,13 @@ const AdvanceApplicationTab: React.FC<Props> = ({
   };
 
   const availableToApply = Math.max(0, (balance?.balance ?? 0));
-  // paid_amount already includes advance deposits (via bill_payments), so do NOT
-  // also subtract advanceApplied — that would double-count the advance.
-  const balanceAfterApply = totalAmount - paidAmount;
+  const totalDebited  = balance?.total_debited ?? 0;
+  const totalRefunded = Math.max(0,
+    (balance?.total_deposited ?? 0) - totalDebited - (balance?.balance ?? 0)
+  );
+  // Net position: bill total minus advance and any direct cash payments already collected.
+  // Do NOT use bills.paid_amount — it is inflated by syncAdvanceToBill auto-syncs.
+  const balanceAfterApply = totalAmount - (availableToApply + totalDebited) - directCashPaid;
   const isRefund = balanceAfterApply < 0;
 
   const applyAdvance = async () => {
@@ -302,15 +312,17 @@ const AdvanceApplicationTab: React.FC<Props> = ({
   return (
     <div className="space-y-5 max-w-2xl">
       {/* Balance summary */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-5 gap-2">
         {[
-          { label: "Total Deposited",    value: balance?.total_deposited ?? 0, color: "text-emerald-700" },
-          { label: "Applied (debited)",  value: balance?.total_debited ?? 0,   color: "text-orange-600" },
-          { label: "Available Balance",  value: availableToApply,               color: availableToApply > 0 ? "text-blue-700 font-bold" : "text-slate-500" },
+          { label: "Total Deposited",   value: balance?.total_deposited ?? 0, color: "text-emerald-700" },
+          { label: "Refunded",          value: totalRefunded,                  color: totalRefunded > 0 ? "text-blue-600" : "text-slate-400" },
+          { label: "Applied (debited)", value: totalDebited,                   color: totalDebited > 0 ? "text-orange-600" : "text-slate-400" },
+          { label: "Available Balance", value: (balance?.balance ?? 0) - totalAmount + directCashPaid, color: (balance?.balance ?? 0) - totalAmount + directCashPaid > 0 ? "text-blue-700 font-bold" : (balance?.balance ?? 0) - totalAmount + directCashPaid === 0 ? "text-emerald-700 font-bold" : "text-red-600 font-bold" },
+          { label: "Actual Bill",       value: totalAmount,                    color: "text-foreground" },
         ].map(s => (
-          <div key={s.label} className="border border-border rounded-lg p-3 bg-card">
-            <p className="text-[11px] text-muted-foreground">{s.label}</p>
-            <p className={cn("text-[18px] mt-0.5", s.color)}>{inr(s.value)}</p>
+          <div key={s.label} className="border border-border rounded-lg p-2.5 bg-card">
+            <p className="text-[10px] text-muted-foreground">{s.label}</p>
+            <p className={cn("text-[15px] mt-0.5", s.color)}>{inr(s.value)}</p>
           </div>
         ))}
       </div>
@@ -318,22 +330,16 @@ const AdvanceApplicationTab: React.FC<Props> = ({
       {/* Current bill status */}
       <div className="bg-muted/40 rounded-lg p-3 text-[12px] space-y-1">
         <div className="flex justify-between"><span className="text-muted-foreground">Bill Total</span><span>{inr(totalAmount)}</span></div>
-        {advanceApplied > 0 && (
-          <div className="flex justify-between text-orange-600">
-            <span>└ Advance applied</span>
-            <span>- {inr(advanceApplied)}</span>
-          </div>
-        )}
-        {paidAmount - advanceApplied > 0 && (
+        {(availableToApply + totalDebited) > 0 && (
           <div className="flex justify-between text-emerald-700">
-            <span>└ Direct payments</span>
-            <span>- {inr(Math.max(0, paidAmount - advanceApplied))}</span>
+            <span>└ Net Advance Balance</span>
+            <span>- {inr(availableToApply + totalDebited)}</span>
           </div>
         )}
-        {paidAmount > 0 && (
-          <div className="flex justify-between text-emerald-700 font-semibold">
-            <span>Total Paid</span>
-            <span>- {inr(paidAmount)}</span>
+        {directCashPaid > 0 && (
+          <div className="flex justify-between text-emerald-700">
+            <span>└ Cash / Card / UPI</span>
+            <span>- {inr(directCashPaid)}</span>
           </div>
         )}
         <div className={cn("flex justify-between font-bold border-t border-border pt-1", isRefund ? "text-blue-700" : balanceAfterApply === 0 ? "text-emerald-700" : "text-red-600")}>
@@ -398,17 +404,33 @@ const AdvanceApplicationTab: React.FC<Props> = ({
           Bill fully settled — no balance due.
         </div>
       )}
-      {isRefund && (
-        <div className="flex items-start gap-2 bg-blue-50 border border-blue-200 rounded p-3 text-[12px] text-blue-800">
-          <AlertCircle size={14} className="mt-0.5 shrink-0" />
-          <div>
-            <p className="font-semibold">Patient has overpaid — refund required</p>
-            <p className="mt-0.5 text-blue-600">
-              Refund amount: <strong>{inr(Math.abs(balanceAfterApply))}</strong>.
-              Process a refund via cash/UPI/bank transfer and record it in the Payments tab.
-            </p>
+      {isRefund && paymentStatus !== 'refunded' && (
+        <div className="flex items-start justify-between gap-3 bg-blue-50 border border-blue-200 rounded p-3">
+          <div className="flex items-start gap-2 text-[12px] text-blue-800">
+            <AlertCircle size={14} className="mt-0.5 shrink-0" />
+            <div>
+              <p className="font-semibold">Patient has overpaid — refund required</p>
+              <p className="mt-0.5 text-blue-600">
+                Refund due: <strong>{inr(Math.abs(balanceAfterApply))}</strong>
+              </p>
+            </div>
           </div>
+          <Button size="sm" className="h-8 text-xs shrink-0" onClick={() => setShowRefundModal(true)}>
+            Process Refund
+          </Button>
         </div>
+      )}
+      {isRefund && paymentStatus !== 'refunded' && showRefundModal && (
+        <RefundModal
+          open={showRefundModal}
+          onClose={() => setShowRefundModal(false)}
+          billId={billId}
+          patientId={patientId}
+          admissionId={admissionId}
+          hospitalId={hospitalId}
+          refundAmount={Math.abs(balanceAfterApply)}
+          onRefunded={() => { setShowRefundModal(false); fetchBalance(); onRefresh(); }}
+        />
       )}
 
       {/* Add deposit */}

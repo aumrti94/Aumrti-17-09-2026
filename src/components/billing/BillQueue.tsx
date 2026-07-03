@@ -2,7 +2,7 @@ import React from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Receipt, Plus, IndianRupee } from "lucide-react";
+import { Receipt, Plus, IndianRupee, Search, X } from "lucide-react";
 import EmptyState from "@/components/EmptyState";
 import type { BillRecord } from "@/pages/billing/BillingPage";
 import { useHospitalContext } from "@/contexts/HospitalContext";
@@ -55,6 +55,8 @@ interface Props {
   todayCollection: number;
   pendingAmount: number;
   billCount: number;
+  patientSearch: string;
+  onPatientSearch: (v: string) => void;
 }
 
 const BillQueue: React.FC<Props> = ({
@@ -62,6 +64,7 @@ const BillQueue: React.FC<Props> = ({
   statusFilter, onStatusFilter, dateFilter, onDateFilter,
   startDate, endDate, onStartDate, onEndDate,
   onNewBill, onAdvanceReceipt, todayCollection, pendingAmount, billCount,
+  patientSearch, onPatientSearch,
 }) => {
   const { permissions, role } = useHospitalContext();
   return (
@@ -76,7 +79,28 @@ const BillQueue: React.FC<Props> = ({
           </Button>
         )}
       </div>
-      <div className="flex gap-1.5 mt-2 overflow-x-auto">
+
+      {/* Patient search */}
+      <div className="relative mt-2">
+        <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+        <input
+          type="text"
+          value={patientSearch}
+          onChange={e => onPatientSearch(e.target.value)}
+          placeholder="Name / UHID / phone / ABHA…"
+          className="w-full pl-7 pr-7 py-1.5 text-[12px] border border-border rounded-md bg-background focus:border-primary focus:outline-none"
+        />
+        {patientSearch && (
+          <button
+            onClick={() => onPatientSearch("")}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+          >
+            <X size={12} />
+          </button>
+        )}
+      </div>
+
+      <div className={cn("flex gap-1.5 mt-2 overflow-x-auto", patientSearch && "opacity-40 pointer-events-none")}>
         {STATUS_FILTERS.map((f) => (
           <button
             key={f.key}
@@ -96,13 +120,19 @@ const BillQueue: React.FC<Props> = ({
 
     {/* Stats */}
     <div className="px-4 py-1.5 bg-muted/50 border-b border-border flex gap-4 text-[11px] flex-shrink-0">
-      <span className="text-success font-bold">₹{todayCollection.toLocaleString("en-IN")} collected</span>
-      <span className="text-accent font-medium">₹{pendingAmount.toLocaleString("en-IN")} pending</span>
-      <span className="text-muted-foreground">{billCount} bills</span>
+      {patientSearch ? (
+        <span className="text-primary font-medium">All dates · {billCount} bills found</span>
+      ) : (
+        <>
+          <span className="text-success font-bold">₹{todayCollection.toLocaleString("en-IN")} collected</span>
+          <span className="text-accent font-medium">₹{pendingAmount.toLocaleString("en-IN")} pending</span>
+          <span className="text-muted-foreground">{billCount} bills</span>
+        </>
+      )}
     </div>
 
-    {/* Date filter */}
-    <div className="px-4 py-1.5 border-b border-border flex-shrink-0 space-y-1.5">
+    {/* Date filter — hidden when patient search is active */}
+    <div className={cn("px-4 py-1.5 border-b border-border flex-shrink-0 space-y-1.5", patientSearch && "opacity-40 pointer-events-none")}>
       <div className="flex items-center gap-2">
         {DATE_FILTERS.map((d) => (
           <button

@@ -30,7 +30,7 @@ import { generateBillNumber } from "@/hooks/useBillNumber";
 import { autoPostJournalEntry } from "@/lib/accounting";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
 import { roundCurrency, calcGST } from "@/lib/currency";
-import { getModuleDefaultRate } from "@/lib/serviceRates";
+import { getModuleDefaultRate, getRate, SERVICE_RATE_CODES } from "@/lib/serviceRates";
 
 // ── Module constants (match service_charges.service_module CHECK constraint) ──
 export const MODULE_DIALYSIS      = "dialysis";
@@ -50,6 +50,7 @@ export const MODULE_VACCINATION   = "vaccination";
 export const MODULE_DENTAL        = "dental";
 export const MODULE_IVF           = "ivf";
 export const MODULE_OTHER         = "other";
+export const MODULE_OT            = "ot";
 
 export interface ServiceBillingResult {
   billId:   string;
@@ -149,6 +150,51 @@ async function findOrCreateOpdBill(
       encounter_id:    encounterId,
       bill_number:     billNumber,
       bill_type:       billType,
+      bill_date:       new Date().toISOString().split("T")[0],
+      bill_status:     "final",
+      payment_status:  "unpaid",
+      subtotal:        0,
+      gst_amount:      0,
+      total_amount:    0,
+      patient_payable: 0,
+      balance_due:     0,
+    })
+    .select("id")
+    .maybeSingle();
+
+  return newBill!.id;
+}
+
+/**
+ * Find or create the 'emergency' bill for an ED visit.
+ * ED bills are keyed by bills.ed_visit_id (bills.encounter_id FKs opd_encounters and
+ * cannot hold an ed_visit id). Consolidates every ED charge for the visit onto one bill.
+ */
+async function findOrCreateEdBill(
+  hospitalId: string, patientId: string, edVisitId: string,
+): Promise<string> {
+  const { data: existing } = await (supabase as any)
+    .from("bills")
+    .select("id")
+    .eq("hospital_id", hospitalId)
+    .eq("ed_visit_id", edVisitId)
+    .eq("bill_type", "emergency")
+    .in("payment_status", ["unpaid", "partial"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (existing) return existing.id;
+
+  const billNumber = await generateBillNumber(hospitalId, "ER");
+  const { data: newBill } = await (supabase as any)
+    .from("bills")
+    .insert({
+      hospital_id:     hospitalId,
+      patient_id:      patientId,
+      ed_visit_id:     edVisitId,
+      bill_number:     billNumber,
+      bill_type:       "emergency",
       bill_date:       new Date().toISOString().split("T")[0],
       bill_status:     "final",
       payment_status:  "unpaid",
@@ -267,11 +313,14 @@ export async function autoChargeService(
       isNewBill = true;
     }
   } else if (encounterId) {
-    // OPD encounter: find/create encounter bill
-    const billType = serviceModule === MODULE_ED ? "ed"
-      : serviceModule === MODULE_OPD_CONSULT ? "opd"
-      : "opd";
-    billId    = await findOrCreateOpdBill(hospitalId, patientId, encounterId, billType);
+    if (serviceModule === MODULE_ED) {
+      // ED: encounterId carries the ed_visit id. Consolidate onto one 'emergency' bill
+      // keyed by bills.ed_visit_id (NOT encounter_id, which FKs opd_encounters).
+      billId = await findOrCreateEdBill(hospitalId, patientId, encounterId);
+    } else {
+      // OPD encounter: find/create encounter bill
+      billId = await findOrCreateOpdBill(hospitalId, patientId, encounterId, "opd");
+    }
   } else {
     // Standalone (ambulance, mortuary, etc.) — create a new bill
     const bn = await generateBillNumber(hospitalId, serviceModule.toUpperCase().slice(0, 3));
@@ -391,6 +440,32 @@ export async function getEdChargeRate(
 }
 
 /**
+ * Read a configured ED charge rate by service_master item_type
+ * (e.g. 'ed_observation', 'ed_specialist_consult'), set in Settings →
+ * Services & Fees → Emergency. Used by the itemized ED charges panel for its
+ * quick-charge shortcuts. Returns { fee: 0 } when not configured.
+ */
+export async function getEdItemRate(
+  hospitalId: string,
+  itemType: string,
+): Promise<{ fee: number; gstPct: number }> {
+  if (!hospitalId || !itemType) return { fee: 0, gstPct: 0 };
+  const { data } = await (supabase as any)
+    .from("service_master")
+    .select("fee, gst_percent, gst_applicable")
+    .eq("hospital_id", hospitalId)
+    .eq("item_type", itemType)
+    .eq("is_active", true)
+    .limit(1)
+    .maybeSingle();
+  if (!data) return { fee: 0, gstPct: 0 };
+  return {
+    fee: Number(data.fee) || 0,
+    gstPct: data.gst_applicable ? Number(data.gst_percent) || 0 : 0,
+  };
+}
+
+/**
  * Record a service that cannot be billed yet (no rate, no patient link)
  * but needs to appear in the leakage dashboard.
  */
@@ -420,4 +495,275 @@ export async function recordUnbilledService(opts: {
     billing_status: "unbilled",
     notes:          opts.notes ?? null,
   }).catch(() => {});
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// OT billing (Phase 7 consolidation) — was triplicated across EndCaseModal.tsx,
+// OTBillingTab.tsx and ipdBilling.ts, each with its own rate lookup + line-item
+// construction. `buildOTChargeLineItems` is the shared, pure computation; the
+// three call sites differ only in how they resolve/create the *target bill*
+// (IPD append vs. daycare bill vs. discharge sweep's own batched insert), so
+// that part stays with each caller.
+// ─────────────────────────────────────────────────────────────────────────
+
+interface OTScheduleForBilling {
+  id: string;
+  surgery_name: string;
+  anaesthesia_type?: string | null;
+  surgeon_id?: string | null;
+  anaesthetist_id?: string | null;
+  actual_start_time?: string | null;
+  actual_end_time?: string | null;
+  estimated_duration_minutes?: number | null;
+  patient_id?: string | null;
+  admission_id?: string | null;
+}
+
+/**
+ * Record billed OT charges into service_charges — the table every other module's
+ * autoChargeService() call already writes to, and the one the Revenue Leakage
+ * Dashboard reads from. OT's own billing path (chargeOTCase/buildOTChargeLineItems)
+ * bypasses autoChargeService entirely (see file header), so without this OT charges
+ * were invisible to that reporting even though they were being billed correctly.
+ */
+export async function recordOTServiceCharges(opts: {
+  hospitalId: string;
+  patientId?: string | null;
+  admissionId?: string | null;
+  scheduleId: string;
+  billId: string;
+  items: any[]; // bill_line_items-shaped rows that were actually posted
+}): Promise<void> {
+  const { hospitalId, patientId, admissionId, scheduleId, billId, items } = opts;
+  if (!patientId || items.length === 0) return;
+  const { data: { user } } = await supabase.auth.getUser();
+  const now = new Date().toISOString();
+  const rows = items.map((item) => ({
+    hospital_id: hospitalId,
+    patient_id: patientId,
+    admission_id: admissionId ?? null,
+    service_module: MODULE_OT,
+    service_ref_id: scheduleId,
+    service_date: now.split("T")[0],
+    service_name: item.description,
+    quantity: item.quantity,
+    unit_rate: item.unit_rate,
+    gst_percent: item.gst_percent,
+    gst_amount: item.gst_amount,
+    total_amount: item.total_amount,
+    therapist_id: user?.id || null,
+    billing_status: "billed",
+    bill_id: billId,
+    billed_at: now,
+    created_by: user?.id || null,
+  }));
+  await (supabase as any).from("service_charges").insert(rows).catch(() => {});
+}
+
+/** service_master rate lookup, optionally scoped to a specific doctor_id. */
+async function getServiceMasterRate(
+  hospitalId: string,
+  itemType: string,
+  fallback: number,
+  doctorId: string | null = null,
+): Promise<{ fee: number; gstPct: number; gst: number; hsn: string }> {
+  let query = (supabase as any)
+    .from("service_master")
+    .select("fee, gst_percent, gst_applicable, hsn_code")
+    .eq("hospital_id", hospitalId)
+    .eq("item_type", itemType)
+    .eq("is_active", true);
+  query = doctorId ? query.eq("doctor_id", doctorId) : query.is("doctor_id", null);
+  const { data } = await query.limit(1).maybeSingle();
+  if (!data) return { fee: fallback, gstPct: 0, gst: 0, hsn: "" };
+  const fee = Number(data.fee) || fallback;
+  const gstPct = data.gst_applicable ? (Number(data.gst_percent) || 0) : 0;
+  return { fee, gstPct, gst: calcGST(fee, gstPct), hsn: data.hsn_code || "" };
+}
+
+/**
+ * Resolve a surgeon/anaesthetist fee: per-doctor rate first (service_master row
+ * scoped by doctor_id — same mechanism SettingsStaffPage already uses for
+ * per-doctor consultation fees, see idx_service_master_doctor_unique), then the
+ * hospital-wide service_master default, then service_rates, then a hardcoded floor.
+ */
+async function resolveOtStaffFee(
+  hospitalId: string,
+  itemType: "surgeon_fee" | "anaesthesia_fee",
+  doctorId: string | null | undefined,
+  fallbackRateCode: string,
+  hardcoded: number,
+): Promise<{ fee: number; gstPct: number; gst: number; hsn: string }> {
+  if (doctorId) {
+    const doctorRate = await getServiceMasterRate(hospitalId, itemType, 0, doctorId);
+    if (doctorRate.fee > 0) return doctorRate;
+  }
+  const fallback = await getRate(hospitalId, fallbackRateCode, hardcoded);
+  return getServiceMasterRate(hospitalId, itemType, fallback, null);
+}
+
+/**
+ * Pure computation: given an OT case, returns the bill_line_items rows it should
+ * have (OT facility charge, surgeon fee, anaesthetist fee, unbilled implants) —
+ * no insert, no dedupe filtering, no side effects. Callers decide how to dedupe
+ * and insert against their target bill.
+ */
+export async function buildOTChargeLineItems(
+  hospitalId: string,
+  billId: string,
+  ot: OTScheduleForBilling,
+): Promise<{ items: any[]; implantIds: string[] }> {
+  const items: any[] = [];
+
+  const otRate = await getServiceMasterRate(hospitalId, "ot_charge", 2000, null);
+  const actualDuration =
+    ot.actual_start_time && ot.actual_end_time
+      ? Math.ceil((new Date(ot.actual_end_time).getTime() - new Date(ot.actual_start_time).getTime()) / 3600000)
+      : Math.ceil((ot.estimated_duration_minutes || 60) / 60);
+  const hours = Math.max(1, actualDuration);
+  const otFee = roundCurrency(hours * otRate.fee);
+  items.push({
+    hospital_id: hospitalId, bill_id: billId,
+    item_type: "ot_charge",
+    description: `OT Charges: ${ot.surgery_name} (${hours} hr)`,
+    quantity: hours, unit_rate: otRate.fee,
+    taxable_amount: otFee, gst_percent: otRate.gstPct,
+    gst_amount: calcGST(otFee, otRate.gstPct),
+    total_amount: roundCurrency(otFee + calcGST(otFee, otRate.gstPct)),
+    hsn_code: otRate.hsn || "999315", source_module: MODULE_OT,
+    source_record_id: ot.id,
+    source_dedupe_key: `ot:${ot.id}:ot_charge`,
+  });
+
+  if (ot.surgeon_id) {
+    const surgRate = await resolveOtStaffFee(hospitalId, "surgeon_fee", ot.surgeon_id, SERVICE_RATE_CODES.SURGERY_FEE, 5000);
+    items.push({
+      hospital_id: hospitalId, bill_id: billId,
+      item_type: "surgeon_fee",
+      description: `Surgeon Fee: ${ot.surgery_name}`,
+      quantity: 1, unit_rate: surgRate.fee,
+      taxable_amount: surgRate.fee, gst_percent: surgRate.gstPct,
+      gst_amount: surgRate.gst, total_amount: roundCurrency(surgRate.fee + surgRate.gst),
+      hsn_code: surgRate.hsn || "999316", source_module: MODULE_OT,
+      source_record_id: ot.id,
+      source_dedupe_key: `ot:${ot.id}:surgeon_fee`,
+    });
+  }
+
+  if (ot.anaesthetist_id) {
+    const anaesRate = await resolveOtStaffFee(hospitalId, "anaesthesia_fee", ot.anaesthetist_id, SERVICE_RATE_CODES.ANAESTHESIA_FEE, 1500);
+    items.push({
+      hospital_id: hospitalId, bill_id: billId,
+      item_type: "anaesthesia_fee",
+      description: `Anaesthesia: ${ot.anaesthesia_type || "General"}`,
+      quantity: 1, unit_rate: anaesRate.fee,
+      taxable_amount: anaesRate.fee, gst_percent: anaesRate.gstPct,
+      gst_amount: anaesRate.gst, total_amount: roundCurrency(anaesRate.fee + anaesRate.gst),
+      hsn_code: anaesRate.hsn || "999317", source_module: MODULE_OT,
+      source_record_id: ot.id,
+      source_dedupe_key: `ot:${ot.id}:anaesthesia_fee`,
+    });
+  }
+
+  const { data: unbilledImplants } = await (supabase as any)
+    .from("ot_implants")
+    .select("id, item_name, unit_cost, quantity")
+    .eq("schedule_id", ot.id)
+    .eq("billed", false);
+
+  const implantIds: string[] = [];
+  (unbilledImplants || []).forEach((imp: any) => {
+    const cost = Number(imp.unit_cost || 0);
+    if (cost <= 0) return;
+    const qty = Number(imp.quantity || 1);
+    const total = roundCurrency(cost * qty);
+    items.push({
+      hospital_id: hospitalId, bill_id: billId,
+      item_type: "implant",
+      description: `Implant: ${imp.item_name}`,
+      quantity: qty, unit_rate: cost,
+      taxable_amount: total, gst_percent: 12,
+      gst_amount: calcGST(total, 12),
+      total_amount: roundCurrency(total + calcGST(total, 12)),
+      hsn_code: "9021", source_module: MODULE_OT,
+      source_record_id: ot.id,
+      source_dedupe_key: `ot:${ot.id}:implant:${imp.id}`,
+    });
+    implantIds.push(imp.id);
+  });
+
+  return { items, implantIds };
+}
+
+export interface ChargeOTCaseResult {
+  billId: string;
+  total: number;
+  itemsAdded: number;
+}
+
+/**
+ * Orchestrates a full OT charge run against an already-resolved bill: dedupe
+ * against existing bill_line_items for this case, insert what's missing,
+ * recalc totals, mark the schedule/implants billed, post the GL entry.
+ * Used by EndCaseModal.tsx (auto-fire on case end) and OTBillingTab.tsx
+ * (manual "Push"/"Re-sync"); ipdBilling.ts's discharge sweep uses
+ * `buildOTChargeLineItems` directly instead, to stay inside its own
+ * single-batch-insert transaction shape.
+ */
+export async function chargeOTCase(opts: {
+  hospitalId: string;
+  billId: string;
+  schedule: OTScheduleForBilling;
+}): Promise<ChargeOTCaseResult> {
+  const { hospitalId, billId, schedule } = opts;
+
+  const { data: existingItems } = await (supabase as any)
+    .from("bill_line_items")
+    .select("source_dedupe_key")
+    .eq("bill_id", billId)
+    .eq("source_module", MODULE_OT);
+  const existingKeys = new Set<string>((existingItems || []).map((i: any) => i.source_dedupe_key).filter(Boolean));
+
+  const { items: candidateItems, implantIds } = await buildOTChargeLineItems(hospitalId, billId, schedule);
+  const newItems = candidateItems.filter((li) => !li.source_dedupe_key || !existingKeys.has(li.source_dedupe_key));
+
+  if (newItems.length === 0) {
+    return { billId, total: 0, itemsAdded: 0 };
+  }
+
+  await supabase.from("bill_line_items").insert(newItems);
+  await recalculateBillTotalsSafe(billId);
+
+  const { data: updatedBill } = await supabase.from("bills").select("total_amount").eq("id", billId).maybeSingle();
+  const total = Number(updatedBill?.total_amount || 0);
+
+  await (supabase as any)
+    .from("ot_schedules")
+    .update({ billed: true, bill_id: billId })
+    .eq("id", schedule.id);
+
+  await recordOTServiceCharges({
+    hospitalId, patientId: schedule.patient_id, admissionId: schedule.admission_id,
+    scheduleId: schedule.id, billId, items: newItems,
+  });
+
+  const billedImplantIds = implantIds.filter((id) =>
+    newItems.some((li) => li.source_dedupe_key === `ot:${schedule.id}:implant:${id}`)
+  );
+  if (billedImplantIds.length > 0) {
+    await (supabase as any).from("ot_implants").update({ billed: true }).in("id", billedImplantIds);
+  }
+
+  const { data: { user } } = await supabase.auth.getUser();
+  await autoPostJournalEntry({
+    triggerEvent: "bill_finalized_ot",
+    sourceModule: MODULE_OT,
+    sourceId: billId,
+    amount: total,
+    description: `OT Revenue - ${schedule.surgery_name}`,
+    hospitalId,
+    postedBy: user?.id || "",
+  });
+
+  return { billId, total, itemsAdded: newItems.length };
 }

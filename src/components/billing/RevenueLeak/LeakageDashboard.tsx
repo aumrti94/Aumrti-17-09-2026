@@ -57,6 +57,7 @@ const MODULE_LABELS: Record<string, string> = {
   opd_consult:    "OPD Consultations",
   ed:             "Emergency Dept.",
   oncology:       "Oncology/Chemo",
+  ot:             "Operation Theatre",
   other:          "Other Services",
 };
 
@@ -73,6 +74,7 @@ const MODULE_COLORS: Record<string, string> = {
   opd_consult:   "text-emerald-700 bg-emerald-50 border-emerald-200",
   ed:            "text-red-700 bg-red-50 border-red-200",
   oncology:      "text-rose-700 bg-rose-50 border-rose-200",
+  ot:            "text-fuchsia-700 bg-fuchsia-50 border-fuchsia-200",
 };
 
 const inr = (n: number) =>
