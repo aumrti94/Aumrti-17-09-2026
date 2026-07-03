@@ -87,6 +87,42 @@ export async function deactivateProtocol(
   );
 }
 
+/**
+ * Declare a Mass Casualty Incident (MCI) from the Emergency Department. Reuses the
+ * epidemic_protocols mechanism with triage_mode = 'mass_casualty' (a surge protocol),
+ * standing down any currently active protocol first. Stand down via deactivateProtocol().
+ */
+export async function declareMassCasualty(hospitalId: string): Promise<void> {
+  // Resolve the acting user's staff record for activated_by (FK-safe).
+  const { data: { user } } = await supabase.auth.getUser();
+  let dbUserId: string | null = null;
+  if (user) {
+    const { data } = await (supabase as any).from("users")
+      .select("id").eq("auth_user_id", user.id).maybeSingle();
+    dbUserId = data?.id ?? null;
+  }
+
+  // Stand down any currently active protocol.
+  await (supabase as any)
+    .from("epidemic_protocols")
+    .update({ is_active: false, deactivated_at: new Date().toISOString() })
+    .eq("hospital_id", hospitalId)
+    .eq("is_active", true);
+
+  await (supabase as any).from("epidemic_protocols").insert({
+    hospital_id:   hospitalId,
+    protocol_name: "Mass Casualty Incident (MCI)",
+    is_active:     true,
+    activated_at:  new Date().toISOString(),
+    activated_by:  dbUserId,
+    triage_mode:   "mass_casualty",
+    ppe_level:     "standard",
+    notes:         "MCI surge declared from the Emergency Department",
+  });
+
+  await logNABHEvidence(hospitalId, "COP.4", "Mass Casualty Incident (MCI) mode activated from Emergency");
+}
+
 export function getTriageModeLabel(protocol: EpidemicProtocol | null): string {
   if (!protocol) return "Standard";
   switch (protocol.triage_mode) {

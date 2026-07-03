@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { autoChargeService, MODULE_ED, getEdChargeRate, recordUnbilledService } from "@/lib/serviceBilling";
+import { autoChargeService, MODULE_ED, getEdChargeRate, getEdItemRate, recordUnbilledService } from "@/lib/serviceBilling";
 import { useNavigate } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -18,6 +18,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import AdmitPatientModal from "@/components/ipd/AdmitPatientModal";
 import NewLabOrderModal from "@/components/lab/NewLabOrderModal";
 import BookOTModal from "@/components/ot/BookOTModal";
+import EDChargesPanel from "@/components/emergency/EDChargesPanel";
+import EDDischargeSummaryModal from "@/components/emergency/EDDischargeSummaryModal";
+import ReferralLetterModal from "@/components/opd/ReferralLetterModal";
+import AdvanceReceiptModal from "@/components/billing/AdvanceReceiptModal";
+import EDMedicationPanel from "@/components/emergency/EDMedicationPanel";
+import EDHandoverNotePanel from "@/components/emergency/EDHandoverNotePanel";
+import ConsentSignatureModal from "@/components/consent/ConsentSignatureModal";
+import { routeEdPatientToMortuary } from "@/lib/edMortuary";
+import { calculateNEWS2, getNEWS2BadgeClasses, getNEWS2Label } from "@/lib/news2";
 import type { OTRoom } from "@/pages/ot/OTPage";
 import type { EDVisit } from "@/pages/emergency/EmergencyPage";
 
@@ -31,7 +40,8 @@ interface Props {
 const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefresh }) => {
   const navigate = useNavigate();
   const { registerScreen, unregisterScreen } = useVoiceScribe();
-  const [vitals, setVitals] = useState({ bp_s: "", bp_d: "", pulse: "", spo2: "", gcs: "" });
+  const [vitals, setVitals] = useState({ bp_s: "", bp_d: "", pulse: "", spo2: "", gcs: "", rr: "", temp: "" });
+  const [treatingDoctor, setTreatingDoctor] = useState<string | null>(null);
   const [complaint, setComplaint] = useState("");
   const [ample, setAmple] = useState({ a: "", m: "", p: "", l: "", e: "" });
   const [diagnosis, setDiagnosis] = useState("");
@@ -69,12 +79,33 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
   const [specialistReason, setSpecialistReason] = useState("");
   const [specialistSubmitting, setSpecialistSubmitting] = useState(false);
   const [departments, setDepartments] = useState<{ id: string; name: string }[]>([]);
+  const [billConsult, setBillConsult] = useState(false);
+  const [consultRate, setConsultRate] = useState<{ fee: number; gstPct: number }>({ fee: 0, gstPct: 0 });
 
-  // ED billing summary for the Charges panel
-  const [edBilling, setEdBilling] = useState<{ status: string; billId: string | null; total: number }>({ status: "unbilled", billId: null, total: 0 });
+  // ED billing summary for the Charges panel.
+  // total = casualty fee; itemizedTotal / itemizedBillId = itemized ED charges (ed_charge_items).
+  const [edBilling, setEdBilling] = useState<{ status: string; billId: string | null; total: number; itemizedTotal: number; itemizedBillId: string | null }>(
+    { status: "unbilled", billId: null, total: 0, itemizedTotal: 0, itemizedBillId: null }
+  );
+  const [showChargesPanel, setShowChargesPanel] = useState(false);
+  const [showDischargeSummary, setShowDischargeSummary] = useState(false);
+  const [showDeposit, setShowDeposit] = useState(false);
+  const [showMedications, setShowMedications] = useState(false);
+  const [showHandoverNote, setShowHandoverNote] = useState(false);
+  const [showConsent, setShowConsent] = useState(false);
+  // ED bill balance surfaced in the discharge dialog (settlement prompt)
+  const [edBillInfo, setEdBillInfo] = useState<{ id: string; balance: number } | null>(null);
+  // Additional dispositions (LAMA/DAMA/LWBS/absconded/referred-out)
+  const [pendingDisp, setPendingDisp] = useState<string | null>(null);
+  const [showReferralModal, setShowReferralModal] = useState(false);
+  const [referralUhid, setReferralUhid] = useState("");
+  const [dispKey, setDispKey] = useState(0);
 
   const loadEdCharges = useCallback(async () => {
-    if (!visit?.id || !hospitalId) { setEdBilling({ status: "unbilled", billId: null, total: 0 }); return; }
+    if (!visit?.id || !hospitalId) {
+      setEdBilling({ status: "unbilled", billId: null, total: 0, itemizedTotal: 0, itemizedBillId: null });
+      return;
+    }
     const { data: v } = await supabase.from("ed_visits").select("billing_status, bill_id").eq("id", visit.id).maybeSingle();
     let total = 0;
     const billId = (v as any)?.bill_id ?? null;
@@ -83,16 +114,41 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
         .select("total_amount").eq("bill_id", billId).eq("source_record_id", visit.id).eq("source_module", MODULE_ED);
       total = (items || []).reduce((s: number, i: any) => s + Number(i.total_amount || 0), 0);
     }
-    setEdBilling({ status: (v as any)?.billing_status ?? "unbilled", billId, total });
+    // Itemized ED charges (procedures / observation / consumables / consults).
+    const { data: charges } = await (supabase as any).from("ed_charge_items")
+      .select("quantity, unit_rate, gst_percent, bill_id").eq("ed_visit_id", visit.id);
+    const itemizedTotal = (charges || []).reduce((s: number, c: any) => {
+      const taxable = Number(c.quantity || 0) * Number(c.unit_rate || 0);
+      return s + taxable + (taxable * (Number(c.gst_percent) || 0)) / 100;
+    }, 0);
+    const itemizedBillId = (charges || []).find((c: any) => c.bill_id)?.bill_id ?? null;
+    setEdBilling({ status: (v as any)?.billing_status ?? "unbilled", billId, total, itemizedTotal, itemizedBillId });
   }, [visit?.id, hospitalId]);
 
   useEffect(() => { loadEdCharges(); }, [loadEdCharges]);
 
-  // Load departments for specialist dialog
+  // Resolve the treating doctor's name for display.
+  useEffect(() => {
+    if (!visit?.doctor_id) { setTreatingDoctor(null); return; }
+    supabase.from("users").select("full_name").eq("id", visit.doctor_id).maybeSingle()
+      .then(({ data }) => setTreatingDoctor((data as any)?.full_name || null));
+  }, [visit?.doctor_id]);
+
+  // When the discharge dialog opens, fetch the ED bill balance for the settlement prompt.
+  useEffect(() => {
+    if (!showDischargeConfirm || !visit?.id) { setEdBillInfo(null); return; }
+    (supabase as any).from("bills")
+      .select("id, balance_due").eq("ed_visit_id", visit.id).eq("bill_type", "emergency")
+      .order("created_at", { ascending: false }).limit(1).maybeSingle()
+      .then(({ data }: any) => setEdBillInfo(data ? { id: data.id, balance: Number(data.balance_due || 0) } : null));
+  }, [showDischargeConfirm, visit?.id]);
+
+  // Load departments for specialist dialog + configured in-ED specialist consult rate
   useEffect(() => {
     if (!hospitalId) return;
     supabase.from("departments").select("id, name").eq("hospital_id", hospitalId).eq("is_active", true).order("name")
       .then(({ data }) => setDepartments(data || []));
+    getEdItemRate(hospitalId, "ed_specialist_consult").then(setConsultRate);
   }, [hospitalId]);
 
   // Load OT rooms for refer-to-OT modal
@@ -111,7 +167,7 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
     setMlcDetails(visit.mlc_details as any || { police_station: "", officer: "", fir: "", injury_type: "" });
     setAmple(visit.ample_history as any || { a: "", m: "", p: "", l: "", e: "" });
     const vs = visit.vitals_snapshot || {};
-    setVitals({ bp_s: vs.bp_s || "", bp_d: vs.bp_d || "", pulse: vs.pulse || "", spo2: vs.spo2 || "", gcs: vs.gcs || "" });
+    setVitals({ bp_s: vs.bp_s || "", bp_d: vs.bp_d || "", pulse: vs.pulse || "", spo2: vs.spo2 || "", gcs: vs.gcs || "", rr: vs.rr || "", temp: vs.temp || "" });
     setTriageSuggestion(null);
     setDispositionSuggestion(null);
     setInvestigationsSuggested([]);
@@ -131,6 +187,8 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
           pulse: vd.pulse || prev.pulse,
           spo2: vd.spo2 || prev.spo2,
           gcs: vd.gcs || prev.gcs,
+          rr: vd.respiratory_rate || vd.rr || prev.rr,
+          temp: vd.temperature || vd.temp || prev.temp,
         }));
       }
 
@@ -225,56 +283,54 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
     toast({ title: "Vitals saved" });
   };
 
+  // NEWS2 Early Warning Score — computed from the entered vitals (reuses lib/news2).
+  // Plain computation (not a hook) so it is safe below the early return above.
+  const news2Score = computeEdNews2(vitals);
+
+  // Assign the current user as the treating doctor (ed_visits.doctor_id → users.id).
+  const assignToMe = async () => {
+    if (!userId) return;
+    const { data: ud } = await supabase.from("users").select("id").eq("auth_user_id", userId).maybeSingle();
+    if (!ud?.id) { toast({ title: "Could not resolve your staff record", variant: "destructive" }); return; }
+    await supabase.from("ed_visits").update({ doctor_id: ud.id }).eq("id", visit.id);
+    toast({ title: "Assigned to you" });
+    onRefresh();
+  };
+
   const saveField = async (field: string, value: any) => {
     await supabase.from("ed_visits").update({ [field]: value } as any).eq("id", visit.id);
   };
 
   const handleDisposition = async (disp: string) => {
+    // Terminal dispositions close the visit (remove from the active board). "admitted" and
+    // "expired" keep their prior behaviour (unchanged). New: lama/dama/lwbs/absconded/referred_out.
+    const TERMINAL = ["discharged", "lama", "dama", "lwbs", "absconded", "referred_out"];
     await supabase.from("ed_visits").update({
       disposition: disp,
       disposition_time: new Date().toISOString(),
-      is_active: disp === "discharged" ? false : true,
+      is_active: TERMINAL.includes(disp) ? false : true,
     }).eq("id", visit.id);
 
     // Auto-create mortuary admission for expired patients
     if ((disp === "expired" || disp === "deceased") && hospitalId && visit) {
-      const bodyNum = `BODY-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 9000) + 1000).padStart(4, "0")}`;
-
-      await supabase.from("mortuary_admissions").insert({
-        hospital_id: hospitalId,
-        patient_id: visit.patient_id,
-        admission_id: null,
-        body_number: bodyNum,
-        time_of_death: new Date().toISOString(),
-        pronounced_by: userId,
-        cause_of_death: visit.chief_complaint || "Under investigation",
-        manner_of_death: "undetermined",
-        is_mlc: mlc || false,
-        status: "in_mortuary",
-        notes: `Patient brought from Emergency Department. MLC: ${mlc ? "Yes" : "No"}`,
+      const { bodyNumber } = await routeEdPatientToMortuary({
+        hospitalId,
+        patientId: visit.patient_id,
+        pronouncedBy: userId,
+        cause: visit.chief_complaint,
+        isMlc: mlc || false,
+        mlcDetails: { police_station: mlcDetails.police_station, officer: mlcDetails.officer, fir: mlcDetails.fir },
       });
-
-      toast({ title: `Mortuary admission created — Body No: ${bodyNum}` });
-
-      if (mlc) {
-        await supabase.from("mlc_records").insert({
-          hospital_id: hospitalId,
-          patient_id: visit.patient_id,
-          mlc_number: `MLC-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 9000) + 1000).padStart(4, "0")}`,
-          incident_type: "unknown_cause",
-          police_station: mlcDetails.police_station || "",
-          officer_name: mlcDetails.officer || "",
-          fir_number: mlcDetails.fir || "",
-          status: "open",
-        });
-      }
+      toast({ title: `Mortuary admission created — Body No: ${bodyNumber}` });
     }
 
-    // Auto-bill the configured Casualty / Emergency fee on discharge or admission.
-    // On admit, the fee is appended to the patient's IPD bill; on discharge it forms a
-    // standalone ED bill. Idempotent via ed_visits.billing_status (no double charge).
-    // If no fee is configured (₹0), nothing is billed — same as before this feature.
-    if ((disp === "discharged" || disp === "admitted") && hospitalId && visit.patient_id) {
+    // Auto-bill the configured Casualty / Emergency fee when the patient was treated:
+    // discharge, admission, or leaving against advice (LAMA/DAMA) — a service was rendered.
+    // LWBS / absconded / referred_out do NOT trigger the casualty fee here.
+    // On admit, the fee is appended to the patient's IPD bill; otherwise it forms an ED bill.
+    // Idempotent via ed_visits.billing_status (no double charge). If no fee is configured (₹0),
+    // nothing is billed — same as before this feature.
+    if (["discharged", "admitted", "lama", "dama"].includes(disp) && hospitalId && visit.patient_id) {
       const { fee, gstPct } = await getEdChargeRate(hospitalId);
       if (fee > 0) {
         let admissionId: string | null = null;
@@ -308,7 +364,7 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
           toast({ title: "Could not bill the emergency charge", variant: "destructive" });
         }
         loadEdCharges();
-      } else if (disp === "discharged") {
+      } else if (disp !== "admitted") {
         // No casualty fee configured — preserve prior behaviour: flag for the leakage dashboard.
         recordUnbilledService({
           hospitalId,
@@ -321,8 +377,20 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
       }
     }
 
-    toast({ title: `Patient ${disp}` });
+    toast({ title: `Patient ${disp.replace(/_/g, " ")}` });
     onRefresh();
+  };
+
+  // Open the referral letter for a transfer-out (uhid needed by the letter).
+  const openReferral = async () => {
+    const { data } = await supabase.from("patients").select("uhid").eq("id", visit.patient_id).maybeSingle();
+    setReferralUhid((data as any)?.uhid || "");
+    setShowReferralModal(true);
+  };
+
+  const handleDispSelect = (v: string) => {
+    if (v === "referred_out") openReferral();
+    else setPendingDisp(v);
   };
 
   const handleBloodRequest = async () => {
@@ -357,10 +425,44 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
         alert_message: `📟 Specialist consult requested: ${deptName} for ${visit.patient_name}. Reason: ${specialistReason || "Emergency consultation"}`,
         patient_id: visit.patient_id,
       });
+
+      // Optional: bill the in-ED specialist consult fee (off by default; itemized ED charge).
+      if (billConsult && consultRate.fee > 0) {
+        try {
+          const { data: row } = await (supabase as any).from("ed_charge_items").insert({
+            hospital_id:  hospitalId,
+            ed_visit_id:  visit.id,
+            patient_id:   visit.patient_id,
+            description:  `Specialist Consult — ${deptName}`,
+            category:     "consult",
+            quantity:     1,
+            unit_rate:    consultRate.fee,
+            gst_percent:  consultRate.gstPct,
+            performed_by: userId,
+          }).select("id").maybeSingle();
+          if (row) {
+            await autoChargeService({
+              hospitalId,
+              patientId:     visit.patient_id,
+              encounterId:   visit.id,
+              serviceName:   `Specialist Consult — ${deptName}`,
+              serviceModule: MODULE_ED,
+              sourceTable:   "ed_charge_items",
+              sourceId:      row.id,
+              unitRate:      consultRate.fee,
+              gstPercent:    consultRate.gstPct,
+              performedBy:   userId,
+            });
+            loadEdCharges();
+          }
+        } catch { /* alert already sent; billing is best-effort */ }
+      }
+
       toast({ title: "✓ Specialist alert sent", description: `${deptName} team notified` });
       setShowSpecialistDialog(false);
       setSpecialistDept("");
       setSpecialistReason("");
+      setBillConsult(false);
     } catch {
       toast({ title: "Failed to send alert", variant: "destructive" });
     } finally {
@@ -393,16 +495,23 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
       {/* CENTER: Clinical Entry */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {/* Vitals row */}
-        <div className="flex gap-2 items-end">
+        <div className="flex gap-2 items-end flex-wrap">
           <VInput label="BP Sys" value={vitals.bp_s} onChange={v => setVitals({ ...vitals, bp_s: v })} placeholder="120" />
           <span className="text-slate-500 pb-2">/</span>
           <VInput label="Dia" value={vitals.bp_d} onChange={v => setVitals({ ...vitals, bp_d: v })} placeholder="80" />
           <VInput label="Pulse" value={vitals.pulse} onChange={v => setVitals({ ...vitals, pulse: v })} placeholder="88" />
+          <VInput label="RR" value={vitals.rr} onChange={v => setVitals({ ...vitals, rr: v })} placeholder="16" />
           <VInput label="SpO2" value={vitals.spo2} onChange={v => setVitals({ ...vitals, spo2: v })} placeholder="98" />
+          <VInput label="Temp°C" value={vitals.temp} onChange={v => setVitals({ ...vitals, temp: v })} placeholder="37" />
           <VInput label="GCS" value={vitals.gcs} onChange={v => setVitals({ ...vitals, gcs: v })} placeholder="15" />
           <Button size="sm" onClick={saveVitals} disabled={savingVitals} className="h-8 text-xs bg-blue-600 hover:bg-blue-700 mb-0.5">
             {savingVitals ? "..." : "Save"}
           </Button>
+          {news2Score != null && (
+            <span className={cn("mb-0.5 px-2 py-1.5 rounded text-[11px] font-bold", getNEWS2BadgeClasses(news2Score))} title={getNEWS2Label(news2Score)}>
+              {getNEWS2Label(news2Score)}
+            </span>
+          )}
         </div>
 
         {/* Chief complaint */}
@@ -592,6 +701,16 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
       <div className="w-[170px] flex-shrink-0 flex flex-col gap-2 p-3 overflow-y-auto" style={{ background: "#162032", borderLeft: "1px solid #334155" }}>
         <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Actions</p>
 
+        {/* Treating doctor */}
+        {visit.doctor_id ? (
+          <div className="rounded-lg border border-teal-700/50 px-2.5 py-1.5" style={{ background: "rgba(13,148,136,0.12)" }}>
+            <p className="text-[9px] text-slate-500 uppercase font-bold">Treating Doctor</p>
+            <p className="text-[11px] text-teal-300 font-medium truncate">{treatingDoctor || "Assigned"}</p>
+          </div>
+        ) : (
+          <ActionBtn label="🙋 Assign to me" bg="#0D9488" onClick={assignToMe} />
+        )}
+
         <button
           onClick={handleAITriageAssist}
           disabled={aiTriageLoading}
@@ -603,12 +722,30 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
         </button>
         <ActionBtn label="🛏️ Admit to IPD" bg="#3B82F6" onClick={() => setShowAdmitModal(true)} />
         <ActionBtn label="🔬 STAT Lab" bg="#8B5CF6" onClick={() => { if (hospitalId) setShowLabModal(true); }} />
+        <ActionBtn label="💉 Medications" bg="#7C3AED" onClick={() => setShowMedications(true)} />
+        <ActionBtn label="🗒️ Handover Note" bg="#475569" onClick={() => setShowHandoverNote(true)} />
+        <ActionBtn label="📝 Consent" bg="#0891B2" onClick={() => setShowConsent(true)} />
         <ActionBtn label="🩸 Blood Request" bg="#EF4444" onClick={() => setShowBloodDialog(true)} />
         <ActionBtn label="📟 Call Specialist" bg="#F59E0B" onClick={() => setShowSpecialistDialog(true)} />
         {visit.triage_category !== "red" && visit.triage_category !== "critical" && visit.disposition !== "discharged" && visit.disposition !== "expired" && (
           <ActionBtn label="🏥 Refer to OT" bg="#0E7B7B" onClick={() => setShowOTModal(true)} />
         )}
+        <ActionBtn label="📄 Discharge Summary" bg="#0EA5E9" onClick={() => setShowDischargeSummary(true)} />
         <ActionBtn label="🏠 Discharge" bg="#10B981" onClick={() => setShowDischargeConfirm(true)} />
+
+        {/* Other dispositions: LAMA / DAMA / LWBS / Absconded / Referred-out */}
+        <Select key={dispKey} onValueChange={(v) => { handleDispSelect(v); setDispKey(k => k + 1); }}>
+          <SelectTrigger className="h-9 text-[12px] font-bold text-white border-slate-600" style={{ background: "#64748B" }}>
+            <SelectValue placeholder="⚑ Other Disposition" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="lama">LAMA — Left Against Medical Advice</SelectItem>
+            <SelectItem value="dama">DAMA — Discharge Against Medical Advice</SelectItem>
+            <SelectItem value="lwbs">LWBS — Left Without Being Seen</SelectItem>
+            <SelectItem value="absconded">Absconded</SelectItem>
+            <SelectItem value="referred_out">Referred Out (transfer)</SelectItem>
+          </SelectContent>
+        </Select>
         {mlc && <ActionBtn label="📄 MLC Register" bg="#7C3AED" onClick={() => setShowMlcDialog(true)} />}
         {mlc && (
           <ActionBtn label="📋 Police Intimation" bg="#6D28D9" onClick={() => {
@@ -656,6 +793,8 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
         {/* ED Charges */}
         <div className="mt-2 rounded-lg border border-slate-700 p-2.5" style={{ background: "#0F172A" }}>
           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">ED Charges</p>
+
+          {/* Casualty fee (unchanged) */}
           {edBilling.status === "billed" ? (
             <>
               <p className="text-sm font-bold text-emerald-400 tabular-nums">₹{edBilling.total.toLocaleString("en-IN")}</p>
@@ -668,8 +807,33 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
               )}
             </>
           ) : (
-            <p className="text-[11px] text-slate-400 leading-snug">Not yet billed — bills automatically on discharge or admit.</p>
+            <p className="text-[11px] text-slate-400 leading-snug">Casualty fee bills automatically on discharge or admit.</p>
           )}
+
+          {/* Itemized ED charges */}
+          {edBilling.itemizedTotal > 0 && (
+            <div className="mt-2 pt-2 border-t border-slate-700/70">
+              <p className="text-sm font-bold text-emerald-400 tabular-nums">₹{edBilling.itemizedTotal.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</p>
+              <p className="text-[10px] text-slate-500 mt-0.5">Itemized ED charges</p>
+              {edBilling.itemizedBillId && (
+                <button onClick={() => navigate(`/billing?bill_id=${edBilling.itemizedBillId}`)}
+                  className="flex items-center gap-1 text-[11px] text-blue-400 font-medium hover:underline mt-1">
+                  View Bill <ExternalLink className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          )}
+
+          <button onClick={() => setShowChargesPanel(true)}
+            className="w-full mt-2 h-8 rounded-md text-[11px] font-bold text-white flex items-center justify-center gap-1 transition-all active:scale-[0.97]"
+            style={{ background: "#334155" }}>
+            + Add ED Charge
+          </button>
+          <button onClick={() => setShowDeposit(true)}
+            className="w-full mt-1.5 h-8 rounded-md text-[11px] font-bold text-white flex items-center justify-center gap-1 transition-all active:scale-[0.97]"
+            style={{ background: "#0D9488" }}>
+            💰 Collect Deposit
+          </button>
         </div>
 
         <div className="mt-auto pt-2 border-t border-slate-700">
@@ -723,6 +887,112 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
         />
       )}
 
+      {/* Itemized ED Charges */}
+      {showChargesPanel && hospitalId && (
+        <EDChargesPanel
+          hospitalId={hospitalId}
+          userId={userId}
+          edVisitId={visit.id}
+          patientId={visit.patient_id}
+          patientName={visit.patient_name}
+          onClose={() => setShowChargesPanel(false)}
+          onCharged={loadEdCharges}
+        />
+      )}
+
+      {/* ED Discharge Summary */}
+      {showDischargeSummary && hospitalId && (
+        <EDDischargeSummaryModal
+          hospitalId={hospitalId}
+          userId={userId}
+          edVisitId={visit.id}
+          patientName={visit.patient_name}
+          onClose={() => setShowDischargeSummary(false)}
+        />
+      )}
+
+      {/* Collect Deposit (patient advance) */}
+      {showDeposit && hospitalId && (
+        <AdvanceReceiptModal
+          hospitalId={hospitalId}
+          prefilledPatient={{ id: visit.patient_id, full_name: visit.patient_name, uhid: "" }}
+          onClose={() => setShowDeposit(false)}
+          onCreated={() => setShowDeposit(false)}
+        />
+      )}
+
+      {/* ED Medications (eMAR) */}
+      {showMedications && hospitalId && (
+        <EDMedicationPanel
+          hospitalId={hospitalId}
+          userId={userId}
+          edVisitId={visit.id}
+          patientId={visit.patient_id}
+          patientName={visit.patient_name}
+          allergies={ample.a}
+          onClose={() => setShowMedications(false)}
+          onAdministered={loadEdCharges}
+        />
+      )}
+
+      {/* ED nursing handover note */}
+      {showHandoverNote && hospitalId && (
+        <EDHandoverNotePanel
+          hospitalId={hospitalId}
+          userId={userId}
+          edVisitId={visit.id}
+          patientId={visit.patient_id}
+          patientName={visit.patient_name}
+          onClose={() => setShowHandoverNote(false)}
+        />
+      )}
+
+      {/* Emergency / high-risk consent (reuses the shared consent capture) */}
+      {showConsent && hospitalId && (
+        <ConsentSignatureModal
+          open={showConsent}
+          onClose={() => setShowConsent(false)}
+          edVisitId={visit.id}
+          admissionId={null}
+          patientId={visit.patient_id}
+          patientName={visit.patient_name}
+          hospitalId={hospitalId}
+        />
+      )}
+
+      {/* Confirm LAMA / DAMA / LWBS / Absconded */}
+      <AlertDialog open={!!pendingDisp} onOpenChange={(o) => { if (!o) setPendingDisp(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm disposition</AlertDialogTitle>
+            <AlertDialogDescription>
+              Mark <strong>{visit.patient_name}</strong> as <strong>{pendingDisp ? DISP_LABELS[pendingDisp] ?? pendingDisp : ""}</strong>? This closes the ED visit.
+              {(pendingDisp === "lama" || pendingDisp === "dama") && " The casualty fee (if configured) will be billed."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { const d = pendingDisp!; setPendingDisp(null); handleDisposition(d); }}>
+              Confirm
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Referred-out — referral / transfer letter (reuses the OPD referral letter) */}
+      {showReferralModal && hospitalId && (
+        <ReferralLetterModal
+          open={showReferralModal}
+          onClose={() => setShowReferralModal(false)}
+          hospitalId={hospitalId}
+          patientName={visit.patient_name}
+          patientUhid={referralUhid}
+          chiefComplaint={complaint}
+          diagnosis={diagnosis}
+          onReferred={() => { setShowReferralModal(false); handleDisposition("referred_out"); }}
+        />
+      )}
+
       {/* Discharge Confirmation */}
       <AlertDialog open={showDischargeConfirm} onOpenChange={setShowDischargeConfirm}>
         <AlertDialogContent>
@@ -730,6 +1000,21 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
             <AlertDialogTitle>Confirm Discharge</AlertDialogTitle>
             <AlertDialogDescription>
               Are you sure you want to discharge <strong>{visit.patient_name}</strong> from the Emergency Department? This will mark the visit as inactive.
+              {edBillInfo && edBillInfo.balance > 0 && (
+                <span className="block mt-2 rounded-md bg-amber-50 border border-amber-200 px-2.5 py-1.5 text-amber-800">
+                  Outstanding ED bill: <strong>₹{edBillInfo.balance.toLocaleString("en-IN")}</strong>
+                  <button
+                    onClick={() => navigate(`/billing?bill_id=${edBillInfo.id}`)}
+                    className="ml-2 text-amber-900 underline font-medium">
+                    Collect payment in Billing →
+                  </button>
+                </span>
+              )}
+              <button
+                onClick={() => { setShowDischargeConfirm(false); setShowDischargeSummary(true); }}
+                className="block mt-2 text-sky-600 hover:underline font-medium">
+                📄 Prepare discharge summary first
+              </button>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -813,6 +1098,12 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
                 placeholder="Brief reason for specialist consultation..."
                 className="mt-1 resize-none" rows={3} />
             </div>
+            {consultRate.fee > 0 && (
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={billConsult} onChange={e => setBillConsult(e.target.checked)} className="rounded" />
+                <span className="text-sm font-medium">Bill consultation fee (₹{consultRate.fee.toLocaleString("en-IN")})</span>
+              </label>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowSpecialistDialog(false)}>Cancel</Button>
@@ -882,6 +1173,31 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
       )}
     </div>
   );
+};
+
+// NEWS2 from the ED vitals object. Returns null until the required vitals are present.
+// Consciousness is derived from GCS (15 = Alert); supplemental O2 defaults to off.
+function computeEdNews2(vitals: { rr: string; spo2: string; bp_s: string; pulse: string; temp: string; gcs: string }): number | null {
+  const rr = parseFloat(vitals.rr), spo2 = parseFloat(vitals.spo2), sbp = parseFloat(vitals.bp_s);
+  const hr = parseFloat(vitals.pulse), temp = parseFloat(vitals.temp), gcs = parseFloat(vitals.gcs);
+  if ([rr, spo2, sbp, hr, temp].some(n => isNaN(n))) return null;
+  return calculateNEWS2({
+    respiratory_rate: rr,
+    spo2,
+    on_supplemental_o2: false,
+    systolic_bp: sbp,
+    heart_rate: hr,
+    consciousness: (!isNaN(gcs) && gcs < 15) ? "V" : "A",
+    temperature: temp,
+  });
+}
+
+const DISP_LABELS: Record<string, string> = {
+  lama: "LAMA (Left Against Medical Advice)",
+  dama: "DAMA (Discharge Against Medical Advice)",
+  lwbs: "LWBS (Left Without Being Seen)",
+  absconded: "Absconded",
+  referred_out: "Referred Out",
 };
 
 const VInput = ({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder: string }) => (

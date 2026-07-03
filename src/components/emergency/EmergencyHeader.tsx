@@ -5,9 +5,12 @@ import NABHBadge from "@/components/nabh/NABHBadge";
 
 interface Props {
   onCodeBlue: () => void;
+  onAnalytics?: () => void;
+  mciActive?: boolean;
+  onToggleMci?: () => void;
 }
 
-const EmergencyHeader: React.FC<Props> = ({ onCodeBlue }) => {
+const EmergencyHeader: React.FC<Props> = ({ onCodeBlue, onAnalytics, mciActive, onToggleMci }) => {
   const [clock, setClock] = useState(new Date());
   const [showConfirm, setShowConfirm] = useState(false);
   const [showOverlay, setShowOverlay] = useState(false);
@@ -37,6 +40,24 @@ const EmergencyHeader: React.FC<Props> = ({ onCodeBlue }) => {
         <div className="flex-1" />
 
         <NABHBadge standardCodes={["AAC.1", "COP.3", "COP.13"]} />
+
+        {onToggleMci && (
+          <button
+            onClick={onToggleMci}
+            className={`h-11 px-4 mr-2 rounded-lg text-white text-[13px] font-bold active:scale-[0.97] transition-all ${mciActive ? "bg-orange-600 hover:bg-orange-700" : "bg-slate-700 hover:bg-slate-600"}`}
+          >
+            {mciActive ? "⚫ Stand Down MCI" : "🚨 Declare MCI"}
+          </button>
+        )}
+
+        {onAnalytics && (
+          <button
+            onClick={onAnalytics}
+            className="h-11 px-4 mr-2 rounded-lg bg-slate-700 text-white text-[13px] font-bold hover:bg-slate-600 active:scale-[0.97] transition-all"
+          >
+            📊 Analytics
+          </button>
+        )}
 
         <button
           onClick={() => setShowConfirm(true)}

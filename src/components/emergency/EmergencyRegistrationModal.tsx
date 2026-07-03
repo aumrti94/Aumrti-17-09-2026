@@ -9,14 +9,33 @@ import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Search, Bot } from "lucide-react";
 import { classifyTriage, type TriageClassification } from "@/lib/clinicalPredictions";
+import { routeEdPatientToMortuary } from "@/lib/edMortuary";
 
 interface Props {
   open: boolean;
   onClose: () => void;
   hospitalId: string | null;
+  userId?: string | null;
+  mciActive?: boolean;
   onRegistered: () => void;
   onMlcRequired?: (edVisitId: string, patientId: string, patientName: string) => void;
 }
+
+// START field triage (mass casualty) → mapped to the board's P categories.
+const START_TAGS = [
+  { key: "immediate", label: "🔴 Immediate", triage: "P1", color: "#EF4444" },
+  { key: "delayed",   label: "🟡 Delayed",   triage: "P3", color: "#EAB308" },
+  { key: "minor",     label: "🟢 Minor",     triage: "P4", color: "#22C55E" },
+  { key: "expectant", label: "⚫ Expectant",  triage: "P1", color: "#334155" },
+];
+
+const ARRIVAL_MODES = [
+  { key: "walkin", label: "🚶 Walk-in" },
+  { key: "ambulance", label: "🚑 Ambulance" },
+  { key: "referred", label: "🏥 Referred" },
+  { key: "police", label: "🚓 Police" },
+  { key: "brought_dead", label: "⚫ Brought Dead" },
+];
 
 const triageLevels = [
   { key: "P1", label: "🔴 P1 - IMMEDIATE", color: "#EF4444" },
@@ -29,13 +48,15 @@ const triageColors: Record<string, string> = {
   P1: "#EF4444", P2: "#F97316", P3: "#EAB308", P4: "#22C55E",
 };
 
-const EmergencyRegistrationModal: React.FC<Props> = ({ open, onClose, hospitalId, onRegistered, onMlcRequired }) => {
+const EmergencyRegistrationModal: React.FC<Props> = ({ open, onClose, hospitalId, userId, mciActive, onRegistered, onMlcRequired }) => {
   const [name, setName] = useState("Unknown");
   const [age, setAge] = useState("");
   const [gender, setGender] = useState("male");
   const [triage, setTriage] = useState("");
   const [complaint, setComplaint] = useState("");
   const [mlc, setMlc] = useState(false);
+  const [arrivalMode, setArrivalMode] = useState("walkin");
+  const [broughtBy, setBroughtBy] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [phoneSearch, setPhoneSearch] = useState("");
   const [linkedPatient, setLinkedPatient] = useState<{ id: string; full_name: string; uhid: string } | null>(null);
@@ -66,6 +87,7 @@ const EmergencyRegistrationModal: React.FC<Props> = ({ open, onClose, hospitalId
     setName("Unknown"); setAge(""); setGender("male"); setTriage(""); setComplaint(""); setMlc(false);
     setPhoneSearch(""); setLinkedPatient(null); setPhoneResults([]);
     setAiTriageResult(null); setAiTriageLoading(false);
+    setArrivalMode("walkin"); setBroughtBy("");
     setVitals({ pulse: "", bp_s: "", bp_d: "", spo2: "", gcs: "" });
   };
 
@@ -92,7 +114,9 @@ const EmergencyRegistrationModal: React.FC<Props> = ({ open, onClose, hospitalId
   };
 
   const handleSubmit = async () => {
-    if (!triage || !hospitalId) {
+    const isBid = arrivalMode === "brought_dead";
+    if (!hospitalId) return;
+    if (!isBid && !triage) {
       toast({ title: "Select triage category", variant: "destructive" });
       return;
     }
@@ -121,15 +145,18 @@ const EmergencyRegistrationModal: React.FC<Props> = ({ open, onClose, hospitalId
       patientId = patient.id;
     }
 
-    // Create ED visit — capture ID so we can link MLC case
+    // Create ED visit — capture ID so we can link MLC case.
+    // Brought-dead (BID) visits open already closed (expired) and route to the mortuary below.
     const { data: edVisit, error: vErr } = await supabase.from("ed_visits").insert({
       hospital_id: hospitalId,
       patient_id: patientId,
-      triage_category: triage,
-      chief_complaint: complaint || null,
+      triage_category: isBid ? "P1" : triage,
+      chief_complaint: complaint || (isBid ? "Brought dead" : null),
       mlc,
-      arrival_mode: "walkin",
-    }).select("id").maybeSingle();
+      arrival_mode: arrivalMode,
+      arrival_details: broughtBy.trim() ? { brought_by: broughtBy.trim() } : null,
+      ...(isBid ? { disposition: "expired", disposition_time: new Date().toISOString(), is_active: false } : {}),
+    } as any).select("id").maybeSingle();
 
     // Log AI triage accuracy if used
     if (aiTriageResult) {
@@ -144,13 +171,32 @@ const EmergencyRegistrationModal: React.FC<Props> = ({ open, onClose, hospitalId
       } as any);
     }
 
-    setSubmitting(false);
     if (vErr) {
+      setSubmitting(false);
       toast({ title: "Error", description: vErr.message, variant: "destructive" });
       return;
     }
 
-    toast({ title: `Patient triaged as ${triage}` });
+    // Brought-dead → mortuary pipeline (reuses the same routing as an ED "expired" disposition).
+    if (isBid) {
+      try {
+        const { bodyNumber } = await routeEdPatientToMortuary({
+          hospitalId,
+          patientId,
+          pronouncedBy: userId ?? null,
+          cause: complaint || "Brought dead",
+          isMlc: mlc,
+          notes: `Brought dead to Emergency Department. MLC: ${mlc ? "Yes" : "No"}`,
+        });
+        toast({ title: `Brought-dead recorded — Body No: ${bodyNumber}` });
+      } catch {
+        toast({ title: "Registered, but mortuary admission failed", variant: "destructive" });
+      }
+    } else {
+      toast({ title: `Patient triaged as ${triage}` });
+    }
+
+    setSubmitting(false);
     const registeredName = name || "Unknown";
     reset();
     onClose();
@@ -171,6 +217,33 @@ const EmergencyRegistrationModal: React.FC<Props> = ({ open, onClose, hospitalId
         </DialogHeader>
 
         <div className="space-y-3 mt-2">
+          {/* Arrival mode */}
+          <div>
+            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Arrival Mode</label>
+            <div className="flex flex-wrap gap-1.5 mt-1">
+              {ARRIVAL_MODES.map(m => (
+                <button key={m.key} type="button" onClick={() => setArrivalMode(m.key)}
+                  className={cn(
+                    "px-2.5 h-8 rounded-lg text-[11px] font-bold border transition-all",
+                    arrivalMode === m.key
+                      ? (m.key === "brought_dead" ? "bg-slate-200 text-slate-900 border-slate-200" : "bg-blue-600 text-white border-blue-600")
+                      : "border-slate-600 text-slate-400 hover:border-slate-500"
+                  )}>{m.label}</button>
+              ))}
+            </div>
+            {(arrivalMode === "ambulance" || arrivalMode === "referred" || arrivalMode === "police") && (
+              <Input value={broughtBy} onChange={e => setBroughtBy(e.target.value)}
+                placeholder={arrivalMode === "referred" ? "Referring hospital / doctor" : arrivalMode === "police" ? "Police station / officer" : "Ambulance / brought by"}
+                className="h-8 text-[12px] mt-1.5 text-white border-slate-600"
+                style={{ background: "#0F172A" }} />
+            )}
+            {arrivalMode === "brought_dead" && (
+              <p className="text-[11px] text-amber-400 mt-1.5">
+                ⚠ Patient will be recorded as expired and routed to the mortuary. Triage is not required.
+              </p>
+            )}
+          </div>
+
           {/* Name */}
           <div>
             <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Patient Name</label>
@@ -259,6 +332,24 @@ const EmergencyRegistrationModal: React.FC<Props> = ({ open, onClose, hospitalId
             </div>
           </div>
 
+          {/* START field triage — shown during a Mass Casualty Incident */}
+          {mciActive && arrivalMode !== "brought_dead" && (
+            <div className="rounded-lg border border-orange-600/50 p-2" style={{ background: "rgba(234,88,12,0.12)" }}>
+              <label className="text-[10px] font-bold text-orange-300 uppercase tracking-wider">🚨 START Field Triage (MCI)</label>
+              <div className="grid grid-cols-4 gap-1.5 mt-1.5">
+                {START_TAGS.map(t => (
+                  <button key={t.key} type="button" onClick={() => setTriage(t.triage)}
+                    className={cn("h-12 rounded-lg text-[11px] font-bold border-2 transition-all",
+                      triage === t.triage ? "text-white" : "border-slate-600 text-slate-300 hover:border-slate-500")}
+                    style={triage === t.triage ? { background: t.color, borderColor: t.color } : {}}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-orange-300/70 mt-1">Maps to P1/P3/P4 categories on the triage board.</p>
+            </div>
+          )}
+
           {/* Triage — with AI button */}
           <div>
             <div className="flex items-center justify-between">
@@ -320,10 +411,10 @@ const EmergencyRegistrationModal: React.FC<Props> = ({ open, onClose, hospitalId
             <span className="text-xs text-slate-400">Medico-Legal Case?</span>
           </label>
 
-          <Button onClick={handleSubmit} disabled={submitting || !triage}
+          <Button onClick={handleSubmit} disabled={submitting || (arrivalMode !== "brought_dead" && !triage)}
             className="w-full h-11 text-sm font-bold"
-            style={{ background: "#22C55E" }}>
-            {submitting ? "Registering..." : "Register & Triage →"}
+            style={{ background: arrivalMode === "brought_dead" ? "#64748B" : "#22C55E" }}>
+            {submitting ? "Registering..." : arrivalMode === "brought_dead" ? "Record Brought Dead →" : "Register & Triage →"}
           </Button>
         </div>
       </DialogContent>

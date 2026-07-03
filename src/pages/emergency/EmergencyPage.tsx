@@ -8,7 +8,8 @@ import EmergencyRegistrationModal from "@/components/emergency/EmergencyRegistra
 import MLCDetailsModal from "@/components/emergency/MLCDetailsModal";
 import EpidemicModeBanner from "@/components/emergency/EpidemicModeBanner";
 import EDBoardingPredictor from "@/components/emergency/EDBoardingPredictor";
-import { getActiveEpidemicProtocol } from "@/lib/disaster-mode";
+import EDAnalyticsModal from "@/components/emergency/EDAnalyticsModal";
+import { getActiveEpidemicProtocol, declareMassCasualty, deactivateProtocol } from "@/lib/disaster-mode";
 
 export interface EDVisit {
   id: string;
@@ -38,6 +39,7 @@ const EmergencyPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [epidemicProtocol, setEpidemicProtocol] = useState<any>(null);
   const [mlcModal, setMlcModal] = useState<{ edVisitId: string; patientId: string; patientName: string } | null>(null);
+  const [showAnalytics, setShowAnalytics] = useState(false);
 
   const fetchData = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -122,13 +124,31 @@ const EmergencyPage: React.FC = () => {
     fetchData();
   };
 
+  const mciActive = epidemicProtocol?.triage_mode === "mass_casualty";
+
+  const handleToggleMci = async () => {
+    if (!hospitalId) return;
+    try {
+      if (mciActive) {
+        await deactivateProtocol(hospitalId, userId || "");
+        toast({ title: "MCI stood down", description: "Mass casualty mode deactivated." });
+      } else {
+        await declareMassCasualty(hospitalId);
+        toast({ title: "🚨 MCI declared", description: "START surge triage is now in effect." });
+      }
+      fetchData();
+    } catch (e: any) {
+      toast({ title: "Could not update MCI mode", description: e?.message, variant: "destructive" });
+    }
+  };
+
   return (
-    <div className="flex flex-col h-full overflow-hidden" style={{ background: "#0F172A" }}>
+    <div className="flex flex-col h-full overflow-y-auto" style={{ background: "#0F172A" }}>
       <EpidemicModeBanner protocol={epidemicProtocol} />
-      <EmergencyHeader onCodeBlue={handleCodeBlue} />
+      <EmergencyHeader onCodeBlue={handleCodeBlue} onAnalytics={() => setShowAnalytics(true)} mciActive={mciActive} onToggleMci={handleToggleMci} />
 
       {/* ROW 1: Triage Board */}
-      <div className="flex-shrink-0" style={{ height: "42%" }}>
+      <div className="flex-shrink-0" style={{ height: "42%", minHeight: 340 }}>
         <TriageBoard
           visits={visits}
           selectedId={selectedId}
@@ -145,7 +165,7 @@ const EmergencyPage: React.FC = () => {
       )}
 
       {/* ROW 2: Patient Workspace */}
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 flex-shrink-0 min-h-[500px]">
         <EmergencyWorkspace
           visit={selectedVisit}
           hospitalId={hospitalId}
@@ -158,11 +178,17 @@ const EmergencyPage: React.FC = () => {
         open={showRegModal}
         onClose={() => setShowRegModal(false)}
         hospitalId={hospitalId}
+        userId={userId}
+        mciActive={mciActive}
         onRegistered={fetchData}
         onMlcRequired={(edVisitId, patientId, patientName) =>
           setMlcModal({ edVisitId, patientId, patientName })
         }
       />
+
+      {showAnalytics && hospitalId && (
+        <EDAnalyticsModal hospitalId={hospitalId} onClose={() => setShowAnalytics(false)} />
+      )}
 
       {mlcModal && hospitalId && (
         <MLCDetailsModal

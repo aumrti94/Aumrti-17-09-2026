@@ -4,6 +4,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { EDVisit } from "@/pages/emergency/EmergencyPage";
 import { useHospitalContext } from "@/contexts/HospitalContext";
 import { hasActionAccess } from "@/lib/tabPermissions";
+import { isReassessmentOverdue } from "@/lib/edSla";
 
 interface Props {
   visits: EDVisit[];
@@ -106,6 +107,9 @@ const TriageBoard: React.FC<Props> = ({ visits, selectedId, onSelect, onRegister
                           <p className="text-[11px] text-slate-400 truncate mt-0.5">{v.chief_complaint}</p>
                         )}
                         <div className="flex items-center gap-1 mt-1">
+                          {isReassessmentOverdue(v.triage_category, v.minutes_ago, v.disposition) && (
+                            <span className="text-[9px] bg-amber-500 text-white px-1.5 py-px rounded-full font-bold animate-pulse">⏰ Reassess</span>
+                          )}
                           {v.mlc && (
                             <span className="text-[9px] bg-red-600 text-white px-1.5 py-px rounded-full font-bold">
                               {v.mlc_details?.mlc_number || "MLC"}
