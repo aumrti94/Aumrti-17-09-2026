@@ -3,7 +3,8 @@ import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Progress } from "@/components/ui/progress";
-import { Check } from "lucide-react";
+import { Check, AlertTriangle, Trash2 } from "lucide-react";
+import SignaturePad from "@/components/ui/SignaturePad";
 import type { OTSchedule } from "@/pages/ot/OTPage";
 
 interface Props {
@@ -22,6 +23,8 @@ interface ChecklistData {
   signin_difficult_airway: boolean;
   signin_blood_loss_risk: boolean;
   signin_completed_at: string | null;
+  signin_completed_by: string | null;
+  signin_signature: string | null;
   timeout_team_introduced: boolean;
   timeout_patient_confirmed: boolean;
   timeout_procedure_confirmed: boolean;
@@ -31,6 +34,8 @@ interface ChecklistData {
   timeout_anticoagulation: boolean;
   timeout_equipment_issues: boolean;
   timeout_completed_at: string | null;
+  timeout_completed_by: string | null;
+  timeout_signature: string | null;
   signout_procedure_recorded: boolean;
   signout_instrument_count: boolean;
   signout_swab_count: boolean;
@@ -38,10 +43,31 @@ interface ChecklistData {
   signout_equipment_issues: boolean;
   signout_recovery_handover: boolean;
   signout_completed_at: string | null;
+  signout_completed_by: string | null;
+  signout_signature: string | null;
   compliance_percentage: number;
+  skip_reason: string | null;
+  skip_reason_by: string | null;
+  skip_reason_at: string | null;
 }
 
-const SIGNIN_ITEMS: { key: string; label: string }[] = [
+interface OTInstrumentCount {
+  id: string;
+  count_type: "instrument" | "sponge" | "needle";
+  opening_count: number | null;
+  closing_count: number | null;
+  discrepancy_notes: string | null;
+}
+
+const COUNT_TYPES: OTInstrumentCount["count_type"][] = ["instrument", "sponge", "needle"];
+
+// Maps a WHO Sign Out checkbox to the count row that must be complete before it can be checked
+const COUNT_GATE: Record<string, OTInstrumentCount["count_type"]> = {
+  signout_instrument_count: "instrument",
+  signout_swab_count: "sponge",
+};
+
+export const SIGNIN_ITEMS: { key: string; label: string }[] = [
   { key: "signin_patient_identity", label: "Patient identity confirmed" },
   { key: "signin_site_marked", label: "Surgical site marked" },
   { key: "signin_consent_signed", label: "Patient consent signed" },
@@ -52,7 +78,7 @@ const SIGNIN_ITEMS: { key: string; label: string }[] = [
   { key: "signin_blood_loss_risk", label: "Blood loss risk assessed" },
 ];
 
-const TIMEOUT_ITEMS: { key: string; label: string }[] = [
+export const TIMEOUT_ITEMS: { key: string; label: string }[] = [
   { key: "timeout_team_introduced", label: "Team introductions done" },
   { key: "timeout_patient_confirmed", label: "Patient identity re-confirmed" },
   { key: "timeout_procedure_confirmed", label: "Procedure confirmed" },
@@ -63,7 +89,7 @@ const TIMEOUT_ITEMS: { key: string; label: string }[] = [
   { key: "timeout_equipment_issues", label: "Equipment concerns addressed" },
 ];
 
-const SIGNOUT_ITEMS: { key: string; label: string }[] = [
+export const SIGNOUT_ITEMS: { key: string; label: string }[] = [
   { key: "signout_procedure_recorded", label: "Procedure recorded in notes" },
   { key: "signout_instrument_count", label: "Instrument count correct" },
   { key: "signout_swab_count", label: "Swab count correct" },
@@ -74,9 +100,71 @@ const SIGNOUT_ITEMS: { key: string; label: string }[] = [
 
 const ALL_KEYS = [...SIGNIN_ITEMS, ...TIMEOUT_ITEMS, ...SIGNOUT_ITEMS].map((i) => i.key);
 
+const PHASE_LABEL: Record<"signin" | "timeout" | "signout", string> = {
+  signin: "Sign In",
+  timeout: "Time Out",
+  signout: "Sign Out",
+};
+
 const WHOChecklistTab: React.FC<Props> = ({ schedule, onRefresh }) => {
   const { toast } = useToast();
   const [cl, setCl] = useState<ChecklistData | null>(null);
+  const [signingPhase, setSigningPhase] = useState<"signin" | "timeout" | "signout" | null>(null);
+  const [sigDataUrl, setSigDataUrl] = useState<string | null>(null);
+  const [sigClearCount, setSigClearCount] = useState(0);
+  const [savingSig, setSavingSig] = useState(false);
+  const [showSkipForm, setShowSkipForm] = useState(false);
+  const [skipReasonText, setSkipReasonText] = useState("");
+  const [savingSkip, setSavingSkip] = useState(false);
+  const [counts, setCounts] = useState<OTInstrumentCount[]>([]);
+
+  const fetchCounts = useCallback(async () => {
+    const { data } = await supabase
+      .from("ot_instrument_counts")
+      .select("id, count_type, opening_count, closing_count, discrepancy_notes")
+      .eq("ot_schedule_id", schedule.id);
+
+    const existingTypes = new Set((data || []).map((c: any) => c.count_type));
+    const missing = COUNT_TYPES.filter((t) => !existingTypes.has(t));
+    let rows = (data as OTInstrumentCount[]) || [];
+
+    if (missing.length > 0) {
+      const hid = (await supabase.rpc("get_user_hospital_id")) as any;
+      const { data: created } = await supabase
+        .from("ot_instrument_counts")
+        .insert(missing.map((count_type) => ({ hospital_id: hid.data, ot_schedule_id: schedule.id, count_type })))
+        .select("id, count_type, opening_count, closing_count, discrepancy_notes");
+      rows = [...rows, ...((created as OTInstrumentCount[]) || [])];
+    }
+    setCounts(rows);
+  }, [schedule.id]);
+
+  useEffect(() => { fetchCounts(); }, [fetchCounts]);
+
+  const isCountComplete = (type: OTInstrumentCount["count_type"]) => {
+    const row = counts.find((c) => c.count_type === type);
+    if (!row || row.opening_count === null || row.closing_count === null) return false;
+    if (row.opening_count !== row.closing_count && !row.discrepancy_notes?.trim()) return false;
+    return true;
+  };
+
+  const updateCount = async (type: OTInstrumentCount["count_type"], field: "opening_count" | "closing_count", value: number | null) => {
+    const row = counts.find((c) => c.count_type === type);
+    if (!row) return;
+    setCounts((prev) => prev.map((c) => (c.count_type === type ? { ...c, [field]: value } : c)));
+    const { data: { user } } = await supabase.auth.getUser();
+    await supabase.from("ot_instrument_counts").update({ [field]: value, counted_by: user?.id || null }).eq("id", row.id);
+  };
+
+  const updateDiscrepancyNotesLocal = (type: OTInstrumentCount["count_type"], value: string) => {
+    setCounts((prev) => prev.map((c) => (c.count_type === type ? { ...c, discrepancy_notes: value } : c)));
+  };
+
+  const persistDiscrepancyNotes = async (type: OTInstrumentCount["count_type"]) => {
+    const row = counts.find((c) => c.count_type === type);
+    if (!row) return;
+    await supabase.from("ot_instrument_counts").update({ discrepancy_notes: row.discrepancy_notes }).eq("id", row.id);
+  };
 
   const fetchChecklist = useCallback(async () => {
     let { data } = await supabase
@@ -103,6 +191,14 @@ const WHOChecklistTab: React.FC<Props> = ({ schedule, onRefresh }) => {
 
   const toggleItem = async (key: string) => {
     const current = (cl as any)[key];
+    const gateType = COUNT_GATE[key];
+    if (!current && gateType && !isCountComplete(gateType)) {
+      toast({
+        title: "Enter opening & closing count first",
+        description: `Complete the ${gateType} count below (and explain any mismatch) before marking this correct.`,
+      });
+      return;
+    }
     const update = { [key]: !current } as any;
 
     // Recalculate compliance
@@ -114,13 +210,44 @@ const WHOChecklistTab: React.FC<Props> = ({ schedule, onRefresh }) => {
     setCl({ ...newCl, compliance_percentage: update.compliance_percentage });
   };
 
-  const completePhase = async (phase: "signin" | "timeout" | "signout") => {
+  const startSigning = (phase: "signin" | "timeout" | "signout") => {
+    setSigningPhase(phase);
+    setSigDataUrl(null);
+    setSigClearCount((c) => c + 1);
+  };
+
+  const confirmSignAndComplete = async () => {
+    if (!signingPhase || !sigDataUrl || !cl) return;
+    setSavingSig(true);
+    const { data: { user } } = await supabase.auth.getUser();
     const update: any = {
-      [`${phase}_completed_at`]: new Date().toISOString(),
+      [`${signingPhase}_completed_at`]: new Date().toISOString(),
+      [`${signingPhase}_completed_by`]: user?.id || null,
+      [`${signingPhase}_signature`]: sigDataUrl,
     };
     await supabase.from("ot_checklists").update(update).eq("id", cl.id);
     setCl({ ...cl, ...update });
-    toast({ title: `${phase === "signin" ? "Sign In" : phase === "timeout" ? "Time Out" : "Sign Out"} completed ✓` });
+    toast({ title: `${PHASE_LABEL[signingPhase]} completed ✓ (signed)` });
+    setSigningPhase(null);
+    setSigDataUrl(null);
+    setSavingSig(false);
+  };
+
+  const saveSkipReason = async () => {
+    if (!skipReasonText.trim() || !cl) return;
+    setSavingSkip(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    const update: any = {
+      skip_reason: skipReasonText.trim(),
+      skip_reason_by: user?.id || null,
+      skip_reason_at: new Date().toISOString(),
+    };
+    await supabase.from("ot_checklists").update(update).eq("id", cl.id);
+    setCl({ ...cl, ...update });
+    toast({ title: "Exception documented", description: "Reason recorded for this incomplete checklist item." });
+    setShowSkipForm(false);
+    setSkipReasonText("");
+    setSavingSkip(false);
   };
 
   const signinDone = SIGNIN_ITEMS.every((i) => (cl as any)[i.key]);
@@ -178,6 +305,55 @@ const WHOChecklistTab: React.FC<Props> = ({ schedule, onRefresh }) => {
             </button>
           );
         })}
+
+        {phase === "signout" && (
+          <div className="border-t border-border px-3 py-2 space-y-2.5 bg-muted/20">
+            <p className="text-[10px] font-bold uppercase text-muted-foreground tracking-wide">Instrument / Sponge / Needle Count</p>
+            {COUNT_TYPES.map((type) => {
+              const row = counts.find((c) => c.count_type === type);
+              const hasBoth = row?.opening_count !== null && row?.opening_count !== undefined && row?.closing_count !== null && row?.closing_count !== undefined;
+              const mismatch = hasBoth && row!.opening_count !== row!.closing_count;
+              return (
+                <div key={type} className="space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-medium capitalize w-16 flex-shrink-0">{type}</span>
+                    <input
+                      type="number" min={0} placeholder="Open"
+                      disabled={phaseCompleted}
+                      value={row?.opening_count ?? ""}
+                      onChange={(e) => updateCount(type, "opening_count", e.target.value === "" ? null : Number(e.target.value))}
+                      className="w-14 text-[11px] border border-border rounded px-1.5 py-1 bg-background disabled:opacity-60"
+                    />
+                    <span className="text-[10px] text-muted-foreground">→</span>
+                    <input
+                      type="number" min={0} placeholder="Close"
+                      disabled={phaseCompleted}
+                      value={row?.closing_count ?? ""}
+                      onChange={(e) => updateCount(type, "closing_count", e.target.value === "" ? null : Number(e.target.value))}
+                      className="w-14 text-[11px] border border-border rounded px-1.5 py-1 bg-background disabled:opacity-60"
+                    />
+                    {mismatch ? (
+                      <span className="text-[10px] text-red-500 font-semibold">⚠ Mismatch</span>
+                    ) : hasBoth ? (
+                      <span className="text-[10px] text-emerald-600 font-semibold">✓ Match</span>
+                    ) : null}
+                  </div>
+                  {mismatch && (
+                    <textarea
+                      value={row?.discrepancy_notes || ""}
+                      disabled={phaseCompleted}
+                      onChange={(e) => updateDiscrepancyNotesLocal(type, e.target.value)}
+                      onBlur={() => persistDiscrepancyNotes(type)}
+                      placeholder="Required — explain the discrepancy…"
+                      rows={1}
+                      className="w-full text-[11px] border border-red-300 rounded px-2 py-1 bg-background resize-none focus:outline-none focus:ring-1 focus:ring-red-400 disabled:opacity-60"
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="px-3 py-2 border-t border-border flex-shrink-0">
@@ -189,21 +365,53 @@ const WHOChecklistTab: React.FC<Props> = ({ schedule, onRefresh }) => {
         <Progress value={(items.filter((i) => (cl as any)[i.key]).length / items.length) * 100} className="h-1 mb-2" />
         {phaseCompleted ? (
           <div className="bg-emerald-50 text-emerald-700 text-[11px] font-semibold text-center py-1.5 rounded-md">
-            ✓ Completed
+            ✓ Completed{(cl as any)[`${phase}_signature`] ? " · signed" : ""}
+          </div>
+        ) : signingPhase === phase ? (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] font-medium text-muted-foreground">Sign to confirm {title}</p>
+              <button onClick={() => setSigClearCount((c) => c + 1)} className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-destructive transition-colors">
+                <Trash2 size={10} /> Clear
+              </button>
+            </div>
+            <SignaturePad label="" onCapture={setSigDataUrl} cleared={sigClearCount} height={70} />
+            <div className="flex gap-2">
+              <button onClick={() => setSigningPhase(null)} className="flex-1 text-[11px] font-medium py-1.5 rounded-md border border-border text-muted-foreground hover:bg-muted/50">
+                Cancel
+              </button>
+              <button
+                disabled={!sigDataUrl || savingSig}
+                onClick={confirmSignAndComplete}
+                className="flex-1 text-[11px] font-semibold py-1.5 rounded-md bg-primary text-primary-foreground disabled:opacity-50"
+              >
+                {savingSig ? "Saving..." : "Confirm & Complete"}
+              </button>
+            </div>
           </div>
         ) : (
-          <button
-            disabled={!allDone || locked}
-            onClick={() => completePhase(phase)}
-            className={cn(
-              "w-full text-xs font-semibold py-2 rounded-md transition-all active:scale-95",
-              allDone && !locked
-                ? "bg-primary text-primary-foreground hover:opacity-90"
-                : "bg-muted text-muted-foreground cursor-not-allowed"
+          <>
+            <button
+              disabled={!allDone || locked}
+              onClick={() => startSigning(phase)}
+              className={cn(
+                "w-full text-xs font-semibold py-2 rounded-md transition-all active:scale-95",
+                allDone && !locked
+                  ? "bg-primary text-primary-foreground hover:opacity-90"
+                  : "bg-muted text-muted-foreground cursor-not-allowed"
+              )}
+            >
+              {allDone ? `✓ Sign & Complete ${title}` : "Complete all items above"}
+            </button>
+            {!allDone && !locked && (
+              <button
+                onClick={() => setShowSkipForm(true)}
+                className="w-full mt-1.5 flex items-center justify-center gap-1 text-[10px] text-amber-600 hover:text-amber-700 font-medium"
+              >
+                <AlertTriangle size={10} /> Cannot complete — document reason
+              </button>
             )}
-          >
-            {allDone ? `✓ Complete ${title}` : "Complete all items above"}
-          </button>
+          </>
         )}
       </div>
     </div>
@@ -216,6 +424,47 @@ const WHOChecklistTab: React.FC<Props> = ({ schedule, onRefresh }) => {
         {renderPhase("⏱️ TIME OUT", "Before skin incision", TIMEOUT_ITEMS, "bg-orange-50", "border-b-orange-500", "text-orange-700", timeoutDone, timeoutCompleted, !signinCompleted, "timeout")}
         {renderPhase("📋 SIGN OUT", "Before patient leaves OT", SIGNOUT_ITEMS, "bg-emerald-50", "border-b-emerald-500", "text-emerald-700", signoutDone, signoutCompleted, !timeoutCompleted, "signout")}
       </div>
+      {(showSkipForm || cl.skip_reason) && (
+        <div className="border-t border-border px-5 py-3 bg-amber-50/60 flex-shrink-0">
+          {cl.skip_reason ? (
+            <div className="flex items-start gap-2">
+              <AlertTriangle size={14} className="text-amber-600 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-[12px] font-semibold text-amber-800">Documented exception</p>
+                <p className="text-[12px] text-amber-700">{cl.skip_reason}</p>
+                {cl.skip_reason_at && (
+                  <p className="text-[10px] text-amber-600 mt-0.5">{new Date(cl.skip_reason_at).toLocaleString()}</p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-[12px] font-semibold text-amber-800 flex items-center gap-1.5">
+                <AlertTriangle size={13} /> Document why this checklist could not be fully completed
+              </p>
+              <textarea
+                value={skipReasonText}
+                onChange={(e) => setSkipReasonText(e.target.value)}
+                placeholder="Required — e.g. life-threatening emergency, reason Time Out items were not completed…"
+                rows={2}
+                className="w-full text-[12px] border border-amber-300 rounded-md px-3 py-2 bg-background resize-none focus:outline-none focus:ring-1 focus:ring-amber-500"
+              />
+              <div className="flex gap-2 justify-end">
+                <button onClick={() => { setShowSkipForm(false); setSkipReasonText(""); }} className="text-[11px] text-muted-foreground hover:text-foreground px-3 py-1.5">
+                  Cancel
+                </button>
+                <button
+                  disabled={!skipReasonText.trim() || savingSkip}
+                  onClick={saveSkipReason}
+                  className="text-[11px] font-semibold px-3 py-1.5 rounded-md bg-amber-600 text-white disabled:opacity-50"
+                >
+                  {savingSkip ? "Saving..." : "Save exception reason"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       <div className="bg-card border-t border-border px-5 py-2 flex items-center gap-4 flex-shrink-0">
         <span className="text-xs text-muted-foreground">WHO Compliance:</span>
         <Progress

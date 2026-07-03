@@ -17,7 +17,15 @@ interface UtilStats {
   byCategory: Record<string, number>;
   bySurgeon: Array<{ name: string; count: number }>;
   busyDays: Array<{ date: string; count: number }>;
+  onTimeStartPct: number | null;
+  onTimeStartSample: number;
+  avgTurnoverMin: number | null;
+  turnoverSample: number;
+  byRoom: Array<{ name: string; utilizationPct: number }>;
 }
+
+// A first case starting within this many minutes of its scheduled time counts "on time".
+const ON_TIME_GRACE_MIN = 15;
 
 const CATEGORY_COLORS: Record<string, string> = {
   general: "bg-slate-400",
@@ -44,7 +52,7 @@ const OTUtilizationTab: React.FC<Props> = ({ hospitalId }) => {
 
     const { data } = await (supabase as any)
       .from("ot_schedules")
-      .select("status, surgery_category, estimated_duration_minutes, actual_start_time, actual_end_time, scheduled_date, surgeon:users!ot_schedules_surgeon_id_fkey(full_name)")
+      .select("status, surgery_category, estimated_duration_minutes, actual_start_time, actual_end_time, scheduled_date, scheduled_start_time, ot_room_id, ot_room:ot_rooms(name), surgeon:users!ot_schedules_surgeon_id_fkey(full_name)")
       .gte("scheduled_date", fromDate)
       .lte("scheduled_date", toDate)
       .order("scheduled_date");
@@ -72,6 +80,59 @@ const OTUtilizationTab: React.FC<Props> = ({ hospitalId }) => {
       .filter((s: any) => ["completed", "in_progress"].includes(s.status))
       .reduce((sum: number, s: any) => sum + (s.estimated_duration_minutes || 0), 0);
     const utilizationPct = Math.min(100, Math.round((usedMin / totalAvailMin) * 100));
+
+    // Utilization by room (same 14h/day-per-room capacity assumption as the aggregate figure)
+    const roomUsedMin: Record<string, { name: string; usedMin: number }> = {};
+    data
+      .filter((s: any) => ["completed", "in_progress"].includes(s.status))
+      .forEach((s: any) => {
+        if (!s.ot_room_id) return;
+        const entry = roomUsedMin[s.ot_room_id] || { name: s.ot_room?.name || "Room", usedMin: 0 };
+        entry.usedMin += s.estimated_duration_minutes || 0;
+        roomUsedMin[s.ot_room_id] = entry;
+      });
+    const byRoom = Object.values(roomUsedMin)
+      .map((r) => ({ name: r.name, utilizationPct: Math.min(100, Math.round((r.usedMin / totalAvailMin) * 100)) }))
+      .sort((a, b) => b.utilizationPct - a.utilizationPct);
+
+    // First-case-of-day on-time start % (per room+date, actual vs scheduled start, ≤15 min grace)
+    // and average turnover time (gap between one case's actual end and the next case's actual
+    // start, same room+date) — both grouped by ot_room_id + scheduled_date.
+    const byRoomDate: Record<string, any[]> = {};
+    data.forEach((s: any) => {
+      if (!s.ot_room_id) return;
+      const key = `${s.ot_room_id}|${s.scheduled_date}`;
+      (byRoomDate[key] ||= []).push(s);
+    });
+
+    let onTimeCount = 0;
+    let onTimeSample = 0;
+    const turnoverGaps: number[] = [];
+
+    Object.values(byRoomDate).forEach((cases) => {
+      const sorted = [...cases].sort((a, b) => (a.scheduled_start_time || "").localeCompare(b.scheduled_start_time || ""));
+      const first = sorted[0];
+      if (first?.actual_start_time && first.scheduled_start_time) {
+        onTimeSample++;
+        const scheduledDt = new Date(`${first.scheduled_date}T${first.scheduled_start_time}`);
+        const actualDt = new Date(first.actual_start_time);
+        const delayMin = (actualDt.getTime() - scheduledDt.getTime()) / 60000;
+        if (delayMin <= ON_TIME_GRACE_MIN) onTimeCount++;
+      }
+
+      const withActual = cases
+        .filter((c) => c.actual_start_time && c.actual_end_time)
+        .sort((a, b) => new Date(a.actual_start_time).getTime() - new Date(b.actual_start_time).getTime());
+      for (let i = 0; i < withActual.length - 1; i++) {
+        const gapMin = (new Date(withActual[i + 1].actual_start_time).getTime() - new Date(withActual[i].actual_end_time).getTime()) / 60000;
+        if (gapMin >= 0 && gapMin < 300) turnoverGaps.push(gapMin);
+      }
+    });
+
+    const onTimeStartPct = onTimeSample > 0 ? Math.round((onTimeCount / onTimeSample) * 100) : null;
+    const avgTurnoverMin = turnoverGaps.length > 0
+      ? Math.round(turnoverGaps.reduce((a, b) => a + b, 0) / turnoverGaps.length)
+      : null;
 
     // By category
     const byCategory: Record<string, number> = {};
@@ -101,7 +162,12 @@ const OTUtilizationTab: React.FC<Props> = ({ hospitalId }) => {
       .slice(0, 5)
       .map(([date, count]) => ({ date, count }));
 
-    setStats({ total, completed, cancelled, in_progress: inProgress, avgDurationMin, utilizationPct, byCategory, bySurgeon, busyDays });
+    setStats({
+      total, completed, cancelled, in_progress: inProgress, avgDurationMin, utilizationPct,
+      byCategory, bySurgeon, busyDays, byRoom,
+      onTimeStartPct, onTimeStartSample: onTimeSample,
+      avgTurnoverMin, turnoverSample: turnoverGaps.length,
+    });
     setLoading(false);
   }, [hospitalId, fromDate, toDate]);
 
@@ -151,6 +217,16 @@ const OTUtilizationTab: React.FC<Props> = ({ hospitalId }) => {
               { label: "Avg Duration", value: `${stats.avgDurationMin}m`, color: "text-blue-600" },
               { label: "Utilization", value: `${stats.utilizationPct}%`, color: stats.utilizationPct > 80 ? "text-emerald-600" : stats.utilizationPct > 50 ? "text-amber-600" : "text-destructive" },
               { label: "Cancel Rate", value: stats.total > 0 ? `${Math.round((stats.cancelled / stats.total) * 100)}%` : "0%", color: "text-rose-600" },
+              {
+                label: "First-Case On-Time",
+                value: stats.onTimeStartPct !== null ? `${stats.onTimeStartPct}%` : "—",
+                color: stats.onTimeStartPct === null ? "text-muted-foreground" : stats.onTimeStartPct > 80 ? "text-emerald-600" : stats.onTimeStartPct > 50 ? "text-amber-600" : "text-destructive",
+              },
+              {
+                label: "Avg Turnover Time",
+                value: stats.avgTurnoverMin !== null ? `${stats.avgTurnoverMin}m` : "—",
+                color: "text-blue-600",
+              },
             ].map((k) => (
               <div key={k.label} className="bg-muted/40 rounded-lg p-2.5 text-center">
                 <p className={cn("text-xl font-bold", k.color)}>{k.value}</p>
@@ -177,6 +253,30 @@ const OTUtilizationTab: React.FC<Props> = ({ hospitalId }) => {
             </div>
             <p className="text-[9px] text-muted-foreground mt-0.5">Based on 14-hour OT window per day</p>
           </div>
+
+          {/* Utilization by room */}
+          {stats.byRoom.length > 0 && (
+            <div>
+              <p className="text-[10px] font-bold uppercase text-muted-foreground mb-2 tracking-wide">Utilization by Room</p>
+              <div className="space-y-1.5">
+                {stats.byRoom.map((r) => (
+                  <div key={r.name} className="flex items-center gap-2">
+                    <span className="text-[11px] text-muted-foreground w-24 shrink-0 truncate">{r.name}</span>
+                    <div className="flex-1 h-4 bg-muted rounded overflow-hidden">
+                      <div
+                        className={cn(
+                          "h-full rounded transition-all",
+                          r.utilizationPct > 80 ? "bg-emerald-500" : r.utilizationPct > 50 ? "bg-amber-400" : "bg-destructive/60"
+                        )}
+                        style={{ width: `${r.utilizationPct}%` }}
+                      />
+                    </div>
+                    <span className="text-[11px] font-semibold text-foreground w-9 text-right">{r.utilizationPct}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* By surgery category */}
           {Object.keys(stats.byCategory).length > 0 && (

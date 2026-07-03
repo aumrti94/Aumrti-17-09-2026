@@ -4,11 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import PatientSearchPicker from "@/components/shared/PatientSearchPicker";
-import ConsentSignatureModal from "@/components/consent/ConsentSignatureModal";
 import type { OTRoom } from "@/pages/ot/OTPage";
-
-// Consent types that satisfy the surgical/anaesthesia gate.
-const SURGICAL_CONSENT_RE = /surg|anaesth|anesth|operat|procedure/i;
 
 interface Props {
   rooms: OTRoom[];
@@ -27,6 +23,11 @@ interface Props {
 const CATEGORIES = ["general", "orthopaedic", "gynaecology", "urology", "cardiothoracic", "neurosurgery", "ent", "ophthalmology", "paediatric", "plastic", "emergency", "endoscopy", "other"];
 const ANAESTHESIA = ["general", "spinal", "epidural", "regional", "local", "sedation", "none"];
 const DURATIONS = [30, 45, 60, 90, 120, 150, 180, 240];
+const CASE_TYPES = [
+  { value: "elective", label: "Elective" },
+  { value: "emergency", label: "Emergency" },
+  { value: "add_on", label: "Add-on" },
+] as const;
 
 const BookOTModal: React.FC<Props> = ({ rooms, selectedRoomId, selectedDate, prefillTime, onClose, onBooked, initialPatientId, initialPatientName, initialDiagnosis, initialUrgency, initialSurgeonId }) => {
   const { hospitalId } = useHospitalId();
@@ -37,6 +38,7 @@ const BookOTModal: React.FC<Props> = ({ rooms, selectedRoomId, selectedDate, pre
     patientId: initialPatientId || "",
     surgeryName: initialDiagnosis || "",
     category: isEmergencyReferral ? "emergency" : "general",
+    caseType: isEmergencyReferral ? "emergency" : "elective",
     date: selectedDate,
     roomId: selectedRoomId || "",
     startTime: prefillTime || (isEmergencyReferral ? new Date().toTimeString().slice(0, 5) : "09:00"),
@@ -48,53 +50,6 @@ const BookOTModal: React.FC<Props> = ({ rooms, selectedRoomId, selectedDate, pre
   });
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState<string | null>(null);
-  // Surgical consent gate
-  const [needsConsent, setNeedsConsent] = useState(false);
-  const [consentModal, setConsentModal] = useState<{ admissionId: string; patientName: string } | null>(null);
-
-  // Returns true if the OT may proceed, false if a valid surgical/anaesthesia consent
-  // is required (hospital has configured one) but not on file for this patient.
-  const hasValidSurgicalConsent = async (): Promise<boolean> => {
-    if (!hospitalId || !form.patientId) return true;
-    const [{ data: templates }, { data: consents }] = await Promise.all([
-      supabase.from("consent_form_templates").select("consent_type").eq("hospital_id", hospitalId).eq("is_active", true),
-      (supabase as any).from("patient_consents")
-        .select("consent_type, valid_until, patient_signature")
-        .eq("hospital_id", hospitalId).eq("patient_id", form.patientId).eq("consent_given", true),
-    ]);
-    // Only enforce if the hospital has actually configured a surgical/anaesthesia consent template.
-    const hospitalEnforces = (templates || []).some((t: any) => SURGICAL_CONSENT_RE.test(t.consent_type || ""));
-    if (!hospitalEnforces) return true;
-    const now = Date.now();
-    return (consents || []).some((c: any) =>
-      c.patient_signature &&
-      SURGICAL_CONSENT_RE.test(c.consent_type || "") &&
-      (!c.valid_until || new Date(c.valid_until).getTime() > now)
-    );
-  };
-
-  // Fetch the patient's active admission (surgical patients are usually admitted) so the
-  // consent modal can attach the consent to it, then open the signature modal.
-  const openConsentCapture = async () => {
-    const { data: adm } = await (supabase as any)
-      .from("admissions")
-      .select("id")
-      .eq("hospital_id", hospitalId)
-      .eq("patient_id", form.patientId)
-      .eq("status", "active")
-      .order("admitted_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (!adm?.id) {
-      toast({
-        title: "Capture consent from the patient record",
-        description: "No active admission found — open the patient's record / IPD workspace to obtain informed surgical consent.",
-        variant: "destructive",
-      });
-      return;
-    }
-    setConsentModal({ admissionId: adm.id, patientName: initialPatientName || "Patient" });
-  };
 
   useEffect(() => {
     if (!hospitalId) return;
@@ -155,17 +110,6 @@ const BookOTModal: React.FC<Props> = ({ rooms, selectedRoomId, selectedDate, pre
       toast({ title: "Cannot book — time slot has a conflict", variant: "destructive" });
       return;
     }
-    // Surgical consent gate — block booking without valid surgical/anaesthesia consent.
-    if (!(await hasValidSurgicalConsent())) {
-      setNeedsConsent(true);
-      toast({
-        title: "Surgical consent required",
-        description: "Capture informed surgical/anaesthesia consent before booking this OT.",
-        variant: "destructive",
-      });
-      return;
-    }
-    setNeedsConsent(false);
     setSaving(true);
     const hid = (await supabase.rpc("get_user_hospital_id")) as any;
     const hospitalId = hid?.data;
@@ -180,6 +124,7 @@ const BookOTModal: React.FC<Props> = ({ rooms, selectedRoomId, selectedDate, pre
         anaesthetist_id: form.anaesthetistId || null,
         surgery_name: form.surgeryName,
         surgery_category: form.category,
+        case_type: form.caseType,
         scheduled_date: form.date,
         scheduled_start_time: form.startTime,
         scheduled_end_time: endTime,
@@ -191,7 +136,12 @@ const BookOTModal: React.FC<Props> = ({ rooms, selectedRoomId, selectedDate, pre
       .maybeSingle();
 
     if (error) {
-      toast({ title: "Failed to book OT", description: error.message, variant: "destructive" });
+      if (error.code === "23P01") {
+        toast({ title: "This slot was just booked by someone else", description: "Pick another time or room.", variant: "destructive" });
+        await checkConflict();
+      } else {
+        toast({ title: "Failed to book OT", description: error.message, variant: "destructive" });
+      }
       setSaving(false);
       return;
     }
@@ -305,6 +255,22 @@ const BookOTModal: React.FC<Props> = ({ rooms, selectedRoomId, selectedDate, pre
             </div>
           </div>
 
+          <div>
+            <label className="text-xs font-medium mb-1 block">Case Type *</label>
+            <div className="flex gap-2">
+              {CASE_TYPES.map((c) => (
+                <button
+                  key={c.value}
+                  type="button"
+                  onClick={() => setForm({ ...form, caseType: c.value })}
+                  className={`flex-1 text-xs font-medium py-2 rounded-md border transition-colors ${form.caseType === c.value ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:bg-muted"}`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium mb-1 block">Date *</label>
@@ -366,18 +332,6 @@ const BookOTModal: React.FC<Props> = ({ rooms, selectedRoomId, selectedDate, pre
           </div>
         </div>
 
-        {needsConsent && (
-          <div className="mx-6 mb-2 flex items-center justify-between gap-3 bg-red-50 border border-red-200 rounded-md px-3 py-2">
-            <p className="text-xs text-red-700 font-medium">
-              ⚠ Informed surgical consent is not on file for this patient.
-            </p>
-            <button onClick={openConsentCapture}
-              className="shrink-0 text-xs font-semibold text-red-700 underline hover:text-red-900">
-              Get Consent Signed
-            </button>
-          </div>
-        )}
-
         <div className="px-6 pb-5 pt-2">
           <button onClick={handleSubmit} disabled={saving}
             className="w-full bg-[hsl(var(--sidebar-accent))] text-white font-semibold py-3 rounded-lg hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50">
@@ -385,18 +339,6 @@ const BookOTModal: React.FC<Props> = ({ rooms, selectedRoomId, selectedDate, pre
           </button>
         </div>
       </div>
-
-      {consentModal && hospitalId && (
-        <ConsentSignatureModal
-          open
-          onClose={() => setConsentModal(null)}
-          admissionId={consentModal.admissionId}
-          patientId={form.patientId}
-          patientName={consentModal.patientName}
-          hospitalId={hospitalId}
-          onAllSigned={() => { setConsentModal(null); setNeedsConsent(false); toast({ title: "Consent captured — you can book the OT now" }); }}
-        />
-      )}
     </div>
   );
 };

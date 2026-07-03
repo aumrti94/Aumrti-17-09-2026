@@ -26,6 +26,7 @@ export interface OTSchedule {
   scrub_nurse_id: string | null;
   surgery_name: string;
   surgery_category: string;
+  case_type: string;
   scheduled_date: string;
   scheduled_start_time: string;
   scheduled_end_time: string;

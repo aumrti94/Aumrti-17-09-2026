@@ -5,12 +5,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import SignaturePad from "@/components/ui/SignaturePad";
+import { Trash2, ShieldCheck } from "lucide-react";
 
 interface Props {
   patientId: string;
   hospitalId: string;
   encounterId?: string | null;
   admissionId?: string | null;
+  otScheduleId?: string | null;
 }
 
 const ASA_CLASSES = [
@@ -36,8 +39,14 @@ const TECHNIQUE_LABELS: Record<string, string> = {
 
 const ALDRETE_COMPONENTS = ['Activity', 'Respiration', 'Circulation', 'Consciousness', 'SpO2'];
 
-const AnaesthesiaSheet: React.FC<Props> = ({ patientId, hospitalId, encounterId, admissionId }) => {
+const AnaesthesiaSheet: React.FC<Props> = ({ patientId, hospitalId, encounterId, admissionId, otScheduleId }) => {
   const [recordId, setRecordId] = useState<string | null>(null);
+  const [consultantSignature, setConsultantSignature] = useState<string | null>(null);
+  const [signedAt, setSignedAt] = useState<string | null>(null);
+  const [signingConsultant, setSigningConsultant] = useState(false);
+  const [consultantSig, setConsultantSig] = useState<string | null>(null);
+  const [sigClearCount, setSigClearCount] = useState(0);
+  const [savingSig, setSavingSig] = useState(false);
   const [asaClass, setAsaClass] = useState<number | null>(null);
   const [mallampati, setMallampati] = useState<number | null>(null);
   const [mouthOpening, setMouthOpening] = useState('');
@@ -52,6 +61,7 @@ const AnaesthesiaSheet: React.FC<Props> = ({ patientId, hospitalId, encounterId,
   const [aldreteScores, setAldreteScores] = useState<any[]>([]);
   const [complications, setComplications] = useState('');
   const [saving, setSaving] = useState(false);
+  const [pacuHistory, setPacuHistory] = useState<{ assessed_at: string; total_score: number | null; notes: string | null }[]>([]);
 
   // New entries
   const [newDrug, setNewDrug] = useState({ drug_name: '', dose: '', route: 'IV', time: '' });
@@ -60,9 +70,11 @@ const AnaesthesiaSheet: React.FC<Props> = ({ patientId, hospitalId, encounterId,
 
   useEffect(() => {
     (async () => {
-      const { data } = await (supabase as any).from('anaesthesia_records')
-        .select('*').eq('patient_id', patientId).eq('hospital_id', hospitalId)
-        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      const query = (supabase as any).from('anaesthesia_records')
+        .select('*').eq('hospital_id', hospitalId);
+      const { data } = otScheduleId
+        ? await query.eq('ot_id', otScheduleId).maybeSingle()
+        : await query.eq('patient_id', patientId).order('created_at', { ascending: false }).limit(1).maybeSingle();
       if (data) {
         setRecordId(data.id);
         setAsaClass(data.asa_class);
@@ -78,9 +90,30 @@ const AnaesthesiaSheet: React.FC<Props> = ({ patientId, hospitalId, encounterId,
         setBloodLoss(data.blood_loss_ml?.toString() || '');
         setAldreteScores(data.aldrete_scores || []);
         setComplications(data.complications || '');
+        setConsultantSignature(data.consultant_signature || null);
+        setSignedAt(data.signed_at || null);
+      } else {
+        setRecordId(null);
+        setConsultantSignature(null);
+        setSignedAt(null);
       }
     })();
-  }, [patientId, hospitalId]);
+  }, [patientId, hospitalId, otScheduleId]);
+
+  // Case-linked: PACU/Aldrete recovery scoring is owned by PACUTab (pacu_assessments,
+  // already keyed by ot_schedule_id) — read it here instead of keeping a second,
+  // unsynced Aldrete record in this sheet's own jsonb.
+  useEffect(() => {
+    if (!otScheduleId) return;
+    (async () => {
+      const { data } = await (supabase as any)
+        .from('pacu_assessments')
+        .select('assessed_at, total_score, notes')
+        .eq('ot_schedule_id', otScheduleId)
+        .order('assessed_at', { ascending: false });
+      setPacuHistory(data || []);
+    })();
+  }, [otScheduleId]);
 
   const addDrug = () => {
     if (!newDrug.drug_name) return;
@@ -110,6 +143,7 @@ const AnaesthesiaSheet: React.FC<Props> = ({ patientId, hospitalId, encounterId,
     try {
       const payload = {
         hospital_id: hospitalId, patient_id: patientId,
+        ot_id: otScheduleId || null,
         asa_class: asaClass, mallampati_score: mallampati,
         airway_mouth_opening: mouthOpening || null,
         neck_mobility: neckMobility || null,
@@ -136,6 +170,28 @@ const AnaesthesiaSheet: React.FC<Props> = ({ patientId, hospitalId, encounterId,
       toast.error('Failed to save anaesthesia record');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const confirmConsultantSign = async () => {
+    if (!recordId || !consultantSig) return;
+    setSavingSig(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const now = new Date().toISOString();
+      await (supabase as any).from('anaesthesia_records').update({
+        consultant_signature: consultantSig,
+        signed_by: user?.id || null,
+        signed_at: now,
+      }).eq('id', recordId);
+      setConsultantSignature(consultantSig);
+      setSignedAt(now);
+      setSigningConsultant(false);
+      toast.success('Anaesthesia record signed by consultant');
+    } catch (err) {
+      toast.error('Failed to save signature');
+    } finally {
+      setSavingSig(false);
     }
   };
 
@@ -307,37 +363,95 @@ const AnaesthesiaSheet: React.FC<Props> = ({ patientId, hospitalId, encounterId,
       {/* PACU / Aldrete */}
       <div className="space-y-2">
         <h3 className="text-sm font-semibold">PACU Recovery — Aldrete Score</h3>
-        <div className="space-y-2">
-          {ALDRETE_COMPONENTS.map((comp, ci) => (
-            <div key={comp} className="flex items-center gap-2">
-              <span className="text-xs w-28 font-medium">{comp}</span>
-              {[0, 1, 2].map(s => (
-                <button key={s} onClick={() => setNewAldrete(prev => { const n = [...prev]; n[ci] = s; return n; })}
-                  className={cn("text-xs w-8 h-8 rounded border",
-                    newAldrete[ci] === s ? "bg-primary text-primary-foreground" : "border-border hover:bg-muted"
-                  )}>{s}</button>
-              ))}
-            </div>
-          ))}
-          <Button size="sm" variant="outline" onClick={addAldreteScore} className="text-xs">Add Aldrete Score</Button>
-        </div>
-        {aldreteScores.length > 0 && (
+        {otScheduleId ? (
+          // Case-linked: read-only, sourced from the OT workspace's PACU tab (system of record)
           <div className="space-y-1">
-            {aldreteScores.map((a: any, i: number) => (
-              <div key={i} className="text-xs bg-muted rounded px-3 py-1.5 flex justify-between">
-                <span>{a.time} — Total: {a.total}/10</span>
-                <span className={cn("font-medium", a.total >= 9 ? 'text-emerald-600' : 'text-amber-600')}>
-                  {a.total >= 9 ? '✓ Discharge criteria met' : 'Discharge criteria not met'}
-                </span>
-              </div>
-            ))}
+            <p className="text-[11px] text-muted-foreground">Recorded in the OT workspace's PACU tab.</p>
+            {pacuHistory.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No PACU assessments recorded yet.</p>
+            ) : (
+              pacuHistory.map((a, i) => (
+                <div key={i} className="text-xs bg-muted rounded px-3 py-1.5 flex justify-between">
+                  <span>{new Date(a.assessed_at).toLocaleString()} — Total: {a.total_score ?? '—'}/10</span>
+                  <span className={cn("font-medium", (a.total_score ?? 0) >= 9 ? 'text-emerald-600' : 'text-amber-600')}>
+                    {(a.total_score ?? 0) >= 9 ? '✓ Discharge criteria met' : 'Discharge criteria not met'}
+                  </span>
+                </div>
+              ))
+            )}
           </div>
+        ) : (
+          <>
+            <div className="space-y-2">
+              {ALDRETE_COMPONENTS.map((comp, ci) => (
+                <div key={comp} className="flex items-center gap-2">
+                  <span className="text-xs w-28 font-medium">{comp}</span>
+                  {[0, 1, 2].map(s => (
+                    <button key={s} onClick={() => setNewAldrete(prev => { const n = [...prev]; n[ci] = s; return n; })}
+                      className={cn("text-xs w-8 h-8 rounded border",
+                        newAldrete[ci] === s ? "bg-primary text-primary-foreground" : "border-border hover:bg-muted"
+                      )}>{s}</button>
+                  ))}
+                </div>
+              ))}
+              <Button size="sm" variant="outline" onClick={addAldreteScore} className="text-xs">Add Aldrete Score</Button>
+            </div>
+            {aldreteScores.length > 0 && (
+              <div className="space-y-1">
+                {aldreteScores.map((a: any, i: number) => (
+                  <div key={i} className="text-xs bg-muted rounded px-3 py-1.5 flex justify-between">
+                    <span>{a.time} — Total: {a.total}/10</span>
+                    <span className={cn("font-medium", a.total >= 9 ? 'text-emerald-600' : 'text-amber-600')}>
+                      {a.total >= 9 ? '✓ Discharge criteria met' : 'Discharge criteria not met'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
 
       <Button onClick={handleSave} disabled={saving} className="bg-teal-600 hover:bg-teal-700">
         {saving ? 'Saving...' : 'Save Anaesthesia Record'}
       </Button>
+
+      {/* Consultant sign-off — required before an OT case can be closed */}
+      {otScheduleId && (
+        <div className="space-y-2 border-t border-border pt-4">
+          <h3 className="text-sm font-semibold flex items-center gap-1.5">
+            <ShieldCheck size={14} className="text-teal-600" /> Consultant Sign-Off
+          </h3>
+          {consultantSignature ? (
+            <div className="bg-emerald-50 text-emerald-700 text-xs font-medium px-3 py-2 rounded-lg flex items-center gap-2">
+              <ShieldCheck size={14} />
+              Signed by consultant{signedAt ? ` — ${new Date(signedAt).toLocaleString()}` : ''}
+            </div>
+          ) : !recordId ? (
+            <p className="text-xs text-muted-foreground">Save the anaesthesia record above before signing.</p>
+          ) : signingConsultant ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-[12px] text-muted-foreground">Consultant signature</p>
+                <button onClick={() => setSigClearCount(c => c + 1)} className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-destructive transition-colors">
+                  <Trash2 size={11} /> Clear
+                </button>
+              </div>
+              <SignaturePad label="" onCapture={setConsultantSig} cleared={sigClearCount} height={90} />
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => { setSigningConsultant(false); setConsultantSig(null); }}>Cancel</Button>
+                <Button size="sm" disabled={!consultantSig || savingSig} onClick={confirmConsultantSign} className="bg-teal-600 hover:bg-teal-700">
+                  {savingSig ? 'Saving...' : 'Sign & Lock Anaesthesia Record'}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button size="sm" variant="outline" onClick={() => { setSigningConsultant(true); setConsultantSig(null); setSigClearCount(c => c + 1); }}>
+              Sign as Consultant
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 };

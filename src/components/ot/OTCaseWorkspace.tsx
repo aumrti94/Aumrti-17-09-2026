@@ -12,6 +12,7 @@ import OTTeamTab from "./tabs/OTTeamTab";
 import PACUTab from "./tabs/PACUTab";
 import OTBillingTab from "./tabs/OTBillingTab";
 import OTImplantsConsumablesTab from "./tabs/OTImplantsConsumablesTab";
+import AnaesthesiaSheet from "@/components/specialty/AnaesthesiaSheet";
 import EndCaseModal from "./EndCaseModal";
 
 interface Props {
@@ -20,7 +21,7 @@ interface Props {
   onRefresh: () => void;
 }
 
-const BASE_TABS = ["WHO Checklist", "Case Details", "OT Team", "Implants & Consumables"] as const;
+const BASE_TABS = ["WHO Checklist", "Case Details", "OT Team", "Implants & Consumables", "Anaesthesia"] as const;
 const PACU_TAB = "PACU" as const;
 const BILLING_TAB = "Billing" as const;
 type TabName = (typeof BASE_TABS)[number] | typeof PACU_TAB | typeof BILLING_TAB;
@@ -31,6 +32,7 @@ const OT_TAB_KEYS: Record<string, string> = {
   "Case Details": "case_details",
   "OT Team": "ot_team",
   "Implants & Consumables": "implants",
+  "Anaesthesia": "anaesthesia",
   "PACU": "pacu",
   "Billing": "billing",
 };
@@ -271,6 +273,9 @@ const OTCaseWorkspace: React.FC<Props> = ({ schedule, hospitalId, onRefresh }) =
         {activeTab === "OT Team" && <OTTeamTab schedule={schedule} />}
         {activeTab === "Implants & Consumables" && (
           <OTImplantsConsumablesTab schedule={schedule} hospitalId={hospitalId} onRefresh={onRefresh} />
+        )}
+        {activeTab === "Anaesthesia" && hospitalId && (
+          <AnaesthesiaSheet patientId={schedule.patient_id} hospitalId={hospitalId} otScheduleId={schedule.id} />
         )}
         {activeTab === PACU_TAB && (schedule.status === "in_progress" || schedule.status === "completed") && (
           <PACUTab schedule={schedule} />

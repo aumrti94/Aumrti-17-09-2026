@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import SignaturePad from "@/components/ui/SignaturePad";
 import {
   FileText, PenLine, CheckCircle2, Loader2, Trash2, ChevronLeft, ChevronRight,
 } from "lucide-react";
@@ -22,84 +23,12 @@ interface ConsentTemplate {
 interface Props {
   open: boolean;
   onClose: () => void;
-  admissionId: string;
+  admissionId?: string | null;
+  edVisitId?: string | null;      // Emergency visit — used when there is no admission
   patientId: string;
   patientName: string;
   hospitalId: string;
   onAllSigned?: () => void;
-}
-
-// ── Canvas signature pad ─────────────────────────────────────────────────────
-function SignaturePad({
-  label,
-  onCapture,
-  cleared,
-}: {
-  label: string;
-  onCapture: (dataUrl: string | null) => void;
-  cleared: number;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const drawing = useRef(false);
-  const hasStrokes = useRef(false);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d")!;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    hasStrokes.current = false;
-    onCapture(null);
-  }, [cleared]);
-
-  const getPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const rect = canvasRef.current!.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-  };
-
-  const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    drawing.current = true;
-    const ctx = canvasRef.current!.getContext("2d")!;
-    const { x, y } = getPos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-
-  const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!drawing.current) return;
-    const ctx = canvasRef.current!.getContext("2d")!;
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.strokeStyle = "#0f172a";
-    const { x, y } = getPos(e);
-    ctx.lineTo(x, y);
-    ctx.stroke();
-    hasStrokes.current = true;
-  };
-
-  const onPointerUp = () => {
-    drawing.current = false;
-    if (hasStrokes.current && canvasRef.current) {
-      onCapture(canvasRef.current.toDataURL("image/png"));
-    }
-  };
-
-  return (
-    <div>
-      <p className="text-[12px] font-medium text-muted-foreground mb-1.5">{label}</p>
-      <canvas
-        ref={canvasRef}
-        width={380}
-        height={100}
-        className="w-full border border-border rounded-lg bg-slate-50 touch-none cursor-crosshair"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerLeave={onPointerUp}
-      />
-    </div>
-  );
 }
 
 // ── SHA-256 of a string ──────────────────────────────────────────────────────
@@ -112,7 +41,7 @@ async function sha256(text: string): Promise<string> {
 
 // ── Main modal ────────────────────────────────────────────────────────────────
 export default function ConsentSignatureModal({
-  open, onClose, admissionId, patientId, patientName, hospitalId, onAllSigned,
+  open, onClose, admissionId, edVisitId, patientId, patientName, hospitalId, onAllSigned,
 }: Props) {
   const { toast } = useToast();
   const [templates, setTemplates]         = useState<ConsentTemplate[]>([]);
@@ -161,7 +90,8 @@ export default function ConsentSignatureModal({
     setSaving(true);
     try {
       const now       = new Date().toISOString();
-      const hashInput = `${admissionId}|${template.id}|${patientId}|${now}|${patientSig.substring(0, 50)}`;
+      const contextId = admissionId ?? edVisitId ?? patientId;
+      const hashInput = `${contextId}|${template.id}|${patientId}|${now}|${patientSig.substring(0, 50)}`;
       const hash      = await sha256(hashInput);
       const validUntil = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -170,7 +100,8 @@ export default function ConsentSignatureModal({
       await (supabase as any).from("patient_consents").insert({
         hospital_id:        hospitalId,
         patient_id:         patientId,
-        admission_id:       admissionId,
+        admission_id:       admissionId ?? null,
+        ed_visit_id:        edVisitId ?? null,
         template_id:        template.id,
         consent_type:       template.consent_type,
         consent_given:      true,
@@ -205,7 +136,7 @@ export default function ConsentSignatureModal({
     } finally {
       setSaving(false);
     }
-  }, [template, canSign, patientSig, witnessSig, witnessName, admissionId, patientId, hospitalId, isLast, onAllSigned]);
+  }, [template, canSign, patientSig, witnessSig, witnessName, admissionId, edVisitId, patientId, hospitalId, isLast, onAllSigned]);
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>

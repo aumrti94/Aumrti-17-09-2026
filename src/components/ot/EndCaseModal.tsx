@@ -2,22 +2,22 @@ import React, { useState, useEffect, useRef } from "react";
 import { X, Search, Plus, Trash2, Package } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { generateBillNumber } from "@/hooks/useBillNumber";
-import { autoPostJournalEntry } from "@/lib/accounting";
-import { calcGST, roundCurrency, formatINR } from "@/lib/currency";
-import { recalculateBillTotalsSafe } from "@/lib/billTotals";
-import { getRate, SERVICE_RATE_CODES } from "@/lib/serviceRates";
+import { roundCurrency, formatINR } from "@/lib/currency";
+import { chargeOTCase } from "@/lib/serviceBilling";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { useToast } from "@/hooks/use-toast";
 import type { OTSchedule } from "@/pages/ot/OTPage";
 
-interface CapturedImplant {
-  name: string;
-  manufacturer: string;
-  lot_number: string;
-  expiry_date: string;
+interface OTImplantRow {
+  id: string;
+  item_name: string;
+  manufacturer: string | null;
+  lot_number: string | null;
+  expiry_date: string | null;
   unit_cost: number;
   quantity: number;
-  inventory_item_id?: string;
+  cdsco_registration_number: string | null;
+  billed: boolean;
 }
 
 interface DraftImplant {
@@ -25,6 +25,7 @@ interface DraftImplant {
   manufacturer: string;
   lot_number: string;
   expiry_date: string;
+  cdsco_registration_number: string;
   unit_cost: string;
   quantity: string;
   inventory_item_id?: string;
@@ -32,7 +33,7 @@ interface DraftImplant {
 
 const BLANK_DRAFT: DraftImplant = {
   name: "", manufacturer: "", lot_number: "", expiry_date: "",
-  unit_cost: "", quantity: "1",
+  cdsco_registration_number: "", unit_cost: "", quantity: "1",
 };
 
 interface Props {
@@ -51,7 +52,17 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
   // Implant declaration
   const [implantDeclaration, setImplantDeclaration] = useState<"yes" | "no" | null>(null);
   const [noImplantConfirmed, setNoImplantConfirmed] = useState(false);
-  const [capturedImplants, setCapturedImplants] = useState<CapturedImplant[]>([]);
+  const [implants, setImplants] = useState<OTImplantRow[]>([]);
+
+  const fetchImplants = async () => {
+    const { data } = await (supabase as any)
+      .from("ot_implants")
+      .select("id, item_name, manufacturer, lot_number, expiry_date, unit_cost, quantity, cdsco_registration_number, billed")
+      .eq("schedule_id", schedule.id)
+      .order("created_at");
+    setImplants(data || []);
+  };
+  useEffect(() => { fetchImplants(); }, [schedule.id]);
 
   // Implant add form
   const [draft, setDraft] = useState<DraftImplant>({ ...BLANK_DRAFT });
@@ -109,33 +120,52 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
     setShowDropdown(false);
   };
 
-  const addImplant = () => {
+  const addImplant = async () => {
     const cost = parseFloat(draft.unit_cost);
     const qty = Math.max(1, parseInt(draft.quantity) || 1);
     if (!draft.name.trim() || isNaN(cost) || cost <= 0) {
       toast({ title: "Item name and unit cost are required", variant: "destructive" });
       return;
     }
-    setCapturedImplants(prev => [...prev, {
-      name: draft.name.trim(),
-      manufacturer: draft.manufacturer.trim(),
-      lot_number: draft.lot_number.trim(),
-      expiry_date: draft.expiry_date,
+    if (!draft.cdsco_registration_number.trim()) {
+      toast({ title: "CDSCO registration number is required", variant: "destructive" });
+      return;
+    }
+    if (!hospitalId) return;
+    const { error } = await (supabase as any).from("ot_implants").insert({
+      hospital_id: hospitalId,
+      schedule_id: schedule.id,
+      item_name: draft.name.trim(),
+      manufacturer: draft.manufacturer.trim() || null,
+      lot_number: draft.lot_number.trim() || null,
+      expiry_date: draft.expiry_date || null,
+      cdsco_registration_number: draft.cdsco_registration_number.trim(),
       unit_cost: roundCurrency(cost),
       quantity: qty,
-      inventory_item_id: draft.inventory_item_id,
-    }]);
+    });
+    if (error) {
+      toast({ title: "Failed to add implant", description: error.message, variant: "destructive" });
+      return;
+    }
     setDraft({ ...BLANK_DRAFT });
     setImplantQuery("");
     setSearchResults([]);
+    fetchImplants();
   };
 
-  const removeImplant = (idx: number) => setCapturedImplants(prev => prev.filter((_, i) => i !== idx));
+  const removeImplant = async (id: string) => {
+    await (supabase as any).from("ot_implants").delete().eq("id", id);
+    fetchImplants();
+  };
+
+  const hasImplants = implants.length > 0;
+  const allImplantsCdscoComplete = implants.every((i) => !!i.cdsco_registration_number?.trim());
 
   const canClose =
     !saving &&
-    implantDeclaration !== null &&
-    (implantDeclaration === "yes" ? capturedImplants.length > 0 : noImplantConfirmed);
+    (hasImplants
+      ? allImplantsCdscoComplete
+      : implantDeclaration === "no" && noImplantConfirmed);
 
   const triggerOTBilling = async (otSchedule: OTSchedule) => {
     const { data: userData } = await supabase.rpc("get_user_hospital_id") as any;
@@ -149,7 +179,7 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
 
     const { data: existingBill } = await supabase
       .from("bills")
-      .select("id, total_amount, balance_due")
+      .select("id")
       .eq("hospital_id", hospId)
       .eq("admission_id", otSchedule.admission_id)
       .eq("bill_type", "ipd")
@@ -181,146 +211,11 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
 
     if (!billId) return;
 
-    const getServiceMasterRate = async (itemType: string, fallback: number) => {
-      const { data } = await supabase
-        .from("service_master")
-        .select("fee, gst_percent, gst_applicable, hsn_code")
-        .eq("hospital_id", hospId)
-        .eq("item_type", itemType)
-        .eq("is_active", true)
-        .limit(1)
-        .maybeSingle();
-      if (!data) return { fee: fallback, gstPct: 0, gst: 0, hsn: "" };
-      const fee = Number(data.fee) || fallback;
-      const gstPct = data.gst_applicable ? (Number(data.gst_percent) || 0) : 0;
-      return { fee, gstPct, gst: calcGST(fee, gstPct), hsn: data.hsn_code || "" };
-    };
+    const result = await chargeOTCase({ hospitalId: hospId, billId, schedule: otSchedule });
 
-    const anaesFallback = await getRate(hospId, SERVICE_RATE_CODES.ANAESTHESIA_FEE, 1500);
-    const surgeryFallback = await getRate(hospId, SERVICE_RATE_CODES.SURGERY_FEE, 5000);
-
-    const otRate = await getServiceMasterRate("ot_charge", 2000);
-    const surgRate = await getServiceMasterRate("surgeon_fee", surgeryFallback);
-    const anaesRate = await getServiceMasterRate("anaesthesia_fee", anaesFallback);
-
-    const actualDuration =
-      otSchedule.actual_start_time && otSchedule.actual_end_time
-        ? Math.ceil(
-            (new Date(otSchedule.actual_end_time).getTime() -
-              new Date(otSchedule.actual_start_time).getTime()) /
-              3600000
-          )
-        : Math.ceil((otSchedule.estimated_duration_minutes || 60) / 60);
-
-    const hours = Math.max(1, actualDuration);
-    const otTimeCharge = roundCurrency(hours * otRate.fee);
-    const otTimeGst = calcGST(otTimeCharge, otRate.gstPct);
-
-    const { data: existingOTItems } = await (supabase as any)
-      .from("bill_line_items")
-      .select("source_dedupe_key")
-      .eq("bill_id", billId)
-      .eq("source_module", "ot");
-    const existingDedupeKeys = new Set<string>(
-      (existingOTItems || []).map((i: any) => i.source_dedupe_key).filter(Boolean)
-    );
-
-    const lineItems: any[] = [];
-    const addItem = (item: any) => {
-      if (item.source_dedupe_key && existingDedupeKeys.has(item.source_dedupe_key)) return;
-      lineItems.push(item);
-    };
-
-    addItem({
-      hospital_id: hospId, bill_id: billId,
-      item_type: "ot_charge",
-      description: `OT Charges: ${otSchedule.surgery_name} (${hours} hr)`,
-      quantity: hours, unit_rate: otRate.fee,
-      taxable_amount: otTimeCharge, gst_percent: otRate.gstPct,
-      gst_amount: otTimeGst, total_amount: otTimeCharge + otTimeGst,
-      hsn_code: otRate.hsn || "999315", source_module: "ot",
-      source_record_id: otSchedule.id,
-      source_dedupe_key: `ot:${otSchedule.id}:ot_charge`,
-    });
-
-    if (otSchedule.surgeon_id) {
-      addItem({
-        hospital_id: hospId, bill_id: billId,
-        item_type: "surgeon_fee",
-        description: `Surgeon Fee: ${otSchedule.surgery_name}`,
-        quantity: 1, unit_rate: surgRate.fee,
-        taxable_amount: surgRate.fee, gst_percent: surgRate.gstPct,
-        gst_amount: surgRate.gst, total_amount: surgRate.fee + surgRate.gst,
-        hsn_code: surgRate.hsn || "999316", source_module: "ot",
-        source_record_id: otSchedule.id,
-        source_dedupe_key: `ot:${otSchedule.id}:surgeon_fee`,
-      });
-    }
-
-    if (otSchedule.anaesthetist_id) {
-      addItem({
-        hospital_id: hospId, bill_id: billId,
-        item_type: "anaesthesia_fee",
-        description: `Anaesthesia: ${otSchedule.anaesthesia_type || "General"}`,
-        quantity: 1, unit_rate: anaesRate.fee,
-        taxable_amount: anaesRate.fee, gst_percent: anaesRate.gstPct,
-        gst_amount: anaesRate.gst, total_amount: anaesRate.fee + anaesRate.gst,
-        hsn_code: anaesRate.hsn || "999317", source_module: "ot",
-        source_record_id: otSchedule.id,
-        source_dedupe_key: `ot:${otSchedule.id}:anaesthesia_fee`,
-      });
-    }
-
-    const implants = (otSchedule.implants_consumables as any[]) || [];
-    implants.forEach((imp: any, idx: number) => {
-      const cost = Number(imp.cost || imp.price || 0);
-      if (cost <= 0) return;
-      const qty = Number(imp.quantity || 1);
-      const total = roundCurrency(cost * qty);
-      addItem({
-        hospital_id: hospId, bill_id: billId,
-        item_type: "implant",
-        description: `Implant: ${imp.name || imp.item_name || "Surgical Consumable"}`,
-        quantity: qty, unit_rate: cost,
-        taxable_amount: total, gst_percent: 12,
-        gst_amount: calcGST(total, 12),
-        total_amount: roundCurrency(total + calcGST(total, 12)),
-        hsn_code: "9021", source_module: "ot",
-        source_record_id: otSchedule.id,
-        source_dedupe_key: `ot:${otSchedule.id}:implant:${idx}`,
-      });
-    });
-
-    if (lineItems.length > 0) {
-      await supabase.from("bill_line_items").insert(lineItems);
-
-      const result = await recalculateBillTotalsSafe(billId);
-      if (!result.ok) {
-        console.error("OT bill recalculation failed:", result.error);
-        toast({ title: "OT bill totals need refresh", description: result.error || "Charges were added but totals could not be updated", variant: "destructive" });
-      }
-
-      const { data: updatedBill } = await supabase.from("bills").select("total_amount").eq("id", billId).maybeSingle();
-      const total = Number(updatedBill?.total_amount || 0);
-
-      const { data: { user: authUser } } = await supabase.auth.getUser();
-      await autoPostJournalEntry({
-        triggerEvent: "bill_finalized_ot",
-        sourceModule: "ot",
-        sourceId: billId,
-        amount: total,
-        description: `OT Revenue - ${otSchedule.surgery_name}`,
-        hospitalId: hospId,
-        postedBy: authUser?.id || "",
-      });
-
-      await (supabase as any)
-        .from("ot_schedules")
-        .update({ billed: true, bill_id: billId })
-        .eq("id", otSchedule.id);
-
-      toast({ title: `OT charges auto-billed: ₹${total.toLocaleString("en-IN")}` });
-    } else if (existingDedupeKeys.size > 0) {
+    if (result.itemsAdded > 0) {
+      toast({ title: `OT charges auto-billed: ₹${result.total.toLocaleString("en-IN")}` });
+    } else {
       toast({ title: "OT charges already billed", description: "No new items to add" });
     }
   };
@@ -329,21 +224,8 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
     setSaving(true);
     const endTime = new Date().toISOString();
 
-    // Merge captured implants with any pre-existing ones on the schedule
-    const priorImplants = (schedule.implants_consumables as any[]) || [];
-    const newImplants = capturedImplants.map(imp => ({
-      name: imp.name,
-      manufacturer: imp.manufacturer,
-      lot_number: imp.lot_number,
-      expiry_date: imp.expiry_date,
-      cost: imp.unit_cost,
-      quantity: imp.quantity,
-      inventory_item_id: imp.inventory_item_id,
-    }));
-    const allImplants = [...priorImplants, ...newImplants];
-
     // Check implants against approved pre-auth for insurance admissions
-    if (schedule.admission_id && capturedImplants.length > 0) {
+    if (schedule.admission_id && implants.length > 0) {
       const { data: adm } = await supabase
         .from("admissions")
         .select("insurance_type")
@@ -360,7 +242,7 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
           .limit(1)
           .maybeSingle();
 
-        const implantNames = capturedImplants.map(i => i.name).join(", ");
+        const implantNames = implants.map(i => i.item_name).join(", ");
 
         if (!preAuth) {
           toast({
@@ -412,13 +294,30 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
       return;
     }
 
+    // ── Anaesthesia consultant signature gate ──
+    const { data: anaesthesiaRecord } = await (supabase as any)
+      .from("anaesthesia_records")
+      .select("consultant_signature")
+      .eq("ot_id", schedule.id)
+      .maybeSingle();
+
+    if (!anaesthesiaRecord?.consultant_signature) {
+      toast({
+        title: "Anaesthesia Consultant Signature Required",
+        description:
+          "The anaesthesia record for this case must be signed by the consultant (Anaesthesia tab → Consultant Sign-Off) before it can be closed.",
+        variant: "destructive",
+      });
+      setSaving(false);
+      return;
+    }
+
     const { error } = await supabase
       .from("ot_schedules")
       .update({
         status: "completed",
         actual_end_time: endTime,
         post_op_diagnosis: postOpDx || null,
-        implants_consumables: allImplants,
         booking_notes: complications
           ? `${schedule.booking_notes || ""}\n\nComplications: ${complications}`.trim()
           : schedule.booking_notes,
@@ -435,8 +334,8 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
 
     // NABH COP.8.4 — implant documentation evidence
     if (hospitalId) {
-      const implantSummary = capturedImplants.length > 0
-        ? capturedImplants.map(i => `${i.name} x${i.quantity} @ ${formatINR(i.unit_cost)}`).join(", ")
+      const implantSummary = implants.length > 0
+        ? implants.map(i => `${i.item_name} x${i.quantity} @ ${formatINR(i.unit_cost)}${i.cdsco_registration_number ? ` (CDSCO ${i.cdsco_registration_number})` : ""}`).join(", ")
         : "None (surgeon confirmed no implants used)";
       await logNABHEvidence(
         hospitalId,
@@ -446,7 +345,7 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
       );
     }
 
-    await triggerOTBilling({ ...schedule, actual_end_time: endTime, status: "completed", implants_consumables: allImplants });
+    await triggerOTBilling({ ...schedule, actual_end_time: endTime, status: "completed" });
 
     setSaving(false);
     onEnded();
@@ -506,25 +405,29 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
               <span className="text-xs font-semibold text-foreground">Implants / High-Value Consumables</span>
               <span className="text-[10px] text-red-500 font-medium ml-auto">Required</span>
             </div>
-            <p className="text-xs text-muted-foreground">Were any implants or high-value consumables used in this procedure?</p>
 
-            <div className="flex gap-6">
-              {(["yes", "no"] as const).map((v) => (
-                <label
-                  key={v}
-                  className="flex items-center gap-2 cursor-pointer"
-                  onClick={() => { setImplantDeclaration(v); setNoImplantConfirmed(false); }}
-                >
-                  <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${implantDeclaration === v ? "border-primary" : "border-muted-foreground/30"}`}>
-                    {implantDeclaration === v && <div className="w-2 h-2 rounded-full bg-primary" />}
-                  </div>
-                  <span className="text-sm">{v === "yes" ? "Yes" : "No"}</span>
-                </label>
-              ))}
-            </div>
+            {!hasImplants && (
+              <>
+                <p className="text-xs text-muted-foreground">Were any implants or high-value consumables used in this procedure?</p>
+                <div className="flex gap-6">
+                  {(["yes", "no"] as const).map((v) => (
+                    <label
+                      key={v}
+                      className="flex items-center gap-2 cursor-pointer"
+                      onClick={() => { setImplantDeclaration(v); setNoImplantConfirmed(false); }}
+                    >
+                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${implantDeclaration === v ? "border-primary" : "border-muted-foreground/30"}`}>
+                        {implantDeclaration === v && <div className="w-2 h-2 rounded-full bg-primary" />}
+                      </div>
+                      <span className="text-sm">{v === "yes" ? "Yes" : "No"}</span>
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
 
-            {/* YES — capture implants */}
-            {implantDeclaration === "yes" && (
+            {/* Implants exist (added here or in the Implants & Consumables tab) or user is actively declaring some */}
+            {(hasImplants || implantDeclaration === "yes") && (
               <div className="space-y-3 pt-1">
                 {/* Inventory search */}
                 <div ref={searchRef} className="relative">
@@ -587,6 +490,12 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
                     className="text-xs border border-border rounded-md px-2.5 py-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary"
                     title="Expiry date"
                   />
+                  <input
+                    value={draft.cdsco_registration_number}
+                    onChange={(e) => setDraft(d => ({ ...d, cdsco_registration_number: e.target.value }))}
+                    placeholder="CDSCO registration # *"
+                    className="text-xs border border-border rounded-md px-2.5 py-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
                   <div className="flex gap-1.5">
                     <input
                       type="number"
@@ -617,29 +526,36 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
                 </button>
 
                 {/* Captured implants list */}
-                {capturedImplants.length > 0 ? (
+                {implants.length > 0 ? (
                   <div className="space-y-1.5 border-t border-border pt-2">
-                    {capturedImplants.map((imp, idx) => (
-                      <div key={idx} className="flex items-start justify-between bg-muted/40 rounded-md px-2.5 py-2">
+                    {implants.map((imp) => (
+                      <div key={imp.id} className="flex items-start justify-between bg-muted/40 rounded-md px-2.5 py-2">
                         <div className="min-w-0 flex-1">
-                          <p className="text-xs font-medium truncate">{imp.name}</p>
+                          <p className="text-xs font-medium truncate">{imp.item_name}</p>
                           <p className="text-[10px] text-muted-foreground">
                             Qty {imp.quantity} · {formatINR(imp.unit_cost)} each · Total {formatINR(roundCurrency(imp.unit_cost * imp.quantity))}
                             {imp.lot_number ? ` · Lot: ${imp.lot_number}` : ""}
                             {imp.expiry_date ? ` · Exp: ${imp.expiry_date}` : ""}
                           </p>
+                          {imp.cdsco_registration_number ? (
+                            <p className="text-[10px] text-emerald-600">CDSCO: {imp.cdsco_registration_number}</p>
+                          ) : (
+                            <p className="text-[10px] text-red-500">⚠ CDSCO registration number missing — required to close</p>
+                          )}
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => removeImplant(idx)}
-                          className="text-muted-foreground hover:text-destructive transition-colors ml-2 shrink-0 mt-0.5"
-                        >
-                          <Trash2 size={12} />
-                        </button>
+                        {!imp.billed && (
+                          <button
+                            type="button"
+                            onClick={() => removeImplant(imp.id)}
+                            className="text-muted-foreground hover:text-destructive transition-colors ml-2 shrink-0 mt-0.5"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        )}
                       </div>
                     ))}
                     <p className="text-[10px] text-muted-foreground text-right pt-0.5">
-                      Implant subtotal (excl. 12% GST): {formatINR(roundCurrency(capturedImplants.reduce((s, i) => s + i.unit_cost * i.quantity, 0)))}
+                      Implant subtotal (excl. 12% GST): {formatINR(roundCurrency(implants.reduce((s, i) => s + i.unit_cost * i.quantity, 0)))}
                     </p>
                   </div>
                 ) : (
@@ -649,7 +565,7 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
             )}
 
             {/* NO — confirmation checkbox */}
-            {implantDeclaration === "no" && (
+            {!hasImplants && implantDeclaration === "no" && (
               <label className="flex items-start gap-2 cursor-pointer">
                 <input
                   type="checkbox"
@@ -666,7 +582,10 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
         </div>
 
         <div className="px-6 pb-5 pt-3 border-t border-border flex-shrink-0">
-          {!canClose && implantDeclaration === null && (
+          {!canClose && hasImplants && (
+            <p className="text-[10px] text-amber-600 mb-2 text-center">All implants must have a CDSCO registration number before closing this case.</p>
+          )}
+          {!canClose && !hasImplants && implantDeclaration === null && (
             <p className="text-[10px] text-amber-600 mb-2 text-center">Implant declaration is required before closing this case.</p>
           )}
           <button

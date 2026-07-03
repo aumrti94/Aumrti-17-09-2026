@@ -34,6 +34,12 @@ const EQUIPMENT = [
   "Imaging ready (C-arm, scope etc.)",
 ];
 
+interface EquipmentRow {
+  id: string;
+  item_text: string;
+  checked: boolean;
+}
+
 interface Props {
   schedule: OTSchedule;
 }
@@ -42,7 +48,7 @@ const OTTeamTab: React.FC<Props> = ({ schedule }) => {
   const { toast } = useToast();
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [staff, setStaff] = useState<StaffOption[]>([]);
-  const [equipment, setEquipment] = useState<boolean[]>(new Array(EQUIPMENT.length).fill(false));
+  const [equipment, setEquipment] = useState<EquipmentRow[]>([]);
 
   useEffect(() => {
     const fetchTeam = async () => {
@@ -75,9 +81,42 @@ const OTTeamTab: React.FC<Props> = ({ schedule }) => {
       setStaff((data as any) || []);
     };
 
+    const fetchEquipment = async () => {
+      const { data } = await (supabase as any)
+        .from("ot_equipment_checklist")
+        .select("id, item_text, checked")
+        .eq("ot_schedule_id", schedule.id);
+
+      const existingTexts = new Set((data || []).map((r: any) => r.item_text));
+      const missing = EQUIPMENT.filter((t) => !existingTexts.has(t));
+      let rows: EquipmentRow[] = data || [];
+
+      if (missing.length > 0) {
+        const hid = (await supabase.rpc("get_user_hospital_id")) as any;
+        const { data: created } = await (supabase as any)
+          .from("ot_equipment_checklist")
+          .insert(missing.map((item_text) => ({ hospital_id: hid.data, ot_schedule_id: schedule.id, item_text })))
+          .select("id, item_text, checked");
+        rows = [...rows, ...((created as EquipmentRow[]) || [])];
+      }
+      rows.sort((a, b) => EQUIPMENT.indexOf(a.item_text) - EQUIPMENT.indexOf(b.item_text));
+      setEquipment(rows);
+    };
+
     fetchTeam();
     fetchStaff();
+    fetchEquipment();
   }, [schedule.id]);
+
+  const toggleEquipment = async (row: EquipmentRow) => {
+    const next = !row.checked;
+    setEquipment((prev) => prev.map((r) => (r.id === row.id ? { ...r, checked: next } : r)));
+    const { data: { user } } = await supabase.auth.getUser();
+    await (supabase as any)
+      .from("ot_equipment_checklist")
+      .update({ checked: next, checked_by: user?.id || null, checked_at: next ? new Date().toISOString() : null })
+      .eq("id", row.id);
+  };
 
   const assignRole = async (roleKey: string, userId: string) => {
     const existing = team.find((t) => t.role_in_ot === roleKey);
@@ -144,33 +183,22 @@ const OTTeamTab: React.FC<Props> = ({ schedule }) => {
               );
             })}
           </div>
-
-          <button
-            onClick={() => toast({ title: "Team notification sent ✓" })}
-            className="w-full mt-4 bg-[hsl(var(--sidebar-accent))] text-white text-xs font-semibold py-2.5 rounded-md hover:opacity-90 active:scale-95 transition-all"
-          >
-            Notify Team
-          </button>
         </div>
 
         {/* Equipment checklist */}
         <div className="bg-card border border-border rounded-lg p-4">
           <p className="text-[13px] font-bold text-foreground mb-3">Equipment Ready?</p>
           <div className="space-y-2">
-            {EQUIPMENT.map((item, idx) => (
+            {equipment.map((row) => (
               <button
-                key={item}
-                onClick={() => {
-                  const next = [...equipment];
-                  next[idx] = !next[idx];
-                  setEquipment(next);
-                }}
+                key={row.id}
+                onClick={() => toggleEquipment(row)}
                 className="flex items-center gap-3 w-full text-left py-2"
               >
-                <div className={`w-5 h-5 rounded-sm border-2 flex items-center justify-center flex-shrink-0 transition-colors ${equipment[idx] ? "bg-emerald-500 border-emerald-500" : "border-muted-foreground/30"}`}>
-                  {equipment[idx] && <span className="text-white text-xs">✓</span>}
+                <div className={`w-5 h-5 rounded-sm border-2 flex items-center justify-center flex-shrink-0 transition-colors ${row.checked ? "bg-emerald-500 border-emerald-500" : "border-muted-foreground/30"}`}>
+                  {row.checked && <span className="text-white text-xs">✓</span>}
                 </div>
-                <span className="text-[13px] text-foreground/80">{item}</span>
+                <span className="text-[13px] text-foreground/80">{row.item_text}</span>
               </button>
             ))}
           </div>

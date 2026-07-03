@@ -3,6 +3,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Trash2, CheckCircle2, IndianRupee } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { calcGST, roundCurrency } from "@/lib/currency";
+import { recalculateBillTotalsSafe } from "@/lib/billTotals";
+import { generateBillNumber } from "@/hooks/useBillNumber";
 import type { OTSchedule } from "@/pages/ot/OTPage";
 
 interface OTImplant {
@@ -12,6 +15,7 @@ interface OTImplant {
   manufacturer: string | null;
   lot_number: string | null;
   expiry_date: string | null;
+  cdsco_registration_number: string | null;
   unit_cost: number;
   quantity: number;
   billed: boolean;
@@ -35,7 +39,7 @@ interface Props {
 
 const emptyImplant = (): Partial<OTImplant> => ({
   item_name: "", catalogue_number: "", manufacturer: "", lot_number: "",
-  expiry_date: "", unit_cost: 0, quantity: 1,
+  expiry_date: "", cdsco_registration_number: "", unit_cost: 0, quantity: 1,
 });
 
 const emptyConsumable = (): Partial<OTConsumable> => ({
@@ -65,6 +69,10 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
 
   const addImplant = async () => {
     if (!newImplant.item_name?.trim() || !hospitalId) return;
+    if (!newImplant.cdsco_registration_number?.trim()) {
+      toast({ title: "CDSCO registration number is required", variant: "destructive" });
+      return;
+    }
     const { error } = await (supabase as any).from("ot_implants").insert({
       hospital_id: hospitalId,
       schedule_id: schedule.id,
@@ -73,6 +81,7 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
       manufacturer: newImplant.manufacturer || null,
       lot_number: newImplant.lot_number || null,
       expiry_date: newImplant.expiry_date || null,
+      cdsco_registration_number: newImplant.cdsco_registration_number.trim(),
       unit_cost: Number(newImplant.unit_cost) || 0,
       quantity: Number(newImplant.quantity) || 1,
     });
@@ -109,54 +118,117 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
     fetchData();
   };
 
+  // Implants bill through bill_line_items (same table/GST/dedupe scheme as OT charges &
+  // fees) so they land on the real OT bill instead of a separate, GST-less list.
+  const billImplants = async (unbilled: OTImplant[]): Promise<number> => {
+    if (unbilled.length === 0 || !hospitalId || !schedule.admission_id) return 0;
+
+    const { data: existingBill } = await supabase
+      .from("bills")
+      .select("id")
+      .eq("hospital_id", hospitalId)
+      .eq("admission_id", schedule.admission_id)
+      .eq("bill_type", "ipd")
+      .maybeSingle();
+
+    let billId = existingBill?.id;
+    if (!billId) {
+      const billNum = await generateBillNumber(hospitalId, "BILL");
+      const { data: newBill } = await supabase
+        .from("bills")
+        .insert({
+          hospital_id: hospitalId,
+          patient_id: schedule.patient_id,
+          admission_id: schedule.admission_id,
+          bill_number: billNum,
+          bill_type: "ipd",
+          bill_date: new Date().toISOString().split("T")[0],
+          bill_status: "draft",
+          payment_status: "unpaid",
+          total_amount: 0,
+          balance_due: 0,
+        })
+        .select("id")
+        .maybeSingle();
+      billId = newBill?.id;
+    }
+    if (!billId) return 0;
+
+    const { data: existingKeys } = await (supabase as any)
+      .from("bill_line_items")
+      .select("source_dedupe_key")
+      .eq("bill_id", billId)
+      .eq("source_module", "ot");
+    const existingSet = new Set<string>((existingKeys || []).map((k: any) => k.source_dedupe_key).filter(Boolean));
+
+    const lineItems = unbilled
+      .map((i) => {
+        const total = roundCurrency(i.unit_cost * i.quantity);
+        const gst = calcGST(total, 12);
+        return {
+          hospital_id: hospitalId, bill_id: billId,
+          item_type: "implant",
+          description: `Implant: ${i.item_name}`,
+          quantity: i.quantity, unit_rate: i.unit_cost,
+          taxable_amount: total, gst_percent: 12, gst_amount: gst,
+          total_amount: roundCurrency(total + gst),
+          hsn_code: "9021", source_module: "ot",
+          source_record_id: schedule.id,
+          source_dedupe_key: `ot:${schedule.id}:implant:${i.id}`,
+        };
+      })
+      .filter((li) => !existingSet.has(li.source_dedupe_key));
+
+    if (lineItems.length > 0) {
+      await supabase.from("bill_line_items").insert(lineItems);
+      await recalculateBillTotalsSafe(billId);
+    }
+
+    await (supabase as any).from("ot_implants").update({ billed: true }).in("id", unbilled.map((i) => i.id));
+    return unbilled.length;
+  };
+
   const billAll = async () => {
+    const unbilledImplants = implants.filter((i) => !i.billed);
+    const unbilledConsumables = consumables.filter((c) => !c.billed);
+
+    if (unbilledImplants.length === 0 && unbilledConsumables.length === 0) {
+      toast({ title: "All items already billed" });
+      return;
+    }
     if (!schedule.admission_id) {
       toast({ title: "No linked admission", description: "This case is not linked to an IPD admission. Items cannot be auto-billed.", variant: "destructive" });
       return;
     }
-    setBilling(true);
-    const unbilledImplants = implants.filter((i) => !i.billed);
-    const unbilledConsumables = consumables.filter((c) => !c.billed);
 
-    const billItems = [
-      ...unbilledImplants.map((i) => ({
-        admission_id: schedule.admission_id,
-        item_name: `Implant: ${i.item_name}`,
-        category: "implant",
-        quantity: i.quantity,
-        unit_price: i.unit_cost,
-        total_price: i.unit_cost * i.quantity,
-      })),
-      ...unbilledConsumables.map((c) => ({
+    setBilling(true);
+    let billedCount = 0;
+
+    try {
+      billedCount += await billImplants(unbilledImplants);
+    } catch {
+      toast({ title: "Failed to bill implants", variant: "destructive" });
+    }
+
+    if (unbilledConsumables.length > 0) {
+      const billItems = unbilledConsumables.map((c) => ({
         admission_id: schedule.admission_id,
         item_name: `Consumable: ${c.item_name}`,
         category: "consumable",
         quantity: c.quantity,
         unit_price: c.unit_cost,
         total_price: c.unit_cost * c.quantity,
-      })),
-    ];
-
-    if (billItems.length === 0) {
-      toast({ title: "All items already billed" });
-      setBilling(false);
-      return;
+      }));
+      const { error } = await (supabase as any).from("bill_items").insert(billItems);
+      if (!error) {
+        await (supabase as any).from("ot_consumables").update({ billed: true }).in("id", unbilledConsumables.map((c) => c.id));
+        billedCount += unbilledConsumables.length;
+      } else {
+        toast({ title: "Failed to bill consumables", description: error.message, variant: "destructive" });
+      }
     }
 
-    const { error } = await (supabase as any).from("bill_items").insert(billItems);
-    if (error) {
-      toast({ title: "Billing failed", description: error.message, variant: "destructive" });
-      setBilling(false);
-      return;
-    }
-
-    // Mark as billed
-    const impIds = unbilledImplants.map((i) => i.id);
-    const conIds = unbilledConsumables.map((c) => c.id);
-    if (impIds.length > 0) await (supabase as any).from("ot_implants").update({ billed: true }).in("id", impIds);
-    if (conIds.length > 0) await (supabase as any).from("ot_consumables").update({ billed: true }).in("id", conIds);
-
-    toast({ title: `${billItems.length} item(s) added to patient bill` });
+    toast({ title: `${billedCount} item(s) billed` });
     fetchData();
     setBilling(false);
   };
@@ -219,6 +291,7 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
                   <th className="text-left px-3 py-2 text-muted-foreground font-medium">Item</th>
                   <th className="text-left px-2 py-2 text-muted-foreground font-medium">Catalogue #</th>
                   <th className="text-left px-2 py-2 text-muted-foreground font-medium">Lot / Expiry</th>
+                  <th className="text-left px-2 py-2 text-muted-foreground font-medium">CDSCO #</th>
                   <th className="text-right px-2 py-2 text-muted-foreground font-medium">Qty</th>
                   <th className="text-right px-2 py-2 text-muted-foreground font-medium">Unit ₹</th>
                   <th className="text-right px-2 py-2 text-muted-foreground font-medium">Total</th>
@@ -237,6 +310,11 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
                       {imp.lot_number && <span>{imp.lot_number}</span>}
                       {imp.expiry_date && <span className="ml-1 text-[10px] text-amber-600">exp {imp.expiry_date}</span>}
                       {!imp.lot_number && !imp.expiry_date && "—"}
+                    </td>
+                    <td className="px-2 py-2">
+                      {imp.cdsco_registration_number
+                        ? <span className="text-muted-foreground">{imp.cdsco_registration_number}</span>
+                        : <span className="text-[10px] text-red-500 font-medium">Missing</span>}
                     </td>
                     <td className="px-2 py-2 text-right">{imp.quantity}</td>
                     <td className="px-2 py-2 text-right">₹{imp.unit_cost.toLocaleString("en-IN")}</td>
@@ -303,6 +381,15 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
                   className="w-full mt-0.5 px-2 py-1.5 text-xs border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
                   value={newImplant.expiry_date || ""}
                   onChange={(e) => setNewImplant({ ...newImplant, expiry_date: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground font-medium">CDSCO Registration # *</label>
+                <input
+                  className="w-full mt-0.5 px-2 py-1.5 text-xs border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+                  placeholder="e.g. MD-12345"
+                  value={newImplant.cdsco_registration_number || ""}
+                  onChange={(e) => setNewImplant({ ...newImplant, cdsco_registration_number: e.target.value })}
                 />
               </div>
               <div className="flex gap-2">

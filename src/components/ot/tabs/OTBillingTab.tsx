@@ -2,11 +2,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
-import { calcGST, roundCurrency } from "@/lib/currency";
-import { recalculateBillTotalsSafe } from "@/lib/billTotals";
-import { getRate, SERVICE_RATE_CODES } from "@/lib/serviceRates";
+import { chargeOTCase } from "@/lib/serviceBilling";
 import { generateBillNumber } from "@/hooks/useBillNumber";
-import { autoPostJournalEntry } from "@/lib/accounting";
 import { Button } from "@/components/ui/button";
 import { Loader2, Receipt, RefreshCw, ExternalLink, CheckCircle2, AlertCircle } from "lucide-react";
 import type { OTSchedule } from "@/pages/ot/OTPage";
@@ -41,6 +38,16 @@ const OTBillingTab: React.FC<Props> = ({ schedule, hospitalId }) => {
   const [linkedBillNumber, setLinkedBillNumber] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [pushing, setPushing] = useState(false);
+  const [unbilledImplantsPreview, setUnbilledImplantsPreview] = useState<{ item_name: string; unit_cost: number; quantity: number }[]>([]);
+
+  useEffect(() => {
+    (supabase as any)
+      .from("ot_implants")
+      .select("item_name, unit_cost, quantity")
+      .eq("schedule_id", schedule.id)
+      .eq("billed", false)
+      .then(({ data }: any) => setUnbilledImplantsPreview(data || []));
+  }, [schedule.id]);
 
   const loadBillingStatus = useCallback(async () => {
     if (!hospitalId) return;
@@ -90,143 +97,13 @@ const OTBillingTab: React.FC<Props> = ({ schedule, hospitalId }) => {
 
   useEffect(() => { loadBillingStatus(); }, [loadBillingStatus]);
 
-  const getServiceMasterRate = async (itemType: string, fallback: number) => {
-    const { data } = await supabase
-      .from("service_master")
-      .select("fee, gst_percent, gst_applicable, hsn_code")
-      .eq("hospital_id", hospitalId!)
-      .eq("item_type", itemType)
-      .eq("is_active", true)
-      .limit(1)
-      .maybeSingle();
-    if (!data) return { fee: fallback, gstPct: 0, gst: 0, hsn: "" };
-    const fee = Number(data.fee) || fallback;
-    const gstPct = data.gst_applicable ? (Number(data.gst_percent) || 0) : 0;
-    return { fee, gstPct, gst: calcGST(fee, gstPct), hsn: data.hsn_code || "" };
-  };
-
   const pushOTCharges = async (targetBillId: string) => {
-    // Deduplication check
-    const { data: existingOTItems } = await (supabase as any)
-      .from("bill_line_items")
-      .select("source_dedupe_key")
-      .eq("bill_id", targetBillId)
-      .eq("source_module", "ot");
-    const existingKeys = new Set<string>(
-      (existingOTItems || []).map((i: any) => i.source_dedupe_key).filter(Boolean)
-    );
-
-    const anaesFallback = await getRate(hospitalId!, SERVICE_RATE_CODES.ANAESTHESIA_FEE, 1500);
-    const surgeryFallback = await getRate(hospitalId!, SERVICE_RATE_CODES.SURGERY_FEE, 5000);
-    const otRate = await getServiceMasterRate("ot_charge", 2000);
-    const surgRate = await getServiceMasterRate("surgeon_fee", surgeryFallback);
-    const anaesRate = await getServiceMasterRate("anaesthesia_fee", anaesFallback);
-
-    const actualDuration =
-      schedule.actual_start_time && schedule.actual_end_time
-        ? Math.ceil((new Date(schedule.actual_end_time).getTime() - new Date(schedule.actual_start_time).getTime()) / 3600000)
-        : Math.ceil((schedule.estimated_duration_minutes || 60) / 60);
-    const hours = Math.max(1, actualDuration);
-    const otFee = roundCurrency(hours * otRate.fee);
-
-    const items: any[] = [];
-    const add = (item: any) => {
-      if (item.source_dedupe_key && existingKeys.has(item.source_dedupe_key)) return;
-      items.push(item);
-    };
-
-    add({
-      hospital_id: hospitalId, bill_id: targetBillId,
-      item_type: "ot_charge",
-      description: `OT Charges: ${schedule.surgery_name} (${hours} hr)`,
-      quantity: hours, unit_rate: otRate.fee,
-      taxable_amount: otFee, gst_percent: otRate.gstPct,
-      gst_amount: calcGST(otFee, otRate.gstPct),
-      total_amount: otFee + calcGST(otFee, otRate.gstPct),
-      hsn_code: otRate.hsn || "999315", source_module: "ot",
-      source_record_id: schedule.id,
-      source_dedupe_key: `ot:${schedule.id}:ot_charge`,
-    });
-
-    if (schedule.surgeon_id) {
-      add({
-        hospital_id: hospitalId, bill_id: targetBillId,
-        item_type: "surgeon_fee",
-        description: `Surgeon Fee: ${schedule.surgery_name}`,
-        quantity: 1, unit_rate: surgRate.fee,
-        taxable_amount: surgRate.fee, gst_percent: surgRate.gstPct,
-        gst_amount: surgRate.gst, total_amount: surgRate.fee + surgRate.gst,
-        hsn_code: surgRate.hsn || "999316", source_module: "ot",
-        source_record_id: schedule.id,
-        source_dedupe_key: `ot:${schedule.id}:surgeon_fee`,
-      });
-    }
-
-    if (schedule.anaesthetist_id) {
-      add({
-        hospital_id: hospitalId, bill_id: targetBillId,
-        item_type: "anaesthesia_fee",
-        description: `Anaesthesia: ${schedule.anaesthesia_type || "General"}`,
-        quantity: 1, unit_rate: anaesRate.fee,
-        taxable_amount: anaesRate.fee, gst_percent: anaesRate.gstPct,
-        gst_amount: anaesRate.gst, total_amount: anaesRate.fee + anaesRate.gst,
-        hsn_code: anaesRate.hsn || "999317", source_module: "ot",
-        source_record_id: schedule.id,
-        source_dedupe_key: `ot:${schedule.id}:anaesthesia_fee`,
-      });
-    }
-
-    const implants = (schedule.implants_consumables as any[]) || [];
-    implants.forEach((imp: any, idx: number) => {
-      const cost = Number(imp.cost || imp.price || 0);
-      if (cost <= 0) return;
-      const qty = Number(imp.quantity || 1);
-      const total = roundCurrency(cost * qty);
-      add({
-        hospital_id: hospitalId, bill_id: targetBillId,
-        item_type: "implant",
-        description: `Implant: ${imp.name || imp.item_name || "Surgical Consumable"}`,
-        quantity: qty, unit_rate: cost,
-        taxable_amount: total, gst_percent: 12,
-        gst_amount: calcGST(total, 12),
-        total_amount: roundCurrency(total + calcGST(total, 12)),
-        hsn_code: "9021", source_module: "ot",
-        source_record_id: schedule.id,
-        source_dedupe_key: `ot:${schedule.id}:implant:${idx}`,
-      });
-    });
-
-    if (items.length === 0) {
+    const result = await chargeOTCase({ hospitalId: hospitalId!, billId: targetBillId, schedule });
+    if (result.itemsAdded > 0) {
+      toast({ title: `${result.itemsAdded} OT charge(s) added to bill` });
+    } else {
       toast({ title: "All OT charges already in bill" });
-      return;
     }
-
-    await supabase.from("bill_line_items").insert(items);
-    const result = await recalculateBillTotalsSafe(targetBillId);
-    if (!result.ok) {
-      toast({ title: "Charges added but totals need refresh", variant: "destructive" });
-    }
-
-    // Mark billed on schedule
-    await (supabase as any)
-      .from("ot_schedules")
-      .update({ billed: true, bill_id: targetBillId })
-      .eq("id", schedule.id);
-
-    // Journal entry
-    const { data: updatedBill } = await supabase.from("bills").select("total_amount").eq("id", targetBillId).maybeSingle();
-    const { data: { user: authUser } } = await supabase.auth.getUser();
-    await autoPostJournalEntry({
-      triggerEvent: "bill_finalized_ot",
-      sourceModule: "ot",
-      sourceId: targetBillId,
-      amount: Number(updatedBill?.total_amount || 0),
-      description: `OT Revenue - ${schedule.surgery_name}`,
-      hospitalId: hospitalId!,
-      postedBy: authUser?.id || "",
-    });
-
-    toast({ title: `${items.length} OT charge(s) added to bill` });
   };
 
   const handlePushToIPDBill = async () => {
@@ -367,26 +244,21 @@ const OTBillingTab: React.FC<Props> = ({ schedule, hospitalId }) => {
       )}
 
       {/* Implants/consumables preview (if any) */}
-      {!isBilled && isCompleted && (() => {
-        const implants = (schedule.implants_consumables as any[]) || [];
-        const withCost = implants.filter((i) => Number(i.cost || i.price || 0) > 0);
-        if (!withCost.length) return null;
-        return (
-          <div className="border border-border rounded-lg overflow-hidden">
-            <div className="bg-muted/40 px-3 py-2 border-b border-border">
-              <span className="text-xs font-bold text-foreground uppercase tracking-wide">Implants / Consumables</span>
-            </div>
-            {withCost.map((imp: any, i: number) => (
-              <div key={i} className="flex justify-between items-center px-3 py-2 border-b border-border/50 last:border-0">
-                <span className="text-xs text-foreground">{imp.name || imp.item_name || "Surgical Consumable"}</span>
-                <span className="text-xs font-medium text-foreground">
-                  {Number(imp.quantity || 1)} × ₹{Number(imp.cost || imp.price).toLocaleString("en-IN")}
-                </span>
-              </div>
-            ))}
+      {!isBilled && isCompleted && unbilledImplantsPreview.length > 0 && (
+        <div className="border border-border rounded-lg overflow-hidden">
+          <div className="bg-muted/40 px-3 py-2 border-b border-border">
+            <span className="text-xs font-bold text-foreground uppercase tracking-wide">Implants / Consumables</span>
           </div>
-        );
-      })()}
+          {unbilledImplantsPreview.map((imp, i) => (
+            <div key={i} className="flex justify-between items-center px-3 py-2 border-b border-border/50 last:border-0">
+              <span className="text-xs text-foreground">{imp.item_name}</span>
+              <span className="text-xs font-medium text-foreground">
+                {imp.quantity} × ₹{imp.unit_cost.toLocaleString("en-IN")}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Action buttons */}
       {isCompleted && (
