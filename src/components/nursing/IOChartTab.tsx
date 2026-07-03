@@ -28,7 +28,6 @@ interface OutputEntry {
   type: string;
   volume_ml: number;
   recorded_at: string;
-  urine_output_ml?: number;
 }
 
 const fmt = (n: number) => n.toLocaleString("en-IN");
@@ -37,7 +36,7 @@ const IOChartTab: React.FC<Props> = ({ admissionId, hospitalId }) => {
   const { toast } = useToast();
   const [ivFluids, setIvFluids] = useState<IVFluid[]>([]);
   const [urineToday, setUrineToday] = useState(0);
-  const [outputs, setOutputs] = useState<{ type: string; volume: number }[]>([]);
+  const [outputs, setOutputs] = useState<OutputEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Add IV form
@@ -54,13 +53,18 @@ const IOChartTab: React.FC<Props> = ({ admissionId, hospitalId }) => {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [ivRes, vitalsRes] = await Promise.all([
+    const [ivRes, vitalsRes, outputsRes] = await Promise.all([
       (supabase as any).from("iv_fluids")
         .select("*")
         .eq("admission_id", admissionId)
         .order("created_at", { ascending: false }),
       supabase.from("ipd_vitals")
         .select("urine_output_ml, recorded_at")
+        .eq("admission_id", admissionId)
+        .gte("recorded_at", `${today}T00:00:00`)
+        .order("recorded_at", { ascending: true }),
+      (supabase as any).from("nursing_fluid_outputs")
+        .select("id, output_type, volume_ml, recorded_at")
         .eq("admission_id", admissionId)
         .gte("recorded_at", `${today}T00:00:00`)
         .order("recorded_at", { ascending: true }),
@@ -72,6 +76,14 @@ const IOChartTab: React.FC<Props> = ({ admissionId, hospitalId }) => {
       (sum: number, v: any) => sum + (v.urine_output_ml || 0), 0
     );
     setUrineToday(urine);
+
+    setOutputs((outputsRes.data || []).map((o: any) => ({
+      id: o.id,
+      type: o.output_type,
+      volume_ml: o.volume_ml,
+      recorded_at: o.recorded_at,
+    })));
+
     setLoading(false);
   }, [admissionId, today]);
 
@@ -119,18 +131,35 @@ const IOChartTab: React.FC<Props> = ({ admissionId, hospitalId }) => {
   const addOutput = async () => {
     if (!outputForm.volume) return;
     setSavingOutput(true);
-    setOutputs((prev) => [...prev, { type: outputForm.type, volume: parseInt(outputForm.volume) }]);
+
+    const { data: { user } } = await supabase.auth.getUser();
+    const { data: userData } = await (supabase as any).from("users")
+      .select("id").eq("auth_user_id", user?.id ?? "").maybeSingle();
+
+    const { error } = await (supabase as any).from("nursing_fluid_outputs").insert({
+      hospital_id: hospitalId,
+      admission_id: admissionId,
+      output_type: outputForm.type,
+      volume_ml: parseInt(outputForm.volume),
+      recorded_by: userData?.id ?? null,
+    });
+
     setSavingOutput(false);
+    if (error) {
+      toast({ title: "Failed to record output", description: error.message, variant: "destructive" });
+      return;
+    }
     setOutputForm({ type: "drain", volume: "" });
     setShowAddOutput(false);
     toast({ title: "Output recorded" });
+    load();
   };
 
   const totalIntake = ivFluids
     .filter((f) => f.status === "running" || f.status === "completed")
     .reduce((sum, f) => sum + (f.volume_infused_ml || f.rate_ml_per_hour || 0), 0);
 
-  const totalOutput = urineToday + outputs.reduce((sum, o) => sum + o.volume, 0);
+  const totalOutput = urineToday + outputs.reduce((sum, o) => sum + o.volume_ml, 0);
   const balance = totalIntake - totalOutput;
 
   const statusColor = (s: string) =>
@@ -259,10 +288,10 @@ const IOChartTab: React.FC<Props> = ({ admissionId, hospitalId }) => {
             <p className="text-sm font-medium text-foreground">Urine Output (today)</p>
             <p className="text-sm font-bold tabular-nums">{fmt(urineToday)} mL</p>
           </div>
-          {outputs.map((o, i) => (
-            <div key={i} className="flex items-center justify-between bg-card border border-border rounded-lg px-3 py-2">
+          {outputs.map((o) => (
+            <div key={o.id} className="flex items-center justify-between bg-card border border-border rounded-lg px-3 py-2">
               <p className="text-sm font-medium text-foreground capitalize">{o.type}</p>
-              <p className="text-sm font-bold tabular-nums">{fmt(o.volume)} mL</p>
+              <p className="text-sm font-bold tabular-nums">{fmt(o.volume_ml)} mL</p>
             </div>
           ))}
         </div>

@@ -97,8 +97,18 @@ export const MODULE_TABS: Record<string, TabDef[]> = {
     { key: "case_details", label: "Case Details" },
     { key: "ot_team", label: "OT Team" },
     { key: "implants", label: "Implants & Consumables" },
+    { key: "anaesthesia", label: "Anaesthesia" },
     { key: "pacu", label: "PACU" },
     { key: "billing", label: "Billing" },
+  ],
+  nursing: [
+    { key: "tasks", label: "Tasks" },
+    { key: "kanban", label: "Kanban" },
+    { key: "care_plans", label: "Care Plans" },
+    { key: "io", label: "I&O Chart" },
+    { key: "restraints", label: "Restraints" },
+    { key: "icu_monitor", label: "ICU Monitor" },
+    { key: "risk_assessments", label: "Risk Assess" },
   ],
 };
 

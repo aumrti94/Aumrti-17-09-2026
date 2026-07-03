@@ -15,6 +15,14 @@ interface Props {
   patientId?: string;
 }
 
+function currentShift(): string {
+  const h = new Date().getHours();
+  if (h >= 6 && h < 14) return "morning";
+  if (h >= 14 && h < 20) return "afternoon";
+  if (h >= 20) return "evening";
+  return "night";
+}
+
 interface VitalRecord {
   id: string;
   bp_systolic: number | null;
@@ -36,9 +44,11 @@ const IPDVitalsTab: React.FC<Props> = ({ admissionId, hospitalId, userId, patien
   const [sepsisResult, setSepsisResult] = useState<SepsisResult | null>(null);
   const [sepsisChecking, setSepsisChecking] = useState(false);
 
+  // nursing_vitals is the canonical vitals table (nursing module completion plan, Phase 3) —
+  // ipd_vitals is now a DB-trigger-maintained mirror kept for other readers.
   const fetchVitals = useCallback(() => {
     if (!admissionId) return;
-    supabase.from("ipd_vitals")
+    supabase.from("nursing_vitals")
       .select("*")
       .eq("admission_id", admissionId)
       .order("recorded_at", { ascending: false })
@@ -90,10 +100,15 @@ const IPDVitalsTab: React.FC<Props> = ({ admissionId, hospitalId, userId, patien
     }
     setSaving(true);
     const news2 = calcNEWS2();
-    const { error } = await supabase.from("ipd_vitals").insert({
+    // nursing_vitals is the canonical vitals table (nursing module completion plan, Phase 3) — a
+    // DB trigger mirrors this into ipd_vitals for other readers. patient_id/shift are required
+    // there (unlike ipd_vitals) but not otherwise used by this screen.
+    const { error } = await supabase.from("nursing_vitals").insert({
       admission_id: admissionId,
       hospital_id: hospitalId,
+      patient_id: patientId,
       recorded_by: userId,
+      shift: currentShift(),
       bp_systolic: form.bp_s ? parseInt(form.bp_s) : null,
       bp_diastolic: form.bp_d ? parseInt(form.bp_d) : null,
       pulse: form.pulse ? parseInt(form.pulse) : null,

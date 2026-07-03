@@ -6,12 +6,20 @@ import { Button } from "@/components/ui/button";
 import { AlertTriangle, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+interface VerifiedRights {
+  right_patient: boolean;
+  right_drug: boolean;
+  right_dose: boolean;
+  right_route: boolean;
+  right_time: boolean;
+  confirmed_at: string;
+}
+
 interface Props {
   open: boolean;
   drugName: string;
   dose?: string;
-  marId?: string;
-  onConfirmed: (secondNurseId: string) => void;
+  onConfirmed: (secondNurseId: string, verifiedRights: VerifiedRights) => void;
   onCancel: () => void;
 }
 
@@ -19,12 +27,11 @@ const FIVE_RIGHTS = ["Right Patient", "Right Drug", "Right Dose", "Right Route",
 
 interface Nurse { id: string; full_name: string; }
 
-const HighAlertDoubleCheckModal: React.FC<Props> = ({ open, drugName, dose, marId, onConfirmed, onCancel }) => {
+const HighAlertDoubleCheckModal: React.FC<Props> = ({ open, drugName, dose, onConfirmed, onCancel }) => {
   const { hospitalId } = useHospitalId();
   const [nurses, setNurses] = useState<Nurse[]>([]);
   const [secondNurse, setSecondNurse] = useState("");
   const [rights, setRights] = useState<Record<string, boolean>>({});
-  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!open || !hospitalId) return;
@@ -41,31 +48,19 @@ const HighAlertDoubleCheckModal: React.FC<Props> = ({ open, drugName, dose, marI
   const allRightsChecked = FIVE_RIGHTS.every((r) => rights[r]);
   const canConfirm = !!secondNurse && allRightsChecked;
 
-  const handleConfirm = async () => {
+  const handleConfirm = () => {
     if (!canConfirm || !hospitalId) return;
-    setSaving(true);
-    const { data: userData } = await supabase.auth.getUser();
-    const confirmedAt = new Date().toISOString();
-    // Build JSONB record of which 5-rights the second nurse verified
-    const verifiedRights = {
+    // The mar_double_checks row is written by the caller (NursingMedicationTask), after the
+    // nursing_mar row it refers to actually exists — this modal only collects the verification.
+    const verifiedRights: VerifiedRights = {
       right_patient: !!rights["Right Patient"],
       right_drug:    !!rights["Right Drug"],
       right_dose:    !!rights["Right Dose"],
       right_route:   !!rights["Right Route"],
       right_time:    !!rights["Right Time"],
-      confirmed_at:  confirmedAt,
+      confirmed_at:  new Date().toISOString(),
     };
-    await (supabase as any).from("mar_double_checks").insert({
-      hospital_id: hospitalId,
-      mar_id: marId || null,
-      first_nurse_id: userData.user?.id || null,
-      second_nurse_id: secondNurse,
-      second_nurse_confirmed_at: confirmedAt,
-      five_rights_both: true,
-      second_nurse_verified_rights: verifiedRights,
-    });
-    setSaving(false);
-    onConfirmed(secondNurse);
+    onConfirmed(secondNurse, verifiedRights);
   };
 
   return (
@@ -111,9 +106,9 @@ const HighAlertDoubleCheckModal: React.FC<Props> = ({ open, drugName, dose, marI
 
           <div className="flex gap-2 justify-end">
             <Button variant="outline" size="sm" onClick={onCancel}>Cancel</Button>
-            <Button size="sm" onClick={handleConfirm} disabled={!canConfirm || saving}
+            <Button size="sm" onClick={handleConfirm} disabled={!canConfirm}
               className="bg-amber-600 hover:bg-amber-700 text-white">
-              {saving ? "Confirming…" : "Confirm & Proceed"}
+              Confirm & Proceed
             </Button>
           </div>
         </div>

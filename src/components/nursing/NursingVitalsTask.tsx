@@ -16,6 +16,14 @@ interface Props {
   onComplete: () => void;
 }
 
+function currentShift(): string {
+  const h = new Date().getHours();
+  if (h >= 6 && h < 14) return "morning";
+  if (h >= 14 && h < 20) return "afternoon";
+  if (h >= 20) return "evening";
+  return "night";
+}
+
 // Use shared NEWS2 calculation from vitalsAlerts.ts
 function calcNEWS2Legacy(v: Record<string, string>): number {
   return calculateNEWS2({
@@ -84,9 +92,13 @@ const NursingVitalsTask: React.FC<Props> = ({ task, onComplete }) => {
     const { data: userData } = await supabase.auth.getUser();
     const userId = userData?.user?.id;
 
-    const { error } = await supabase.from("ipd_vitals").insert({
+    // nursing_vitals is the canonical vitals table (nursing module completion plan, Phase 3) — a
+    // DB trigger mirrors this into ipd_vitals for other readers.
+    const { error } = await supabase.from("nursing_vitals").insert({
       hospital_id: task.hospitalId!,
       admission_id: task.admissionId,
+      patient_id: task.patientId,
+      shift: currentShift(),
       recorded_by: userId!,
       bp_systolic: vitals.bp_systolic ? Number(vitals.bp_systolic) : null,
       bp_diastolic: vitals.bp_diastolic ? Number(vitals.bp_diastolic) : null,

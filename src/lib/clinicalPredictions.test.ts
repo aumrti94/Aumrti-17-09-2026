@@ -2,10 +2,14 @@ import { describe, it, expect } from "vitest";
 import { calculateNEWS2Score } from "./clinicalPredictions";
 
 // ── calculateNEWS2Score ───────────────────────────────────────────────────────
+// Since the nursing module completion plan Phase 3, this is a thin wrapper around the single
+// canonical formula in src/lib/news2.ts (Royal College of Physicians NEWS2 Scale 1) — every
+// screen that computes a NEWS2 score now agrees.
 // Scoring reference (NHS NEWS2):
 //   RR:   ≤8→3, 9-11→1, 12-20→0, 21-24→2, ≥25→3
-//   SpO2: ≤91→3, 92-93→2, 94-95→1, ≥96→0
-//   O2:   on_oxygen adds 2
+//   SpO2: ≤91→3, 92-93→2, 94-95→1, ≥96→0 — ONLY scored when NOT on supplemental O2 (Scale 1)
+//   O2:   on_oxygen adds a flat 2, and suppresses the SpO2-value scoring above (they are not
+//         additive — a patient on O2 is scored on the O2 flag, not their raw SpO2 reading)
 //   Temp: ≤35→3, 35.1-36→1, 36.1-38→0, 38.1-39→1, ≥39.1→2
 //   SBP:  ≤90→3, 91-100→2, 101-110→1, 111-219→0, ≥220→3
 //   PR:   ≤40→3, 41-50→1, 51-90→0, 91-110→1, 111-130→2, ≥131→3
@@ -187,18 +191,22 @@ describe("calculateNEWS2Score", () => {
     expect(score).toBeGreaterThanOrEqual(7);
   });
 
-  it("on_oxygen combined with low SpO2 accumulates both penalties", () => {
-    // SpO2=93 (+2) + on_oxygen (+2) = 4, plus normal rest = 4
-    expect(calculateNEWS2Score({ ...NORMAL, spo2: 93, on_oxygen: true })).toBe(4);
+  it("on_oxygen suppresses SpO2-value scoring — only the flat O2 penalty applies", () => {
+    // Real NEWS2 Scale 1: SpO2=93 would score +2 on room air, but on_oxygen replaces that with
+    // its own flat +2 rather than stacking — total is 2, not 4.
+    expect(calculateNEWS2Score({ ...NORMAL, spo2: 93, on_oxygen: true })).toBe(2);
   });
 
-  // ── Robustness (pinned behaviours — not bugs we are fixing now) ───────────
+  // ── Robustness ────────────────────────────────────────────────────────────
   it("undefined vitals field is treated as absent (no points added)", () => {
     expect(calculateNEWS2Score({ rr: undefined, spo2: undefined })).toBe(0);
   });
 
-  it("rr=0 is treated as absent (falsy guard in implementation)", () => {
-    // Known behaviour: `if (vitals.rr)` skips when rr=0
-    expect(calculateNEWS2Score({ ...NORMAL, rr: 0 })).toBe(0);
+  it("rr=0 (apnoea) is correctly scored as severe, not treated as absent", () => {
+    // Fixed by the Phase 3 consolidation: the old implementation's `if (vitals.rr)` truthy
+    // check silently ignored rr=0 — the single most dangerous respiratory rate a patient can
+    // have. The canonical formula (src/lib/news2.ts) distinguishes "0" from "not supplied" via
+    // a `!= null` check, so apnoea now correctly scores the maximum 3 points.
+    expect(calculateNEWS2Score({ ...NORMAL, rr: 0 })).toBe(3);
   });
 });

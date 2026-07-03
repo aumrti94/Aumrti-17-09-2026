@@ -2,12 +2,15 @@ import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useHospitalId } from "@/hooks/useHospitalId";
+import { useHospitalContext } from "@/contexts/HospitalContext";
+import { hasTabAccess } from "@/lib/tabPermissions";
 import { Button } from "@/components/ui/button";
 import { ClipboardPlus, ListChecks, ClipboardList, LayoutDashboard, Tv, X as XIcon, Droplets, ShieldAlert, Monitor, RefreshCw, AlertTriangle, Activity } from "lucide-react";
 import { getNEWS2BadgeClasses, calculateNEWS2 } from "@/lib/news2";
 import NursingTaskList from "@/components/nursing/NursingTaskList";
 import NursingTaskExecution from "@/components/nursing/NursingTaskExecution";
 import MARAdherenceMonitor from "@/components/nursing/MARAdherenceMonitor";
+import UnacknowledgedAlertsPanel from "@/components/nursing/UnacknowledgedAlertsPanel";
 import NursingProcedureModal from "@/components/nursing/NursingProcedureModal";
 import CarePlansTab from "@/components/nursing/CarePlansTab";
 import IOChartTab from "@/components/nursing/IOChartTab";
@@ -17,6 +20,20 @@ import { cn } from "@/lib/utils";
 import { DndContext, DragEndEvent, closestCenter } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+
+const NURSING_TAB_DEFS: {
+  key: "tasks" | "kanban" | "care_plans" | "io" | "restraints" | "icu_monitor" | "risk_assessments";
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+}[] = [
+  { key: "tasks", label: "Tasks", icon: ListChecks },
+  { key: "kanban", label: "Kanban", icon: LayoutDashboard },
+  { key: "care_plans", label: "Care Plans", icon: ClipboardList },
+  { key: "io", label: "I&O Chart", icon: Droplets },
+  { key: "restraints", label: "Restraints", icon: ShieldAlert },
+  { key: "icu_monitor", label: "ICU Monitor", icon: Monitor },
+  { key: "risk_assessments", label: "Risk Assess", icon: Activity },
+];
 
 export interface NursingTask {
   id: string;
@@ -576,6 +593,7 @@ const ICUMonitor: React.FC<{ hospitalId: string }> = ({ hospitalId }) => {
 const NursingPage: React.FC = () => {
   const { toast } = useToast();
   const { hospitalId } = useHospitalId();
+  const { permissions, role } = useHospitalContext();
   const [tasks, setTasks] = useState<NursingTask[]>([]);
   const [selectedTask, setSelectedTask] = useState<NursingTask | null>(null);
   const [loading, setLoading] = useState(true);
@@ -584,6 +602,16 @@ const NursingPage: React.FC = () => {
   const [filter, setFilter] = useState<string>("all");
   const [showProcedureModal, setShowProcedureModal] = useState(false);
   const [activeTab, setActiveTab] = useState<"tasks" | "kanban" | "care_plans" | "io" | "restraints" | "icu_monitor" | "risk_assessments">("tasks");
+
+  // If a super_admin restricts the currently-active tab for this role, fall back to the first
+  // tab still allowed rather than leaving the UI stuck on a tab whose trigger just disappeared.
+  useEffect(() => {
+    const allowed = NURSING_TAB_DEFS.filter((t) => hasTabAccess("nursing", t.key, permissions, role));
+    if (allowed.length > 0 && !allowed.some((t) => t.key === activeTab)) {
+      setActiveTab(allowed[0].key);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permissions, role]);
   const [selectedRiskPatient, setSelectedRiskPatient] = useState<{ patientId: string; admissionId?: string; patientName: string } | null>(null);
   const [selectedIOAdmission, setSelectedIOAdmission] = useState<{ admissionId: string; patientName: string } | null>(null);
   const [selectedRestraintAdmission, setSelectedRestraintAdmission] = useState<{ admissionId: string; patientName: string } | null>(null);
@@ -776,9 +804,10 @@ const NursingPage: React.FC = () => {
   };
 
   const handleKanbanTaskDone = async (task: NursingTask) => {
-    if (!task.medicationId) return;
+    if (!task.medicationId || !task.hospitalId) return;
     const today = new Date().toISOString().slice(0, 10);
     await supabase.from("nursing_mar").upsert({
+      hospital_id: task.hospitalId,
       admission_id: task.admissionId,
       medication_id: task.medicationId,
       scheduled_date: today,
@@ -845,69 +874,18 @@ const NursingPage: React.FC = () => {
       {tvMode && <NursingTVMode tasks={tasks} shift={shift} onClose={() => setTvMode(false)} />}
       {/* Top tabs + Procedure button */}
       <div className="flex items-center px-4 py-1.5 border-b shrink-0 gap-1">
-        <button
-          onClick={() => setActiveTab("tasks")}
-          className={cn(
-            "h-8 px-3 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors",
-            activeTab === "tasks" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
-          )}
-        >
-          <ListChecks className="h-3.5 w-3.5" /> Tasks
-        </button>
-        <button
-          onClick={() => setActiveTab("kanban")}
-          className={cn(
-            "h-8 px-3 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors",
-            activeTab === "kanban" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
-          )}
-        >
-          <LayoutDashboard className="h-3.5 w-3.5" /> Kanban
-        </button>
-        <button
-          onClick={() => setActiveTab("care_plans")}
-          className={cn(
-            "h-8 px-3 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors",
-            activeTab === "care_plans" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
-          )}
-        >
-          <ClipboardList className="h-3.5 w-3.5" /> Care Plans
-        </button>
-        <button
-          onClick={() => setActiveTab("io")}
-          className={cn(
-            "h-8 px-3 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors",
-            activeTab === "io" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
-          )}
-        >
-          <Droplets className="h-3.5 w-3.5" /> I&O Chart
-        </button>
-        <button
-          onClick={() => setActiveTab("restraints")}
-          className={cn(
-            "h-8 px-3 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors",
-            activeTab === "restraints" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
-          )}
-        >
-          <ShieldAlert className="h-3.5 w-3.5" /> Restraints
-        </button>
-        <button
-          onClick={() => setActiveTab("icu_monitor")}
-          className={cn(
-            "h-8 px-3 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors",
-            activeTab === "icu_monitor" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
-          )}
-        >
-          <Monitor className="h-3.5 w-3.5" /> ICU Monitor
-        </button>
-        <button
-          onClick={() => setActiveTab("risk_assessments")}
-          className={cn(
-            "h-8 px-3 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors",
-            activeTab === "risk_assessments" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
-          )}
-        >
-          <Activity className="h-3.5 w-3.5" /> Risk Assess
-        </button>
+        {NURSING_TAB_DEFS.filter((t) => hasTabAccess("nursing", t.key, permissions, role)).map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setActiveTab(t.key)}
+            className={cn(
+              "h-8 px-3 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors",
+              activeTab === t.key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+            )}
+          >
+            <t.icon className="h-3.5 w-3.5" /> {t.label}
+          </button>
+        ))}
         <div className="ml-auto flex gap-2">
           <Button size="sm" variant="outline" onClick={() => setTvMode(true)} title="Ward TV Display">
             <Tv className="h-4 w-4" />
@@ -917,6 +895,7 @@ const NursingPage: React.FC = () => {
           </Button>
         </div>
       </div>
+      <UnacknowledgedAlertsPanel hospitalId={hospitalId} />
       {activeTab === "tasks" && (
         <MARAdherenceMonitor
           overdueTasks={tasks.filter((t) => t.status === "overdue" && t.type === "medication")}

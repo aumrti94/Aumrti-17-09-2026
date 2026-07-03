@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { differenceInHours, format } from "date-fns";
 import { Clock, AlertCircle, Syringe, Activity, FlaskConical, LayoutGrid } from "lucide-react";
 import { useLocation } from "react-router-dom";
+import { computePendingDoses } from "@/lib/marPending";
 
 interface BoardRow {
   id: string; // admission_id
@@ -86,23 +87,41 @@ const WardNursingBoard: React.FC = () => {
       }
     });
 
-    // 4. Fetch Pending Meds (next 2h or overdue)
+    // 4. Fetch Pending Meds (next 2h or overdue). nursing_mar only has a persisted row once a
+    // nurse has recorded a real outcome or Kardex pre-generated a "pending" placeholder — so
+    // today's expected-but-not-yet-recorded doses are computed virtually from the active
+    // medication schedule, same as NursingPage.tsx's task queue.
     const now = new Date();
-    const twoHoursFromNow = new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString();
-    const { data: meds } = await supabase
-      .from("nursing_mar")
-      .select("admission_id, drug_name, scheduled_time")
-      .in("admission_id", admissionIds)
-      .eq("outcome", "pending")
-      .lte("scheduled_time", twoHoursFromNow)
-      .order("scheduled_time", { ascending: true });
+    const todayStr = now.toISOString().slice(0, 10);
+    const twoHoursFromNow = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+    const cutoffHHMM = `${String(twoHoursFromNow.getHours()).padStart(2, "0")}:${String(twoHoursFromNow.getMinutes()).padStart(2, "0")}`;
+
+    const [{ data: activeMeds }, { data: recordedMar }] = await Promise.all([
+      supabase
+        .from("ipd_medications")
+        .select("id, admission_id, drug_name, dose, route, frequency")
+        .in("admission_id", admissionIds)
+        .eq("is_active", true),
+      supabase
+        .from("nursing_mar")
+        .select("medication_id, admission_id, scheduled_date, scheduled_time")
+        .in("admission_id", admissionIds)
+        .eq("scheduled_date", todayStr),
+    ]);
+    const recordedKeys = new Set(
+      (recordedMar || []).map((r: any) => `${r.medication_id}_${r.scheduled_date}_${r.scheduled_time}`)
+    );
+    const pendingDoses = computePendingDoses((activeMeds as any) || [], recordedKeys, todayStr);
 
     const medMap = new Map<string, { name: string; time: string }[]>();
-    (meds || []).forEach(m => {
-      const list = medMap.get(m.admission_id) || [];
-      list.push({ name: m.drug_name, time: m.scheduled_time });
-      medMap.set(m.admission_id, list);
-    });
+    pendingDoses
+      .filter((p) => p.scheduledTime <= cutoffHHMM)
+      .sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime))
+      .forEach((p) => {
+        const list = medMap.get(p.admissionId) || [];
+        list.push({ name: p.drugName, time: `${p.scheduledDate}T${p.scheduledTime}:00` });
+        medMap.set(p.admissionId, list);
+      });
 
     // 5. Fetch Pending Labs
     const { data: labs } = await supabase

@@ -7,6 +7,7 @@
 
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
+import { calculateNEWS2 as calculateNEWS2Canonical } from "@/lib/news2";
 
 function parseAIJson(text: string): any | null {
   try {
@@ -96,6 +97,9 @@ export interface SepsisResult {
   } | null;
 }
 
+// Thin wrapper around the canonical NEWS2 formula (src/lib/news2.ts) — renames fields to this
+// module's existing vocabulary (rr/on_oxygen/avpu) so its one caller (runSepsisCheck) is
+// unaffected.
 export const calculateNEWS2Score = (vitals: {
   rr?: number;
   spo2?: number;
@@ -105,53 +109,15 @@ export const calculateNEWS2Score = (vitals: {
   pulse?: number;
   avpu?: string;
 }): number => {
-  let score = 0;
-
-  if (vitals.rr) {
-    if (vitals.rr <= 8) score += 3;
-    else if (vitals.rr <= 11) score += 1;
-    else if (vitals.rr <= 20) score += 0;
-    else if (vitals.rr <= 24) score += 2;
-    else score += 3;
-  }
-
-  if (vitals.spo2) {
-    if (vitals.spo2 <= 91) score += 3;
-    else if (vitals.spo2 <= 93) score += 2;
-    else if (vitals.spo2 <= 95) score += 1;
-  }
-
-  if (vitals.on_oxygen) score += 2;
-
-  if (vitals.temperature) {
-    const temp = vitals.temperature;
-    if (temp <= 35.0) score += 3;
-    else if (temp <= 36.0) score += 1;
-    else if (temp <= 38.0) score += 0;
-    else if (temp <= 39.0) score += 1;
-    else score += 2;
-  }
-
-  if (vitals.bp_systolic) {
-    if (vitals.bp_systolic <= 90) score += 3;
-    else if (vitals.bp_systolic <= 100) score += 2;
-    else if (vitals.bp_systolic <= 110) score += 1;
-    else if (vitals.bp_systolic <= 219) score += 0;
-    else score += 3;
-  }
-
-  if (vitals.pulse) {
-    if (vitals.pulse <= 40) score += 3;
-    else if (vitals.pulse <= 50) score += 1;
-    else if (vitals.pulse <= 90) score += 0;
-    else if (vitals.pulse <= 110) score += 1;
-    else if (vitals.pulse <= 130) score += 2;
-    else score += 3;
-  }
-
-  if (vitals.avpu && vitals.avpu !== "A") score += 3;
-
-  return score;
+  return calculateNEWS2Canonical({
+    respiratory_rate: vitals.rr,
+    spo2: vitals.spo2,
+    on_supplemental_o2: !!vitals.on_oxygen,
+    systolic_bp: vitals.bp_systolic,
+    heart_rate: vitals.pulse,
+    consciousness: vitals.avpu,
+    temperature: vitals.temperature,
+  });
 };
 
 export const runSepsisCheck = async (

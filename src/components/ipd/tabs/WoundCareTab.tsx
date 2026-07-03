@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { AlertTriangle, CheckCircle2, Plus, Loader2, TrendingDown } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Plus, Loader2, TrendingDown, Camera, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
@@ -86,6 +86,14 @@ export default function WoundCareTab({ admissionId, patientId, hospitalId, userI
   const [showAssessForm, setShowAssessForm] = useState(false);
   const [showBradenForm, setShowBradenForm] = useState(false);
 
+  // Wound photo upload — wound-photos is a private Storage bucket, resolved to a short-lived
+  // signed URL for display (nursing module completion plan, Phase 4).
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
+  const photoInputRef = useRef<HTMLInputElement>(null);
+
   const [form, setForm] = useState({
     wound_type: "pressure_injury", location: "", stage: "", length_cm: "", width_cm: "", depth_cm: "",
     tissue_type: "granulation", exudate_amount: "minimal", exudate_type: "serous",
@@ -115,6 +123,45 @@ export default function WoundCareTab({ admissionId, patientId, hospitalId, userI
 
   useEffect(() => { fetch(); }, [fetch]);
 
+  // Resolve signed URLs for any assessment photos not yet resolved in this session.
+  useEffect(() => {
+    const toResolve = assessments.filter((a) => a.wound_photo_url && !photoUrls[a.id]);
+    if (toResolve.length === 0) return;
+    (async () => {
+      const entries = await Promise.all(
+        toResolve.map(async (a) => {
+          const { data } = await supabase.storage.from("wound-photos").createSignedUrl(a.wound_photo_url, 3600);
+          return [a.id, data?.signedUrl] as const;
+        })
+      );
+      setPhotoUrls((prev) => {
+        const next = { ...prev };
+        for (const [id, url] of entries) if (url) next[id] = url;
+        return next;
+      });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assessments]);
+
+  const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      toast({ title: "Photo too large", description: "Maximum 10MB allowed", variant: "destructive" });
+      return;
+    }
+    setPhotoFile(file);
+    const reader = new FileReader();
+    reader.onload = () => setPhotoPreview(reader.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  const clearPhoto = () => {
+    setPhotoFile(null);
+    setPhotoPreview(null);
+    if (photoInputRef.current) photoInputRef.current.value = "";
+  };
+
   const bradenTotal = Object.values(bradenForm).reduce((s, v) => s + parseInt(v || "0"), 0);
   const bradenRisk = bradenTotal <= 9 ? "Very High Risk (≤9)" : bradenTotal <= 12 ? "High Risk (10–12)" : bradenTotal <= 14 ? "Moderate Risk (13–14)" : bradenTotal <= 18 ? "Mild Risk (15–18)" : "No Risk (19–23)";
   const bradenColor = bradenTotal <= 9 ? "text-red-700" : bradenTotal <= 12 ? "text-red-600" : bradenTotal <= 14 ? "text-amber-600" : "text-green-600";
@@ -122,6 +169,23 @@ export default function WoundCareTab({ admissionId, patientId, hospitalId, userI
   const saveAssessment = async () => {
     if (!form.location) return;
     setSaving(true);
+
+    let woundPhotoPath: string | null = null;
+    if (photoFile) {
+      setUploadingPhoto(true);
+      const path = `${hospitalId}/${admissionId}/${Date.now()}_${photoFile.name}`;
+      const { data: uploadData, error: uploadErr } = await supabase.storage
+        .from("wound-photos")
+        .upload(path, photoFile);
+      setUploadingPhoto(false);
+      if (uploadErr) {
+        setSaving(false);
+        toast({ title: "Photo upload failed", description: uploadErr.message, variant: "destructive" });
+        return;
+      }
+      woundPhotoPath = uploadData.path;
+    }
+
     await (supabase as any).from("wound_assessments").insert({
       hospital_id: hospitalId, admission_id: admissionId, patient_id: patientId,
       assessed_by: userId,
@@ -137,6 +201,7 @@ export default function WoundCareTab({ admissionId, patientId, hospitalId, userI
       dressing_frequency: form.dressing_frequency || null,
       next_review_date: form.next_review_date || null,
       notes: form.notes || null,
+      wound_photo_url: woundPhotoPath,
     });
 
     // NABH evidence for pressure injuries Stage III/IV
@@ -148,6 +213,7 @@ export default function WoundCareTab({ admissionId, patientId, hospitalId, userI
 
     setSaving(false);
     setShowAssessForm(false);
+    clearPhoto();
     fetch();
     toast({ title: "Wound assessment saved" });
   };
@@ -204,6 +270,31 @@ export default function WoundCareTab({ admissionId, patientId, hospitalId, userI
             {showAssessForm && (
               <div className="border border-border rounded-xl p-4 bg-muted/30 space-y-3">
                 <p className="text-[12px] font-semibold text-foreground">Wound Assessment</p>
+
+                {/* Wound photo — NABH requires photo documentation for pressure injuries */}
+                <div>
+                  <label className="text-[11px] text-muted-foreground">Wound Photo</label>
+                  <input ref={photoInputRef} type="file" accept="image/*" capture="environment"
+                    className="hidden" onChange={handlePhotoSelect} />
+                  {photoPreview ? (
+                    <div className="mt-1 flex items-center gap-3 bg-card border border-border rounded-lg p-2">
+                      <img src={photoPreview} alt="Wound photo preview" className="w-16 h-16 rounded object-cover" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[12px] font-medium text-foreground truncate">{photoFile?.name}</p>
+                        <p className="text-[10px] text-muted-foreground">{photoFile ? (photoFile.size / 1024).toFixed(0) : 0} KB</p>
+                      </div>
+                      <Button size="icon" variant="ghost" className="h-7 w-7" onClick={clearPhoto}>
+                        <X size={14} />
+                      </Button>
+                    </div>
+                  ) : (
+                    <button type="button" onClick={() => photoInputRef.current?.click()}
+                      className="mt-1 w-full h-12 rounded-lg border-2 border-dashed border-border hover:border-primary/50 transition-colors flex items-center justify-center gap-2 text-[12px] text-muted-foreground">
+                      <Camera size={16} /> Tap to add a wound photo
+                    </button>
+                  )}
+                </div>
+
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-[11px] text-muted-foreground">Wound Type *</label>
@@ -314,9 +405,10 @@ export default function WoundCareTab({ admissionId, patientId, hospitalId, userI
                 </div>
 
                 <div className="flex justify-end gap-2">
-                  <Button size="sm" variant="outline" onClick={() => setShowAssessForm(false)} className="h-8">Cancel</Button>
+                  <Button size="sm" variant="outline" onClick={() => { setShowAssessForm(false); clearPhoto(); }} className="h-8">Cancel</Button>
                   <Button size="sm" onClick={saveAssessment} disabled={saving || !form.location} className="h-8 gap-1.5">
-                    {saving ? <Loader2 size={12} className="animate-spin" /> : null}Save Assessment
+                    {saving ? <Loader2 size={12} className="animate-spin" /> : null}
+                    {uploadingPhoto ? "Uploading photo…" : "Save Assessment"}
                   </Button>
                 </div>
               </div>
@@ -342,7 +434,18 @@ export default function WoundCareTab({ admissionId, patientId, hospitalId, userI
                       </div>
                       {a.dressing_type && <p className="text-[11px] text-muted-foreground">Dressing: {a.dressing_type} · {a.dressing_frequency}</p>}
                     </div>
-                    <p className="text-[10px] text-muted-foreground shrink-0">{format(new Date(a.assessed_at), "dd/MM HH:mm")}</p>
+                    <div className="flex flex-col items-end gap-1.5 shrink-0">
+                      <p className="text-[10px] text-muted-foreground">{format(new Date(a.assessed_at), "dd/MM HH:mm")}</p>
+                      {a.wound_photo_url && (
+                        photoUrls[a.id] ? (
+                          <img src={photoUrls[a.id]} alt="Wound photo" title="Click to view full size"
+                            className="w-14 h-14 rounded-lg object-cover border border-border cursor-pointer"
+                            onClick={() => window.open(photoUrls[a.id], "_blank", "noopener,noreferrer")} />
+                        ) : (
+                          <div className="w-14 h-14 rounded-lg bg-muted animate-pulse" />
+                        )
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}

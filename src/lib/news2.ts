@@ -22,18 +22,26 @@ export interface VitalsInput {
 
 export type NEWS2Level = "low" | "medium" | "high" | "critical";
 
-export function calculateNEWS2(v: VitalsInput): number {
+// Every field is optional — a field that isn't supplied contributes 0 to the score. This is the
+// single canonical NEWS2 formula (nursing module completion plan, Phase 3): the two other
+// implementations that used to exist (src/lib/vitalsAlerts.ts, src/lib/clinicalPredictions.ts)
+// are now thin field-mapping wrappers around this function, so every screen scores identically.
+// Existing callers that already pass a complete VitalsInput are unaffected — the `!= null`
+// guards are always true for them, so behaviour is byte-identical to before.
+export function calculateNEWS2(v: Partial<VitalsInput>): number {
   let score = 0;
 
   // Respiratory Rate
-  if (v.respiratory_rate <= 8) score += 3;
-  else if (v.respiratory_rate <= 11) score += 1;
-  else if (v.respiratory_rate <= 20) score += 0;
-  else if (v.respiratory_rate <= 24) score += 2;
-  else score += 3;
+  if (v.respiratory_rate != null) {
+    if (v.respiratory_rate <= 8) score += 3;
+    else if (v.respiratory_rate <= 11) score += 1;
+    else if (v.respiratory_rate <= 20) score += 0;
+    else if (v.respiratory_rate <= 24) score += 2;
+    else score += 3;
+  }
 
   // SpO2 (Scale 1 — non-hypercapnic)
-  if (!v.on_supplemental_o2) {
+  if (v.spo2 != null && !v.on_supplemental_o2) {
     if (v.spo2 <= 91) score += 3;
     else if (v.spo2 <= 93) score += 2;
     else if (v.spo2 <= 95) score += 1;
@@ -43,29 +51,35 @@ export function calculateNEWS2(v: VitalsInput): number {
   if (v.on_supplemental_o2) score += 2;
 
   // Temperature (°C)
-  if (v.temperature <= 35) score += 3;
-  else if (v.temperature <= 36) score += 1;
-  else if (v.temperature <= 38) score += 0;
-  else if (v.temperature <= 39) score += 1;
-  else score += 2;
+  if (v.temperature != null) {
+    if (v.temperature <= 35) score += 3;
+    else if (v.temperature <= 36) score += 1;
+    else if (v.temperature <= 38) score += 0;
+    else if (v.temperature <= 39) score += 1;
+    else score += 2;
+  }
 
   // Systolic BP
-  if (v.systolic_bp <= 90) score += 3;
-  else if (v.systolic_bp <= 100) score += 2;
-  else if (v.systolic_bp <= 110) score += 1;
-  else if (v.systolic_bp <= 219) score += 0;
-  else score += 3;
+  if (v.systolic_bp != null) {
+    if (v.systolic_bp <= 90) score += 3;
+    else if (v.systolic_bp <= 100) score += 2;
+    else if (v.systolic_bp <= 110) score += 1;
+    else if (v.systolic_bp <= 219) score += 0;
+    else score += 3;
+  }
 
   // Heart Rate
-  if (v.heart_rate <= 40) score += 3;
-  else if (v.heart_rate <= 50) score += 1;
-  else if (v.heart_rate <= 90) score += 0;
-  else if (v.heart_rate <= 110) score += 1;
-  else if (v.heart_rate <= 130) score += 2;
-  else score += 3;
+  if (v.heart_rate != null) {
+    if (v.heart_rate <= 40) score += 3;
+    else if (v.heart_rate <= 50) score += 1;
+    else if (v.heart_rate <= 90) score += 0;
+    else if (v.heart_rate <= 110) score += 1;
+    else if (v.heart_rate <= 130) score += 2;
+    else score += 3;
+  }
 
   // Consciousness (ACVPU)
-  if (v.consciousness !== "A") score += 3;
+  if (v.consciousness != null && v.consciousness !== "A") score += 3;
 
   return score;
 }

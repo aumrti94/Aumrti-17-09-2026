@@ -1,3 +1,5 @@
+import { calculateNEWS2 as calculateNEWS2Canonical } from "./news2";
+
 interface VitalsInput {
   bp_systolic?: number;
   bp_diastolic?: number;
@@ -61,50 +63,20 @@ export function checkVitalsThresholds(vitals: VitalsInput): VitalsAlert[] {
   return alerts;
 }
 
+// Thin wrapper around the canonical NEWS2 formula (src/lib/news2.ts) — converts the Fahrenheit
+// temperature this screen collects to Celsius, and always scores as room-air/alert since this
+// formula never captured supplemental-O2 status or consciousness (matches its prior behaviour
+// exactly — it never added the +2 O2 term or an ACVPU term either).
 export function calculateNEWS2(vitals: VitalsInput): number {
-  let score = 0;
-
-  if (vitals.respiratory_rate) {
-    if (vitals.respiratory_rate <= 8) score += 3;
-    else if (vitals.respiratory_rate <= 11) score += 1;
-    else if (vitals.respiratory_rate <= 20) score += 0;
-    else if (vitals.respiratory_rate <= 24) score += 2;
-    else score += 3;
-  }
-
-  if (vitals.spo2) {
-    if (vitals.spo2 <= 91) score += 3;
-    else if (vitals.spo2 <= 93) score += 2;
-    else if (vitals.spo2 <= 95) score += 1;
-  }
-
-  if (vitals.bp_systolic) {
-    if (vitals.bp_systolic <= 90) score += 3;
-    else if (vitals.bp_systolic <= 100) score += 2;
-    else if (vitals.bp_systolic <= 110) score += 1;
-    else if (vitals.bp_systolic <= 219) score += 0;
-    else score += 3;
-  }
-
-  if (vitals.pulse) {
-    if (vitals.pulse <= 40) score += 3;
-    else if (vitals.pulse <= 50) score += 1;
-    else if (vitals.pulse <= 90) score += 0;
-    else if (vitals.pulse <= 110) score += 1;
-    else if (vitals.pulse <= 130) score += 2;
-    else score += 3;
-  }
-
-  if (vitals.temperature) {
-    const tempC = (vitals.temperature - 32) * 5 / 9;
-    if (tempC <= 35.0) score += 3;
-    else if (tempC <= 36.0) score += 1;
-    else if (tempC <= 38.0) score += 0;
-    else if (tempC <= 39.0) score += 1;
-    else score += 2;
-  }
-
-  return score;
+  return calculateNEWS2Canonical({
+    respiratory_rate: vitals.respiratory_rate,
+    spo2: vitals.spo2,
+    on_supplemental_o2: false,
+    systolic_bp: vitals.bp_systolic,
+    heart_rate: vitals.pulse,
+    consciousness: "A",
+    temperature: vitals.temperature != null ? (vitals.temperature - 32) * 5 / 9 : undefined,
+  });
 }
 
 /**

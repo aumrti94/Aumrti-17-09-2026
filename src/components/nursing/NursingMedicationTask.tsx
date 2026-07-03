@@ -40,7 +40,6 @@ const NursingMedicationTask: React.FC<Props> = ({ task, onComplete }) => {
   const [showNotGiven, setShowNotGiven] = useState(false);
   const [reason, setReason] = useState("");
   const [showDoubleCheck, setShowDoubleCheck] = useState(false);
-  const [lastMarId, setLastMarId] = useState<string | undefined>();
   const [patientAllergies, setPatientAllergies] = useState<string | null>(null);
 
   const drugIsHighAlert = isHighAlert(task.drugName);
@@ -57,12 +56,18 @@ const NursingMedicationTask: React.FC<Props> = ({ task, onComplete }) => {
 
   const allChecked = fiveRights(task).every((r) => checks[r.key]);
 
-  const saveOutcome = async (outcome: string, omissionReason?: string) => {
+  // Returns the new/updated nursing_mar row's id on success, or undefined on failure — callers
+  // that need to link a follow-up record (e.g. the high-alert double-check) to this exact dose
+  // use the id. mar_records is now populated by a DB trigger on nursing_mar — no manual mirror
+  // insert here. Upsert (not insert) because Kardex's "Generate Today's MAR" may have already
+  // created a "pending" placeholder row for this same dose — this overwrites it with the real
+  // outcome instead of colliding with the unique constraint.
+  const saveOutcome = async (outcome: string, omissionReason?: string): Promise<string | undefined> => {
     setSaving(true);
     const { data: userData } = await supabase.auth.getUser();
     const userId = userData?.user?.id;
 
-    const { error } = await supabase.from("nursing_mar").insert({
+    const { data: marRow, error } = await supabase.from("nursing_mar").upsert({
       hospital_id: task.hospitalId!,
       admission_id: task.admissionId,
       medication_id: task.medicationId!,
@@ -73,27 +78,12 @@ const NursingMedicationTask: React.FC<Props> = ({ task, onComplete }) => {
       outcome,
       omission_reason: omissionReason || null,
       five_rights_verified: allChecked,
-    });
-
-    // Mirror to dedicated mar_records audit log
-    const marStatus = outcome === "given" ? "given" : outcome === "held" ? "withheld" : "refused";
-    await supabase.from("mar_records" as any).insert({
-      hospital_id: task.hospitalId!,
-      admission_id: task.admissionId,
-      patient_id: task.patientId,
-      drug_name: task.drugName || "",
-      dose: task.dose || null,
-      route: task.route || null,
-      scheduled_time: `${task.scheduledDate}T${task.scheduledTime}:00`,
-      administered_at: outcome === "given" ? new Date().toISOString() : null,
-      administered_by: userId,
-      status: marStatus,
-      notes: omissionReason || null,
-    });
+    }, { onConflict: "admission_id,medication_id,scheduled_date,scheduled_time" }).select("id").single();
 
     setSaving(false);
     if (error) {
       toast({ title: "Error saving record", description: error.message, variant: "destructive" });
+      return undefined;
     } else {
       toast({
         title: outcome === "given"
@@ -106,7 +96,27 @@ const NursingMedicationTask: React.FC<Props> = ({ task, onComplete }) => {
           `Medication administered: ${task.drugName} ${task.dose || ""} to ${task.patientName || "patient"}. 5 Rights verified.`);
       }
       onComplete();
+      return marRow?.id;
     }
+  };
+
+  const handleDoubleCheckConfirmed = async (
+    secondNurseId: string,
+    verifiedRights: { right_patient: boolean; right_drug: boolean; right_dose: boolean; right_route: boolean; right_time: boolean; confirmed_at: string },
+  ) => {
+    setShowDoubleCheck(false);
+    const { data: userData } = await supabase.auth.getUser();
+    const marId = await saveOutcome("given");
+    if (!marId || !task.hospitalId) return;
+    await (supabase as any).from("mar_double_checks").insert({
+      hospital_id: task.hospitalId,
+      mar_id: marId,
+      first_nurse_id: userData?.user?.id || null,
+      second_nurse_id: secondNurseId,
+      second_nurse_confirmed_at: verifiedRights.confirmed_at,
+      five_rights_both: true,
+      second_nurse_verified_rights: verifiedRights,
+    });
   };
 
   return (
@@ -257,8 +267,7 @@ const NursingMedicationTask: React.FC<Props> = ({ task, onComplete }) => {
         open={showDoubleCheck}
         drugName={task.drugName}
         dose={task.dose}
-        marId={lastMarId}
-        onConfirmed={() => { setShowDoubleCheck(false); saveOutcome("given"); }}
+        onConfirmed={handleDoubleCheckConfirmed}
         onCancel={() => setShowDoubleCheck(false)}
       />
     </div>

@@ -287,12 +287,14 @@ serve(async (req) => {
         .eq("hospital_id", hospitalId)
         .order("created_at", { ascending: true }),
 
-      // Medication Administration Record
+      // Medication Administration Record — nursing_mar is canonical (nursing module completion
+      // plan, Phase 2), joined to ipd_medications to denormalize drug_name/dose/route/frequency
       sb
-        .from("med_admin_records")
-        .select("drug_name, dose, route, frequency, scheduled_time, administered_at, status, omission_reason, notes")
+        .from("nursing_mar")
+        .select("scheduled_date, scheduled_time, administered_at, outcome, omission_reason, ipd_medications(drug_name, dose, route, frequency)")
         .eq("admission_id", admission_id)
         .eq("hospital_id", hospitalId)
+        .order("scheduled_date", { ascending: true })
         .order("scheduled_time", { ascending: true })
         .limit(200),
     ]);
@@ -303,6 +305,20 @@ serve(async (req) => {
       dispensed_at: di.pharmacy_dispensing?.dispensed_at ?? null,
     }));
 
+    // Flatten MAR rows into the flat shape buildHtml expects (same shape med_admin_records used
+    // to provide directly)
+    const marRecords = (marRes.data ?? []).map((r: any) => ({
+      drug_name: r.ipd_medications?.drug_name ?? null,
+      dose: r.ipd_medications?.dose ?? null,
+      route: r.ipd_medications?.route ?? null,
+      frequency: r.ipd_medications?.frequency ?? null,
+      scheduled_time: `${r.scheduled_date}T${r.scheduled_time}`,
+      administered_at: r.administered_at,
+      status: r.outcome,
+      omission_reason: r.omission_reason,
+      notes: null,
+    }));
+
     // ── Render HTML ──────────────────────────────────────────────────────────
     const html = buildHtml({
       patientName,
@@ -311,7 +327,7 @@ serve(async (req) => {
       generatedAt: new Date().toLocaleString("en-IN"),
       prescriptions: rxRes.data ?? [],
       dispensingItems,
-      marRecords: marRes.data ?? [],
+      marRecords,
     });
 
     // ── Upload ───────────────────────────────────────────────────────────────

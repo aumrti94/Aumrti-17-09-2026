@@ -10,6 +10,7 @@ import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { AlertTriangle, RefreshCw, Pill, Plus, X, Activity, ClipboardList, CheckCircle2 } from "lucide-react";
 import IPDDeviceTab from "./IPDDeviceTab";
+import IOChartTab from "@/components/nursing/IOChartTab";
 import { calculateNEWS2, getNEWS2BadgeClasses } from "@/lib/news2";
 
 interface Props {
@@ -301,14 +302,30 @@ const NursingKardexTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pa
   }, [admissionId]);
 
   // ── MAR fetching ─────────────────────────────────────────────────────────
+  // nursing_mar is the canonical MAR table (Phase 2 of the nursing completion plan) — joined to
+  // ipd_medications to denormalize drug_name/dose/route for display, matching the shape this
+  // tab's UI already expects.
   const fetchMAR = useCallback(async () => {
     if (!admissionId) return;
     const { data } = await (supabase as any)
-      .from("med_admin_records")
-      .select("*")
+      .from("nursing_mar")
+      .select("id, scheduled_date, scheduled_time, administered_at, outcome, omission_reason, ipd_medications(drug_name, dose, route, frequency)")
       .eq("admission_id", admissionId)
+      .order("scheduled_date", { ascending: true })
       .order("scheduled_time", { ascending: true });
-    setMarRecords(data || []);
+    const mapped: MARRecord[] = (data || []).map((r: any) => ({
+      id: r.id,
+      drug_name: r.ipd_medications?.drug_name || "—",
+      dose: r.ipd_medications?.dose || "",
+      route: r.ipd_medications?.route || "",
+      frequency: r.ipd_medications?.frequency ?? null,
+      scheduled_time: `${r.scheduled_date}T${r.scheduled_time}`,
+      administered_at: r.administered_at,
+      status: r.outcome,
+      omission_reason: r.omission_reason,
+      notes: null,
+    }));
+    setMarRecords(mapped);
   }, [admissionId]);
 
   // ── Devices fetching ─────────────────────────────────────────────────────
@@ -443,6 +460,28 @@ const NursingKardexTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pa
     }
     setSaving(false);
 
+    // Persist an escalation alert on a high score — previously this only showed a local toast,
+    // so an elevated MEWS/NEWS2 recorded here never reached the clinical_alerts feed nurses
+    // monitor elsewhere (nursing module completion plan, Phase 3).
+    if (mewsScore >= 5 || (news2Score !== null && news2Score >= 5)) {
+      const scoreLabel = news2Score !== null ? `NEWS2 ${news2Score} / MEWS ${mewsScore}` : `MEWS ${mewsScore}`;
+      try {
+        await offlineWrite({
+          table: "clinical_alerts",
+          operation: "insert",
+          data: {
+            hospital_id: hospitalId,
+            patient_id: patientId,
+            alert_type: "high_news2",
+            severity: (news2Score !== null && news2Score >= 7) || mewsScore >= 7 ? "critical" : "high",
+            alert_message: `Elevated early-warning score (${scoreLabel}) recorded via Nursing Kardex — clinical review required.`,
+          },
+        });
+      } catch {
+        // Best-effort — vitals were already saved successfully above; don't block on alert delivery.
+      }
+    }
+
     const news2Label = news2Score !== null ? ` · NEWS2: ${news2Score}` : "";
     const offlineNote = isOnline ? "" : " (queued — will sync when online)";
     toast({ title: `Vitals recorded — MEWS: ${mewsScore}${news2Label}${mewsScore >= 5 ? " ⚠️ Escalate!" : ""}${offlineNote}` });
@@ -453,8 +492,8 @@ const NursingKardexTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pa
 
   // ── MAR handlers ─────────────────────────────────────────────────────────
   const handleMarkGiven = async (recordId: string) => {
-    await (supabase as any).from("med_admin_records").update({
-      status: "given",
+    await (supabase as any).from("nursing_mar").update({
+      outcome: "given",
       administered_at: new Date().toISOString(),
       administered_by: userId || null,
     }).eq("id", recordId);
@@ -464,8 +503,8 @@ const NursingKardexTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pa
 
   const handleMarkOmitted = async () => {
     if (!omitTarget || !omitReason) return;
-    await (supabase as any).from("med_admin_records").update({
-      status: "omitted",
+    await (supabase as any).from("nursing_mar").update({
+      outcome: "omitted",
       omission_reason: omitReason,
     }).eq("id", omitTarget);
     toast({ title: "Marked as omitted" });
@@ -480,7 +519,7 @@ const NursingKardexTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pa
 
     const { data: meds } = await (supabase as any)
       .from("ipd_medications")
-      .select("drug_name, dose, route, frequency")
+      .select("id, drug_name, dose, route, frequency")
       .eq("admission_id", admissionId)
       .eq("is_active", true);
 
@@ -496,17 +535,14 @@ const NursingKardexTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pa
     for (const med of meds) {
       const times = getScheduledTimes(med.frequency || "");
       for (const time of times) {
-        const scheduledAt = new Date(`${today}T${time}:00`);
         records.push({
           hospital_id: hospitalId,
           admission_id: admissionId,
-          patient_id: patientId,
-          drug_name: med.drug_name,
-          dose: med.dose,
-          route: med.route || "oral",
-          frequency: med.frequency,
-          scheduled_time: scheduledAt.toISOString(),
-          status: "pending",
+          medication_id: med.id,
+          scheduled_date: today,
+          scheduled_time: `${time}:00`,
+          outcome: "pending",
+          five_rights_verified: false,
         });
       }
     }
@@ -517,18 +553,19 @@ const NursingKardexTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pa
       return;
     }
 
-    try {
-      // MAR generation uses bulk insert — enqueue each record individually so
-      // the offline queue can replay them one-by-one when connectivity returns.
-      for (const record of records) {
-        await offlineWrite({ table: "med_admin_records", operation: "insert", data: record });
-      }
-    } catch (err: any) {
-      setGeneratingMAR(false);
-      toast({ title: "Error generating MAR", description: err.message, variant: "destructive" });
+    // Pre-generating the day's dose checklist can tolerate requiring connectivity (unlike
+    // actually marking a dose given/omitted, which stays instant above) — this needs a direct
+    // batch upsert with dedupe against the nursing_mar unique constraint, which
+    // useOfflineWrite's insert-only API doesn't support.
+    const { error } = await (supabase as any)
+      .from("nursing_mar")
+      .upsert(records, { onConflict: "admission_id,medication_id,scheduled_date,scheduled_time", ignoreDuplicates: true });
+
+    setGeneratingMAR(false);
+    if (error) {
+      toast({ title: "Error generating MAR", description: error.message, variant: "destructive" });
       return;
     }
-    setGeneratingMAR(false);
 
     toast({ title: `MAR generated — ${records.length} dose(s) scheduled for today` });
     fetchMAR();
@@ -683,6 +720,7 @@ const NursingKardexTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pa
           <TabsTrigger value="vitals" className="text-xs h-7">📊 Vitals Chart</TabsTrigger>
           <TabsTrigger value="mar" className="text-xs h-7">💊 Medication Administration</TabsTrigger>
           <TabsTrigger value="devices" className="text-xs h-7">🩺 Devices</TabsTrigger>
+          <TabsTrigger value="io_chart" className="text-xs h-7">💧 I/O Chart</TabsTrigger>
         </TabsList>
 
         {/* ── VITALS SUB-TAB ── */}
@@ -983,6 +1021,14 @@ const NursingKardexTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pa
             hospitalId={hospitalId}
             userId={userId}
             patientId={patientId}
+          />
+        </TabsContent>
+
+        {/* ── I/O CHART SUB-TAB ── */}
+        <TabsContent value="io_chart" className="h-full overflow-auto m-0">
+          <IOChartTab
+            admissionId={admissionId}
+            hospitalId={hospitalId ?? ""}
           />
         </TabsContent>
       </Tabs>
