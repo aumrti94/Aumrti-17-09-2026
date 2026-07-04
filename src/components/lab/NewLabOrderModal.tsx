@@ -363,6 +363,19 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
     setStep("payment");
   };
 
+  // Atomic per-hospital accession number (Phase 3). Best-effort: order creation
+  // must not fail if the RPC is unavailable — analyzer matching simply falls back
+  // to the sample barcode for such orders.
+  const fetchAccession = async (): Promise<string | null> => {
+    try {
+      const { data, error } = await (supabase as any).rpc("next_lab_accession", { p_hospital_id: hospitalId });
+      if (error) return null;
+      return (data as string) || null;
+    } catch {
+      return null;
+    }
+  };
+
   // IPD fast path: create order + advance debit directly
   const createOrderIPD = async () => {
     setSubmitting(true);
@@ -383,7 +396,8 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
         status: "ordered",
         billing_status: "billed",
         ordered_at: new Date().toISOString(),
-      }).select("id").maybeSingle();
+        accession_number: await fetchAccession(),
+      } as any).select("id").maybeSingle();
       if (orderErr || !order) throw orderErr || new Error("Failed to create order");
 
       await supabase.from("lab_order_items").insert(
@@ -584,7 +598,8 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
         status: "ordered",
         billing_status: "billed",
         ordered_at: new Date().toISOString(),
-      }).select("id").maybeSingle();
+        accession_number: await fetchAccession(),
+      } as any).select("id").maybeSingle();
       if (orderErr || !order) throw orderErr || new Error("Lab order creation failed");
 
       // 4. Order items + samples

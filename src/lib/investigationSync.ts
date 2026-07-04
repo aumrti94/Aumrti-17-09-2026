@@ -75,6 +75,13 @@ export async function syncLabOrders(opts: {
 
     const orderedAt = new Date().toISOString();
 
+    // Atomic accession number (Phase 3) — best-effort, never blocks order creation
+    let accession: string | null = null;
+    try {
+      const { data: acc } = await (supabase as any).rpc("next_lab_accession", { p_hospital_id: opts.hospitalId });
+      accession = (acc as string) || null;
+    } catch { /* fall back to barcode-based matching */ }
+
     // Create lab_order
     const { data: newOrder, error: orderErr } = await (supabase as any)
       .from("lab_orders")
@@ -89,6 +96,7 @@ export async function syncLabOrders(opts: {
         status: "ordered",
         billing_status: "unbilled",
         ordered_at: orderedAt,
+        accession_number: accession,
       })
       .select("id")
       .maybeSingle();

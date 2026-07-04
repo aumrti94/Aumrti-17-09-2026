@@ -185,6 +185,18 @@ serve(async (req) => {
       );
     }
 
+    // Verify per-device secret (Phase 3). Devices with no secret configured skip the
+    // check (legacy/backward compatible); once device_secret is set it is mandatory.
+    if (device.device_secret) {
+      const providedSecret = req.headers.get("x-device-secret");
+      if (providedSecret !== device.device_secret) {
+        return new Response(
+          JSON.stringify({ error: "Invalid device secret" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     // Parse the raw message
     let parsed: ParsedResult;
     let messageType = "";
@@ -202,30 +214,91 @@ serve(async (req) => {
       messageType = "UNKNOWN";
     }
 
-    // Try to match to a lab order item by accession number
-    let matchedOrderItemId: string | null = null;
+    // ── Match to a lab order (Phase 3) ───────────────────────────────────────
+    // Primary key: lab_orders.accession_number (exists since 20261008000036).
+    // Fallback: lab_samples.barcode → its parent order (covers analyzers that echo
+    // the specimen barcode instead of the accession).
+    let matchedOrder: { id: string; items: Array<{ id: string; test_id: string | null; result_value: string | null }> } | null = null;
     let matchConfidence = "unmatched";
 
-    if (parsed.accessionNumber) {
-      // Accession is typically on the parent lab_order; find order_items underneath
+    const acc = parsed.accessionNumber?.trim();
+    if (acc) {
       const { data: orders } = await supabase
         .from("lab_orders")
-        .select("id, lab_order_items(id, test_id)")
+        .select("id, lab_order_items(id, test_id, result_value)")
         .eq("hospital_id", hospital_id)
-        .ilike("accession_number", parsed.accessionNumber.trim())
+        .ilike("accession_number", acc)
         .limit(1);
 
-      if (orders && orders.length > 0) {
+      if (orders?.length) {
+        matchedOrder = { id: orders[0].id, items: (orders[0] as any).lab_order_items || [] };
         matchConfidence = "high";
-        // If single test result, match to first unresulted item
-        if (parsed.results.length === 1 && (orders[0] as any).lab_order_items?.length > 0) {
-          matchedOrderItemId = (orders[0] as any).lab_order_items[0]?.id ?? null;
+      } else {
+        const { data: samples } = await supabase
+          .from("lab_samples")
+          .select("lab_order_id")
+          .eq("hospital_id", hospital_id)
+          .ilike("barcode", acc)
+          .limit(1);
+        if (samples?.length) {
+          const { data: order } = await supabase
+            .from("lab_orders")
+            .select("id, lab_order_items(id, test_id, result_value)")
+            .eq("id", samples[0].lab_order_id)
+            .maybeSingle();
+          if (order) {
+            matchedOrder = { id: order.id, items: (order as any).lab_order_items || [] };
+            matchConfidence = "medium";
+          }
         }
-      } else if (parsed.patientIdExternal) {
-        // Fallback: match by patient UHID in pending orders
-        matchConfidence = "medium";
       }
     }
+
+    // ── Route each parsed result to the right item via analyzer test mappings ──
+    // lab_analyzer_test_mappings: (device_id, analyzer_code) → test_id + unit_transform.
+    // Previously multi-result messages were naively mapped to the first item.
+    const { data: mappings } = await supabase
+      .from("lab_analyzer_test_mappings")
+      .select("analyzer_code, test_id, unit_transform")
+      .eq("device_id", device_id);
+    const mappingByCode = new Map<string, { test_id: string | null; unit_transform: number }>(
+      (mappings || []).map((m: any) => [String(m.analyzer_code).toUpperCase(), { test_id: m.test_id, unit_transform: Number(m.unit_transform) || 1 }])
+    );
+
+    const routed: Array<{ itemId: string; value: string; units: string; referenceRange: string; abnormalFlag: string }> = [];
+    const unroutedCodes: string[] = [];
+
+    if (matchedOrder) {
+      const usedItemIds = new Set<string>();
+      for (const r of parsed.results) {
+        const mapping = mappingByCode.get(r.analyzerCode.toUpperCase());
+        let item = mapping?.test_id
+          ? matchedOrder.items.find(i => i.test_id === mapping.test_id && !usedItemIds.has(i.id))
+          : undefined;
+        // Single-result + single-item messages can match without a mapping
+        if (!item && parsed.results.length === 1 && matchedOrder.items.length === 1) {
+          item = matchedOrder.items[0];
+        }
+        if (item) {
+          usedItemIds.add(item.id);
+          const numVal = parseFloat(r.value);
+          const transformed = mapping && !isNaN(numVal)
+            ? String(numVal * mapping.unit_transform)
+            : r.value;
+          routed.push({
+            itemId: item.id,
+            value: transformed,
+            units: r.units,
+            referenceRange: r.referenceRange,
+            abnormalFlag: r.abnormalFlag,
+          });
+        } else {
+          unroutedCodes.push(r.analyzerCode || "(no code)");
+        }
+      }
+    }
+
+    const primaryItemId = routed[0]?.itemId ?? null;
 
     // Persist message
     const { data: msgRow, error: msgErr } = await supabase
@@ -238,29 +311,50 @@ serve(async (req) => {
         message_type:       messageType,
         patient_id_external: parsed.patientIdExternal || null,
         accession_number:   parsed.accessionNumber || null,
-        order_item_id:      matchedOrderItemId,
-        status:             matchedOrderItemId ? "matched" : "pending",
+        order_item_id:      primaryItemId,
+        status:             primaryItemId ? "matched" : "pending",
         match_confidence:   matchConfidence,
+        error_reason:       unroutedCodes.length
+          ? `Unmapped analyzer codes: ${unroutedCodes.join(", ")} — add mappings in the Analyzer tab`
+          : null,
       })
       .select("id")
       .maybeSingle();
 
     if (msgErr) throw msgErr;
 
-    // Auto-post results if device has auto_validate enabled AND we have a match
-    if (device.auto_validate && matchedOrderItemId && parsed.results.length > 0) {
-      const result = parsed.results[0];
-      await supabase
-        .from("lab_order_items")
-        .update({
-          result_value:  result.value,
-          result_unit:   result.units,
-          reference_range: result.referenceRange || null,
-          result_flag:   mapAbnormalFlag(result.abnormalFlag),
-          status:        "resulted",
-          resulted_at:   new Date().toISOString(),
-        })
-        .eq("id", matchedOrderItemId);
+    // ── Auto-post (device.auto_validate) ─────────────────────────────────────
+    // Writes the app's real item lifecycle (status 'result_entered' +
+    // result_entered_at) and flag vocabulary (N/H/L/CH/CL/A) instead of the orphan
+    // 'resulted'/'high'/'low' values used before, so posted results flow through the
+    // normal worklist → validation pipeline.
+    if (device.auto_validate && routed.length > 0) {
+      const now = new Date().toISOString();
+      for (const r of routed) {
+        await supabase
+          .from("lab_order_items")
+          .update({
+            result_value:  r.value,
+            result_numeric: isNaN(parseFloat(r.value)) ? null : parseFloat(r.value),
+            result_unit:   r.units || null,
+            reference_range: r.referenceRange || null,
+            result_flag:   mapAbnormalFlag(r.abnormalFlag),
+            status:        "result_entered",
+            result_entered_at: now,
+          })
+          .eq("id", r.itemId);
+      }
+
+      // Reflect progress on the parent order (partial vs all results in)
+      if (matchedOrder) {
+        const resultedIds = new Set(routed.map(r => r.itemId));
+        const allDone = matchedOrder.items.every(i => i.result_value != null || resultedIds.has(i.id));
+        await supabase
+          .from("lab_orders")
+          .update({ status: allDone ? "result_entered" : "partial_results" })
+          .eq("id", matchedOrder.id)
+          .in("status", ["ordered", "sample_collected", "in_process", "partial_results"]);
+      }
 
       // Mark message as posted
       await supabase
@@ -282,10 +376,12 @@ serve(async (req) => {
       JSON.stringify({
         success: true,
         message_id: msgRow?.id,
-        status: matchedOrderItemId ? "matched" : "pending",
+        status: primaryItemId ? "matched" : "pending",
         match_confidence: matchConfidence,
         results_parsed: parsed.results.length,
-        auto_posted: device.auto_validate && !!matchedOrderItemId,
+        results_routed: routed.length,
+        unmapped_codes: unroutedCodes,
+        auto_posted: device.auto_validate && routed.length > 0,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
@@ -299,11 +395,15 @@ serve(async (req) => {
   }
 });
 
+// Maps HL7 OBX-8 abnormal flags to the app's result_flag vocabulary
+// (calcFlag in LabResultWorkspace: N/H/L/CH/CL, A = abnormal qualitative).
 function mapAbnormalFlag(hl7Flag: string): string {
   switch (hl7Flag?.toUpperCase()) {
-    case "H": case "HH": return "high";
-    case "L": case "LL": return "low";
-    case "A": case "AA": return "critical";
-    case "N": default:   return "normal";
+    case "H":  return "H";
+    case "HH": return "CH";
+    case "L":  return "L";
+    case "LL": return "CL";
+    case "A": case "AA": return "A";
+    case "N": default:   return "N";
   }
 }

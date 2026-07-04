@@ -26,10 +26,21 @@ interface Device {
   port: number | null;
   is_bidirectional: boolean;
   auto_validate: boolean;
+  device_secret: string | null;
   last_connected_at: string | null;
   last_result_at: string | null;
   result_count: number;
   is_active: boolean;
+}
+
+interface TestMapping {
+  id: string;
+  analyzer_code: string;
+  analyzer_name: string | null;
+  test_id: string | null;
+  unit_transform: number;
+  // joined
+  lab_test_master?: { test_name: string } | null;
 }
 
 interface Message {
@@ -145,6 +156,8 @@ const LabAnalyzerTab: React.FC = () => {
   const [showDeviceDialog, setShowDeviceDialog] = useState(false);
   const [editingDevice, setEditingDevice] = useState<Partial<Device>>(EMPTY_DEVICE);
   const [savingDevice, setSavingDevice] = useState(false);
+  // Test-code mappings dialog (Phase 3 — routes analyzer codes to lab_test_master)
+  const [mappingsDevice, setMappingsDevice] = useState<Device | null>(null);
 
   const fetchData = useCallback(async () => {
     if (!hospitalId) return;
@@ -201,17 +214,21 @@ const LabAnalyzerTab: React.FC = () => {
     }
     setPostingId(msg.id);
 
+    // App result_flag vocabulary (calcFlag in LabResultWorkspace): N/H/L/CH/CL/A —
+    // Phase 3 fix: 'high'/'low'/'resulted' were orphan values no other screen read.
     const flagMap: Record<string, string> = {
-      H: "high", HH: "high", L: "low", LL: "low", A: "critical", AA: "critical", N: "normal",
+      H: "H", HH: "CH", L: "L", LL: "CL", A: "A", AA: "A", N: "N",
     };
+    const numVal = parseFloat(reviewedValue);
 
     await (supabase as any).from("lab_order_items").update({
       result_value:    reviewedValue,
+      result_numeric:  isNaN(numVal) ? null : numVal,
       result_unit:     obs.unit,
       reference_range: obs.refRange || null,
-      result_flag:     flagMap[obs.flag.toUpperCase()] || "normal",
-      status:          "resulted",
-      resulted_at:     new Date().toISOString(),
+      result_flag:     flagMap[obs.flag.toUpperCase()] || "N",
+      status:          "result_entered",
+      result_entered_at: new Date().toISOString(),
     }).eq("id", msg.order_item_id);
 
     await (supabase as any).from("lab_analyzer_messages").update({
@@ -248,6 +265,7 @@ const LabAnalyzerTab: React.FC = () => {
       port:             editingDevice.port || null,
       is_bidirectional: editingDevice.is_bidirectional ?? true,
       auto_validate:    editingDevice.auto_validate ?? false,
+      device_secret:    editingDevice.device_secret || null,
       is_active:        editingDevice.is_active ?? true,
       updated_at:       new Date().toISOString(),
     };
@@ -508,6 +526,14 @@ const LabAnalyzerTab: React.FC = () => {
                   variant="ghost"
                   size="sm"
                   className="h-7 text-[11px] gap-1 shrink-0"
+                  onClick={() => setMappingsDevice(dev)}
+                >
+                  <ChevronRight size={12} /> Mappings
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-[11px] gap-1 shrink-0"
                   onClick={() => { setEditingDevice({ ...dev }); setShowDeviceDialog(true); }}
                 >
                   <Settings2 size={12} /> Edit
@@ -534,6 +560,15 @@ const LabAnalyzerTab: React.FC = () => {
           <li>Enable "Auto-post" only for analyzers with reliable accession number encoding.</li>
         </ol>
       </div>
+
+      {/* Test-code mappings dialog */}
+      {mappingsDevice && hospitalId && (
+        <MappingsDialog
+          device={mappingsDevice}
+          hospitalId={hospitalId}
+          onClose={() => setMappingsDevice(null)}
+        />
+      )}
 
       {/* Add/Edit Device Dialog */}
       <Dialog open={showDeviceDialog} onOpenChange={setShowDeviceDialog}>
@@ -604,6 +639,18 @@ const LabAnalyzerTab: React.FC = () => {
                 />
               </div>
             </div>
+            <div>
+              <Label className="text-xs">Device Secret</Label>
+              <Input
+                value={editingDevice.device_secret || ""}
+                onChange={e => setEditingDevice(d => ({ ...d, device_secret: e.target.value }))}
+                placeholder="Shared secret sent as X-Device-Secret by the relay"
+                className="mt-1 h-8 text-sm font-mono"
+              />
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                When set, the ingest endpoint rejects messages without this exact header. Leave blank to disable the check.
+              </p>
+            </div>
             <div className="flex items-center gap-3 pt-1">
               <Switch
                 checked={editingDevice.auto_validate ?? false}
@@ -630,6 +677,145 @@ const LabAnalyzerTab: React.FC = () => {
         </DialogContent>
       </Dialog>
     </div>
+  );
+};
+
+// ── Test-code mappings dialog (Phase 3) ──────────────────────────────────────
+// CRUD on lab_analyzer_test_mappings: analyzer OBX/R code → lab_test_master test.
+// The ingest edge function uses these to route multi-result messages to the right
+// lab_order_items instead of naively posting to the first item.
+const MappingsDialog: React.FC<{ device: Device; hospitalId: string; onClose: () => void }> = ({ device, hospitalId, onClose }) => {
+  const { toast } = useToast();
+  const [mappings, setMappings] = useState<TestMapping[]>([]);
+  const [tests, setTests] = useState<{ id: string; test_name: string; test_code: string | null }[]>([]);
+  const [newCode, setNewCode] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newTestId, setNewTestId] = useState("");
+  const [newTransform, setNewTransform] = useState("1");
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    const [mapRes, testRes] = await Promise.all([
+      (supabase as any)
+        .from("lab_analyzer_test_mappings")
+        .select("id, analyzer_code, analyzer_name, test_id, unit_transform, lab_test_master:test_id(test_name)")
+        .eq("device_id", device.id)
+        .order("analyzer_code"),
+      (supabase as any)
+        .from("lab_test_master")
+        .select("id, test_name, test_code")
+        .eq("hospital_id", hospitalId)
+        .eq("is_active", true)
+        .order("test_name"),
+    ]);
+    setMappings(mapRes.data || []);
+    setTests(testRes.data || []);
+  }, [device.id, hospitalId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const addMapping = async () => {
+    if (!newCode.trim() || !newTestId) return;
+    setSaving(true);
+    const { error } = await (supabase as any).from("lab_analyzer_test_mappings").insert({
+      hospital_id: hospitalId,
+      device_id: device.id,
+      analyzer_code: newCode.trim(),
+      analyzer_name: newName.trim() || null,
+      test_id: newTestId,
+      unit_transform: parseFloat(newTransform) || 1,
+    });
+    setSaving(false);
+    if (error) {
+      toast({ title: "Mapping failed", description: error.message, variant: "destructive" });
+      return;
+    }
+    setNewCode(""); setNewName(""); setNewTestId(""); setNewTransform("1");
+    load();
+    toast({ title: "Mapping added ✓" });
+  };
+
+  const deleteMapping = async (id: string) => {
+    await (supabase as any).from("lab_analyzer_test_mappings").delete().eq("id", id);
+    load();
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Test Code Mappings — {device.device_name || "Analyzer"}</DialogTitle>
+        </DialogHeader>
+        <p className="text-[12px] text-muted-foreground -mt-1">
+          Map the codes this analyzer sends (HL7 OBX-3 / ASTM R-record) to your test master.
+          Unmapped codes stay in the inbox for manual review.
+        </p>
+        <div className="border border-border rounded overflow-hidden max-h-[280px] overflow-y-auto">
+          <table className="w-full text-[12px]">
+            <thead className="bg-muted/60 sticky top-0">
+              <tr>
+                <th className="px-3 py-1.5 text-left font-medium">Analyzer Code</th>
+                <th className="px-3 py-1.5 text-left font-medium">Analyzer Name</th>
+                <th className="px-3 py-1.5 text-left font-medium">Maps To</th>
+                <th className="px-3 py-1.5 text-left font-medium">× Factor</th>
+                <th className="px-3 py-1.5" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {mappings.length === 0 && (
+                <tr><td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">No mappings yet</td></tr>
+              )}
+              {mappings.map(m => (
+                <tr key={m.id}>
+                  <td className="px-3 py-1.5 font-mono">{m.analyzer_code}</td>
+                  <td className="px-3 py-1.5 text-muted-foreground">{m.analyzer_name || "—"}</td>
+                  <td className="px-3 py-1.5">{m.lab_test_master?.test_name || "⚠ test removed"}</td>
+                  <td className="px-3 py-1.5 font-mono">{m.unit_transform}</td>
+                  <td className="px-3 py-1.5 text-right">
+                    <Button variant="ghost" size="sm" className="h-6 text-[10px] text-red-500 hover:bg-red-50" onClick={() => deleteMapping(m.id)}>
+                      <X size={11} />
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="grid grid-cols-[1fr_1fr_1.4fr_70px_auto] gap-2 items-end">
+          <div>
+            <Label className="text-xs">Code *</Label>
+            <Input value={newCode} onChange={e => setNewCode(e.target.value)} placeholder="GLU" className="mt-1 h-8 text-sm font-mono" />
+          </div>
+          <div>
+            <Label className="text-xs">Name</Label>
+            <Input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Glucose" className="mt-1 h-8 text-sm" />
+          </div>
+          <div>
+            <Label className="text-xs">Lab Test *</Label>
+            <select
+              value={newTestId}
+              onChange={e => setNewTestId(e.target.value)}
+              className="mt-1 w-full h-8 text-sm border border-border rounded-md px-2 bg-background"
+            >
+              <option value="">Select test…</option>
+              {tests.map(t => (
+                <option key={t.id} value={t.id}>{t.test_name}{t.test_code ? ` (${t.test_code})` : ""}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label className="text-xs">× Factor</Label>
+            <Input value={newTransform} onChange={e => setNewTransform(e.target.value)} className="mt-1 h-8 text-sm font-mono" />
+          </div>
+          <Button size="sm" className="h-8 text-[11px] gap-1" onClick={addMapping} disabled={saving || !newCode.trim() || !newTestId}>
+            <Plus size={12} /> Add
+          </Button>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };
 

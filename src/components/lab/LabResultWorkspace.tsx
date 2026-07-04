@@ -373,7 +373,12 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
   const handleMarkCollected = async () => {
     if (!currentUserId) return;
     const p = order.patients;
-    const newBarcode = `LAB-${(p?.uhid || "NOID").replace(/\s/g, "")}-${order.id.slice(0, 8).toUpperCase()}`;
+    // Prefer the order's accession number (Phase 3) so printed labels carry the same
+    // identifier the analyzer echoes back; legacy orders keep the LAB-<uhid>-<id> format.
+    const { data: accRow } = await (supabase as any)
+      .from("lab_orders").select("accession_number").eq("id", order.id).maybeSingle();
+    const newBarcode = accRow?.accession_number
+      || `LAB-${(p?.uhid || "NOID").replace(/\s/g, "")}-${order.id.slice(0, 8).toUpperCase()}`;
 
     await supabase.from("lab_order_items").update({
       status: "sample_collected",
