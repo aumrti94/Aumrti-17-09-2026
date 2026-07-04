@@ -12,6 +12,7 @@ import { sendLabResultReady } from "@/lib/whatsapp-notifications";
 import { printDocument, printHeader } from "@/lib/printUtils";
 import { logRecordAccess } from "@/lib/ims";
 import { getLatestQcWarnings } from "@/lib/labQc";
+import { evaluateAutoVerify } from "@/lib/labAutoVerify";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { collectOrderSamples, receiveOrderSamples, startOrderProcessing } from "@/lib/labSamples";
 import PatientIdentityConfirmDialog from "./PatientIdentityConfirmDialog";
@@ -49,6 +50,9 @@ interface TestItem {
   notes: string | null;
   previous_value: string | null;
   delta_flag: string | null;
+  verification_method: string;
+  autoverify_reason: string | null;
+  autoverified_at: string | null;
   test_name: string;
   test_code: string | null;
   category: string;
@@ -59,6 +63,7 @@ interface TestItem {
   critical_high: number | null;
   tat_minutes: number | null;
   sample_type: string;
+  autoverify_eligible: boolean;
 }
 
 interface Props {
@@ -173,9 +178,10 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
         id, test_id, status, result_value, result_numeric, result_unit,
         result_flag, reference_range, sample_barcode, sample_collected_at,
         validated_at, critical_acknowledged, notes, previous_value, delta_flag,
+        verification_method, autoverify_reason, autoverified_at,
         lab_test_master!lab_order_items_test_id_fkey (
           test_name, test_code, category, unit, normal_min, normal_max,
-          critical_low, critical_high, tat_minutes, sample_type
+          critical_low, critical_high, tat_minutes, sample_type, autoverify_eligible
         )
       `)
       .eq("lab_order_id", order.id)
@@ -195,6 +201,7 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
       critical_high: d.lab_test_master?.critical_high,
       tat_minutes: d.lab_test_master?.tat_minutes,
       sample_type: d.lab_test_master?.sample_type || "blood",
+      autoverify_eligible: d.lab_test_master?.autoverify_eligible ?? false,
     }));
 
     // Sort by category then test_name
@@ -391,6 +398,16 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
       }
     }
 
+    // Auto-verification (Phase 12): a deterministic rule engine, evaluated with the
+    // flag/delta we just computed — not the possibly-stale values on `item`. Only
+    // fully-normal, non-delta, QC-clean results on an opt-in test qualify; everything
+    // else is left as 'result_entered' for a human to review, exactly as before.
+    const autoDecision = evaluateAutoVerify(
+      { test_name: item.test_name, autoverify_eligible: item.autoverify_eligible, result_value: rawValue || null, result_flag: finalFlag, delta_flag: deltaFlag },
+      { requiresDualValidation, qcRejectTestNames: new Set(Object.keys(qcRejectByTest)) }
+    );
+    const now = new Date().toISOString();
+
     const { error } = await supabase
       .from("lab_order_items")
       .update({
@@ -401,15 +418,25 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
         reference_range: item.normal_min != null && item.normal_max != null
           ? `${item.normal_min}–${item.normal_max} ${item.unit || ""}`
           : item.normal_max != null ? `< ${item.normal_max} ${item.unit || ""}` : null,
-        result_entered_at: new Date().toISOString(),
+        result_entered_at: now,
         result_entered_by: currentUserId,
-        status: "result_entered",
+        status: autoDecision.eligible ? "reported" : "result_entered",
         previous_value: previousValue,
         delta_flag: deltaFlag,
-      })
+        ...(autoDecision.eligible
+          ? { verification_method: "auto", autoverify_reason: autoDecision.reason, autoverified_at: now, validated_at: now }
+          : {}),
+      } as any)
       .eq("id", item.id);
 
     if (error) { console.error("Save result error:", error); return; }
+
+    if (autoDecision.eligible) {
+      toast({ title: `🤖 ${item.test_name} auto-verified`, description: autoDecision.reason });
+      if (labHospitalId) {
+        logNABHEvidence(labHospitalId, "COP.6", `Auto-verified ${item.test_name} for order ${orderBarcode || order.id}: ${autoDecision.reason}`, "compliant");
+      }
+    }
 
     // Large delta → advisory alert + toast (Phase 8)
     if (deltaFlag && previousValue) {
@@ -609,6 +636,31 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
       }
     }
   };
+
+  // Auto-complete the order once every item has reached 'reported' via auto-verification
+  // (Phase 12). This mirrors handleValidateAll's completion tail but fires without a
+  // click. It can only be reached through the new auto-verify path: the pre-existing
+  // manual release paths (handleValidateAll / handlePathologistValidate) set every
+  // item's status AND the order's status to 'completed' in the same call, so an order
+  // never sits with all-'reported' items while still not 'completed' unless auto-verify
+  // put it there. Guarded by a ref so it fires at most once per order.
+  const autoCompletedRef = React.useRef(false);
+  useEffect(() => {
+    if (autoCompletedRef.current) return;
+    if (order.status === "completed" || items.length === 0) return;
+    if (!items.every(i => i.status === "reported" && i.verification_method === "auto")) return;
+    autoCompletedRef.current = true;
+    (async () => {
+      await supabase.from("lab_orders").update({ status: "completed" }).eq("id", order.id);
+      await finalizeReleasedOrder();
+      if (labHospitalId) {
+        logNABHEvidence(labHospitalId, "COP.6", `Order ${orderBarcode || order.id} auto-completed — all items auto-verified`, "compliant");
+      }
+      setAutoRunAnomaly(true);
+      onRefresh();
+      toast({ title: "🤖 Order auto-verified & released", description: "All results were within range and passed auto-verification rules." });
+    })();
+  }, [items, order.status]);
 
   const handlePathologistValidate = async () => {
     if (!currentUserId || validating) return;
@@ -1220,8 +1272,11 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
                         </div>
 
                         {/* Status */}
-                        <span className={cn("text-[10px] font-medium px-2 py-0.5 rounded-full text-center", sp.bg, sp.text)}>
+                        <span className={cn("text-[10px] font-medium px-2 py-0.5 rounded-full text-center flex items-center justify-center gap-1", sp.bg, sp.text)}>
                           {sp.label}
+                          {item.verification_method === "auto" && (
+                            <span title={item.autoverify_reason || "Auto-verified"}>🤖</span>
+                          )}
                         </span>
 
                         {/* Actions */}

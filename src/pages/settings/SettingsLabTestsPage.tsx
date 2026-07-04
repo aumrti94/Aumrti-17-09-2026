@@ -31,7 +31,7 @@ const SettingsLabTestsPage: React.FC = () => {
   const [category, setCategory] = useState("all");
   const [showAdd, setShowAdd] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
-  const blankForm = { test_name: "", test_code: "", category: "Haematology", sample_type: "Blood", unit: "", normal_min: "", normal_max: "", critical_low: "", critical_high: "", method: "", male_normal_min: "", male_normal_max: "", female_normal_min: "", female_normal_max: "", tat_minutes: "120", fee: "0" };
+  const blankForm = { test_name: "", test_code: "", category: "Haematology", sample_type: "Blood", unit: "", normal_min: "", normal_max: "", critical_low: "", critical_high: "", method: "", male_normal_min: "", male_normal_max: "", female_normal_min: "", female_normal_max: "", tat_minutes: "120", fee: "0", autoverify_eligible: false };
   const [form, setForm] = useState(blankForm);
   const showGenderRanges = form.test_name.toLowerCase().includes("haemoglobin") || form.test_name.toLowerCase().includes("hemoglobin") || form.test_name.toLowerCase().includes("hb") || form.test_name.toLowerCase().includes("rbc") || form.test_name.toLowerCase().includes("hematocrit") || form.test_name.toLowerCase().includes("haematocrit") || form.male_normal_min || form.male_normal_max || form.female_normal_min || form.female_normal_max;
 
@@ -50,7 +50,7 @@ const SettingsLabTestsPage: React.FC = () => {
       if (!hospitalId) return [];
       const { data, error } = await supabase
         .from("lab_test_master")
-        .select("id, test_name, test_code, category, sample_type, unit, normal_min, normal_max, critical_low, critical_high, method, male_normal_min, male_normal_max, female_normal_min, female_normal_max, tat_minutes, is_active, fee")
+        .select("id, test_name, test_code, category, sample_type, unit, normal_min, normal_max, critical_low, critical_high, method, male_normal_min, male_normal_max, female_normal_min, female_normal_max, tat_minutes, is_active, fee, autoverify_eligible")
         .eq("hospital_id", hospitalId)
         .order("test_name");
       if (error) throw error;
@@ -103,6 +103,7 @@ const SettingsLabTestsPage: React.FC = () => {
         female_normal_max: form.female_normal_max ? Number(form.female_normal_max) : null,
         tat_minutes: form.tat_minutes ? Number(form.tat_minutes) : null,
         fee: form.fee ? Number(form.fee) : 0,
+        autoverify_eligible: form.autoverify_eligible,
         is_active: true,
       } as any);
       if (error) throw error;
@@ -135,6 +136,7 @@ const SettingsLabTestsPage: React.FC = () => {
         female_normal_max: form.female_normal_max ? Number(form.female_normal_max) : null,
         tat_minutes: form.tat_minutes ? Number(form.tat_minutes) : null,
         fee: form.fee ? Number(form.fee) : 0,
+        autoverify_eligible: form.autoverify_eligible,
       } as any).eq("id", editId!);
       if (error) throw error;
     },
@@ -166,6 +168,7 @@ const SettingsLabTestsPage: React.FC = () => {
       female_normal_max: t.female_normal_max != null ? String(t.female_normal_max) : "",
       tat_minutes: t.tat_minutes != null ? String(t.tat_minutes) : "120",
       fee: t.fee != null ? String(t.fee) : "0",
+      autoverify_eligible: t.autoverify_eligible ?? false,
     });
   };
 
@@ -321,7 +324,10 @@ const SettingsLabTestsPage: React.FC = () => {
                 {!isLoading && filtered.length === 0 && <tr><td colSpan={9} className="px-3 py-8 text-center text-muted-foreground">No tests found. Add your first lab test.</td></tr>}
                 {filtered.map((t: any) => (
                   <tr key={t.id} className="border-t border-border">
-                    <td className="px-3 py-2.5 font-medium text-foreground">{t.test_name}</td>
+                    <td className="px-3 py-2.5 font-medium text-foreground">
+                      {t.test_name}
+                      {t.autoverify_eligible && <span className="ml-1.5" title="Auto-verification enabled">🤖</span>}
+                    </td>
                     <td className="px-3 py-2.5"><Badge variant="outline">{t.test_code}</Badge></td>
                     <td className="px-3 py-2.5 text-muted-foreground capitalize">{t.category}</td>
                     <td className="px-3 py-2.5 text-muted-foreground">{t.sample_type}</td>
@@ -474,6 +480,20 @@ const SettingsLabTestsPage: React.FC = () => {
             <div className="grid grid-cols-2 gap-3">
               <div><Label>TAT (minutes)</Label><Input type="number" value={form.tat_minutes} onChange={(e) => setForm({ ...form, tat_minutes: e.target.value })} className="mt-1" /></div>
               <div><Label>Fee (₹)</Label><Input type="number" value={form.fee} onChange={(e) => setForm({ ...form, fee: e.target.value })} className="mt-1" /></div>
+            </div>
+            {/* Auto-verification opt-in (Phase 12 AI feature) — off by default. Only
+                fully-normal, non-delta, QC-clean results on this test will ever
+                auto-release; abnormal/critical/delta results always require a human. */}
+            <div className="flex items-start gap-3 rounded-md border border-border px-3 py-2.5 bg-muted/30">
+              <Switch checked={form.autoverify_eligible} onCheckedChange={(v) => setForm({ ...form, autoverify_eligible: v })} className="mt-0.5" />
+              <div>
+                <p className="text-sm font-medium">🤖 Enable auto-verification</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Normal, in-range results with no delta flag and clean QC release automatically without
+                  a technician click. Abnormal, critical, and delta-flagged results always require manual review.
+                  Only enable for stable, well-validated analytes.
+                </p>
+              </div>
             </div>
           </div>
           <DialogFooter>
