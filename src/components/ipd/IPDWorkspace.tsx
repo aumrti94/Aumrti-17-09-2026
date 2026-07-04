@@ -538,10 +538,17 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
       }
 
       if (hasLabs) {
-        await syncLabOrders({
+        const labSync = await syncLabOrders({
           hospitalId, patientId: patient.id, orderedBy: userId, admissionId,
           items: prescription.lab_orders,
         });
+        if (labSync.unmatched.length > 0) {
+          toast({
+            title: `${labSync.unmatched.length} lab test(s) not in the test master — not ordered`,
+            description: `${labSync.unmatched.join(", ")}. Order manually from the Lab module or add them in Settings → Lab Tests.`,
+            variant: "destructive",
+          });
+        }
         // Mark as billed so orders appear in Lab Queue immediately.
         // IPD charges are tracked on the admission bill; payment happens at discharge.
         await supabase.from("lab_orders")

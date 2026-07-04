@@ -121,7 +121,7 @@ export default function BookPackageModal({ open, onClose }: Props) {
       if (includedTests.length > 0 && hospitalId) {
         try {
           const { syncLabOrders } = await import("@/lib/investigationSync");
-          labCount = await syncLabOrders({
+          const labSync = await syncLabOrders({
             hospitalId,
             patientId,
             orderedBy: userId || "",
@@ -129,6 +129,10 @@ export default function BookPackageModal({ open, onClose }: Props) {
             admissionId: null,
             items: includedTests.map(t => ({ test_name: t, urgency: "routine", clinical_indication: `Health Package: ${selectedPkg.package_name}` })),
           });
+          labCount = labSync.created;
+          if (labSync.unmatched.length > 0) {
+            toast.warning(`Not in test master (order manually): ${labSync.unmatched.join(", ")}`);
+          }
         } catch (e) {
           console.error("Package lab order sync error:", e);
         }

@@ -457,16 +457,26 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
         const { autoBillOpdInvestigation, getInvestigationRate } = await import("@/lib/investigationBilling");
         const lineItems: { description: string; itemType: "lab_test"; unitRate: number; gstPercent: number; gstAmount: number }[] = [];
 
+        let usedDefaultRate = false;
         for (const item of items) {
           if (!item.test_name) continue;
-          const { rate, gstPercent } = await getInvestigationRate(fullOrder.hospital_id, item.test_name, "lab");
+          const { rate, gstPercent, isDefaultRate } = await getInvestigationRate(fullOrder.hospital_id, item.test_name, "lab");
           const gstAmount = rate * gstPercent / 100;
+          if (isDefaultRate) usedDefaultRate = true;
           lineItems.push({
-            description: item.test_name,
+            // Visible marker (Phase 4): no configured fee found anywhere — billed at the
+            // hard default so the biller knows to verify instead of silently trusting it.
+            description: isDefaultRate ? `${item.test_name} (default rate — verify)` : item.test_name,
             itemType: "lab_test",
             unitRate: rate,
             gstPercent,
             gstAmount,
+          });
+        }
+        if (usedDefaultRate) {
+          toast({
+            title: "⚠️ Some tests billed at the default rate",
+            description: "No fee is configured for one or more tests — the bill line is marked '(default rate — verify)'. Set fees in Settings → Lab Tests.",
           });
         }
 

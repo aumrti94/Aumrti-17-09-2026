@@ -102,22 +102,11 @@ const LabPage: React.FC = () => {
       const todayStr = new Date().toISOString().split("T")[0];
       const isToday = selectedDate === todayStr;
 
-      if (isToday) {
-        // Delete stale header-only orders (created by investigationSync first-pass) older than 5 min.
-        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-        const staleEmptyIds = (data || [])
-          .filter((o: any) =>
-            (!o.lab_order_items || o.lab_order_items.length === 0) &&
-            o.created_at && o.created_at < fiveMinutesAgo
-          )
-          .map((o: any) => o.id);
-        if (staleEmptyIds.length > 0) {
-          await supabase.from("lab_orders").delete().in("id", staleEmptyIds);
-        }
-      }
-
+      // Header-only ghost orders can no longer be created — order creation is atomic
+      // via the create_lab_order_with_items RPC (Phase 4), so the old client-side
+      // DELETE of stale empty orders is gone. The display filter below stays as a
+      // harmless guard for any pre-Phase-4 leftovers.
       const sorted = (data || [])
-        // For today: hide ghost orders with no items. For past dates: show all.
         .filter((o: any) => isToday ? (o.lab_order_items && o.lab_order_items.length > 0) : true)
         .sort((a: any, b: any) => {
           const p: Record<string, number> = { stat: 0, urgent: 1, routine: 2 };

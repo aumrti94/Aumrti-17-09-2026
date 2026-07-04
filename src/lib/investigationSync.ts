@@ -26,9 +26,18 @@ export function isRadiologyKeyword(name: string): boolean {
   return /\bx[\s-]?ray\b|\bcect\b|\bhrct\b|\bct\b|\bmri\b|\busg\b|\bultrasound\b|\bultrasonography\b|\becg\b|\belectrocardiogram\b|\becho\b|\b2d\s*echo\b|\bechocardiography\b|\bdexa\b|\bmammograph|\bfluoroscop|\bpet\b/i.test(name);
 }
 
+export interface SyncLabOrdersResult {
+  created: number;
+  /** Prescribed test names with no active lab_test_master match — NOT ordered.
+   *  Callers should surface these so staff can order them manually. */
+  unmatched: string[];
+}
+
 /**
  * Sync prescription lab_orders JSON → real lab_orders / lab_order_items / lab_samples rows.
  * Skips duplicates by checking existing orders for the same encounter/admission + test.
+ * Creation is atomic per order via the create_lab_order_with_items RPC (Phase 4) —
+ * header-only ghost orders can no longer be left behind.
  */
 export async function syncLabOrders(opts: {
   hospitalId: string;
@@ -37,9 +46,10 @@ export async function syncLabOrders(opts: {
   encounterId?: string | null;
   admissionId?: string | null;
   items: LabOrderInput[];
-}): Promise<number> {
-  if (!opts.items.length) return 0;
+}): Promise<SyncLabOrdersResult> {
+  if (!opts.items.length) return { created: 0, unmatched: [] };
   let created = 0;
+  const unmatched: string[] = [];
 
   // Fetch existing lab orders for this encounter/admission to avoid dupes
   let existingTests: string[] = [];
@@ -73,67 +83,39 @@ export async function syncLabOrders(opts: {
     if (!item.test_name?.trim()) continue;
     if (existingTests.includes(item.test_name.toLowerCase())) continue;
 
-    const orderedAt = new Date().toISOString();
-
-    // Atomic accession number (Phase 3) — best-effort, never blocks order creation
-    let accession: string | null = null;
-    try {
-      const { data: acc } = await (supabase as any).rpc("next_lab_accession", { p_hospital_id: opts.hospitalId });
-      accession = (acc as string) || null;
-    } catch { /* fall back to barcode-based matching */ }
-
-    // Create lab_order
-    const { data: newOrder, error: orderErr } = await (supabase as any)
-      .from("lab_orders")
-      .insert({
-        hospital_id: opts.hospitalId,
-        patient_id: opts.patientId,
-        ordered_by: opts.orderedBy,
-        encounter_id: opts.encounterId || null,
-        admission_id: opts.admissionId || null,
-        priority: item.urgency || "routine",
-        clinical_notes: item.clinical_indication || null,
-        status: "ordered",
-        billing_status: "unbilled",
-        ordered_at: orderedAt,
-        accession_number: accession,
-      })
-      .select("id")
-      .maybeSingle();
-
-    if (orderErr || !newOrder) {
-      console.error("Lab order insert failed:", orderErr?.message);
-      continue;
-    }
-
-    // Match test in master
+    // Match test in master. Unmatched tests are no longer ordered as nameless
+    // test_id:null items (they had no name, no rate, and no analyzer mapping) —
+    // they are returned to the caller to surface for manual ordering.
     const matched = (masterTests || []).find(
       (t: any) => t.test_name.toLowerCase() === item.test_name.toLowerCase()
     );
-
-    // Create lab_order_item — rollback lab_orders if this fails
-    const { error: itemErr } = await (supabase as any).from("lab_order_items").insert({
-      hospital_id: opts.hospitalId,
-      lab_order_id: newOrder.id,
-      test_id: matched?.id || null,
-      status: "ordered",
-      result_unit: matched?.unit || null,
-      reference_range: matched?.normal_range_male || matched?.normal_range_female || null,
-    });
-    if (itemErr) {
-      await (supabase as any).from("lab_orders").delete().eq("id", newOrder.id);
-      console.error("Lab order item insert failed (order rolled back):", itemErr.message);
+    if (!matched) {
+      unmatched.push(item.test_name);
       continue;
     }
 
-    // Create lab_sample
-    await (supabase as any).from("lab_samples").insert({
-      hospital_id: opts.hospitalId,
-      lab_order_id: newOrder.id,
-      sample_type: matched?.sample_type || "blood",
-      barcode: `BC-${Date.now()}-${randomChars(4)}`,
-      status: "pending",
+    // Atomic create: header + item + sample in one transaction (accession assigned inside)
+    const { data: newOrderId, error: rpcErr } = await (supabase as any).rpc("create_lab_order_with_items", {
+      p_hospital_id: opts.hospitalId,
+      p_patient_id: opts.patientId,
+      p_ordered_by: opts.orderedBy,
+      p_encounter_id: opts.encounterId || null,
+      p_admission_id: opts.admissionId || null,
+      p_priority: item.urgency || "routine",
+      p_clinical_notes: item.clinical_indication || null,
+      p_billing_status: "unbilled",
+      p_items: [{
+        test_id: matched.id,
+        result_unit: matched.unit || null,
+        reference_range: matched.normal_range_male || matched.normal_range_female || null,
+      }],
+      p_samples: [{ sample_type: matched.sample_type || "blood", barcode: `BC-${Date.now()}-${randomChars(4)}` }],
     });
+
+    if (rpcErr || !newOrderId) {
+      console.error("Lab order create failed:", rpcErr?.message);
+      continue;
+    }
 
     await logNABHEvidence(
       opts.hospitalId,
@@ -146,7 +128,7 @@ export async function syncLabOrders(opts: {
     existingTests.push(item.test_name.toLowerCase());
   }
 
-  return created;
+  return { created, unmatched };
 }
 
 /**

@@ -191,7 +191,7 @@ export async function getInvestigationRate(
   hospitalId: string,
   name: string,
   type: "lab" | "radiology"
-): Promise<{ rate: number; gstPercent: number }> {
+): Promise<{ rate: number; gstPercent: number; isDefaultRate?: boolean }> {
   // 1) Canonical source: the module's own master table.
   if (type === "lab") {
     const { data: lt } = await (supabase as any)
@@ -229,6 +229,7 @@ export async function getInvestigationRate(
     return { rate: Number(svc.fee), gstPercent: svc.gst_applicable ? Number(svc.gst_percent) || 0 : 0 };
   }
 
-  // 3) Hard default — avoids ₹0 bills while alerting operators to configure rates
-  return { rate: type === "lab" ? 200 : 500, gstPercent: 0 };
+  // 3) Hard default — avoids ₹0 bills. isDefaultRate lets callers visibly mark the
+  //    bill line (Phase 4) instead of silently charging a made-up figure.
+  return { rate: type === "lab" ? 200 : 500, gstPercent: 0, isDefaultRate: true };
 }
