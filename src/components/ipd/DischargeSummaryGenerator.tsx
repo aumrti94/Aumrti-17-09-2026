@@ -12,6 +12,37 @@ import { logAudit } from "@/lib/auditLog";
 import { formatDateIST } from "@/lib/dateUtils";
 import { computePendingDoses } from "@/lib/marPending";
 
+// ── Lab investigations block for the discharge summary (Phase 10) ─────────────
+// Validated lab results for the admission, grouped by date, abnormal values flagged.
+async function buildLabInvestigationsSection(admissionId: string): Promise<string> {
+  const { data } = await (supabase as any)
+    .from("lab_order_items")
+    .select(`
+      result_value, result_unit, result_flag, status,
+      lab_test_master:lab_test_master!lab_order_items_test_id_fkey(test_name),
+      lab_orders!inner(admission_id, order_date)
+    `)
+    .eq("lab_orders.admission_id", admissionId)
+    .in("status", ["reported", "validated"])
+    .not("result_value", "is", null)
+    .order("created_at", { ascending: true })
+    .limit(300);
+  if (!data?.length) return "";
+
+  const byDate: Record<string, string[]> = {};
+  for (const r of data) {
+    const date = r.lab_orders.order_date;
+    const name = r.lab_test_master?.test_name || "—";
+    const flag = r.result_flag === "CH" || r.result_flag === "CL" ? " [CRITICAL]"
+      : r.result_flag === "H" ? " [High]" : r.result_flag === "L" ? " [Low]" : "";
+    (byDate[date] ||= []).push(`${name}: ${r.result_value} ${r.result_unit || ""}${flag}`.trim());
+  }
+  return Object.entries(byDate)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, tests]) => `${new Date(date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}:\n${tests.map(t => `  • ${t}`).join("\n")}`)
+    .join("\n");
+}
+
 // ── SHA-256 of a string ──────────────────────────────────────────────────────
 async function sha256(text: string): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -149,6 +180,12 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
         ? `BP: ${vitals.bp || "—"}, HR: ${vitals.hr || "—"}, SpO2: ${vitals.spo2 || "—"}, Temp: ${vitals.temp || "—"}, RR: ${vitals.rr || "—"}`
         : "";
 
+      // Lab investigations section (Phase 10). The ai-discharge-summary edge fn already
+      // feeds validated labs to the LLM, but the readable output dropped them. Pull the
+      // admission's validated results directly and render an INVESTIGATIONS block,
+      // grouped by date with abnormal values flagged.
+      const labLine = await buildLabInvestigationsSection(admissionId);
+
       const formatted = [
         s.final_diagnosis   ? `FINAL DIAGNOSIS:\n${s.final_diagnosis}` : "",
         icdLine             ? `\nICD-10 CODES:\n${icdLine}` : "",
@@ -159,6 +196,7 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
           ? `\nPROCEDURES PERFORMED:\n${(s.procedures_performed as string[]).map((p) => `• ${p}`).join("\n")}`
           : "",
         s.hospital_course   ? `\nHOSPITAL COURSE:\n${s.hospital_course}` : "",
+        labLine             ? `\nLABORATORY INVESTIGATIONS:\n${labLine}` : "",
         vitalsLine          ? `\nVITALS AT DISCHARGE:\n${vitalsLine}` : "",
         medsLines           ? `\nDISCHARGE MEDICATIONS:\n${medsLines}` : "",
         s.diet_instructions ? `\nDIET:\n${s.diet_instructions}` : "",
@@ -246,6 +284,19 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
 
     if (overdueCount > 0) {
       warnings.push(`${overdueCount} medication dose(s) are overdue (pending for more than 2 hours).`);
+    }
+
+    // Check: no lab orders still pending results for this admission (Phase 10)
+    const { data: pendingLabs } = await (supabase as any)
+      .from("lab_orders")
+      .select("id, lab_order_items(lab_test_master:lab_test_master!lab_order_items_test_id_fkey(test_name))")
+      .eq("admission_id", admissionId)
+      .not("status", "in", "(completed,cancelled)");
+    if ((pendingLabs?.length ?? 0) > 0) {
+      const names = (pendingLabs || [])
+        .flatMap((o: any) => (o.lab_order_items || []).map((i: any) => i.lab_test_master?.test_name).filter(Boolean))
+        .slice(0, 5);
+      warnings.push(`${pendingLabs.length} lab order(s) still awaiting results${names.length ? ` (${names.join(", ")})` : ""}.`);
     }
 
     return warnings;

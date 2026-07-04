@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { ExternalLink, Mic, FileText, Bot, Loader2, X } from "lucide-react";
+import { ExternalLink, Mic, FileText, Bot, Loader2, X, FlaskConical } from "lucide-react";
 import AIAttestationModal from "@/components/ai/AIAttestationModal";
 import { printDocument, printHeader } from "@/lib/printUtils";
 import { useVoiceScribe } from "@/contexts/VoiceScribeContext";
@@ -100,6 +100,52 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
   const [showReferralModal, setShowReferralModal] = useState(false);
   const [referralUhid, setReferralUhid] = useState("");
   const [dispKey, setDispKey] = useState(0);
+
+  // ED lab results-return (lab plan Phase 10). ED can order STAT labs but never saw
+  // results back; the timeline "Investigation" step was hardcoded empty. Fetch this
+  // visit's lab orders (patient's orders since arrival) + realtime updates.
+  const [edLabs, setEdLabs] = useState<Array<{ id: string; status: string; accession: string | null; items: Array<{ test_name: string; result_value: string | null; result_unit: string | null; result_flag: string | null; status: string }> }>>([]);
+
+  const loadEdLabs = useCallback(async () => {
+    if (!visit?.patient_id || !hospitalId) { setEdLabs([]); return; }
+    const { data } = await (supabase as any)
+      .from("lab_orders")
+      .select(`id, status, accession_number, order_time,
+        lab_order_items(result_value, result_unit, result_flag, status,
+          lab_test_master:lab_test_master!lab_order_items_test_id_fkey(test_name))`)
+      .eq("hospital_id", hospitalId)
+      .eq("patient_id", visit.patient_id)
+      .gte("order_time", visit.arrival_time)
+      .neq("status", "cancelled")
+      .order("order_time", { ascending: false });
+    setEdLabs((data || []).map((o: any) => ({
+      id: o.id,
+      status: o.status,
+      accession: o.accession_number,
+      items: (o.lab_order_items || []).map((i: any) => ({
+        test_name: i.lab_test_master?.test_name || "—",
+        result_value: i.result_value,
+        result_unit: i.result_unit,
+        result_flag: i.result_flag,
+        status: i.status,
+      })),
+    })));
+  }, [visit?.patient_id, visit?.arrival_time, hospitalId]);
+
+  useEffect(() => { loadEdLabs(); }, [loadEdLabs]);
+
+  useEffect(() => {
+    if (!hospitalId || !visit?.patient_id) return;
+    const channel = supabase
+      .channel(`ed-labs-${visit.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "lab_order_items", filter: `hospital_id=eq.${hospitalId}` }, () => loadEdLabs())
+      .on("postgres_changes", { event: "*", schema: "public", table: "lab_orders", filter: `hospital_id=eq.${hospitalId}` }, () => loadEdLabs())
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [hospitalId, visit?.id, visit?.patient_id, loadEdLabs]);
+
+  const edLabsHasResults = edLabs.some(o => o.status !== "ordered");
+  const edLabsHasCritical = edLabs.some(o => o.items.some(i => i.result_flag === "CH" || i.result_flag === "CL"));
 
   const loadEdCharges = useCallback(async () => {
     if (!visit?.id || !hospitalId) {
@@ -479,7 +525,11 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
           <TimelineItem filled label="Arrived" time={new Date(visit.arrival_time).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })} />
           <TimelineItem filled label={`Triaged as ${visit.triage_category}`} time="" />
           <TimelineItem filled={!!visit.doctor_id} label="Doctor seen" time="" />
-          <TimelineItem filled={false} label="Investigation" time="" />
+          <TimelineItem
+            filled={edLabsHasResults}
+            label={edLabs.length > 0 ? `Investigation (${edLabs.length})` : "Investigation"}
+            time={edLabsHasCritical ? "🔴 Critical" : edLabsHasResults ? "Results in" : ""}
+          />
           <TimelineItem filled={visit.disposition !== "awaiting"} label={visit.disposition !== "awaiting" ? `Disposition: ${visit.disposition}` : "Disposition"} time={visit.disposition !== "awaiting" ? "Done" : ""} />
         </div>
         <div className="mt-2 bg-red-900/20 rounded-md p-2 flex items-center gap-2">
@@ -553,6 +603,37 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
             </div>
             <button onClick={() => { if (hospitalId) { setShowLabModal(true); } setInvestigationsSuggested([]); }}
               className="text-[10px] text-purple-300 hover:underline mt-1.5">Create STAT Lab Orders →</button>
+          </div>
+        )}
+
+        {/* ED lab results (Phase 10) — realtime results-return for STAT labs */}
+        {edLabs.length > 0 && (
+          <div className={cn("rounded-lg p-2.5 border", edLabsHasCritical ? "bg-red-900/30 border-red-700/50" : "bg-slate-800/50 border-slate-700")}>
+            <p className={cn("text-[10px] font-bold uppercase mb-1.5 flex items-center gap-1.5", edLabsHasCritical ? "text-red-300" : "text-slate-400")}>
+              <FlaskConical className="h-3 w-3" /> Lab Results {edLabsHasCritical && "— CRITICAL VALUES"}
+            </p>
+            <div className="space-y-1.5">
+              {edLabs.map(o => (
+                <div key={o.id} className="text-[11px]">
+                  <div className="flex items-center gap-2 text-slate-500">
+                    <span className="font-mono text-[10px]">{o.accession || "—"}</span>
+                    <span className="capitalize">{o.status.replace(/_/g, " ")}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
+                    {o.items.map((it, idx) => {
+                      const crit = it.result_flag === "CH" || it.result_flag === "CL";
+                      const abn = it.result_flag === "H" || it.result_flag === "L";
+                      return (
+                        <span key={idx} className={cn("text-[11px]", crit ? "text-red-400 font-bold" : abn ? "text-amber-300 font-semibold" : "text-slate-300")}>
+                          {it.test_name}: {it.result_value ?? "—"}{it.result_unit ? ` ${it.result_unit}` : ""}
+                          {crit ? " 🔴" : abn ? " ⚠" : ""}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
