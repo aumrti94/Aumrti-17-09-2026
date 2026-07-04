@@ -31,7 +31,7 @@ const SettingsLabTestsPage: React.FC = () => {
   const [category, setCategory] = useState("all");
   const [showAdd, setShowAdd] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
-  const blankForm = { test_name: "", test_code: "", category: "Haematology", sample_type: "Blood", unit: "", normal_min: "", normal_max: "", male_normal_min: "", male_normal_max: "", female_normal_min: "", female_normal_max: "", tat_minutes: "120", fee: "0" };
+  const blankForm = { test_name: "", test_code: "", category: "Haematology", sample_type: "Blood", unit: "", normal_min: "", normal_max: "", critical_low: "", critical_high: "", method: "", male_normal_min: "", male_normal_max: "", female_normal_min: "", female_normal_max: "", tat_minutes: "120", fee: "0" };
   const [form, setForm] = useState(blankForm);
   const showGenderRanges = form.test_name.toLowerCase().includes("haemoglobin") || form.test_name.toLowerCase().includes("hemoglobin") || form.test_name.toLowerCase().includes("hb") || form.test_name.toLowerCase().includes("rbc") || form.test_name.toLowerCase().includes("hematocrit") || form.test_name.toLowerCase().includes("haematocrit") || form.male_normal_min || form.male_normal_max || form.female_normal_min || form.female_normal_max;
 
@@ -50,7 +50,7 @@ const SettingsLabTestsPage: React.FC = () => {
       if (!hospitalId) return [];
       const { data, error } = await supabase
         .from("lab_test_master")
-        .select("id, test_name, test_code, category, sample_type, unit, normal_min, normal_max, male_normal_min, male_normal_max, female_normal_min, female_normal_max, tat_minutes, is_active, fee")
+        .select("id, test_name, test_code, category, sample_type, unit, normal_min, normal_max, critical_low, critical_high, method, male_normal_min, male_normal_max, female_normal_min, female_normal_max, tat_minutes, is_active, fee")
         .eq("hospital_id", hospitalId)
         .order("test_name");
       if (error) throw error;
@@ -94,6 +94,9 @@ const SettingsLabTestsPage: React.FC = () => {
         unit: form.unit || null,
         normal_min: form.normal_min ? Number(form.normal_min) : null,
         normal_max: form.normal_max ? Number(form.normal_max) : null,
+        critical_low: form.critical_low ? Number(form.critical_low) : null,
+        critical_high: form.critical_high ? Number(form.critical_high) : null,
+        method: form.method || null,
         male_normal_min: form.male_normal_min ? Number(form.male_normal_min) : null,
         male_normal_max: form.male_normal_max ? Number(form.male_normal_max) : null,
         female_normal_min: form.female_normal_min ? Number(form.female_normal_min) : null,
@@ -123,6 +126,9 @@ const SettingsLabTestsPage: React.FC = () => {
         unit: form.unit || null,
         normal_min: form.normal_min ? Number(form.normal_min) : null,
         normal_max: form.normal_max ? Number(form.normal_max) : null,
+        critical_low: form.critical_low ? Number(form.critical_low) : null,
+        critical_high: form.critical_high ? Number(form.critical_high) : null,
+        method: form.method || null,
         male_normal_min: form.male_normal_min ? Number(form.male_normal_min) : null,
         male_normal_max: form.male_normal_max ? Number(form.male_normal_max) : null,
         female_normal_min: form.female_normal_min ? Number(form.female_normal_min) : null,
@@ -151,6 +157,9 @@ const SettingsLabTestsPage: React.FC = () => {
       unit: t.unit || "",
       normal_min: t.normal_min != null ? String(t.normal_min) : "",
       normal_max: t.normal_max != null ? String(t.normal_max) : "",
+      critical_low: t.critical_low != null ? String(t.critical_low) : "",
+      critical_high: t.critical_high != null ? String(t.critical_high) : "",
+      method: t.method || "",
       male_normal_min: t.male_normal_min != null ? String(t.male_normal_min) : "",
       male_normal_max: t.male_normal_max != null ? String(t.male_normal_max) : "",
       female_normal_min: t.female_normal_min != null ? String(t.female_normal_min) : "",
@@ -443,6 +452,12 @@ const SettingsLabTestsPage: React.FC = () => {
               <div><Label>Normal Min (default)</Label><Input type="number" value={form.normal_min} onChange={(e) => setForm({ ...form, normal_min: e.target.value })} className="mt-1" /></div>
               <div><Label>Normal Max (default)</Label><Input type="number" value={form.normal_max} onChange={(e) => setForm({ ...form, normal_max: e.target.value })} className="mt-1" /></div>
             </div>
+            {/* Critical (panic) values — trigger critical_lab_value alerts on result entry */}
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label className="text-red-600">Critical Low</Label><Input type="number" value={form.critical_low} onChange={(e) => setForm({ ...form, critical_low: e.target.value })} className="mt-1 border-red-200" placeholder="Panic low value" /></div>
+              <div><Label className="text-red-600">Critical High</Label><Input type="number" value={form.critical_high} onChange={(e) => setForm({ ...form, critical_high: e.target.value })} className="mt-1 border-red-200" placeholder="Panic high value" /></div>
+            </div>
+            <div><Label>Method</Label><Input value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })} className="mt-1" placeholder="e.g. ELISA, PCR, Colorimetric" /></div>
             {showGenderRanges && (
               <>
                 <p className="text-xs text-muted-foreground -mt-1">Gender-specific ranges (overrides default when patient sex is known)</p>

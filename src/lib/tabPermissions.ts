@@ -41,6 +41,7 @@ export const MODULE_TABS: Record<string, TabDef[]> = {
     { key: "qc", label: "QC Dashboard" },
     { key: "calibration", label: "Calibration (NABL)" },
     { key: "histopathology", label: "Histopathology" },
+    { key: "tat", label: "TAT Dashboard" },
     { key: "external", label: "External Referrals" },
     { key: "analyzer", label: "Analyzer Interface" },
     { key: "results", label: "Results (per order)" },

@@ -45,6 +45,8 @@ interface TestItem {
   validated_at: string | null;
   critical_acknowledged: boolean;
   notes: string | null;
+  previous_value: string | null;
+  delta_flag: string | null;
   test_name: string;
   test_code: string | null;
   category: string;
@@ -61,6 +63,10 @@ interface Props {
   order: LabOrder;
   onRefresh: () => void;
 }
+
+// Delta-check threshold: a numeric result swinging this many % from the patient's
+// previous validated value for the same test is flagged for the reviewer (Phase 8).
+const DELTA_CHECK_THRESHOLD_PCT = 50;
 
 function getInitials(name: string) {
   return name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
@@ -156,7 +162,7 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
       .select(`
         id, test_id, status, result_value, result_numeric, result_unit,
         result_flag, reference_range, sample_barcode, sample_collected_at,
-        validated_at, critical_acknowledged, notes,
+        validated_at, critical_acknowledged, notes, previous_value, delta_flag,
         lab_test_master!lab_order_items_test_id_fkey (
           test_name, test_code, category, unit, normal_min, normal_max,
           critical_low, critical_high, tat_minutes, sample_type
@@ -296,6 +302,32 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
       : (!isNumeric && rawValue && ["positive", "detected"].includes(rawValue.toLowerCase())) ? "A"
       : null;
 
+    // Delta check (Phase 8): compare against this patient's most recent prior validated
+    // numeric result for the same test. A >50% swing is flagged for the reviewer.
+    let previousValue: string | null = null;
+    let deltaFlag: string | null = null;
+    if (numVal != null && !isNaN(numVal)) {
+      const { data: prev } = await (supabase as any)
+        .from("lab_order_items")
+        .select("result_numeric, lab_orders!inner(patient_id, order_date)")
+        .eq("test_id", item.test_id)
+        .eq("lab_orders.patient_id", order.patient_id)
+        .neq("lab_order_id", order.id)
+        .in("status", ["reported", "validated"])
+        .not("result_numeric", "is", null)
+        .order("result_entered_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (prev?.result_numeric != null) {
+        const prevNum = Number(prev.result_numeric);
+        previousValue = String(prevNum);
+        if (prevNum !== 0) {
+          const pctChange = Math.abs((numVal - prevNum) / prevNum) * 100;
+          if (pctChange >= DELTA_CHECK_THRESHOLD_PCT) deltaFlag = "delta";
+        }
+      }
+    }
+
     const { error } = await supabase
       .from("lab_order_items")
       .update({
@@ -309,10 +341,30 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
         result_entered_at: new Date().toISOString(),
         result_entered_by: currentUserId,
         status: "result_entered",
+        previous_value: previousValue,
+        delta_flag: deltaFlag,
       })
       .eq("id", item.id);
 
     if (error) { console.error("Save result error:", error); return; }
+
+    // Large delta → advisory alert + toast (Phase 8)
+    if (deltaFlag && previousValue) {
+      toast({
+        title: `Δ Delta check: ${item.test_name}`,
+        description: `Changed from ${previousValue} to ${rawValue} ${item.unit || ""} (>${DELTA_CHECK_THRESHOLD_PCT}%). Verify before releasing.`,
+      });
+      if (labHospitalId) {
+        (supabase as any).from("clinical_alerts").insert({
+          hospital_id: labHospitalId,
+          patient_id: order.patient_id,
+          alert_type: "lab_trend",
+          severity: "medium",
+          alert_message: `Lab delta on ${item.test_name}: ${previousValue} → ${rawValue} ${item.unit || ""} for ${patient?.full_name} (${patient?.uhid})`,
+          lab_order_item_id: item.id,
+        }).catch(() => {});
+      }
+    }
 
     // QC advisory (Phase 2): if the latest QC run for this test violates a Westgard
     // rule, surface a non-blocking warning. Never blocks or delays saving — the result
@@ -724,6 +776,64 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
     printDocument(`Culture Report – ${p?.full_name || "Patient"}`, body);
   };
 
+  // Cumulative report (Phase 8): all of this patient's validated numeric results for
+  // the tests in the current order, as a date-columns × test-rows grid — the classic
+  // trend view clinicians expect for serial labs (creatinine, Hb, electrolytes…).
+  const printCumulativeReport = async () => {
+    const p = order.patients;
+    const testIds = [...new Set(items.map(i => i.test_id).filter(Boolean))];
+    if (testIds.length === 0) { toast({ title: "No tests to trend", variant: "destructive" }); return; }
+
+    const { data } = await (supabase as any)
+      .from("lab_order_items")
+      .select(`
+        result_value, result_flag, result_unit, test_id,
+        lab_test_master:lab_test_master!lab_order_items_test_id_fkey(test_name, unit),
+        lab_orders!inner(patient_id, order_date)
+      `)
+      .eq("lab_orders.patient_id", order.patient_id)
+      .in("test_id", testIds as string[])
+      .in("status", ["reported", "validated"])
+      .not("result_value", "is", null)
+      .order("created_at", { ascending: true })
+      .limit(500);
+
+    if (!data?.length) { toast({ title: "No prior validated results to trend" }); return; }
+
+    // Build date set and test→date→value map
+    const dates: string[] = [...new Set(data.map((r: any) => r.lab_orders.order_date))].sort() as string[];
+    const byTest: Record<string, { unit: string; byDate: Record<string, { value: string; flag: string | null }> }> = {};
+    for (const r of data) {
+      const name = r.lab_test_master?.test_name || "—";
+      if (!byTest[name]) byTest[name] = { unit: r.result_unit || r.lab_test_master?.unit || "", byDate: {} };
+      byTest[name].byDate[r.lab_orders.order_date] = { value: r.result_value, flag: r.result_flag };
+    }
+
+    const dateHeaders = dates.map(d => `<th>${new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}</th>`).join("");
+    const rows = Object.entries(byTest).map(([name, t]) => {
+      const cells = dates.map(d => {
+        const cell = t.byDate[d];
+        if (!cell) return `<td style="color:#cbd5e1">—</td>`;
+        const style = cell.flag === "CH" || cell.flag === "H" ? "color:#b45309;font-weight:700"
+          : cell.flag === "CL" || cell.flag === "L" ? "color:#1d4ed8;font-weight:700" : "";
+        return `<td style="${style}">${cell.value}</td>`;
+      }).join("");
+      return `<tr><td style="font-weight:600">${name}</td><td style="color:#6b7280">${t.unit}</td>${cells}</tr>`;
+    }).join("");
+
+    const body = `
+      ${printHeader(hospitalName || "Lab Report", "Cumulative Laboratory Report", nablNumber ? `NABL: ${nablNumber}` : undefined)}
+      <div style="font-size:12px;margin-bottom:10px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px">
+        <strong>${p?.full_name || "—"}</strong> · ${p?.uhid || ""} · ${getAge(p?.dob || null)} ${p?.gender || ""}
+      </div>
+      <table style="border-collapse:collapse;width:100%;font-size:12px">
+        <thead><tr style="background:#f1f5f9"><th style="text-align:left">Test</th><th style="text-align:left">Unit</th>${dateHeaders}</tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+    logRecordAccess({ hospitalId: labHospitalId, recordType: "Lab_Report", recordId: order.id, patientId: order.patient_id, action: "print" });
+    printDocument(`Cumulative Report – ${p?.full_name || "Patient"}`, body);
+  };
+
   // Group items by category
   const grouped = items.reduce<Record<string, TestItem[]>>((acc, item) => {
     const cat = item.category.toUpperCase();
@@ -926,11 +1036,17 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
                         {/* Unit */}
                         <span className="text-xs text-muted-foreground">{item.unit || "—"}</span>
 
-                        {/* Ref Range */}
-                        <span className="text-xs text-muted-foreground">
+                        {/* Ref Range + delta (Phase 8) */}
+                        <span className="text-xs text-muted-foreground flex items-center gap-1">
                           {item.normal_min != null && item.normal_max != null
                             ? `${item.normal_min} – ${item.normal_max}`
                             : item.normal_max != null ? `< ${item.normal_max}` : "—"}
+                          {item.delta_flag && item.previous_value && (
+                            <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-purple-100 text-purple-700"
+                              title={`Delta >${DELTA_CHECK_THRESHOLD_PCT}% vs previous ${item.previous_value}`}>
+                              Δ {item.previous_value}
+                            </span>
+                          )}
                         </span>
 
                         {/* Flag */}
@@ -1425,6 +1541,11 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
         }}
           className="px-3 py-2 rounded-lg border border-border text-xs font-medium text-foreground hover:bg-muted transition-colors flex items-center gap-1.5">
           <Printer size={13} /> Print Report
+        </button>
+        <button
+          onClick={printCumulativeReport}
+          className="px-3 py-2 rounded-lg border border-border text-xs font-medium text-foreground hover:bg-muted transition-colors flex items-center gap-1.5">
+          <FileText size={13} /> Cumulative
         </button>
         <button
           onClick={() => {

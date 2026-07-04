@@ -47,7 +47,7 @@ describe("lab MODULE_TABS + hasTabAccess", () => {
   it("declares the lab tabs including the Phase 5 collection tab", () => {
     const keys = MODULE_TABS.lab.map((t) => t.key);
     expect(keys).toEqual([
-      "worklist", "collection", "qc", "calibration", "histopathology", "external", "analyzer",
+      "worklist", "collection", "qc", "calibration", "histopathology", "tat", "external", "analyzer",
       "results", "sample", "history", "notes",
     ]);
   });
@@ -78,7 +78,7 @@ describe("lab MODULE_TABS + hasTabAccess", () => {
   it("parseModuleTabs surfaces all lab tabs as true by default", () => {
     const parsed = parseModuleTabs("lab", {});
     expect(Object.keys(parsed).sort()).toEqual(
-      ["analyzer", "calibration", "collection", "external", "histopathology", "history", "notes", "qc", "results", "sample", "worklist"]
+      ["analyzer", "calibration", "collection", "external", "histopathology", "history", "notes", "qc", "results", "sample", "tat", "worklist"]
     );
     expect(Object.values(parsed).every((v) => v === true)).toBe(true);
   });

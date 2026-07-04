@@ -18,6 +18,7 @@ import LabAnalyzerTab from "@/components/lab/LabAnalyzerTab";
 import PendingOpdLabTab from "@/components/lab/PendingOpdLabTab";
 import CollectionWorkstation from "@/components/lab/CollectionWorkstation";
 import PathologyCaseList from "@/components/lab/PathologyCaseList";
+import LabTATPanel from "@/components/lab/LabTATPanel";
 
 interface PendingOpdLabOrder {
   patient: { id: string; full_name: string; uhid: string; gender: string | null; dob: string | null };
@@ -45,6 +46,7 @@ const LAB_MAIN_TABS = [
   { key: "qc" as const, label: "📊 QC Dashboard" },
   { key: "calibration" as const, label: "🔧 Calibration (NABL)" },
   { key: "histopathology" as const, label: "🧫 Histopathology" },
+  { key: "tat" as const, label: "⏱️ TAT" },
   { key: "external" as const, label: "🔗 External Referrals" },
   { key: "analyzer" as const, label: "⚙️ Analyzer Interface" },
 ] as const;
@@ -150,7 +152,7 @@ const LabPage: React.FC = () => {
   const urgentCount = orders.filter((o) => o.priority === "urgent").length;
   const routineCount = orders.filter((o) => o.priority === "routine").length;
 
-  const [mainTab, setMainTab] = useState<"worklist" | "collection" | "pending_opd" | "qc" | "calibration" | "histopathology" | "external" | "analyzer">("worklist");
+  const [mainTab, setMainTab] = useState<"worklist" | "collection" | "pending_opd" | "qc" | "calibration" | "histopathology" | "tat" | "external" | "analyzer">("worklist");
   const [pendingOpdCount, setPendingOpdCount] = useState(0);
 
   return (
@@ -199,6 +201,10 @@ const LabPage: React.FC = () => {
       ) : mainTab === "histopathology" && hospitalId ? (
         <div className="flex-1 overflow-hidden">
           <PathologyCaseList hospitalId={hospitalId} />
+        </div>
+      ) : mainTab === "tat" && hospitalId ? (
+        <div className="flex-1 overflow-hidden">
+          <LabTATPanel hospitalId={hospitalId} />
         </div>
       ) : mainTab === "external" && hospitalId ? (
         <div className="flex-1 overflow-hidden">
