@@ -112,6 +112,8 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
   const [antibiogramSpecimen, setAntibiogramSpecimen] = useState("urine");
   const [antibiogramSensitivity, setAntibiogramSensitivity] = useState<Record<string, "S" | "I" | "R">>({});
   const [antibiogramSaving, setAntibiogramSaving] = useState(false);
+  // Preliminary vs final culture report (Phase 6)
+  const [antibiogramReportStatus, setAntibiogramReportStatus] = useState<"preliminary" | "final">("preliminary");
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [samples, setSamples] = useState<any[]>([]);
   const [history, setHistory] = useState<any[]>([]);
@@ -608,26 +610,118 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
     i.test_name?.toLowerCase().includes("culture") ||
     i.test_name?.toLowerCase().includes("sensitivity")
   );
+  const microItem = items.find(i =>
+    i.category?.toLowerCase().includes("micro") ||
+    i.test_name?.toLowerCase().includes("culture")
+  );
+
+  // Load an existing antibiogram (Phase 6): prefer the structured lab_results row,
+  // fall back to the legacy lab_order_items.notes JSON for historical entries.
+  useEffect(() => {
+    if (!microItem) return;
+    (async () => {
+      const { data: lr } = await (supabase as any)
+        .from("lab_results")
+        .select("organism_identified, colony_count, specimen_type, sensitivity_json, report_status")
+        .eq("order_item_id", microItem.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (lr) {
+        setAntibiogramOrganism(lr.organism_identified || "");
+        setAntibiogramColonyCount(lr.colony_count || "");
+        if (lr.specimen_type) setAntibiogramSpecimen(lr.specimen_type);
+        setAntibiogramSensitivity((lr.sensitivity_json as any) || {});
+        setAntibiogramReportStatus(lr.report_status === "final" ? "final" : "preliminary");
+        return;
+      }
+      // Fallback: parse legacy notes JSON
+      if (microItem.notes) {
+        try {
+          const parsed = JSON.parse(microItem.notes);
+          setAntibiogramOrganism(parsed.organism || "");
+          setAntibiogramColonyCount(parsed.colony_count || "");
+          if (parsed.specimen_type) setAntibiogramSpecimen(parsed.specimen_type);
+          setAntibiogramSensitivity(parsed.sensitivity || {});
+        } catch { /* not JSON — ignore */ }
+      }
+    })();
+  }, [microItem?.id]);
 
   const saveAntibiogram = async () => {
-    const microItem = items.find(i =>
-      i.category?.toLowerCase().includes("micro") ||
-      i.test_name?.toLowerCase().includes("culture")
-    );
     if (!microItem) return;
     setAntibiogramSaving(true);
-    const sensitivityJson = antibiogramSensitivity;
+    const now = new Date().toISOString();
+    // Dual-write (Phase 6): the structured lab_results row is now canonical; the legacy
+    // notes JSON is kept in sync for one release so anything still reading it stays correct.
+    const payload = {
+      hospital_id: labHospitalId,
+      order_id: order.id,
+      order_item_id: microItem.id,
+      patient_id: order.patient_id,
+      organism_identified: antibiogramOrganism,
+      colony_count: antibiogramColonyCount,
+      specimen_type: antibiogramSpecimen,
+      sensitivity_json: antibiogramSensitivity,
+      report_status: antibiogramReportStatus,
+      is_abnormal: !!antibiogramOrganism,
+      ...(antibiogramReportStatus === "final"
+        ? { finalized_at: now, finalized_by: currentUserId, verified_by: currentUserId, verified_at: now }
+        : {}),
+    };
+    // Upsert-by-hand: one lab_results row per item
+    const { data: existing } = await (supabase as any)
+      .from("lab_results").select("id").eq("order_item_id", microItem.id).limit(1).maybeSingle();
+    if (existing) {
+      await (supabase as any).from("lab_results").update(payload).eq("id", existing.id);
+    } else {
+      await (supabase as any).from("lab_results").insert(payload);
+    }
+
     await (supabase as any).from("lab_order_items").update({
       notes: JSON.stringify({
         organism: antibiogramOrganism,
         colony_count: antibiogramColonyCount,
         specimen_type: antibiogramSpecimen,
-        sensitivity: sensitivityJson,
+        sensitivity: antibiogramSensitivity,
+        report_status: antibiogramReportStatus,
       }),
     }).eq("id", microItem.id);
-    toast({ title: "Antibiogram saved" });
+    toast({ title: `Antibiogram saved (${antibiogramReportStatus})` });
     setAntibiogramSaving(false);
     fetchItems();
+  };
+
+  // Print a microbiology / culture report. Preliminary reports carry a watermark so a
+  // provisional organism/sensitivity can be issued before the final read (Phase 6).
+  const printAntibiogram = () => {
+    const p = order.patients;
+    const rows = Object.entries(antibiogramSensitivity)
+      .filter(([, v]) => v)
+      .map(([drug, v]) => {
+        const label = v === "S" ? "Sensitive" : v === "I" ? "Intermediate" : "Resistant";
+        const color = v === "S" ? "#166534" : v === "I" ? "#b45309" : "#b91c1c";
+        return `<tr><td style="padding:3px 8px">${drug}</td><td style="padding:3px 8px;font-weight:bold;color:${color}">${v} — ${label}</td></tr>`;
+      }).join("");
+    const isPrelim = antibiogramReportStatus === "preliminary";
+    const body = `
+      ${printHeader(hospitalName || "Lab Report", "Microbiology / Culture & Sensitivity", nablNumber ? `NABL: ${nablNumber}` : undefined)}
+      <div style="position:relative">
+        ${isPrelim ? `<div style="position:absolute;top:40%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);font-size:64px;color:rgba(200,120,0,0.14);font-weight:900;letter-spacing:4px;pointer-events:none">PRELIMINARY</div>` : ""}
+        <h2 style="margin:0 0 4px">Microbiology / Culture & Sensitivity Report</h2>
+        <p style="margin:0 0 2px"><b>${p?.full_name || "Patient"}</b> · ${p?.uhid || ""} · ${getAge(p?.dob || null)} ${p?.gender || ""}</p>
+        <p style="margin:0 0 2px">Accession: ${orderBarcode || `LAB-${order.id.slice(0,8).toUpperCase()}`}</p>
+        <p style="margin:0 0 10px;font-weight:bold;color:${isPrelim ? "#b45309" : "#166534"}">Status: ${antibiogramReportStatus.toUpperCase()}</p>
+        <table style="border-collapse:collapse;margin-bottom:10px">
+          <tr><td style="padding:3px 8px;color:#555">Specimen</td><td style="padding:3px 8px;font-weight:bold">${antibiogramSpecimen.replace(/_/g," ")}</td></tr>
+          <tr><td style="padding:3px 8px;color:#555">Organism</td><td style="padding:3px 8px;font-weight:bold">${antibiogramOrganism || "—"}</td></tr>
+          <tr><td style="padding:3px 8px;color:#555">Colony Count</td><td style="padding:3px 8px;font-weight:bold">${antibiogramColonyCount || "—"}</td></tr>
+        </table>
+        <h3 style="margin:0 0 4px">Antibiotic Sensitivity</h3>
+        <table style="border-collapse:collapse;border:1px solid #ccc">${rows || `<tr><td style="padding:3px 8px">No sensitivity recorded</td></tr>`}</table>
+      </div>`;
+    logRecordAccess({ hospitalId: labHospitalId, recordType: "Lab_Report", recordId: order.id, patientId: order.patient_id, action: "print" });
+    printDocument(`Culture Report – ${p?.full_name || "Patient"}`, body);
   };
 
   // Group items by category
@@ -977,10 +1071,33 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
                   ))}
                 </div>
               </div>
-              <button onClick={saveAntibiogram} disabled={antibiogramSaving || !antibiogramOrganism}
-                className="h-8 px-4 rounded-md text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors">
-                {antibiogramSaving ? "Saving…" : "Save Antibiogram"}
-              </button>
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-muted-foreground font-medium">Report:</span>
+                  {(["preliminary", "final"] as const).map(rs => (
+                    <button
+                      key={rs}
+                      onClick={() => setAntibiogramReportStatus(rs)}
+                      className={cn(
+                        "text-[11px] font-semibold px-2.5 py-1 rounded-md capitalize transition-colors",
+                        antibiogramReportStatus === rs
+                          ? rs === "final" ? "bg-emerald-600 text-white" : "bg-amber-500 text-white"
+                          : "bg-background border border-border text-muted-foreground hover:bg-muted"
+                      )}
+                    >
+                      {rs}
+                    </button>
+                  ))}
+                </div>
+                <button onClick={saveAntibiogram} disabled={antibiogramSaving || !antibiogramOrganism}
+                  className="h-8 px-4 rounded-md text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors">
+                  {antibiogramSaving ? "Saving…" : "Save Antibiogram"}
+                </button>
+                <button onClick={() => printAntibiogram()} disabled={!antibiogramOrganism}
+                  className="h-8 px-4 rounded-md text-xs font-semibold border border-blue-300 text-blue-700 hover:bg-blue-100 disabled:opacity-40 transition-colors flex items-center gap-1.5">
+                  <Printer size={13} /> Print Report
+                </button>
+              </div>
             </div>
           )}
 
