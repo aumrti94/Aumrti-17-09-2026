@@ -16,6 +16,7 @@ import LabCalibrationTab from "@/components/lab/LabCalibrationTab";
 import ExternalReferralsTab from "@/components/lab/ExternalReferralsTab";
 import LabAnalyzerTab from "@/components/lab/LabAnalyzerTab";
 import PendingOpdLabTab from "@/components/lab/PendingOpdLabTab";
+import CollectionWorkstation from "@/components/lab/CollectionWorkstation";
 
 interface PendingOpdLabOrder {
   patient: { id: string; full_name: string; uhid: string; gender: string | null; dob: string | null };
@@ -38,6 +39,7 @@ interface LabOrder {
 
 const LAB_MAIN_TABS = [
   { key: "worklist" as const, label: "🔬 Worklist" },
+  { key: "collection" as const, label: "💉 Collection" },
   { key: "pending_opd" as const, label: "⏳ Pending from OPD" },
   { key: "qc" as const, label: "📊 QC Dashboard" },
   { key: "calibration" as const, label: "🔧 Calibration (NABL)" },
@@ -146,7 +148,7 @@ const LabPage: React.FC = () => {
   const urgentCount = orders.filter((o) => o.priority === "urgent").length;
   const routineCount = orders.filter((o) => o.priority === "routine").length;
 
-  const [mainTab, setMainTab] = useState<"worklist" | "pending_opd" | "qc" | "calibration" | "external" | "analyzer">("worklist");
+  const [mainTab, setMainTab] = useState<"worklist" | "collection" | "pending_opd" | "qc" | "calibration" | "external" | "analyzer">("worklist");
   const [pendingOpdCount, setPendingOpdCount] = useState(0);
 
   return (
@@ -171,7 +173,11 @@ const LabPage: React.FC = () => {
         <NABHBadge standardCodes={["AAC.3", "HIC.4", "QPS.2"]} />
       </div>
 
-      {mainTab === "pending_opd" && hospitalId ? (
+      {mainTab === "collection" && hospitalId ? (
+        <div className="flex-1 overflow-y-auto">
+          <CollectionWorkstation hospitalId={hospitalId} />
+        </div>
+      ) : mainTab === "pending_opd" && hospitalId ? (
         <div className="flex-1 overflow-y-auto">
           <PendingOpdLabTab
             hospitalId={hospitalId}

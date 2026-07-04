@@ -37,6 +37,7 @@ export const MODULE_TABS: Record<string, TabDef[]> = {
   ],
   lab: [
     { key: "worklist", label: "Worklist" },
+    { key: "collection", label: "Collection" },
     { key: "qc", label: "QC Dashboard" },
     { key: "calibration", label: "Calibration (NABL)" },
     { key: "external", label: "External Referrals" },

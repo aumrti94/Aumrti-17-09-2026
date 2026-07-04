@@ -12,6 +12,7 @@ import { sendLabResultReady } from "@/lib/whatsapp-notifications";
 import { printDocument, printHeader } from "@/lib/printUtils";
 import { logRecordAccess } from "@/lib/ims";
 import { getLatestQcWarnings } from "@/lib/labQc";
+import { collectOrderSamples, receiveOrderSamples, startOrderProcessing } from "@/lib/labSamples";
 import LabTrendPanel from "./LabTrendPanel";
 import LabAnomalyDetector from "./LabAnomalyDetector";
 import LabInterpretationPanel from "./LabInterpretationPanel";
@@ -370,60 +371,30 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
     toast({ title: "✓ Critical value acknowledged" });
   };
 
+  // Sample lifecycle transitions live in src/lib/labSamples.ts (Phase 5) — shared with
+  // the Collection workstation so both drive identical status updates.
   const handleMarkCollected = async () => {
     if (!currentUserId) return;
-    const p = order.patients;
-    // Prefer the order's accession number (Phase 3) so printed labels carry the same
-    // identifier the analyzer echoes back; legacy orders keep the LAB-<uhid>-<id> format.
-    const { data: accRow } = await (supabase as any)
-      .from("lab_orders").select("accession_number").eq("id", order.id).maybeSingle();
-    const newBarcode = accRow?.accession_number
-      || `LAB-${(p?.uhid || "NOID").replace(/\s/g, "")}-${order.id.slice(0, 8).toUpperCase()}`;
-
-    await supabase.from("lab_order_items").update({
-      status: "sample_collected",
-      sample_collected_at: new Date().toISOString(),
-      sample_collected_by: currentUserId,
-    }).eq("lab_order_id", order.id).in("status", ["ordered"]);
-
-    await supabase.from("lab_orders").update({
-      status: "sample_collected",
-      barcode: newBarcode,
-      sample_collected_at: new Date().toISOString(),
-    } as any).eq("id", order.id);
+    const newBarcode = await collectOrderSamples({
+      orderId: order.id,
+      userId: currentUserId,
+      uhid: order.patients?.uhid,
+    });
     setOrderBarcode(newBarcode);
-    await supabase.from("lab_samples").update({
-      status: "collected",
-      collected_at: new Date().toISOString(),
-      collected_by: currentUserId,
-    }).eq("lab_order_id", order.id).eq("status", "pending");
-
     fetchItems(); fetchSamples(); onRefresh();
     toast({ title: "📦 Sample collected" });
   };
 
   const handleMarkReceived = async () => {
     if (!currentUserId) return;
-    await supabase.from("lab_samples").update({
-      status: "received",
-      received_at: new Date().toISOString(),
-      received_by: currentUserId,
-    }).eq("lab_order_id", order.id).eq("status", "collected");
+    await receiveOrderSamples({ orderId: order.id, userId: currentUserId });
     fetchSamples(); onRefresh();
     toast({ title: "📥 Sample received at lab" });
   };
 
   const handleMarkProcessing = async () => {
     if (!currentUserId) return;
-    await supabase.from("lab_samples").update({
-      status: "processing",
-    }).eq("lab_order_id", order.id).eq("status", "received");
-
-    await supabase.from("lab_order_items").update({
-      status: "in_process",
-    }).eq("lab_order_id", order.id).in("status", ["ordered", "sample_collected"]);
-
-    await supabase.from("lab_orders").update({ status: "in_process" }).eq("id", order.id);
+    await startOrderProcessing({ orderId: order.id, userId: currentUserId });
     fetchItems(); fetchSamples(); onRefresh();
     toast({ title: "🔬 Sample processing started" });
   };

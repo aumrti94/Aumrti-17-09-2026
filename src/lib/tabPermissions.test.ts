@@ -40,3 +40,46 @@ describe("nursing MODULE_TABS + hasTabAccess", () => {
     expect(Object.values(parsed).every((v) => v === true)).toBe(true);
   });
 });
+
+// Lab module completion plan, Phase 5 — the Collection workstation tab joins the
+// existing lab tab set under the same permission system.
+describe("lab MODULE_TABS + hasTabAccess", () => {
+  it("declares the lab tabs including the Phase 5 collection tab", () => {
+    const keys = MODULE_TABS.lab.map((t) => t.key);
+    expect(keys).toEqual([
+      "worklist", "collection", "qc", "calibration", "external", "analyzer",
+      "results", "sample", "history", "notes",
+    ]);
+  });
+
+  it("default-allow: with no restriction configured, every lab tab is accessible to a lab technician", () => {
+    for (const tab of MODULE_TABS.lab) {
+      expect(hasTabAccess("lab", tab.key, null, "lab_technician")).toBe(true);
+    }
+  });
+
+  it("restricting the collection tab hides only that tab for the lab technician role", () => {
+    const permissions = { lab: { tabs: { collection: false } } };
+    expect(hasTabAccess("lab", "collection", permissions, "lab_technician")).toBe(false);
+    for (const tab of MODULE_TABS.lab.filter((t) => t.key !== "collection")) {
+      expect(hasTabAccess("lab", tab.key, permissions, "lab_technician")).toBe(true);
+    }
+  });
+
+  it("super_admin and hospital_admin always see all lab tabs regardless of restrictions", () => {
+    const permissions = { lab: { tabs: Object.fromEntries(MODULE_TABS.lab.map((t) => [t.key, false])) } };
+    for (const role of ["super_admin", "hospital_admin"]) {
+      for (const tab of MODULE_TABS.lab) {
+        expect(hasTabAccess("lab", tab.key, permissions, role)).toBe(true);
+      }
+    }
+  });
+
+  it("parseModuleTabs surfaces all lab tabs as true by default", () => {
+    const parsed = parseModuleTabs("lab", {});
+    expect(Object.keys(parsed).sort()).toEqual(
+      ["analyzer", "calibration", "collection", "external", "history", "notes", "qc", "results", "sample", "worklist"]
+    );
+    expect(Object.values(parsed).every((v) => v === true)).toBe(true);
+  });
+});
