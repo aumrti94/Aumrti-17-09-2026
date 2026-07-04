@@ -145,6 +145,7 @@ const LabPage: React.FC = () => {
     if (filterTab === "all") return true;
     if (filterTab === "pending") return ["ordered", "sample_collected"].includes(o.status);
     if (filterTab === "in_process") return o.status === "in_process";
+    if (filterTab === "pending_validation") return o.status === "pending_validation";
     if (filterTab === "ready") return o.status === "partial_results";
     if (filterTab === "completed") return o.status === "completed";
     return true;

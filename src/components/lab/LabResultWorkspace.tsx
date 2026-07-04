@@ -11,6 +11,7 @@ import { useWhatsAppNotification } from "@/components/whatsapp/WhatsAppNotificat
 import { sendLabResultReady } from "@/lib/whatsapp-notifications";
 import { printDocument, printHeader } from "@/lib/printUtils";
 import { logRecordAccess } from "@/lib/ims";
+import { getLatestQcWarnings } from "@/lib/labQc";
 import LabTrendPanel from "./LabTrendPanel";
 import LabAnomalyDetector from "./LabAnomalyDetector";
 import LabInterpretationPanel from "./LabInterpretationPanel";
@@ -125,6 +126,8 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
   const [validationNotes, setValidationNotes] = useState("");
   // Critical notify gate: item id → confirmed
   const [doctorNotifyConfirmed, setDoctorNotifyConfirmed] = useState<Record<string, boolean>>({});
+  // QC advisory: test names already warned about this session (avoid repeat toasts)
+  const qcWarnedTests = React.useRef<Set<string>>(new Set());
 
   // Get current user id and hospital id
   useEffect(() => {
@@ -308,6 +311,22 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
 
     if (error) { console.error("Save result error:", error); return; }
 
+    // QC advisory (Phase 2): if the latest QC run for this test violates a Westgard
+    // rule, surface a non-blocking warning. Never blocks or delays saving — the result
+    // is already persisted above; this is fire-and-forget.
+    if (labHospitalId && item.test_name && !qcWarnedTests.current.has(item.test_name)) {
+      qcWarnedTests.current.add(item.test_name);
+      getLatestQcWarnings(labHospitalId, item.test_name).then((warnings) => {
+        const worst = warnings.find(w => w.severity === "reject") || warnings[0];
+        if (worst) {
+          toast({
+            title: `⚠️ QC ${worst.severity === "reject" ? "failure" : "warning"} on ${item.test_name} (${worst.rule})`,
+            description: `${worst.message}. Verify the run before releasing this result.`,
+          });
+        }
+      }).catch(() => {});
+    }
+
     // Critical alert
     if (finalFlag === "CH" || finalFlag === "CL") {
       const { data: orderData } = await supabase.from("lab_orders").select("hospital_id").eq("id", order.id).maybeSingle();
@@ -419,6 +438,75 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
     toast({ title: "⏳ Submitted for pathologist sign-off" });
   };
 
+  // Shared post-release tail: OPD auto-billing + WhatsApp "result ready".
+  // Used by both release paths (single-step handleValidateAll and the dual-validation
+  // handlePathologistValidate) so pathologist sign-off no longer skips billing/notification.
+  const finalizeReleasedOrder = async () => {
+    // Auto-bill OPD lab charges (skip IPD — handled by discharge auto-pull)
+    const { data: fullOrder } = await supabase.from("lab_orders")
+      .select("hospital_id, admission_id, encounter_id, patient_id, ordered_by")
+      .eq("id", order.id).maybeSingle();
+
+    if (fullOrder && !fullOrder.admission_id) {
+      try {
+        const { autoBillOpdInvestigation, getInvestigationRate } = await import("@/lib/investigationBilling");
+        const lineItems: { description: string; itemType: "lab_test"; unitRate: number; gstPercent: number; gstAmount: number }[] = [];
+
+        for (const item of items) {
+          if (!item.test_name) continue;
+          const { rate, gstPercent } = await getInvestigationRate(fullOrder.hospital_id, item.test_name, "lab");
+          const gstAmount = rate * gstPercent / 100;
+          lineItems.push({
+            description: item.test_name,
+            itemType: "lab_test",
+            unitRate: rate,
+            gstPercent,
+            gstAmount,
+          });
+        }
+
+        const result = await autoBillOpdInvestigation({
+          hospitalId: fullOrder.hospital_id,
+          patientId: fullOrder.patient_id,
+          encounterId: fullOrder.encounter_id,
+          admissionId: null,
+          orderedBy: fullOrder.ordered_by,
+          lineItems,
+          billPrefix: "LAB",
+          sourceModule: "lab",
+          sourceId: order.id,
+        });
+
+        if (result) {
+          toast({ title: `Lab charges billed: ₹${result.total.toLocaleString("en-IN")}` });
+        }
+      } catch (e) {
+        console.error("Lab auto-billing error (non-blocking):", e);
+      }
+    }
+
+    // Trigger WhatsApp notification
+    if (patient?.phone && fullOrder) {
+      try {
+        const { data: hospital } = await supabase.from("hospitals").select("name").eq("id", fullOrder.hospital_id).maybeSingle();
+        const abnormalCount = items.filter(i => i.result_flag && !["N", null].includes(i.result_flag)).length;
+        const result = await sendLabResultReady({
+          hospitalId: fullOrder.hospital_id,
+          hospitalName: hospital?.name || "Hospital",
+          patientId: order.patient_id,
+          patientName: patient.full_name,
+          phone: patient.phone,
+          testCount: items.length,
+          abnormalCount,
+          orderDate: order.order_date,
+        });
+        showWaNotif(patient.full_name, "lab_result_ready", result.waUrl);
+      } catch (e) {
+        console.error("Lab WhatsApp notification error (non-blocking):", e);
+      }
+    }
+  };
+
   const handlePathologistValidate = async () => {
     if (!currentUserId || validating) return;
     setValidating(true);
@@ -448,7 +536,10 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
       }).catch(() => {});
     }
 
+    await finalizeReleasedOrder();
+
     setValidating(false);
+    setAutoRunAnomaly(true);
     fetchItems();
     onRefresh();
     toast({ title: "✓ Report validated & signed by pathologist" });
@@ -502,6 +593,7 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
     const unacknowledgedCritical = items.filter(i => (i.result_flag === "CH" || i.result_flag === "CL") && !i.critical_acknowledged);
     if (unacknowledgedCritical.length > 0) {
       toast({ title: "Acknowledge critical values before releasing", variant: "destructive" });
+      setValidating(false); // was missing — the early return left the button locked
       return;
     }
 
@@ -513,68 +605,7 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
 
     await supabase.from("lab_orders").update({ status: "completed" }).eq("id", order.id);
 
-    // Auto-bill OPD lab charges (skip IPD — handled by discharge auto-pull)
-    const { data: fullOrder } = await supabase.from("lab_orders")
-      .select("hospital_id, admission_id, encounter_id, patient_id, ordered_by")
-      .eq("id", order.id).maybeSingle();
-
-    if (fullOrder && !fullOrder.admission_id) {
-      try {
-        const { autoBillOpdInvestigation, getInvestigationRate } = await import("@/lib/investigationBilling");
-        const lineItems: { description: string; itemType: "lab_test"; unitRate: number; gstPercent: number; gstAmount: number }[] = [];
-
-        for (const item of items) {
-          if (!item.test_name) continue;
-          const { rate, gstPercent } = await getInvestigationRate(fullOrder.hospital_id, item.test_name, "lab");
-          const gstAmount = rate * gstPercent / 100;
-          lineItems.push({
-            description: item.test_name,
-            itemType: "lab_test",
-            unitRate: rate,
-            gstPercent,
-            gstAmount,
-          });
-        }
-
-        const result = await autoBillOpdInvestigation({
-          hospitalId: fullOrder.hospital_id,
-          patientId: fullOrder.patient_id,
-          encounterId: fullOrder.encounter_id,
-          admissionId: null,
-          orderedBy: fullOrder.ordered_by,
-          lineItems,
-          billPrefix: "LAB",
-          sourceModule: "lab",
-          sourceId: order.id,
-        });
-
-        if (result) {
-          toast({ title: `Lab charges billed: ₹${result.total.toLocaleString("en-IN")}` });
-        }
-      } catch (e) {
-        console.error("Lab auto-billing error (non-blocking):", e);
-      }
-    }
-
-    // Trigger WhatsApp notification
-    if (patient?.phone) {
-      const { data: orderData } = await supabase.from("lab_orders").select("hospital_id").eq("id", order.id).maybeSingle();
-      if (orderData) {
-        const { data: hospital } = await supabase.from("hospitals").select("name").eq("id", orderData.hospital_id).maybeSingle();
-        const abnormalCount = items.filter(i => i.result_flag && !["N", null].includes(i.result_flag)).length;
-        const result = await sendLabResultReady({
-          hospitalId: orderData.hospital_id,
-          hospitalName: hospital?.name || "Hospital",
-          patientId: order.patient_id,
-          patientName: patient.full_name,
-          phone: patient.phone,
-          testCount: items.length,
-          abnormalCount,
-          orderDate: order.order_date,
-        });
-        showWaNotif(patient.full_name, "lab_result_ready", result.waUrl);
-      }
-    }
+    await finalizeReleasedOrder();
 
     setValidating(false);
     setAutoRunAnomaly(true); // auto-trigger AI anomaly analysis after validation

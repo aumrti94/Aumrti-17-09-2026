@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
+import { checkWestgardRules } from "@/lib/labQc";
 import { ScatterChart, Scatter, XAxis, YAxis, ReferenceLine, ResponsiveContainer, CartesianGrid, Tooltip } from "recharts";
 import EmptyState from "@/components/EmptyState";
 
@@ -21,58 +22,6 @@ interface QCEntry {
   recorded_at: string;
   recorded_by: string;
 }
-
-interface WestgardWarning {
-  rule: string;
-  severity: "warning" | "reject";
-  message: string;
-}
-
-const checkWestgardRules = (qcValues: number[], mean: number, sd: number): WestgardWarning[] => {
-  const warnings: WestgardWarning[] = [];
-  const n = qcValues.length;
-  if (n < 2 || sd === 0) return warnings;
-
-  const latest = qcValues[n - 1];
-  const zscore = (latest - mean) / sd;
-
-  // 1-3s rule
-  if (Math.abs(zscore) > 3)
-    warnings.push({ rule: "1-3s", severity: "reject", message: "Latest QC value exceeds 3 SD — run rejected" });
-
-  // 1-2s rule
-  if (Math.abs(zscore) > 2 && Math.abs(zscore) <= 3)
-    warnings.push({ rule: "1-2s", severity: "warning", message: "Latest QC value exceeds 2 SD — check equipment" });
-
-  // 2-2s rule
-  if (n >= 2) {
-    const prev = qcValues[n - 2];
-    const prevZ = (prev - mean) / sd;
-    if (zscore > 2 && prevZ > 2)
-      warnings.push({ rule: "2-2s", severity: "reject", message: "Two consecutive QC values exceed +2 SD — systematic error" });
-    if (zscore < -2 && prevZ < -2)
-      warnings.push({ rule: "2-2s", severity: "reject", message: "Two consecutive QC values below -2 SD — systematic error" });
-  }
-
-  // R-4s rule
-  if (n >= 2) {
-    const prev = qcValues[n - 2];
-    const prevZ = (prev - mean) / sd;
-    if (Math.abs(zscore - prevZ) > 4)
-      warnings.push({ rule: "R-4s", severity: "reject", message: "Range between consecutive values > 4 SD — random error" });
-  }
-
-  // 10x rule
-  if (n >= 10) {
-    const last10 = qcValues.slice(-10);
-    const allAbove = last10.every(v => v > mean);
-    const allBelow = last10.every(v => v < mean);
-    if (allAbove || allBelow)
-      warnings.push({ rule: "10x", severity: "warning", message: "10 consecutive values on same side of mean — drift detected" });
-  }
-
-  return warnings;
-};
 
 interface Props {
   hospitalId: string;
