@@ -12,7 +12,9 @@ import { sendLabResultReady } from "@/lib/whatsapp-notifications";
 import { printDocument, printHeader } from "@/lib/printUtils";
 import { logRecordAccess } from "@/lib/ims";
 import { getLatestQcWarnings } from "@/lib/labQc";
+import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { collectOrderSamples, receiveOrderSamples, startOrderProcessing } from "@/lib/labSamples";
+import PatientIdentityConfirmDialog from "./PatientIdentityConfirmDialog";
 import LabTrendPanel from "./LabTrendPanel";
 import LabAnomalyDetector from "./LabAnomalyDetector";
 import LabInterpretationPanel from "./LabInterpretationPanel";
@@ -137,6 +139,14 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
   const [doctorNotifyConfirmed, setDoctorNotifyConfirmed] = useState<Record<string, boolean>>({});
   // QC advisory: test names already warned about this session (avoid repeat toasts)
   const qcWarnedTests = React.useRef<Set<string>>(new Set());
+  // QC release gate (Phase 11): tests whose latest QC run is in Westgard REJECT state.
+  const [qcRejectByTest, setQcRejectByTest] = useState<Record<string, string[]>>({});
+  const [qcOverride, setQcOverride] = useState<{ by: string | null; reason: string | null; at: string | null }>({ by: null, reason: null, at: null });
+  const [showQcOverride, setShowQcOverride] = useState(false);
+  const [qcOverrideReason, setQcOverrideReason] = useState("");
+  const [qcOverrideSaving, setQcOverrideSaving] = useState(false);
+  // Bedside two-identifier confirm before collection (Phase 11)
+  const [showCollectConfirm, setShowCollectConfirm] = useState(false);
 
   // Get current user id and hospital id
   useEffect(() => {
@@ -261,6 +271,59 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
       setRequiresDualValidation(data?.some((c: any) => c.requires_dual_validation) ?? false);
     })();
   }, [labHospitalId, items]);
+
+  // QC release gate (Phase 11): evaluate each test's latest QC run; if any is in a
+  // Westgard REJECT state, release is blocked until a supervisor override is recorded.
+  // Also load any existing override off the order so a re-opened order stays unblocked.
+  useEffect(() => {
+    if (!labHospitalId || items.length === 0) return;
+    (async () => {
+      const testNames = [...new Set(items.map(i => i.test_name).filter(Boolean))];
+      const results = await Promise.all(testNames.map(async (name) => {
+        const warnings = await getLatestQcWarnings(labHospitalId, name);
+        const rejects = warnings.filter(w => w.severity === "reject").map(w => `${w.rule}: ${w.message}`);
+        return [name, rejects] as const;
+      }));
+      const map: Record<string, string[]> = {};
+      for (const [name, rejects] of results) if (rejects.length) map[name] = rejects;
+      setQcRejectByTest(map);
+
+      const { data: ord } = await (supabase as any)
+        .from("lab_orders")
+        .select("qc_override_by, qc_override_reason, qc_override_at")
+        .eq("id", order.id).maybeSingle();
+      if (ord) setQcOverride({ by: ord.qc_override_by, reason: ord.qc_override_reason, at: ord.qc_override_at });
+    })();
+  }, [labHospitalId, items, order.id]);
+
+  const hasQcReject = Object.keys(qcRejectByTest).length > 0;
+  const qcOverridden = !!qcOverride.at;
+  // Release is blocked while QC is rejected and not overridden.
+  const qcBlocksRelease = hasQcReject && !qcOverridden;
+  // Override is a supervisor decision (pathologist / doctor / admin), not a bench tech's.
+  const canOverrideQc = ["doctor", "pathologist", "super_admin", "hospital_admin"].includes(role || "");
+
+  const submitQcOverride = async () => {
+    if (!currentUserId || !qcOverrideReason.trim()) return;
+    setQcOverrideSaving(true);
+    const at = new Date().toISOString();
+    await (supabase as any).from("lab_orders").update({
+      qc_override_by: currentUserId,
+      qc_override_reason: qcOverrideReason.trim(),
+      qc_override_at: at,
+    }).eq("id", order.id);
+    setQcOverride({ by: currentUserId, reason: qcOverrideReason.trim(), at });
+    await logNABHEvidence(
+      labHospitalId,
+      "QPS.2",
+      `QC reject overridden for order ${orderBarcode || order.id}: ${qcOverrideReason.trim()} (tests: ${Object.keys(qcRejectByTest).join(", ")})`,
+      "compliant"
+    );
+    setQcOverrideSaving(false);
+    setShowQcOverride(false);
+    setQcOverrideReason("");
+    toast({ title: "QC override recorded", description: "Release is now permitted for this order." });
+  };
 
   // TAT calculation — freeze at validated_at when the order is completed
   const isCompleted = order.status === "completed";
@@ -549,6 +612,10 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
 
   const handlePathologistValidate = async () => {
     if (!currentUserId || validating) return;
+    if (qcBlocksRelease) {
+      toast({ title: "QC is in reject state — supervisor override required before release", variant: "destructive" });
+      return;
+    }
     setValidating(true);
     const now = new Date().toISOString();
     await supabase.from("lab_order_items").update({
@@ -629,6 +696,10 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
 
   const handleValidateAll = async () => {
     if (!currentUserId || validating) return;
+    if (qcBlocksRelease) {
+      toast({ title: "QC is in reject state — supervisor override required before release", variant: "destructive" });
+      return;
+    }
     setValidating(true);
     const unacknowledgedCritical = items.filter(i => (i.result_flag === "CH" || i.result_flag === "CL") && !i.critical_acknowledged);
     if (unacknowledgedCritical.length > 0) {
@@ -910,7 +981,7 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
 
         {/* Status action */}
         {order.status === "ordered" && (
-          <button onClick={handleMarkCollected}
+          <button onClick={() => setShowCollectConfirm(true)}
             className="shrink-0 px-3.5 py-1.5 rounded-lg bg-amber-500 text-white text-[11px] font-semibold hover:bg-amber-600 active:scale-[0.97] transition-all">
             📦 Mark Collected
           </button>
@@ -926,7 +997,8 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
         {/* Dual-validation: pathologist/doctor sees Validate & Sign */}
         {requiresDualValidation && (role === "doctor" || role === "pathologist" || role === "radiologist") && order.status === "pending_validation" && (
           <button onClick={handlePathologistValidate}
-            disabled={validating}
+            disabled={validating || qcBlocksRelease}
+            title={qcBlocksRelease ? "QC in reject state — override required" : ""}
             className="shrink-0 px-3.5 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-semibold hover:bg-emerald-700 active:scale-[0.97] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
             {validating ? "⏳ Signing..." : "✓ Validate & Sign"}
           </button>
@@ -934,13 +1006,100 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
         {/* Standard single-step validation */}
         {allResultsEntered && !requiresDualValidation && order.status !== "completed" && order.status !== "pending_validation" && (
           <button onClick={handleValidateAll}
-            disabled={hasUnacknowledgedCritical || validating}
+            disabled={hasUnacknowledgedCritical || validating || qcBlocksRelease}
             className="shrink-0 px-3.5 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-semibold hover:bg-emerald-700 active:scale-[0.97] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
-            title={hasUnacknowledgedCritical ? "Acknowledge critical values first" : ""}>
+            title={qcBlocksRelease ? "QC in reject state — override required" : hasUnacknowledgedCritical ? "Acknowledge critical values first" : ""}>
             {validating ? "⏳ Validating..." : "✓ Validate & Release"}
           </button>
         )}
       </div>
+
+      {/* QC release gate banner (Phase 11) */}
+      {hasQcReject && (
+        <div className={cn("px-4 py-2.5 border-b flex-shrink-0", qcOverridden ? "bg-amber-50 border-amber-200" : "bg-red-50 border-red-300")}>
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={16} className={cn("mt-0.5 shrink-0", qcOverridden ? "text-amber-600" : "text-red-600")} />
+            <div className="flex-1 min-w-0">
+              {qcOverridden ? (
+                <p className="text-[12px] text-amber-800">
+                  <span className="font-bold">QC override in effect.</span> Release permitted despite a QC reject.
+                  {qcOverride.reason ? ` Reason: ${qcOverride.reason}` : ""}
+                </p>
+              ) : (
+                <>
+                  <p className="text-[12px] font-bold text-red-800">Result release blocked — QC is in a reject state</p>
+                  <ul className="mt-0.5 space-y-0.5">
+                    {Object.entries(qcRejectByTest).map(([test, rules]) => (
+                      <li key={test} className="text-[11px] text-red-700">
+                        <span className="font-semibold">{test}</span>: {rules.join("; ")}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-[11px] text-red-600 mt-0.5">
+                    Repeat QC and re-run the analyte, or record a supervisor override to release.
+                  </p>
+                  {canOverrideQc ? (
+                    <button
+                      onClick={() => setShowQcOverride(true)}
+                      className="mt-1.5 text-[11px] px-3 py-1.5 rounded-md bg-red-600 text-white font-semibold hover:bg-red-700 active:scale-95 transition-all"
+                    >
+                      Supervisor Override…
+                    </button>
+                  ) : (
+                    <p className="text-[11px] text-red-500 mt-1">A pathologist/supervisor must record the override.</p>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bedside two-identifier confirm before collection (Phase 11) */}
+      {showCollectConfirm && (
+        <PatientIdentityConfirmDialog
+          patientName={patient?.full_name || "Patient"}
+          uhid={patient?.uhid}
+          dob={patient?.dob}
+          gender={patient?.gender}
+          onConfirm={handleMarkCollected}
+          onClose={() => setShowCollectConfirm(false)}
+        />
+      )}
+
+      {/* QC override dialog */}
+      {showQcOverride && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowQcOverride(false)}>
+          <div className="bg-card rounded-lg shadow-xl w-[440px] max-w-[90vw] p-5" onClick={e => e.stopPropagation()}>
+            <p className="text-sm font-bold text-foreground">Supervisor QC Override</p>
+            <p className="text-[12px] text-muted-foreground mt-1">
+              You are permitting result release for an order whose QC is in a Westgard reject state.
+              This is recorded against the order and logged as NABH evidence.
+            </p>
+            <div className="mt-3 text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-md px-2.5 py-1.5">
+              {Object.entries(qcRejectByTest).map(([test, rules]) => (
+                <div key={test}><span className="font-semibold">{test}</span>: {rules.join("; ")}</div>
+              ))}
+            </div>
+            <Textarea
+              value={qcOverrideReason}
+              onChange={e => setQcOverrideReason(e.target.value)}
+              placeholder="Reason for override (required) — e.g. QC repeated & acceptable, corrective action logged separately"
+              className="mt-3 text-sm min-h-[70px]"
+            />
+            <div className="flex justify-end gap-2 mt-3">
+              <button onClick={() => setShowQcOverride(false)} className="text-[12px] px-3 py-1.5 rounded-md border border-border text-muted-foreground hover:bg-muted">Cancel</button>
+              <button
+                onClick={submitQcOverride}
+                disabled={!qcOverrideReason.trim() || qcOverrideSaving}
+                className="text-[12px] px-3 py-1.5 rounded-md bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50"
+              >
+                {qcOverrideSaving ? "Recording…" : "Record Override & Permit Release"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tabs — History is lazy-loaded on first open */}
       <Tabs defaultValue="results" className="flex-1 flex flex-col overflow-hidden"

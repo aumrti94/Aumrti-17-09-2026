@@ -16,6 +16,7 @@ import {
   rejectSample,
   resolveOrderBarcode,
 } from "@/lib/labSamples";
+import PatientIdentityConfirmDialog from "./PatientIdentityConfirmDialog";
 
 // Phlebotomy / collection workstation (lab plan Phase 5).
 // Worklist over lab_samples with collect / receive / process / reject-recollect
@@ -67,6 +68,8 @@ const CollectionWorkstation: React.FC<Props> = ({ hospitalId, admittedOnly = fal
   const [rejecting, setRejecting] = useState<SampleRow | null>(null);
   const [rejectReason, setRejectReason] = useState<string>(SAMPLE_REJECTION_REASONS[0]);
   const [rejectNote, setRejectNote] = useState("");
+  // Bedside two-identifier confirm before collection (Phase 11)
+  const [collectConfirm, setCollectConfirm] = useState<SampleRow | null>(null);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -269,7 +272,7 @@ const CollectionWorkstation: React.FC<Props> = ({ hospitalId, admittedOnly = fal
                           </Button>
                         )}
                         {tab === "pending" && (
-                          <Button size="sm" className="h-7 text-[11px] gap-1" disabled={busy || !currentUserId} onClick={() => act(row, "collect")}>
+                          <Button size="sm" className="h-7 text-[11px] gap-1" disabled={busy || !currentUserId} onClick={() => setCollectConfirm(row)}>
                             {busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Collect
                           </Button>
                         )}
@@ -301,6 +304,16 @@ const CollectionWorkstation: React.FC<Props> = ({ hospitalId, admittedOnly = fal
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* Bedside two-identifier confirm before collection (Phase 11) */}
+      {collectConfirm && (
+        <PatientIdentityConfirmDialog
+          patientName={collectConfirm.lab_orders?.patients?.full_name || "Patient"}
+          uhid={collectConfirm.lab_orders?.patients?.uhid}
+          onConfirm={() => act(collectConfirm, "collect")}
+          onClose={() => setCollectConfirm(null)}
+        />
       )}
 
       {/* Reject dialog */}
