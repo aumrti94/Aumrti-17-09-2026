@@ -21,6 +21,7 @@ import PatientIdentityConfirmDialog from "./PatientIdentityConfirmDialog";
 import LabTrendPanel from "./LabTrendPanel";
 import LabAnomalyDetector from "./LabAnomalyDetector";
 import LabInterpretationPanel from "./LabInterpretationPanel";
+import ReflexTestPanel from "./ReflexTestPanel";
 
 interface LabOrder {
   id: string;
@@ -156,6 +157,8 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
   const [showCollectConfirm, setShowCollectConfirm] = useState(false);
   // Sample mix-up acknowledgement (Phase 13)
   const [mixupAck, setMixupAck] = useState<{ by: string | null; reason: string | null; at: string | null }>({ by: null, reason: null, at: null });
+  // Order's encounter/admission linkage (Phase 14) — needed so a reflex-test order gets billed correctly
+  const [orderLinkage, setOrderLinkage] = useState<{ encounter_id: string | null; admission_id: string | null }>({ encounter_id: null, admission_id: null });
 
   // Get current user id and hospital id
   useEffect(() => {
@@ -321,6 +324,12 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
   );
   const hasHighMixupRisk = mixupIndicators.some(i => i.severity === "high");
   const mixupBlocksRelease = hasHighMixupRisk && !mixupAck.at;
+
+  // Fetch encounter/admission linkage once (Phase 14, for reflex-test ordering)
+  useEffect(() => {
+    (supabase as any).from("lab_orders").select("encounter_id, admission_id").eq("id", order.id).maybeSingle()
+      .then(({ data }: any) => { if (data) setOrderLinkage({ encounter_id: data.encounter_id, admission_id: data.admission_id }); });
+  }, [order.id]);
 
   const hasQcReject = Object.keys(qcRejectByTest).length > 0;
   const qcOverridden = !!qcOverride.at;
@@ -1522,6 +1531,26 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
                 }))}
                 hospitalId={labHospitalId}
                 patientId={order.patient_id}
+              />
+            </div>
+          )}
+
+          {/* AI Reflex Test Suggestions — shown when there's at least one abnormal result */}
+          {labHospitalId && patient && items.some(i => i.result_value && i.result_flag && i.result_flag !== "N") && (
+            <div className="px-4 pb-4">
+              <ReflexTestPanel
+                hospitalId={labHospitalId}
+                patientId={order.patient_id}
+                patientName={patient.full_name}
+                patientUhid={patient.uhid}
+                patientGender={patient.gender}
+                patientDob={patient.dob}
+                encounterId={orderLinkage.encounter_id}
+                admissionId={orderLinkage.admission_id}
+                clinicalNotes={order.clinical_notes}
+                abnormalResults={items
+                  .filter(i => i.result_value && i.result_flag && i.result_flag !== "N")
+                  .map(i => ({ test_name: i.test_name, result_value: i.result_value, result_flag: i.result_flag, unit: i.unit || i.result_unit }))}
               />
             </div>
           )}
