@@ -13,6 +13,8 @@ import { printDocument, printHeader } from "@/lib/printUtils";
 import { logRecordAccess } from "@/lib/ims";
 import { getLatestQcWarnings } from "@/lib/labQc";
 import { evaluateAutoVerify } from "@/lib/labAutoVerify";
+import { checkDeterministicMixupIndicators } from "@/lib/labSampleIntegrity";
+import SampleMixupPanel from "./SampleMixupPanel";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { collectOrderSamples, receiveOrderSamples, startOrderProcessing } from "@/lib/labSamples";
 import PatientIdentityConfirmDialog from "./PatientIdentityConfirmDialog";
@@ -29,7 +31,7 @@ interface LabOrder {
   clinical_notes: string | null;
   patient_id: string;
   ordered_by: string;
-  patients: { full_name: string; uhid: string; gender: string | null; dob: string | null; phone?: string | null } | null;
+  patients: { full_name: string; uhid: string; gender: string | null; dob: string | null; phone?: string | null; blood_group?: string | null } | null;
   ordered_by_user: { full_name: string } | null;
   lab_order_items: any[];
 }
@@ -152,6 +154,8 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
   const [qcOverrideSaving, setQcOverrideSaving] = useState(false);
   // Bedside two-identifier confirm before collection (Phase 11)
   const [showCollectConfirm, setShowCollectConfirm] = useState(false);
+  // Sample mix-up acknowledgement (Phase 13)
+  const [mixupAck, setMixupAck] = useState<{ by: string | null; reason: string | null; at: string | null }>({ by: null, reason: null, at: null });
 
   // Get current user id and hospital id
   useEffect(() => {
@@ -297,11 +301,26 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
 
       const { data: ord } = await (supabase as any)
         .from("lab_orders")
-        .select("qc_override_by, qc_override_reason, qc_override_at")
+        .select("qc_override_by, qc_override_reason, qc_override_at, mixup_acknowledged_by, mixup_ack_reason, mixup_acknowledged_at")
         .eq("id", order.id).maybeSingle();
-      if (ord) setQcOverride({ by: ord.qc_override_by, reason: ord.qc_override_reason, at: ord.qc_override_at });
+      if (ord) {
+        setQcOverride({ by: ord.qc_override_by, reason: ord.qc_override_reason, at: ord.qc_override_at });
+        setMixupAck({ by: ord.mixup_acknowledged_by, reason: ord.mixup_ack_reason, at: ord.mixup_acknowledged_at });
+      }
     })();
   }, [labHospitalId, items, order.id]);
+
+  // Sample mix-up gate (Phase 13): deterministic indicators only (see labSampleIntegrity.ts).
+  const mixupIndicators = React.useMemo(
+    () => checkDeterministicMixupIndicators({
+      patientGender: order.patients?.gender ?? null,
+      patientRecordedBloodGroup: order.patients?.blood_group ?? null,
+      items,
+    }),
+    [order.patients, items]
+  );
+  const hasHighMixupRisk = mixupIndicators.some(i => i.severity === "high");
+  const mixupBlocksRelease = hasHighMixupRisk && !mixupAck.at;
 
   const hasQcReject = Object.keys(qcRejectByTest).length > 0;
   const qcOverridden = !!qcOverride.at;
@@ -403,7 +422,9 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
     // fully-normal, non-delta, QC-clean results on an opt-in test qualify; everything
     // else is left as 'result_entered' for a human to review, exactly as before.
     const autoDecision = evaluateAutoVerify(
-      { test_name: item.test_name, autoverify_eligible: item.autoverify_eligible, result_value: rawValue || null, result_flag: finalFlag, delta_flag: deltaFlag },
+      // A pending, unacknowledged sample mix-up indicator (Phase 13) blocks auto-verify
+      // the same way it blocks manual release — treat the test as not-eligible for this save.
+      { test_name: item.test_name, autoverify_eligible: item.autoverify_eligible && !mixupBlocksRelease, result_value: rawValue || null, result_flag: finalFlag, delta_flag: deltaFlag },
       { requiresDualValidation, qcRejectTestNames: new Set(Object.keys(qcRejectByTest)) }
     );
     const now = new Date().toISOString();
@@ -668,6 +689,10 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
       toast({ title: "QC is in reject state — supervisor override required before release", variant: "destructive" });
       return;
     }
+    if (mixupBlocksRelease) {
+      toast({ title: "Sample mix-up indicator unacknowledged — review before release", variant: "destructive" });
+      return;
+    }
     setValidating(true);
     const now = new Date().toISOString();
     await supabase.from("lab_order_items").update({
@@ -750,6 +775,10 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
     if (!currentUserId || validating) return;
     if (qcBlocksRelease) {
       toast({ title: "QC is in reject state — supervisor override required before release", variant: "destructive" });
+      return;
+    }
+    if (mixupBlocksRelease) {
+      toast({ title: "Sample mix-up indicator unacknowledged — review before release", variant: "destructive" });
       return;
     }
     setValidating(true);
@@ -1049,8 +1078,8 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
         {/* Dual-validation: pathologist/doctor sees Validate & Sign */}
         {requiresDualValidation && (role === "doctor" || role === "pathologist" || role === "radiologist") && order.status === "pending_validation" && (
           <button onClick={handlePathologistValidate}
-            disabled={validating || qcBlocksRelease}
-            title={qcBlocksRelease ? "QC in reject state — override required" : ""}
+            disabled={validating || qcBlocksRelease || mixupBlocksRelease}
+            title={qcBlocksRelease ? "QC in reject state — override required" : mixupBlocksRelease ? "Sample mix-up indicator unacknowledged" : ""}
             className="shrink-0 px-3.5 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-semibold hover:bg-emerald-700 active:scale-[0.97] transition-all disabled:opacity-50 disabled:cursor-not-allowed">
             {validating ? "⏳ Signing..." : "✓ Validate & Sign"}
           </button>
@@ -1058,9 +1087,9 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
         {/* Standard single-step validation */}
         {allResultsEntered && !requiresDualValidation && order.status !== "completed" && order.status !== "pending_validation" && (
           <button onClick={handleValidateAll}
-            disabled={hasUnacknowledgedCritical || validating || qcBlocksRelease}
+            disabled={hasUnacknowledgedCritical || validating || qcBlocksRelease || mixupBlocksRelease}
             className="shrink-0 px-3.5 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-semibold hover:bg-emerald-700 active:scale-[0.97] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
-            title={qcBlocksRelease ? "QC in reject state — override required" : hasUnacknowledgedCritical ? "Acknowledge critical values first" : ""}>
+            title={qcBlocksRelease ? "QC in reject state — override required" : mixupBlocksRelease ? "Sample mix-up indicator unacknowledged" : hasUnacknowledgedCritical ? "Acknowledge critical values first" : ""}>
             {validating ? "⏳ Validating..." : "✓ Validate & Release"}
           </button>
         )}
@@ -1105,6 +1134,30 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Sample mix-up detection (Phase 13) */}
+      {labHospitalId && items.length > 0 && (
+        <SampleMixupPanel
+          orderId={order.id}
+          hospitalId={labHospitalId}
+          patientId={order.patient_id}
+          patientGender={order.patients?.gender ?? null}
+          patientBloodGroup={order.patients?.blood_group ?? null}
+          items={items}
+          currentUserId={currentUserId}
+          acknowledged={mixupAck}
+          onAcknowledged={() => {
+            fetchItems();
+            (async () => {
+              const { data: ord } = await (supabase as any)
+                .from("lab_orders")
+                .select("mixup_acknowledged_by, mixup_ack_reason, mixup_acknowledged_at")
+                .eq("id", order.id).maybeSingle();
+              if (ord) setMixupAck({ by: ord.mixup_acknowledged_by, reason: ord.mixup_ack_reason, at: ord.mixup_acknowledged_at });
+            })();
+          }}
+        />
       )}
 
       {/* Bedside two-identifier confirm before collection (Phase 11) */}
