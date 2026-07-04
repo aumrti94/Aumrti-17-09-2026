@@ -14,6 +14,7 @@ import OTBillingTab from "./tabs/OTBillingTab";
 import OTImplantsConsumablesTab from "./tabs/OTImplantsConsumablesTab";
 import AnaesthesiaSheet from "@/components/specialty/AnaesthesiaSheet";
 import EndCaseModal from "./EndCaseModal";
+import PreOpLabsBanner from "./PreOpLabsBanner";
 
 interface Props {
   schedule: OTSchedule | null;
@@ -227,6 +228,11 @@ const OTCaseWorkspace: React.FC<Props> = ({ schedule, hospitalId, onRefresh }) =
           </button>
         ))}
       </div>
+
+      {/* Pre-op lab clearance banner (soft gate) */}
+      {hospitalId && schedule.patient_id && (
+        <PreOpLabsBanner patientId={schedule.patient_id} hospitalId={hospitalId} />
+      )}
 
       {/* PAC gate inline banner */}
       {showPacGate && (

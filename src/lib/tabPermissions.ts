@@ -24,6 +24,7 @@ export const MODULE_TABS: Record<string, TabDef[]> = {
     { key: "vitals", label: "Vitals" },
     { key: "medications", label: "Medications" },
     { key: "rx_orders", label: "Rx & Orders" },
+    { key: "investigations", label: "Investigations" },
     { key: "wardround", label: "Ward Round" },
     { key: "notes", label: "Notes" },
     { key: "documents", label: "Documents" },
@@ -112,6 +113,7 @@ export const MODULE_TABS: Record<string, TabDef[]> = {
     { key: "restraints", label: "Restraints" },
     { key: "icu_monitor", label: "ICU Monitor" },
     { key: "risk_assessments", label: "Risk Assess" },
+    { key: "collection", label: "Lab Collection" },
   ],
 };
 

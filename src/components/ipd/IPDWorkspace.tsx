@@ -14,6 +14,7 @@ import IPDOverviewTab from "./tabs/IPDOverviewTab";
 import IPDVitalsTab from "./tabs/IPDVitalsTab";
 import IPDMedicationsTab from "./tabs/IPDMedicationsTab";
 import IPDWardRoundTab from "./tabs/IPDWardRoundTab";
+import InvestigationsTab from "./tabs/InvestigationsTab";
 import IPDNotesTab from "./tabs/IPDNotesTab";
 import IPDDocumentsTab from "./tabs/IPDDocumentsTab";
 import IPDFinancialTab from "./tabs/IPDFinancialTab";
@@ -359,13 +360,15 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
 
   const handleEscalate = async () => {
     if (!hospitalId || !patient) return;
+    // Phase 9 fix: this insert used wrong column names (`message`/`status`) — the table
+    // uses `alert_message` and has no `status` column, so every escalation silently
+    // failed. `escalation` is now a permitted alert_type (Phase 1 constraint fix).
     const { error } = await supabase.from("clinical_alerts").insert({
       hospital_id: hospitalId,
       patient_id: patient.id,
       alert_type: "escalation",
       severity: "critical",
-      message: `ESCALATION: ${patient.full_name} (Bed ${bed.bed_number}) requires immediate attention`,
-      status: "active",
+      alert_message: `ESCALATION: ${patient.full_name} (Bed ${bed.bed_number}) requires immediate attention`,
     } as any);
     if (error) {
       toast({ title: "Escalation failed", description: error.message, variant: "destructive" });
@@ -762,6 +765,7 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
             { v: "vitals", l: "Vitals" },
             { v: "medications", l: "Medications" },
             { v: "rx_orders", l: "Rx & Orders" },
+            { v: "investigations", l: "🧪 Investigations" },
             { v: "wardround", l: "Ward Round" },
             { v: "notes", l: "Notes" },
             { v: "documents", l: "Documents" },
@@ -802,6 +806,9 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
               onCommit={handleCommitOrders}
               isSaving={savingOrders}
             />
+          </TabsContent>
+          <TabsContent value="investigations" className="h-full m-0">
+            <InvestigationsTab admissionId={admissionId} hospitalId={hospitalId} patientId={patient?.id} />
           </TabsContent>
           <TabsContent value="wardround" className="h-full m-0">
             <IPDWardRoundTab admissionId={admissionId} hospitalId={hospitalId} userId={userId} patientId={patient?.id || null} />

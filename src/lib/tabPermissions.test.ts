@@ -4,9 +4,9 @@ import { hasTabAccess, parseModuleTabs, MODULE_TABS } from "./tabPermissions";
 // Nursing module completion plan, Phase 7 — /nursing's 7 sub-tabs wired into the same
 // hasTabAccess()/MODULE_TABS permission system every other module (ipd, opd, ot, ...) uses.
 describe("nursing MODULE_TABS + hasTabAccess", () => {
-  it("declares all 7 nursing sub-tabs", () => {
+  it("declares the nursing sub-tabs including the Phase 9 lab-collection tab", () => {
     const keys = MODULE_TABS.nursing.map((t) => t.key);
-    expect(keys).toEqual(["tasks", "kanban", "care_plans", "io", "restraints", "icu_monitor", "risk_assessments"]);
+    expect(keys).toEqual(["tasks", "kanban", "care_plans", "io", "restraints", "icu_monitor", "risk_assessments", "collection"]);
   });
 
   it("default-allow: with no restriction configured, every nursing tab is accessible to a nurse", () => {
@@ -32,10 +32,10 @@ describe("nursing MODULE_TABS + hasTabAccess", () => {
     }
   });
 
-  it("parseModuleTabs (the settings-page helper) surfaces all 7 nursing tabs as true by default", () => {
+  it("parseModuleTabs (the settings-page helper) surfaces all nursing tabs as true by default", () => {
     const parsed = parseModuleTabs("nursing", {});
     expect(Object.keys(parsed).sort()).toEqual(
-      ["care_plans", "icu_monitor", "io", "kanban", "restraints", "risk_assessments", "tasks"]
+      ["care_plans", "collection", "icu_monitor", "io", "kanban", "restraints", "risk_assessments", "tasks"]
     );
     expect(Object.values(parsed).every((v) => v === true)).toBe(true);
   });
