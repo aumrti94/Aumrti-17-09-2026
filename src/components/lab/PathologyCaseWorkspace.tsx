@@ -5,9 +5,10 @@ import { useHospitalContext } from "@/contexts/HospitalContext";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Printer, Save, PenLine, CheckCircle2, Lock } from "lucide-react";
+import { Printer, Save, PenLine, CheckCircle2, Lock, Sparkles } from "lucide-react";
 import { printDocument, printHeader } from "@/lib/printUtils";
 import { logRecordAccess } from "@/lib/ims";
+import { draftHistopathImpression } from "@/lib/labReportNarrative";
 
 // Pathology case detail / structured report / dual sign-off (lab plan Phase 7).
 
@@ -51,6 +52,8 @@ const PathologyCaseWorkspace: React.FC<Props> = ({ caseId, hospitalId, onChanged
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [hospitalName, setHospitalName] = useState("");
   const [nablNumber, setNablNumber] = useState("");
+  // AI impression draft (Phase 16) — fills the textarea only; pathologist edits/signs.
+  const [impressionDrafting, setImpressionDrafting] = useState(false);
 
   const canSign = PATHOLOGIST_ROLES.includes(role || "");
   // Once first-signed, content is locked (only sign-off / amendment changes state).
@@ -81,6 +84,27 @@ const PathologyCaseWorkspace: React.FC<Props> = ({ caseId, hospitalId, onChanged
   };
 
   useEffect(() => { load(); }, [caseId]);
+
+  const draftImpression = async () => {
+    if (!pcase || !micro.trim()) {
+      toast({ title: "Enter the microscopic description first", variant: "destructive" });
+      return;
+    }
+    setImpressionDrafting(true);
+    const draft = await draftHistopathImpression({
+      hospitalId,
+      patientId: pcase.patient_id,
+      caseType: pcase.case_type,
+      specimenType: pcase.specimen_type,
+      specimenSite: pcase.specimen_site,
+      clinicalHistory: pcase.clinical_history,
+      grossDescription: gross,
+      microscopicDescription: micro,
+    });
+    setImpressionDrafting(false);
+    if (draft) setImpression(draft);
+    else toast({ title: "Could not draft an impression", description: "AI unavailable — enter it manually.", variant: "destructive" });
+  };
 
   const saveReport = async () => {
     if (!pcase) return;
@@ -216,7 +240,15 @@ const PathologyCaseWorkspace: React.FC<Props> = ({ caseId, hospitalId, onChanged
       {/* Structured report */}
       <ReportField label="Gross Description" value={gross} onChange={setGross} disabled={contentLocked} />
       <ReportField label="Microscopic Description" value={micro} onChange={setMicro} disabled={contentLocked} />
-      <ReportField label="Impression / Diagnosis" value={impression} onChange={setImpression} disabled={contentLocked} highlight />
+      <ReportField
+        label="Impression / Diagnosis" value={impression} onChange={setImpression} disabled={contentLocked} highlight
+        action={!contentLocked && (
+          <button onClick={draftImpression} disabled={impressionDrafting}
+            className="text-[11px] px-2 py-0.5 rounded bg-primary/10 text-primary font-semibold hover:bg-primary/20 disabled:opacity-50 flex items-center gap-1">
+            <Sparkles size={10} /> {impressionDrafting ? "Drafting…" : "AI Draft"}
+          </button>
+        )}
+      />
 
       {/* Sign-off trail */}
       {(pcase.first_signed_at || pcase.final_signed_at) && (
@@ -260,9 +292,12 @@ const Meta: React.FC<{ label: string; value: string | null }> = ({ label, value 
   </div>
 );
 
-const ReportField: React.FC<{ label: string; value: string; onChange: (v: string) => void; disabled?: boolean; highlight?: boolean }> = ({ label, value, onChange, disabled, highlight }) => (
+const ReportField: React.FC<{ label: string; value: string; onChange: (v: string) => void; disabled?: boolean; highlight?: boolean; action?: React.ReactNode }> = ({ label, value, onChange, disabled, highlight, action }) => (
   <div>
-    <p className={`text-xs font-semibold uppercase mb-1 ${highlight ? "text-blue-700" : "text-muted-foreground"}`}>{label}</p>
+    <div className="flex items-center justify-between mb-1">
+      <p className={`text-xs font-semibold uppercase ${highlight ? "text-blue-700" : "text-muted-foreground"}`}>{label}</p>
+      {action}
+    </div>
     <Textarea
       value={value}
       onChange={e => onChange(e.target.value)}

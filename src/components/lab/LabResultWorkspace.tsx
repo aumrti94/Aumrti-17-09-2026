@@ -23,7 +23,8 @@ import LabAnomalyDetector from "./LabAnomalyDetector";
 import LabInterpretationPanel from "./LabInterpretationPanel";
 import ReflexTestPanel from "./ReflexTestPanel";
 import { checkIntrinsicResistanceConflicts, detectResistancePhenotype, type ResistancePhenotype } from "@/lib/labAST";
-import { Dna } from "lucide-react";
+import { draftLabInterpretiveComment } from "@/lib/labReportNarrative";
+import { Dna, Sparkles } from "lucide-react";
 
 interface LabOrder {
   id: string;
@@ -173,6 +174,10 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
   const [mixupAck, setMixupAck] = useState<{ by: string | null; reason: string | null; at: string | null }>({ by: null, reason: null, at: null });
   // Order's encounter/admission linkage (Phase 14) — needed so a reflex-test order gets billed correctly
   const [orderLinkage, setOrderLinkage] = useState<{ encounter_id: string | null; admission_id: string | null }>({ encounter_id: null, admission_id: null });
+  // AI interpretive comment draft (Phase 16) — always editable, never auto-saved unedited
+  const [interpretiveComment, setInterpretiveComment] = useState("");
+  const [commentDrafting, setCommentDrafting] = useState(false);
+  const [commentSaving, setCommentSaving] = useState(false);
 
   // Get current user id and hospital id
   useEffect(() => {
@@ -339,11 +344,36 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
   const hasHighMixupRisk = mixupIndicators.some(i => i.severity === "high");
   const mixupBlocksRelease = hasHighMixupRisk && !mixupAck.at;
 
-  // Fetch encounter/admission linkage once (Phase 14, for reflex-test ordering)
+  // Fetch encounter/admission linkage + interpretive comment once (Phase 14 / 16)
   useEffect(() => {
-    (supabase as any).from("lab_orders").select("encounter_id, admission_id").eq("id", order.id).maybeSingle()
-      .then(({ data }: any) => { if (data) setOrderLinkage({ encounter_id: data.encounter_id, admission_id: data.admission_id }); });
+    (supabase as any).from("lab_orders").select("encounter_id, admission_id, interpretive_comment").eq("id", order.id).maybeSingle()
+      .then(({ data }: any) => {
+        if (data) {
+          setOrderLinkage({ encounter_id: data.encounter_id, admission_id: data.admission_id });
+          setInterpretiveComment(data.interpretive_comment || "");
+        }
+      });
   }, [order.id]);
+
+  const draftInterpretiveComment = async () => {
+    if (!labHospitalId) return;
+    setCommentDrafting(true);
+    const draft = await draftLabInterpretiveComment({
+      hospitalId: labHospitalId,
+      patientId: order.patient_id,
+      results: items.map(i => ({ test_name: i.test_name, result_value: i.result_value, result_flag: i.result_flag, unit: i.unit || i.result_unit, reference_range: i.reference_range })),
+    });
+    setCommentDrafting(false);
+    if (draft) setInterpretiveComment(draft);
+    else toast({ title: "Could not draft a comment", description: "AI unavailable — enter the comment manually.", variant: "destructive" });
+  };
+
+  const saveInterpretiveComment = async () => {
+    setCommentSaving(true);
+    await (supabase as any).from("lab_orders").update({ interpretive_comment: interpretiveComment || null }).eq("id", order.id);
+    setCommentSaving(false);
+    toast({ title: "Interpretive comment saved" });
+  };
 
   const hasQcReject = Object.keys(qcRejectByTest).length > 0;
   const qcOverridden = !!qcOverride.at;
@@ -1584,6 +1614,30 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
             </div>
           )}
 
+          {/* AI-drafted interpretive comment (Phase 16) — printed on the report if saved.
+              Always human-reviewed: the draft only fills the textarea, never auto-saves. */}
+          {items.some(i => i.result_value) && (
+            <div className="mx-4 mb-3 border border-border rounded-lg p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-foreground">Interpretive Comment</span>
+                <button onClick={draftInterpretiveComment} disabled={commentDrafting}
+                  className="text-[11px] px-2.5 py-1 rounded bg-primary/10 text-primary font-semibold hover:bg-primary/20 disabled:opacity-50 flex items-center gap-1">
+                  <Sparkles size={11} /> {commentDrafting ? "Drafting…" : "AI Draft"}
+                </button>
+              </div>
+              <Textarea
+                value={interpretiveComment}
+                onChange={e => setInterpretiveComment(e.target.value)}
+                placeholder="Optional — appears on the printed report. Use 'AI Draft' for a starting point, then review and edit."
+                className="text-sm min-h-[70px]"
+              />
+              <button onClick={saveInterpretiveComment} disabled={commentSaving}
+                className="text-[11px] px-2.5 py-1 rounded border border-border text-muted-foreground hover:bg-muted disabled:opacity-50">
+                {commentSaving ? "Saving…" : "Save Comment"}
+              </button>
+            </div>
+          )}
+
           {/* AI Anomaly Detection — shown when results are entered */}
           {items.some(i => i.result_value) && labHospitalId && (
             <div className="px-4 pb-3">
@@ -1916,6 +1970,11 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
               <thead><tr><th>Test</th><th>Result</th><th>Unit</th><th>Ref. Range</th></tr></thead>
               <tbody>${categoryRows}</tbody>
             </table>
+            ${interpretiveComment.trim() ? `
+            <div style="margin-top:16px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px">
+              <div style="font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;margin-bottom:3px">Interpretive Comment</div>
+              <div style="font-size:12px;color:#1e293b;white-space:pre-wrap">${interpretiveComment.trim()}</div>
+            </div>` : ""}
             <div style="margin-top:32px;display:flex;justify-content:flex-end">
               <div style="text-align:center;min-width:140px">
                 <div style="border-top:1px solid #334155;padding-top:4px;font-size:11px;color:#475569">Lab Technician / Pathologist</div>
