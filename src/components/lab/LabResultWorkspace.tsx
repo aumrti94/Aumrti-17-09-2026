@@ -22,6 +22,8 @@ import LabTrendPanel from "./LabTrendPanel";
 import LabAnomalyDetector from "./LabAnomalyDetector";
 import LabInterpretationPanel from "./LabInterpretationPanel";
 import ReflexTestPanel from "./ReflexTestPanel";
+import { checkIntrinsicResistanceConflicts, detectResistancePhenotype, type ResistancePhenotype } from "@/lib/labAST";
+import { Dna } from "lucide-react";
 
 interface LabOrder {
   id: string;
@@ -78,6 +80,15 @@ interface Props {
 // previous validated value for the same test is flagged for the reviewer (Phase 8).
 const DELTA_CHECK_THRESHOLD_PCT = 50;
 
+// Antibiogram drug panel (Phase 15 adds Vancomycin + Cefoxitin — required to detect
+// VRE/MRSA phenotypes; without them phenotype detection would be hollow).
+const ANTIBIOGRAM_DRUGS = [
+  "Amoxicillin", "Ampicillin", "Ciprofloxacin", "Levofloxacin", "Cotrimoxazole",
+  "Nitrofurantoin", "Gentamicin", "Amikacin", "Ceftriaxone", "Cefuroxime",
+  "Piperacillin-Taz", "Meropenem", "Imipenem", "Azithromycin", "Doxycycline",
+  "Clindamycin", "Vancomycin", "Cefoxitin",
+];
+
 function getInitials(name: string) {
   return name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
 }
@@ -130,6 +141,9 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
   const [antibiogramSaving, setAntibiogramSaving] = useState(false);
   // Preliminary vs final culture report (Phase 6)
   const [antibiogramReportStatus, setAntibiogramReportStatus] = useState<"preliminary" | "final">("preliminary");
+  // AI resistance phenotype detection (Phase 15) — advisory only, feeds stewardship alerts
+  const [phenotypes, setPhenotypes] = useState<ResistancePhenotype[] | null>(null);
+  const [phenotypeLoading, setPhenotypeLoading] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [samples, setSamples] = useState<any[]>([]);
   const [history, setHistory] = useState<any[]>([]);
@@ -861,6 +875,42 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
     })();
   }, [microItem?.id]);
 
+  // Deterministic intrinsic-resistance conflicts (Phase 15) — recomputed on every
+  // organism/sensitivity edit; these are the only AST findings shown as a hard warning.
+  const intrinsicConflicts = React.useMemo(
+    () => checkIntrinsicResistanceConflicts(antibiogramOrganism, antibiogramSensitivity),
+    [antibiogramOrganism, antibiogramSensitivity]
+  );
+
+  const runPhenotypeDetection = async () => {
+    if (!microItem || !labHospitalId) return;
+    setPhenotypeLoading(true);
+    const result = await detectResistancePhenotype({
+      hospitalId: labHospitalId,
+      patientId: order.patient_id,
+      organism: antibiogramOrganism,
+      specimenType: antibiogramSpecimen,
+      sensitivity: antibiogramSensitivity,
+    });
+    setPhenotypes(result);
+    setPhenotypeLoading(false);
+
+    for (const p of result) {
+      if (!p.stewardship_alert) continue;
+      await (supabase as any).from("clinical_alerts").insert({
+        hospital_id: labHospitalId,
+        patient_id: order.patient_id,
+        alert_type: "antibiotic_stewardship",
+        severity: p.confidence === "high" ? "critical" : "high",
+        alert_message: `Possible ${p.phenotype} (${p.confidence} confidence) — ${antibiogramOrganism} in ${patient?.full_name} (${patient?.uhid}): ${p.explanation}`,
+        lab_order_item_id: microItem.id,
+      });
+    }
+    if (result.some(p => p.stewardship_alert)) {
+      toast({ title: "⚠️ Possible resistant phenotype detected", description: "Antibiotic stewardship team notified." });
+    }
+  };
+
   const saveAntibiogram = async () => {
     if (!microItem) return;
     setAntibiogramSaving(true);
@@ -1445,23 +1495,37 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
               <div>
                 <label className="text-[11px] text-muted-foreground font-medium block mb-2">Sensitivity (S=Sensitive · I=Intermediate · R=Resistant)</label>
                 <div className="grid grid-cols-4 gap-1">
-                  {["Amoxicillin","Ampicillin","Ciprofloxacin","Levofloxacin","Cotrimoxazole","Nitrofurantoin","Gentamicin","Amikacin","Ceftriaxone","Cefuroxime","Piperacillin-Taz","Meropenem","Imipenem","Azithromycin","Doxycycline","Clindamycin"].map(drug => (
-                    <div key={drug} className="flex items-center gap-1 bg-background border border-border rounded px-2 py-1">
-                      <span className="text-[10px] text-muted-foreground flex-1 truncate" title={drug}>{drug}</span>
-                      <select value={antibiogramSensitivity[drug] || ""}
-                        onChange={e => setAntibiogramSensitivity(p => ({ ...p, [drug]: e.target.value as "S"|"I"|"R" }))}
-                        className={cn("h-6 w-10 text-[11px] font-bold border-0 rounded text-center appearance-none cursor-pointer",
-                          antibiogramSensitivity[drug] === "S" ? "bg-green-100 text-green-800" :
-                          antibiogramSensitivity[drug] === "I" ? "bg-amber-100 text-amber-800" :
-                          antibiogramSensitivity[drug] === "R" ? "bg-red-100 text-red-800" : "bg-muted text-muted-foreground")}>
-                        <option value="">—</option>
-                        <option value="S">S</option>
-                        <option value="I">I</option>
-                        <option value="R">R</option>
-                      </select>
-                    </div>
-                  ))}
+                  {ANTIBIOGRAM_DRUGS.map(drug => {
+                    const conflict = intrinsicConflicts.find(c => c.drug === drug);
+                    return (
+                      <div key={drug} className={cn("flex items-center gap-1 bg-background border rounded px-2 py-1", conflict ? "border-red-400" : "border-border")}>
+                        <span className="text-[10px] text-muted-foreground flex-1 truncate flex items-center gap-1" title={conflict ? conflict.note : drug}>
+                          {drug}
+                          {conflict && <AlertTriangle size={10} className="text-red-500 shrink-0" />}
+                        </span>
+                        <select value={antibiogramSensitivity[drug] || ""}
+                          onChange={e => setAntibiogramSensitivity(p => ({ ...p, [drug]: e.target.value as "S"|"I"|"R" }))}
+                          className={cn("h-6 w-10 text-[11px] font-bold border-0 rounded text-center appearance-none cursor-pointer",
+                            antibiogramSensitivity[drug] === "S" ? "bg-green-100 text-green-800" :
+                            antibiogramSensitivity[drug] === "I" ? "bg-amber-100 text-amber-800" :
+                            antibiogramSensitivity[drug] === "R" ? "bg-red-100 text-red-800" : "bg-muted text-muted-foreground")}>
+                          <option value="">—</option>
+                          <option value="S">S</option>
+                          <option value="I">I</option>
+                          <option value="R">R</option>
+                        </select>
+                      </div>
+                    );
+                  })}
                 </div>
+                {intrinsicConflicts.length > 0 && (
+                  <div className="mt-2 rounded-md border border-red-300 bg-red-50 px-2.5 py-1.5 space-y-0.5">
+                    <p className="text-[10px] font-bold text-red-700 flex items-center gap-1"><AlertTriangle size={11} /> Intrinsic resistance conflict — likely data-entry error</p>
+                    {intrinsicConflicts.map((c, i) => (
+                      <p key={i} className="text-[10px] text-red-700">{c.drug}: {c.note}</p>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="flex items-center gap-3 flex-wrap">
                 <div className="flex items-center gap-1.5">
@@ -1489,7 +1553,34 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
                   className="h-8 px-4 rounded-md text-xs font-semibold border border-blue-300 text-blue-700 hover:bg-blue-100 disabled:opacity-40 transition-colors flex items-center gap-1.5">
                   <Printer size={13} /> Print Report
                 </button>
+                <button onClick={runPhenotypeDetection} disabled={phenotypeLoading || !antibiogramOrganism}
+                  className="h-8 px-4 rounded-md text-xs font-semibold border border-purple-300 text-purple-700 hover:bg-purple-100 disabled:opacity-40 transition-colors flex items-center gap-1.5">
+                  <Dna size={13} /> {phenotypeLoading ? "Analysing…" : "Detect Resistance Phenotype (AI)"}
+                </button>
               </div>
+
+              {/* AI resistance phenotype results (Phase 15) — advisory only */}
+              {phenotypes !== null && (
+                <div className="space-y-1.5">
+                  {phenotypes.length === 0 ? (
+                    <p className="text-[11px] text-muted-foreground">No specific resistance phenotype inferred from this pattern.</p>
+                  ) : (
+                    phenotypes.map((p, i) => (
+                      <div key={i} className={cn(
+                        "rounded-md border px-3 py-2 text-[11px]",
+                        p.stewardship_alert ? "bg-red-50 border-red-300" : "bg-purple-50 border-purple-200"
+                      )}>
+                        <p className="font-bold flex items-center gap-1.5">
+                          <Dna size={12} /> {p.phenotype}
+                          <span className="text-[9px] font-semibold uppercase opacity-70">{p.confidence} confidence</span>
+                          {p.stewardship_alert && <span className="text-[9px] font-bold text-red-700 uppercase">Stewardship Alert Raised</span>}
+                        </p>
+                        <p className="mt-0.5 opacity-80">{p.explanation}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
           )}
 
