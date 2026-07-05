@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import {
   Home, LayoutGrid, UserPlus, Stethoscope, BedDouble,
   FlaskConical, Pill, Receipt, BarChart3, Inbox, Settings,
-  LogOut, HeartPulse, Activity, FolderOpen, X, CalendarDays, Building2, ShieldCheck, Wrench, Users,
+  LogOut, HeartPulse, Activity, FolderOpen, X, CalendarDays, Building2, ShieldCheck, Wrench, Users, UserCircle,
 } from "lucide-react";
 import { useCredentialAlert } from "@/contexts/CredentialAlertContext";
 import { useProductMode } from "@/contexts/ProductModeContext";
@@ -48,6 +48,7 @@ const recordsItems: SidebarItem[] = [
 ];
 
 const bottomItems: SidebarItem[] = [
+  { label: "My HR", path: "/my-hr", icon: UserCircle },
   { label: "Inbox", path: "/inbox", icon: Inbox },
   { label: "Settings", path: "/settings", icon: Settings },
 ];

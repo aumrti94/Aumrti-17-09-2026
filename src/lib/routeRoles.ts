@@ -155,7 +155,7 @@ export function hasAccess(
   const normalizedPath = path.split("?")[0].replace(/\/$/, "") || "/";
 
   // 1.5 Core routes that all authenticated users can access
-  const coreRoutes = ["/dashboard", "/modules", "/settings/profile", "/inbox"];
+  const coreRoutes = ["/dashboard", "/modules", "/settings/profile", "/inbox", "/my-hr"];
   if (coreRoutes.includes(normalizedPath)) return true;
 
   // 2. Check Database Overrides (Dynamic Permissions)
