@@ -45,8 +45,8 @@ const navGroups: { section: string; tabs: { id: string; label: string; icon: Rea
   {
     section: "Payroll",
     tabs: [
-      { id: "payroll",     label: "Payroll (Legacy)",      icon: DollarSign },
-      { id: "payroll_run", label: "Payroll Run (PF/ESI/TDS)", icon: Calculator },
+      { id: "payroll_run", label: "Payroll (PF/ESI/TDS)",  icon: Calculator },
+      { id: "payroll",     label: "Payroll (History)",     icon: DollarSign },
       { id: "payroll_integrations",  label: "Payroll Integrations",     icon: Link2 },
     ],
   },

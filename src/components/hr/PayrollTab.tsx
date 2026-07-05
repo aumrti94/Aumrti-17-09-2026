@@ -627,20 +627,28 @@ const PayrollTab: React.FC = () => {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      {/* Header */}
+      {/* Retired-engine banner */}
+      <div className="flex-shrink-0 bg-amber-50 border-b border-amber-200 flex items-start gap-2 px-5 py-2">
+        <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+        <span className="text-xs text-amber-800">
+          <strong>Retired engine — read-only history.</strong> New payroll is now processed in the{" "}
+          <strong>Payroll Run (PF/ESI/TDS)</strong> tab (proper TDS + salary structures + GL posting). Past runs below
+          remain viewable and exportable.
+        </span>
+      </div>
+
+      {/* Header (running new legacy payroll disabled) */}
       <div className="h-12 flex-shrink-0 bg-card border-b border-border flex items-center gap-3 px-5">
         <Input
           type="month"
           value={selectedMonth}
           onChange={(e) => setSelectedMonth(e.target.value)}
           className="w-44 h-8 text-sm"
+          disabled
         />
-        <Button size="sm" onClick={openRunModal}>
-          <DollarSign className="h-4 w-4 mr-1" /> Run Payroll for {selectedMonth}
+        <Button size="sm" onClick={openRunModal} disabled title="Use the Payroll Run (PF/ESI/TDS) tab">
+          <DollarSign className="h-4 w-4 mr-1" /> Run Payroll (retired)
         </Button>
-        <span className="text-[11px] text-muted-foreground ml-2">
-          Legacy engine (staff basic salary). For full statutory payslips use the <strong>Payroll Run (PF/ESI/TDS)</strong> tab — don't process the same month in both.
-        </span>
       </div>
 
       {/* Content */}

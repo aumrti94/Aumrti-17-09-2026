@@ -8,13 +8,17 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
   Calculator, PlayCircle, CheckCircle2, Download, Printer,
-  Loader2, ChevronDown, ChevronRight, AlertCircle, FileText, Users, Wallet,
+  Loader2, ChevronDown, ChevronRight, AlertCircle, FileText, Users, Wallet, Eye,
 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import {
   calculatePayslip, generatePayslipHtml,
   type PayslipCalculation, type SalaryStructure, type AttendanceInput,
 } from "@/lib/payrollEngine";
+import { autoPostJournalEntry } from "@/lib/accounting";
+import { generateEPFECRFromPayslips, generateForm16FromPayslip, generateForm16AFromPayslips } from "@/lib/payrollExports";
+import { printDocument, printHeader } from "@/lib/printUtils";
 import SalaryStructureSetup from "./SalaryStructureSetup";
 
 const MONTHS = [
@@ -73,6 +77,15 @@ const PayrollRunTab: React.FC = () => {
   const [processing, setProcessing] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [salarySetupOpen, setSalarySetupOpen] = useState(false);
+
+  // View past run
+  const [viewRun, setViewRun] = useState<PayrollRun | null>(null);
+  const [viewSlips, setViewSlips] = useState<any[]>([]);
+  const [viewLoading, setViewLoading] = useState(false);
+
+  // Gratuity calculator
+  const [showGratuity, setShowGratuity] = useState(false);
+  const [gratuity, setGratuity] = useState({ staff_id: "", from: "", to: new Date().toISOString().split("T")[0], lastBasic: "", years: 0, result: null as number | null });
 
   // Editable attendance overrides per staff
   const [attendanceOverrides, setAttendanceOverrides] = useState<Record<string, Partial<AttendanceInput>>>({});
@@ -260,6 +273,133 @@ const PayrollRunTab: React.FC = () => {
     toast({ title: `Payroll processed for ${MONTHS[selectedMonth - 1]} ${selectedYear} ✓` });
   };
 
+  // ── Approve a run + post to General Ledger ────────────────────────────────
+  const approveRun = async (run: PayrollRun) => {
+    const { data: u } = await supabase.auth.getUser();
+    const { data: cu } = await supabase.from("users").select("id, hospital_id").eq("auth_user_id", u.user?.id || "").maybeSingle();
+    if (!cu) { toast({ title: "User not resolved", variant: "destructive" }); return; }
+
+    await (supabase as any).from("payroll_runs").update({ status: "approved", approved_by: cu.id, approved_at: new Date().toISOString() }).eq("id", run.id);
+
+    // Summary posting via shared engine (respects posting rules)
+    await autoPostJournalEntry({
+      triggerEvent: "payroll_processed",
+      sourceModule: "hr",
+      sourceId: run.id,
+      amount: Number(run.total_net || 0),
+      description: `Payroll ${MONTHS[run.month - 1]} ${run.year} — net`,
+      hospitalId: cu.hospital_id,
+      postedBy: cu.id,
+    });
+
+    // Detailed double-entry journal (Salaries Dr; Net Payable + Statutory Cr)
+    const totalGross = Number(run.total_gross || 0);
+    const totalNet = Number(run.total_net || 0);
+    const totalDed = Number(run.total_deductions || 0);
+    if (totalGross > 0) {
+      const { data: nextNum } = await supabase.rpc("get_next_journal_number", { p_hospital_id: cu.hospital_id });
+      const { data: journal } = await (supabase as any).from("journal_entries").insert({
+        hospital_id: cu.hospital_id,
+        journal_number: nextNum || `JV-${Date.now()}`,
+        entry_date: new Date().toISOString().split("T")[0],
+        description: `Payroll: ${MONTHS[run.month - 1]} ${run.year}`,
+        total_debit: totalGross, total_credit: totalGross,
+        status: "posted", reference_type: "payroll", reference_id: run.id, created_by: cu.id,
+      }).select("id").maybeSingle();
+
+      if (journal) {
+        const lines: any[] = [
+          { journal_id: journal.id, hospital_id: cu.hospital_id, account_code: "5001", account_name: "Salaries & Wages", debit_amount: totalGross, credit_amount: 0, description: `Gross salary ${MONTHS[run.month - 1]} ${run.year}` },
+          { journal_id: journal.id, hospital_id: cu.hospital_id, account_code: "2101", account_name: "Salaries Payable", debit_amount: 0, credit_amount: totalNet, description: "Net salary payable" },
+        ];
+        if (totalDed > 0) lines.push({ journal_id: journal.id, hospital_id: cu.hospital_id, account_code: "2102", account_name: "TDS / PF / ESI Payable", debit_amount: 0, credit_amount: totalDed, description: "Statutory deductions payable" });
+        await (supabase as any).from("journal_entry_lines").insert(lines);
+      }
+    }
+    toast({ title: "Payroll approved & posted to accounts" });
+    fetchRuns();
+  };
+
+  const openViewRun = async (run: PayrollRun) => {
+    setViewRun(run);
+    setViewLoading(true);
+    setViewSlips([]);
+    const { data: slips } = await (supabase as any).from("payslips").select("*").eq("run_id", run.id);
+    const ids = (slips || []).map((s: any) => s.staff_id);
+    const { data: users } = ids.length ? await supabase.from("users").select("id, full_name").in("id", ids) : { data: [] };
+    const nameMap = new Map((users || []).map((u: any) => [u.id, u.full_name]));
+    setViewSlips((slips || []).map((s: any) => ({ ...s, full_name: nameMap.get(s.staff_id) || "Unknown" })));
+    setViewLoading(false);
+  };
+
+  const printPastPayslip = (slip: any) => {
+    const html = generatePayslipHtml({
+      hospitalName: "Hospital", staffName: slip.full_name, designation: "Staff",
+      month: MONTHS[(viewRun?.month || 1) - 1], year: viewRun?.year || selectedYear,
+      pan: "", pf: "",
+      calc: {
+        basic: slip.basic, hra: slip.hra, da: slip.da, ta: slip.ta,
+        special_allowance: slip.special_allowance, medical_allowance: slip.medical_allowance,
+        other_allowances: slip.other_allowances || 0, gross_earned: slip.gross_earned,
+        pf_employee: slip.pf_employee, esi_employee: slip.esi_employee, pt: slip.pt,
+        tds_monthly: slip.tds_monthly, total_deductions: slip.total_deductions,
+        pf_employer: slip.pf_employer, esi_employer: slip.esi_employer, net_pay: slip.net_pay,
+      },
+      attendance: { total_days: slip.total_days, present_days: slip.present_days, paid_leaves: slip.paid_leaves, lop_days: slip.lop_days },
+    });
+    const w = window.open("", "_blank");
+    if (w) { w.document.write(html); w.document.close(); w.print(); }
+  };
+
+  const runExport = async (run: PayrollRun, kind: "ecr" | "16a") => {
+    const monthLabel = `${run.year}-${String(run.month).padStart(2, "0")}`;
+    const { data: h } = await (supabase as any).from("hospitals").select("name, address").eq("id", hospitalId).maybeSingle();
+    if (kind === "ecr") { await generateEPFECRFromPayslips(run.id, monthLabel); return; }
+    const fy = run.month >= 4 ? `${run.year}-${run.year + 1}` : `${run.year - 1}-${run.year}`;
+    const q = run.month >= 4 && run.month <= 6 ? "Q1" : run.month >= 7 && run.month <= 9 ? "Q2" : run.month >= 10 && run.month <= 12 ? "Q3" : "Q4";
+    await generateForm16AFromPayslips(run.id, q as any, fy, h?.name || "Hospital", h?.address || "");
+  };
+
+  const emitForm16 = async (slip: any) => {
+    if (!viewRun) return;
+    const fy = viewRun.month >= 4 ? `${viewRun.year}-${viewRun.year + 1}` : `${viewRun.year - 1}-${viewRun.year}`;
+    const { data: h } = await (supabase as any).from("hospitals").select("name, address").eq("id", hospitalId).maybeSingle();
+    await generateForm16FromPayslip(slip.id, fy, h?.name || "Hospital", h?.address || "");
+  };
+
+  // ── Gratuity (Payment of Gratuity Act, 1972) ──────────────────────────────
+  const calcGratuity = () => {
+    if (!gratuity.from || !gratuity.to || !gratuity.lastBasic) { toast({ title: "Fill service dates and last basic", variant: "destructive" }); return; }
+    const years = (new Date(gratuity.to).getTime() - new Date(gratuity.from).getTime()) / (1000 * 60 * 60 * 24 * 365.25);
+    if (years < 5) { toast({ title: "Gratuity needs ≥ 5 years of service", variant: "destructive" }); return; }
+    const amount = Math.round((Number(gratuity.lastBasic) * 15 / 26) * Math.floor(years));
+    setGratuity(g => ({ ...g, years: Math.floor(years), result: amount }));
+  };
+
+  const printGratuity = async () => {
+    if (gratuity.result === null) return;
+    const emp = staff.find(s => s.id === gratuity.staff_id);
+    const { data: h } = await (supabase as any).from("hospitals").select("name, address").eq("id", hospitalId).maybeSingle();
+    const body = `
+      ${printHeader(h?.name || "Hospital", "Gratuity Payment Certificate")}
+      <div style="margin:20px 0;padding:16px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;">
+        <table style="width:100%;font-size:13px;border-collapse:collapse;">
+          <tr><td style="padding:4px 8px;color:#64748b;width:40%">Employee</td><td style="font-weight:600">${emp?.full_name || "—"}</td></tr>
+          <tr><td style="padding:4px 8px;color:#64748b">Date of Joining</td><td>${gratuity.from ? new Date(gratuity.from).toLocaleDateString("en-IN") : "—"}</td></tr>
+          <tr><td style="padding:4px 8px;color:#64748b">Date of Leaving</td><td>${gratuity.to ? new Date(gratuity.to).toLocaleDateString("en-IN") : "—"}</td></tr>
+          <tr><td style="padding:4px 8px;color:#64748b">Completed Years</td><td>${gratuity.years} years</td></tr>
+          <tr><td style="padding:4px 8px;color:#64748b">Last Basic Salary</td><td>₹${Number(gratuity.lastBasic).toLocaleString("en-IN")}</td></tr>
+          <tr style="background:#dbeafe;"><td style="padding:8px;color:#1e40af;font-weight:700">Gratuity Amount</td><td style="font-weight:700;font-size:15px;color:#1e40af">₹${gratuity.result.toLocaleString("en-IN")}</td></tr>
+        </table>
+        <p style="font-size:10px;color:#94a3b8;margin-top:12px;">Formula: (Last Basic × 15/26) × Years of Service — Payment of Gratuity Act, 1972</p>
+      </div>
+      <div style="margin-top:40px;display:flex;justify-content:space-between;font-size:12px;">
+        <div style="text-align:center"><div style="border-top:1px solid #334155;width:160px;padding-top:4px;">Employee Signature</div></div>
+        <div style="text-align:center"><div style="border-top:1px solid #334155;width:160px;padding-top:4px;">Authorised Signatory</div></div>
+      </div>`;
+    printDocument("Gratuity Certificate", body);
+  };
+
   // ── Print single payslip ──────────────────────────────────────────────────
   const printPayslip = (s: StaffRow) => {
     if (!s.calc || !s.attendance) { toast({ title: "Compute first", variant: "destructive" }); return; }
@@ -366,7 +506,7 @@ const PayrollRunTab: React.FC = () => {
       </div>
 
       <p className="text-[11px] text-muted-foreground -mt-2">
-        Statutory engine (salary structures → PF/ESI/TDS payslips). Use <strong>one</strong> payroll engine per month — do not also process the same month in the legacy Payroll tab.
+        Canonical payroll engine — salary structures → PF/ESI/TDS payslips, Form 16/16A, EPF ECR, and GL posting on approval. (The legacy Payroll tab is now read-only history.)
       </p>
 
       {/* ── Summary cards ─── */}
@@ -526,8 +666,8 @@ const PayrollRunTab: React.FC = () => {
           </div>
           <div className="divide-y divide-border">
             {runs.map(r => (
-              <div key={r.id} className="flex items-center gap-4 px-4 py-2.5">
-                <div className="flex-1">
+              <div key={r.id} className="flex items-center gap-3 px-4 py-2.5 flex-wrap">
+                <div className="flex-1 min-w-[140px]">
                   <p className="text-[13px] font-semibold">{MONTHS[r.month - 1]} {r.year}</p>
                   <p className="text-[11px] text-muted-foreground">
                     Gross: {inr(r.total_gross)} · Net: {inr(r.total_net)}
@@ -536,16 +676,90 @@ const PayrollRunTab: React.FC = () => {
                 <Badge className={cn("text-[10px]", STATUS_COLORS[r.status] || "")}>
                   {r.status}
                 </Badge>
-                {r.processed_at && (
-                  <p className="text-[10px] text-muted-foreground shrink-0">
-                    {new Date(r.processed_at).toLocaleDateString("en-IN")}
-                  </p>
-                )}
+                <div className="flex gap-1.5 flex-wrap">
+                  <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1" onClick={() => openViewRun(r)} title="View payslips"><Eye size={12} /> View</Button>
+                  <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1" onClick={() => runExport(r, "ecr")} title="EPF ECR export"><FileText size={12} /> ECR</Button>
+                  <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1" onClick={() => runExport(r, "16a")} title="Form 16A (consultants)"><FileText size={12} /> 16A</Button>
+                  {r.status === "processed" && (
+                    <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1" onClick={() => approveRun(r)} title="Approve & post to accounts"><CheckCircle2 size={12} /> Approve</Button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
         </div>
       )}
+
+      {/* ── Gratuity calculator ─── */}
+      <div className="border border-border rounded-lg overflow-hidden">
+        <button className="w-full flex items-center justify-between px-4 py-2.5 bg-muted/40 hover:bg-muted/60" onClick={() => setShowGratuity(v => !v)}>
+          <span className="text-[13px] font-bold flex items-center gap-2"><Calculator size={14} /> Gratuity Calculator <span className="text-[11px] font-normal text-muted-foreground">(Act 1972)</span></span>
+          {showGratuity ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </button>
+        {showGratuity && (
+          <div className="p-4 space-y-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div>
+                <Label className="text-[10px] uppercase text-muted-foreground">Employee</Label>
+                <select className="w-full h-8 text-xs mt-0.5 border border-input rounded-md px-2 bg-background" value={gratuity.staff_id}
+                  onChange={e => { const emp = staff.find(s => s.id === e.target.value); setGratuity(g => ({ ...g, staff_id: e.target.value, lastBasic: emp ? String(Math.round((emp.gross_monthly || 0) * 0.4)) : "", result: null })); }}>
+                  <option value="">Select…</option>
+                  {staff.map(s => <option key={s.id} value={s.id}>{s.full_name}</option>)}
+                </select>
+              </div>
+              <div><Label className="text-[10px] uppercase text-muted-foreground">Last Basic ₹/mo</Label><Input type="number" className="h-8 text-xs mt-0.5" value={gratuity.lastBasic} onChange={e => setGratuity(g => ({ ...g, lastBasic: e.target.value, result: null }))} /></div>
+              <div><Label className="text-[10px] uppercase text-muted-foreground">Date of Joining</Label><Input type="date" className="h-8 text-xs mt-0.5" value={gratuity.from} onChange={e => setGratuity(g => ({ ...g, from: e.target.value, result: null }))} /></div>
+              <div><Label className="text-[10px] uppercase text-muted-foreground">Date of Leaving</Label><Input type="date" className="h-8 text-xs mt-0.5" value={gratuity.to} onChange={e => setGratuity(g => ({ ...g, to: e.target.value, result: null }))} /></div>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <Button size="sm" onClick={calcGratuity}><Calculator size={13} className="mr-1" /> Calculate</Button>
+              {gratuity.result !== null && (
+                <>
+                  <div className="flex-1 min-w-[200px] bg-blue-50 rounded-md px-3 py-2 text-xs text-blue-700">
+                    Service: <strong>{gratuity.years} yrs</strong> · Gratuity: <strong className="text-sm">₹{gratuity.result.toLocaleString("en-IN")}</strong>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={printGratuity}><FileText size={13} className="mr-1" /> Certificate</Button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── View past run dialog ─── */}
+      <Dialog open={!!viewRun} onOpenChange={(o) => { if (!o) { setViewRun(null); setViewSlips([]); } }}>
+        <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Payslips — {viewRun ? `${MONTHS[viewRun.month - 1]} ${viewRun.year}` : ""}</DialogTitle></DialogHeader>
+          {viewLoading ? (
+            <div className="flex items-center justify-center py-10 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading…</div>
+          ) : viewSlips.length === 0 ? (
+            <div className="text-center py-10 text-muted-foreground text-sm">No payslips for this run.</div>
+          ) : (
+            <div className="overflow-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/40"><tr><th className="text-left px-3 py-2">Staff</th><th className="text-right px-3 py-2">Gross</th><th className="text-right px-3 py-2">PF</th><th className="text-right px-3 py-2">TDS</th><th className="text-right px-3 py-2">Net</th><th className="text-left px-3 py-2">Actions</th></tr></thead>
+                <tbody>
+                  {viewSlips.map((s) => (
+                    <tr key={s.id} className="border-t border-border">
+                      <td className="px-3 py-1.5 font-medium">{s.full_name}</td>
+                      <td className="px-3 py-1.5 text-right">{inr(Number(s.gross_earned || 0))}</td>
+                      <td className="px-3 py-1.5 text-right">{inr(Number(s.pf_employee || 0))}</td>
+                      <td className="px-3 py-1.5 text-right">{inr(Number(s.tds_monthly || 0))}</td>
+                      <td className="px-3 py-1.5 text-right font-semibold">{inr(Number(s.net_pay || 0))}</td>
+                      <td className="px-3 py-1.5">
+                        <div className="flex gap-1">
+                          <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => printPastPayslip(s)}><Printer size={11} className="mr-0.5" /> Payslip</Button>
+                          <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => emitForm16(s)}>Form 16</Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {hospitalId && (
         <SalaryStructureSetup
