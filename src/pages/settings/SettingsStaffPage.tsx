@@ -27,6 +27,7 @@ interface StaffForm {
   // Employment & Salary
   employee_id: string;
   employment_type: string;
+  employee_type: string;
   basic_salary: string;
   hra_percent: string;
   da_percent: string;
@@ -52,7 +53,7 @@ interface StaffForm {
 const EMPTY_FORM: StaffForm = {
   full_name: "", phone: "", email: "", role: "" as AppRole,
   department_id: "", registration_number: "", ward_id: "",
-  employee_id: "", employment_type: "permanent", basic_salary: "",
+  employee_id: "", employment_type: "permanent", employee_type: "staff", basic_salary: "",
   hra_percent: "20", da_percent: "10", conveyance: "1600", medical_allowance: "1250",
   pf_applicable: true, esic_applicable: false, uan_number: "", pan_number: "", esi_ip_number: "", license_expiry_date: "",
   hpr_id: "",
@@ -246,6 +247,7 @@ const SettingsStaffPage: React.FC = () => {
     hospital_id: hid,
     designation: form.role,
     employment_type: form.employment_type || "permanent",
+    employee_type: form.employee_type || "staff",
     department_id: deptId,
     registration_number: form.registration_number || null,
     employee_id: form.employee_id || null,
@@ -651,6 +653,7 @@ const SettingsStaffPage: React.FC = () => {
         hpr_id: (user as any).hpr_id ?? "",
         employee_id: profile?.employee_id ?? "",
         employment_type: profile?.employment_type ?? "permanent",
+        employee_type: profile?.employee_type ?? "staff",
         basic_salary: profile?.basic_salary?.toString() ?? "",
         hra_percent: profile?.hra_percent?.toString() ?? "20",
         da_percent: profile?.da_percent?.toString() ?? "10",
@@ -1090,6 +1093,15 @@ const SettingsStaffPage: React.FC = () => {
                       <option value="contract">Contract</option>
                       <option value="visiting">Visiting</option>
                       <option value="intern">Intern</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[14px] font-medium text-muted-foreground mb-1 block">Payroll Type</label>
+                    <select value={form.employee_type} onChange={(e) => setForm({ ...form, employee_type: e.target.value })}
+                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
+                      <option value="staff">Salaried Staff (Form 16 / TDS 192)</option>
+                      <option value="consultant">Consultant (Form 16A / TDS 194J)</option>
+                      <option value="trainee">Trainee / Stipend</option>
                     </select>
                   </div>
                 </div>

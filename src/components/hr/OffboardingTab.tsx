@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { printDocument, printHeader } from "@/lib/printUtils";
+import { autoPostJournalEntry } from "@/lib/accounting";
 import { UserMinus, Plus, Loader2, FileText, Calculator } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -145,10 +146,50 @@ const OffboardingTab: React.FC = () => {
     if (error) { toast({ title: "Failed to settle", description: error.message, variant: "destructive" }); return; }
     await (supabase as any).from("staff_exits").update({ status: "completed" }).eq("id", active.id);
     await supabase.from("users").update({ is_active: false }).eq("id", active.user_id);
-    toast({ title: "Full & Final settled", description: `${active.staff_name} deactivated. Net payable ₹${net.toLocaleString("en-IN")}.` });
+
+    // Post the F&F payout to the General Ledger (mirrors payroll approval posting)
+    await postFfsToLedger(active, cu?.id || null, net);
+
+    toast({ title: "Full & Final settled", description: `${active.staff_name} deactivated · ₹${net.toLocaleString("en-IN")} net · posted to accounts.` });
     printStatement(active, net);
     setActive(null);
     load();
+  };
+
+  const postFfsToLedger = async (exit: Exit, postedBy: string | null, net: number) => {
+    if (!hospitalId) return;
+    const earnings = ffs.gratuity + ffs.leave_encashment + (parseFloat(ffs.pending_salary) || 0) + (parseFloat(ffs.bonus) || 0);
+    const deductions = parseFloat(ffs.deductions) || 0;
+    if (earnings <= 0) return;
+
+    await autoPostJournalEntry({
+      triggerEvent: "payroll_processed",
+      sourceModule: "hr",
+      sourceId: exit.id,
+      amount: net,
+      description: `Full & Final — ${exit.staff_name}`,
+      hospitalId,
+      postedBy: postedBy || undefined,
+    });
+
+    const { data: nextNum } = await supabase.rpc("get_next_journal_number", { p_hospital_id: hospitalId });
+    const { data: journal } = await (supabase as any).from("journal_entries").insert({
+      hospital_id: hospitalId,
+      journal_number: nextNum || `JV-${Date.now()}`,
+      entry_date: new Date().toISOString().split("T")[0],
+      description: `Full & Final Settlement — ${exit.staff_name}`,
+      total_debit: earnings, total_credit: earnings,
+      status: "posted", reference_type: "full_final_settlement", reference_id: exit.id, created_by: postedBy,
+    }).select("id").maybeSingle();
+
+    if (journal) {
+      const lines: any[] = [
+        { journal_id: journal.id, hospital_id: hospitalId, account_code: "5002", account_name: "Employee Full & Final", debit_amount: earnings, credit_amount: 0, description: `F&F earnings — ${exit.staff_name}` },
+        { journal_id: journal.id, hospital_id: hospitalId, account_code: "2103", account_name: "F&F Payable", debit_amount: 0, credit_amount: net, description: "Net F&F payable" },
+      ];
+      if (deductions > 0) lines.push({ journal_id: journal.id, hospital_id: hospitalId, account_code: "2104", account_name: "Employee Recoveries", debit_amount: 0, credit_amount: deductions, description: "Recoveries / deductions" });
+      await (supabase as any).from("journal_entry_lines").insert(lines);
+    }
   };
 
   const printStatement = async (exit: Exit, net: number) => {
