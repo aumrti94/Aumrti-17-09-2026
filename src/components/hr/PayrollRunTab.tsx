@@ -8,13 +8,14 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
   Calculator, PlayCircle, CheckCircle2, Download, Printer,
-  Loader2, ChevronDown, ChevronRight, AlertCircle, FileText, Users,
+  Loader2, ChevronDown, ChevronRight, AlertCircle, FileText, Users, Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   calculatePayslip, generatePayslipHtml,
   type PayslipCalculation, type SalaryStructure, type AttendanceInput,
 } from "@/lib/payrollEngine";
+import SalaryStructureSetup from "./SalaryStructureSetup";
 
 const MONTHS = [
   "January","February","March","April","May","June",
@@ -71,6 +72,7 @@ const PayrollRunTab: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [salarySetupOpen, setSalarySetupOpen] = useState(false);
 
   // Editable attendance overrides per staff
   const [attendanceOverrides, setAttendanceOverrides] = useState<Record<string, Partial<AttendanceInput>>>({});
@@ -331,6 +333,14 @@ const PayrollRunTab: React.FC = () => {
           size="sm"
           variant="outline"
           className="h-9 gap-1.5"
+          onClick={() => setSalarySetupOpen(true)}
+        >
+          <Wallet size={14} /> Salary Setup
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-9 gap-1.5"
           onClick={computeAll}
           disabled={loading}
         >
@@ -354,6 +364,10 @@ const PayrollRunTab: React.FC = () => {
           </>
         )}
       </div>
+
+      <p className="text-[11px] text-muted-foreground -mt-2">
+        Statutory engine (salary structures → PF/ESI/TDS payslips). Use <strong>one</strong> payroll engine per month — do not also process the same month in the legacy Payroll tab.
+      </p>
 
       {/* ── Summary cards ─── */}
       {staff.some(s => s.calc) && (
@@ -387,7 +401,7 @@ const PayrollRunTab: React.FC = () => {
             <AlertCircle size={28} className="text-amber-400 mx-auto mb-2" />
             <p className="text-[13px] text-muted-foreground">No staff with salary assignments found.</p>
             <p className="text-[12px] text-muted-foreground/70 mt-1">
-              Go to Staff → assign salary structures to run payroll.
+              Click <button className="underline font-medium" onClick={() => setSalarySetupOpen(true)}>Salary Setup</button> to create a structure and assign salaries.
             </p>
           </div>
         )}
@@ -531,6 +545,15 @@ const PayrollRunTab: React.FC = () => {
             ))}
           </div>
         </div>
+      )}
+
+      {hospitalId && (
+        <SalaryStructureSetup
+          open={salarySetupOpen}
+          onClose={() => setSalarySetupOpen(false)}
+          hospitalId={hospitalId}
+          onSaved={fetchStaff}
+        />
       )}
     </div>
   );

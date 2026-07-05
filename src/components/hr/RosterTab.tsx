@@ -35,6 +35,7 @@ interface RosterEntry {
   shift_id: string | null;
   is_off: boolean;
   is_holiday: boolean;
+  published_at?: string | null;
 }
 
 const RosterTab: React.FC = () => {
@@ -120,6 +121,30 @@ const RosterTab: React.FC = () => {
     setOpenPopover(null);
   };
 
+  const publishedCount = roster.filter((r) => r.published_at).length;
+  const isWeekPublished = roster.length > 0 && publishedCount === roster.length;
+
+  const publishRoster = async () => {
+    const dateFrom = format(weekDays[0], "yyyy-MM-dd");
+    const dateTo = format(weekDays[6], "yyyy-MM-dd");
+    if (roster.length === 0) {
+      toast({ title: "Nothing to publish", description: "Assign shifts before publishing.", variant: "destructive" });
+      return;
+    }
+    const { error } = await (supabase as any)
+      .from("duty_roster")
+      .update({ published_at: new Date().toISOString() })
+      .eq("hospital_id", hospitalId)
+      .gte("roster_date", dateFrom)
+      .lte("roster_date", dateTo);
+    if (error) {
+      toast({ title: "Publish failed", description: error.message, variant: "destructive" });
+    } else {
+      toast({ title: "Roster published", description: `Week of ${format(weekDays[0], "dd MMM")} is now live for staff.` });
+      loadData();
+    }
+  };
+
   const handleDragStart = (userId: string, date: Date, entry: RosterEntry) => {
     setDragData({ userId, fromDate: format(date, "yyyy-MM-dd"), entry });
   };
@@ -170,9 +195,21 @@ const RosterTab: React.FC = () => {
           </SelectContent>
         </Select>
 
-        <div className="ml-auto">
-          <Button size="sm" className="bg-success text-success-foreground hover:bg-success/90 text-xs gap-1.5">
-            <Send className="h-3 w-3" /> Publish Roster
+        <div className="ml-auto flex items-center gap-2">
+          {roster.length > 0 && (
+            <span className={cn(
+              "text-[10px] px-2 py-0.5 rounded-full font-medium",
+              isWeekPublished ? "bg-success/10 text-success" : "bg-amber-500/10 text-amber-600"
+            )}>
+              {isWeekPublished ? "Published" : "Draft"}
+            </span>
+          )}
+          <Button
+            size="sm"
+            className="bg-success text-success-foreground hover:bg-success/90 text-xs gap-1.5"
+            onClick={publishRoster}
+          >
+            <Send className="h-3 w-3" /> {isWeekPublished ? "Re-publish Roster" : "Publish Roster"}
           </Button>
         </div>
       </div>

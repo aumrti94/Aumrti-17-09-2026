@@ -67,6 +67,7 @@ export const MODULE_TABS: Record<string, TabDef[]> = {
     { key: "pending", label: "Pending Payments" },
     { key: "leakage", label: "Revenue Leakage" },
     { key: "approvals", label: "Approvals" },
+    { key: "refund_approvals", label: "Refund Approvals" },
   ],
   hr: [
     { key: "roster", label: "Roster" },
@@ -81,6 +82,7 @@ export const MODULE_TABS: Record<string, TabDef[]> = {
     { key: "training", label: "Training & CME" },
     { key: "compliance", label: "Training Compliance" },
     { key: "injuries", label: "Injury Register" },
+    { key: "second_victim", label: "Second Victim Support" },
     { key: "performance", label: "Performance Appraisals" },
     { key: "occupational_health", label: "Occupational Health" },
     { key: "burnout", label: "Burnout Risk Monitor" },
@@ -114,6 +116,7 @@ export const MODULE_TABS: Record<string, TabDef[]> = {
     { key: "icu_monitor", label: "ICU Monitor" },
     { key: "risk_assessments", label: "Risk Assess" },
     { key: "collection", label: "Lab Collection" },
+    { key: "radiology", label: "Radiology" },
   ],
 };
 
@@ -151,12 +154,15 @@ export const MODULE_ACTIONS: Record<string, ActionDef[]> = {
     { key: "dispense", label: "Dispense Medicines", description: "Dispense medications to patients" },
     { key: "receive_stock", label: "Receive Stock", description: "Record new stock receipts from supplier" },
     { key: "write_indent", label: "Create Indent", description: "Raise a stock indent/purchase request" },
+    { key: "process_return", label: "Process Return", description: "Confirm a drug return and issue credit/refund" },
+    { key: "quarantine_destroy_stock", label: "Quarantine/Destroy Stock", description: "Mark batch stock as quarantined or destroyed" },
   ],
   billing: [
     { key: "new_bill", label: "Create New Bill", description: "Create a new billing record" },
     { key: "approve_discount", label: "Approve Discount", description: "Approve or override discount on a bill" },
     { key: "day_closure", label: "Day Closure", description: "Perform end-of-day billing closure" },
     { key: "waive_amount", label: "Waive Amount", description: "Waive outstanding dues on a bill" },
+    { key: "approve_refund", label: "Approve Refund", description: "Approve or reject a pending patient refund" },
   ],
   emergency: [
     { key: "register_patient", label: "Register Emergency Patient", description: "Register a new emergency/casualty case" },

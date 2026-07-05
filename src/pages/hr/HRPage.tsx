@@ -23,28 +23,57 @@ import TrainingComplianceTab from "@/components/hr/TrainingComplianceTab";
 import PerformanceAppraisalTab from "@/components/hr/PerformanceAppraisalTab";
 import OccupationalHealthTab from "@/components/hr/OccupationalHealthTab";
 import BurnoutRiskTab from "@/components/hr/BurnoutRiskTab";
+import SecondVictimTab from "@/components/hr/SecondVictimTab";
+import HRReportsTab from "@/components/hr/HRReportsTab";
 import { Button } from "@/components/ui/button";
 import { useCredentialAlert } from "@/contexts/CredentialAlertContext";
 
-const navTabs = [
-  { id: "roster",      label: "Roster",               icon: Calendar },
-  { id: "attendance",  label: "Attendance",            icon: CheckSquare },
-  { id: "leave",       label: "Leave Management",      icon: Palmtree },
-  { id: "payroll",     label: "Payroll (Legacy)",      icon: DollarSign },
-  { id: "payroll_run", label: "Payroll Run (PF/ESI/TDS)", icon: Calculator },
-  { id: "directory",   label: "Staff Directory",       icon: Users },
-  { id: "credentials", label: "Credentials",           icon: ShieldCheck },
-  { id: "expiring",    label: "Expiring Credentials",  icon: Clock },
-  { id: "privileges",  label: "Privileges",            icon: Award },
-  { id: "training",    label: "Training & CME",        icon: GraduationCap },
-  { id: "compliance",  label: "Training Compliance",   icon: BarChart2 },
-  { id: "injuries",              label: "Injury Register",          icon: AlertTriangle },
-  { id: "performance",           label: "Performance Appraisals",   icon: Star },
-  { id: "occupational_health",   label: "Occupational Health",      icon: HeartPulse },
-  { id: "burnout",               label: "Burnout Risk Monitor",     icon: HeartHandshake },
-  { id: "payroll_integrations",  label: "Payroll Integrations",     icon: Link2 },
-  { id: "reports",               label: "Reports",                  icon: FileText },
+const navGroups: { section: string; tabs: { id: string; label: string; icon: React.ElementType }[] }[] = [
+  {
+    section: "Workforce",
+    tabs: [
+      { id: "directory",   label: "Staff Directory",       icon: Users },
+      { id: "roster",      label: "Roster",               icon: Calendar },
+      { id: "attendance",  label: "Attendance",            icon: CheckSquare },
+      { id: "leave",       label: "Leave Management",      icon: Palmtree },
+    ],
+  },
+  {
+    section: "Payroll",
+    tabs: [
+      { id: "payroll",     label: "Payroll (Legacy)",      icon: DollarSign },
+      { id: "payroll_run", label: "Payroll Run (PF/ESI/TDS)", icon: Calculator },
+      { id: "payroll_integrations",  label: "Payroll Integrations",     icon: Link2 },
+    ],
+  },
+  {
+    section: "Compliance",
+    tabs: [
+      { id: "credentials", label: "Credentials",           icon: ShieldCheck },
+      { id: "expiring",    label: "Expiring Credentials",  icon: Clock },
+      { id: "privileges",  label: "Privileges",            icon: Award },
+      { id: "training",    label: "Training & CME",        icon: GraduationCap },
+      { id: "compliance",  label: "Training Compliance",   icon: BarChart2 },
+      { id: "injuries",              label: "Injury Register",          icon: AlertTriangle },
+      { id: "second_victim",         label: "Second Victim Support",    icon: HeartHandshake },
+      { id: "occupational_health",   label: "Occupational Health",      icon: HeartPulse },
+      { id: "burnout",               label: "Burnout Risk Monitor",     icon: HeartHandshake },
+      { id: "performance",           label: "Performance Appraisals",   icon: Star },
+    ],
+  },
+  {
+    section: "Talent Lifecycle",
+    tabs: [],
+  },
+  {
+    section: "",
+    tabs: [
+      { id: "reports",               label: "Reports",                  icon: FileText },
+    ],
+  },
 ];
+
+const navTabs = navGroups.flatMap((g) => g.tabs);
 
 const HRPage: React.FC = () => {
   const navigate = useNavigate();
@@ -124,7 +153,9 @@ const HRPage: React.FC = () => {
       case "performance":            return hospitalId ? <PerformanceAppraisalTab hospitalId={hospitalId} /> : null;
       case "occupational_health":    return hospitalId ? <OccupationalHealthTab hospitalId={hospitalId} /> : null;
       case "burnout":                return hospitalId ? <BurnoutRiskTab hospitalId={hospitalId} /> : null;
+      case "second_victim":          return <SecondVictimTab />;
       case "payroll_integrations":   return hospitalId ? <PayrollIntegrationsTab hospitalId={hospitalId} /> : null;
+      case "reports":                return hospitalId ? <HRReportsTab hospitalId={hospitalId} /> : null;
       default:
         return (
           <div className="flex-1 flex items-center justify-center text-muted-foreground">
@@ -196,29 +227,42 @@ const HRPage: React.FC = () => {
       {/* Body */}
       <div className="flex flex-1 overflow-hidden">
         {/* Left Nav */}
-        <div className="w-[220px] bg-card border-r border-border flex flex-col overflow-y-auto">
-          {navTabs.filter((tab) => hasTabAccess("hr", tab.id, permissions, role)).map((tab) => {
-            const Icon = tab.icon;
-            const isExpiring = tab.id === "expiring";
+        <div className="w-[220px] bg-card border-r border-border flex flex-col overflow-y-auto py-1">
+          {navGroups.map((group) => {
+            const visibleTabs = group.tabs.filter((tab) => hasTabAccess("hr", tab.id, permissions, role));
+            if (visibleTabs.length === 0) return null;
             return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={cn(
-                  "h-11 flex items-center gap-3 px-4 text-sm transition-colors text-left shrink-0",
-                  activeTab === tab.id
-                    ? "bg-primary/10 text-primary font-semibold border-r-2 border-primary"
-                    : "text-muted-foreground hover:bg-muted/50"
+              <div key={group.section || "root"} className="mb-1">
+                {group.section && (
+                  <div className="px-4 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground/60">
+                    {group.section}
+                  </div>
                 )}
-              >
-                <Icon className="h-4 w-4 flex-shrink-0" />
-                <span className="flex-1">{tab.label}</span>
-                {isExpiring && expiringCount > 0 && (
-                  <span className="h-5 min-w-[20px] rounded-full bg-red-500 text-[10px] font-bold text-white flex items-center justify-center px-1 ml-1">
-                    {expiringCount}
-                  </span>
-                )}
-              </button>
+                {visibleTabs.map((tab) => {
+                  const Icon = tab.icon;
+                  const isExpiring = tab.id === "expiring";
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTab(tab.id)}
+                      className={cn(
+                        "h-10 w-full flex items-center gap-3 px-4 text-sm transition-colors text-left shrink-0",
+                        activeTab === tab.id
+                          ? "bg-primary/10 text-primary font-semibold border-r-2 border-primary"
+                          : "text-muted-foreground hover:bg-muted/50"
+                      )}
+                    >
+                      <Icon className="h-4 w-4 flex-shrink-0" />
+                      <span className="flex-1">{tab.label}</span>
+                      {isExpiring && expiringCount > 0 && (
+                        <span className="h-5 min-w-[20px] rounded-full bg-red-500 text-[10px] font-bold text-white flex items-center justify-center px-1 ml-1">
+                          {expiringCount}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             );
           })}
         </div>

@@ -638,6 +638,9 @@ const PayrollTab: React.FC = () => {
         <Button size="sm" onClick={openRunModal}>
           <DollarSign className="h-4 w-4 mr-1" /> Run Payroll for {selectedMonth}
         </Button>
+        <span className="text-[11px] text-muted-foreground ml-2">
+          Legacy engine (staff basic salary). For full statutory payslips use the <strong>Payroll Run (PF/ESI/TDS)</strong> tab — don't process the same month in both.
+        </span>
       </div>
 
       {/* Content */}

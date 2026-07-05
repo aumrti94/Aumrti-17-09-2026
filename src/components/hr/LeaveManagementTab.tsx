@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { format, differenceInDays } from "date-fns";
+import { format, differenceInDays, addDays } from "date-fns";
 import { Check, X, CalendarIcon, Plus } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -86,6 +86,45 @@ const LeaveManagementTab: React.FC = () => {
 
   const filtered = filter === "all" ? requests : requests.filter((r) => r.status === filter);
 
+  // Dates covered by a leave request (inclusive)
+  const leaveDates = (req: LeaveRequest): string[] => {
+    const dates: string[] = [];
+    let d = new Date(req.from_date);
+    const end = new Date(req.to_date);
+    while (d <= end) { dates.push(format(d, "yyyy-MM-dd")); d = addDays(d, 1); }
+    return dates;
+  };
+
+  // Reflect approved leave in staff_attendance so payroll counts it as leave days.
+  // Only writes dates that are unmarked or already on_leave — never overwrites present/absent.
+  const syncLeaveToAttendance = async (req: LeaveRequest) => {
+    const { data: userData } = await supabase.from("users").select("hospital_id").eq("id", req.user_id).maybeSingle();
+    if (!userData) return;
+    const dates = leaveDates(req);
+    const { data: existing } = await (supabase as any)
+      .from("staff_attendance").select("attendance_date, status")
+      .eq("user_id", req.user_id).in("attendance_date", dates);
+    const existingStatus = new Map((existing || []).map((e: any) => [e.attendance_date, e.status]));
+    for (const dt of dates) {
+      const st = existingStatus.get(dt);
+      if (st !== undefined && st !== "" && st !== "on_leave") continue; // don't clobber present/absent
+      await (supabase as any).from("staff_attendance").upsert(
+        { hospital_id: userData.hospital_id, user_id: req.user_id, attendance_date: dt, status: "on_leave", source: "leave" },
+        { onConflict: "hospital_id,user_id,attendance_date" }
+      );
+    }
+  };
+
+  // Remove auto-created on_leave rows if an approved leave is later rejected/cancelled.
+  const removeLeaveFromAttendance = async (req: LeaveRequest) => {
+    await (supabase as any).from("staff_attendance")
+      .delete()
+      .eq("user_id", req.user_id)
+      .eq("status", "on_leave")
+      .eq("source", "leave")
+      .in("attendance_date", leaveDates(req));
+  };
+
   const handleApprove = async (id: string) => {
     const req = requests.find((r) => r.id === id);
     if (!req) return;
@@ -102,13 +141,19 @@ const LeaveManagementTab: React.FC = () => {
       }
     }
 
+    // Reflect leave in attendance → payroll
+    await syncLeaveToAttendance(req);
+
     setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status: "approved" } : r)));
-    toast({ title: "Leave approved" });
+    toast({ title: "Leave approved", description: "Marked as on-leave in attendance for the leave dates." });
   };
 
   const handleReject = async () => {
     if (!rejectId) return;
+    const req = requests.find((r) => r.id === rejectId);
     await (supabase as any).from("leave_requests").update({ status: "rejected", reviewer_notes: rejectNotes, reviewed_at: new Date().toISOString() }).eq("id", rejectId);
+    // If this leave had already been reflected in attendance (approved earlier), undo it.
+    if (req && req.status === "approved") await removeLeaveFromAttendance(req);
     setRequests((prev) => prev.map((r) => (r.id === rejectId ? { ...r, status: "rejected" } : r)));
     setRejectId(null);
     setRejectNotes("");

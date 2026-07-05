@@ -43,10 +43,10 @@ const RosterOptimizerPanel: React.FC<Props> = ({ hospitalId }) => {
       const dateFrom = today.toISOString().split("T")[0];
       const dateTo = addDays(today, 7).toISOString().split("T")[0];
 
-      // Fetch duty roster for next 7 days
+      // Fetch duty roster for next 7 days (join shift_master for timing/type)
       const { data: roster } = await (supabase as any)
         .from("duty_roster")
-        .select("roster_date, user_id, shift, department, role")
+        .select("roster_date, user_id, shift_id, department_id, is_off, shift_master(shift_code, shift_type, start_time)")
         .eq("hospital_id", hospitalId)
         .gte("roster_date", dateFrom)
         .lte("roster_date", dateTo)
@@ -55,7 +55,7 @@ const RosterOptimizerPanel: React.FC<Props> = ({ hospitalId }) => {
       // Fetch active staff count and roles
       const { data: staff } = await supabase
         .from("users")
-        .select("id, full_name, role, department")
+        .select("id, full_name, role, department_id, departments(name)")
         .eq("hospital_id", hospitalId)
         .eq("is_active", true);
 
@@ -72,12 +72,17 @@ const RosterOptimizerPanel: React.FC<Props> = ({ hospitalId }) => {
       const staffData = staff || [];
       const leaveData = leaves || [];
 
-      // Aggregate roster by date + department + shift
-      const rosterSummary: Record<string, number> = {};
-      rosterData.forEach((r: any) => {
-        const key = `${r.roster_date}|${r.department || "General"}|${r.shift || "day"}`;
-        rosterSummary[key] = (rosterSummary[key] || 0) + 1;
-      });
+      // Classify a roster entry as night shift (shift code "N" or starts 20:00–06:00)
+      const isNightShift = (r: any): boolean => {
+        const code = r.shift_master?.shift_code;
+        if (code === "N") return true;
+        const st = r.shift_master?.start_time as string | undefined;
+        if (st) {
+          const h = parseInt(st.slice(0, 2), 10);
+          if (!Number.isNaN(h)) return h >= 20 || h < 6;
+        }
+        return false;
+      };
 
       // Count staff on leave per date
       const onLeaveByDate: Record<string, number> = {};
@@ -96,11 +101,12 @@ const RosterOptimizerPanel: React.FC<Props> = ({ hospitalId }) => {
 
       const rosterContext = next7Days.map(date => {
         const dayRoster = rosterData.filter((r: any) => r.roster_date === date);
+        const scheduled = dayRoster.filter((r: any) => r.shift_id && !r.is_off);
         const dayLeave = onLeaveByDate[date] || 0;
-        const dayShift = dayRoster.filter((r: any) => r.shift === "day").length;
-        const nightShift = dayRoster.filter((r: any) => r.shift === "night").length;
+        const nightShift = scheduled.filter(isNightShift).length;
+        const dayShift = scheduled.length - nightShift;
         const isWeekend = [0, 6].includes(new Date(date + "T00:00:00").getDay());
-        return `${date} (${isWeekend ? "Weekend" : "Weekday"}): ${dayRoster.length} scheduled, Day shift: ${dayShift}, Night shift: ${nightShift}, On leave: ${dayLeave}`;
+        return `${date} (${isWeekend ? "Weekend" : "Weekday"}): ${scheduled.length} scheduled, Day shift: ${dayShift}, Night shift: ${nightShift}, On leave: ${dayLeave}`;
       }).join("\n");
 
       const staffContext = `Total active staff: ${staffData.length}`;

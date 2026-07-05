@@ -310,6 +310,29 @@ const AttendanceTab: React.FC = () => {
     toast({ title: `Marked ${unmarked.length} staff as present` });
   };
 
+  const exportCsv = () => {
+    if (filteredRows.length === 0) {
+      toast({ title: "Nothing to export", variant: "destructive" });
+      return;
+    }
+    const esc = (v: any) => {
+      const s = String(v ?? "");
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const headers = ["Name", "Role", "Department", "Shift", "In", "Out", "Hours", "Status"];
+    const lines = filteredRows.map((r) => [
+      r.fullName, r.role, r.deptName, r.shiftName,
+      r.inTime?.slice(0, 5) || "", r.outTime?.slice(0, 5) || "",
+      r.hoursWorked ?? "", r.status || "unmarked",
+    ].map(esc).join(","));
+    const csv = [headers.join(","), ...lines].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = Object.assign(document.createElement("a"), { href: url, download: `attendance_${dateStr}.csv` });
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       {/* Header */}
@@ -375,7 +398,7 @@ const AttendanceTab: React.FC = () => {
               <Button variant="outline" size="sm" className="text-xs gap-1.5" onClick={markAllPresent}>
                 <CheckCircle2 className="h-3 w-3" /> Mark All Present
               </Button>
-              <Button variant="ghost" size="sm" className="text-xs gap-1.5">
+              <Button variant="ghost" size="sm" className="text-xs gap-1.5" onClick={exportCsv}>
                 <Download className="h-3 w-3" /> Export
               </Button>
             </>
