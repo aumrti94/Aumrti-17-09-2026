@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -108,10 +108,30 @@ const SettingsStaffPage: React.FC = () => {
   const qc = useQueryClient();
   const { checkStaffCapacity } = useCapacityCheck();
 
+  const location = useLocation();
   const [filter, setFilter] = useState("all");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<StaffForm>(EMPTY_FORM);
+  const [hiredApplicantId, setHiredApplicantId] = useState<string | null>(null);
+
+  // Recruitment → hire: open the add-staff drawer pre-filled from the applicant.
+  useEffect(() => {
+    const prefill = (location.state as any)?.prefill;
+    if (!prefill) return;
+    setEditingId(null);
+    setForm({
+      ...EMPTY_FORM,
+      full_name: prefill.full_name || "",
+      phone: prefill.phone || "",
+      email: prefill.email || "",
+      department_id: prefill.department_id || "",
+    });
+    setHiredApplicantId(prefill.applicant_id || null);
+    setDrawerOpen(true);
+    // clear router state so a refresh/back doesn't re-open
+    window.history.replaceState({}, "");
+  }, [location.state]);
 
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkRows, setBulkRows] = useState<BulkRow[]>([{ ...EMPTY_BULK }]);
@@ -357,6 +377,12 @@ const SettingsStaffPage: React.FC = () => {
 
         // Create staff_profiles row with salary data
         await (supabase as any).from("staff_profiles").insert(buildProfilePayload(newId, hid, deptId));
+
+        // If this staff was created from a recruitment "hire", link the applicant.
+        if (hiredApplicantId) {
+          await (supabase as any).from("job_applicants").update({ hired_user_id: newId }).eq("id", hiredApplicantId);
+          setHiredApplicantId(null);
+        }
 
         // Create service_master row for doctor consultation fee
         if (form.role === "doctor" && form.consultation_fee) {

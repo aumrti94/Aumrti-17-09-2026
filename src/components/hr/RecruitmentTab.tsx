@@ -231,7 +231,7 @@ const RecruitmentTab: React.FC = () => {
                             <Button size="sm" variant="outline" className="h-6 text-[10px] gap-1" onClick={() => openOnboarding(a)}>
                               <CheckCircle2 className="h-3 w-3" /> Onboarding
                             </Button>
-                            <Button size="sm" variant="ghost" className="h-6 text-[10px] gap-1" onClick={() => navigate("/settings/staff")}>
+                            <Button size="sm" variant="ghost" className="h-6 text-[10px] gap-1" onClick={() => navigate("/settings/staff", { state: { prefill: { full_name: a.full_name, phone: a.phone, email: a.email, department_id: openings.find(o => o.id === a.job_opening_id)?.department_id || "", applicant_id: a.id } } })}>
                               <UserCog className="h-3 w-3" /> Create Staff
                             </Button>
                           </div>
@@ -340,7 +340,7 @@ const RecruitmentTab: React.FC = () => {
           </div>
           <p className="text-[10px] text-muted-foreground">{tasks.filter((t) => t.is_done).length}/{tasks.length} complete</p>
           <DialogFooter>
-            <Button size="sm" variant="outline" onClick={() => navigate("/settings/staff")}>Open Staff Setup</Button>
+            <Button size="sm" variant="outline" onClick={() => onboardingFor && navigate("/settings/staff", { state: { prefill: { full_name: onboardingFor.full_name, phone: onboardingFor.phone, email: onboardingFor.email, department_id: openings.find(o => o.id === onboardingFor.job_opening_id)?.department_id || "", applicant_id: onboardingFor.id } } })}>Open Staff Setup</Button>
             <Button size="sm" onClick={() => setOnboardingFor(null)}>Done</Button>
           </DialogFooter>
         </DialogContent>
