@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { ChevronLeft, ChevronRight, Send } from "lucide-react";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import RosterOptimizerPanel from "./RosterOptimizerPanel";
+import ShiftSwapPanel from "./ShiftSwapPanel";
 import EmptyState from "@/components/EmptyState";
 import { format, addDays, startOfWeek, isSameDay, isToday } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
@@ -348,10 +349,11 @@ const RosterTab: React.FC = () => {
         </table>
       </div>
 
-      {/* Roster Optimizer — AI coverage gap analysis for next 7 days */}
+      {/* Roster Optimizer — AI coverage gap analysis for next 7 days + Shift Swaps */}
       {hospitalId && (
         <div className="px-4 pb-4">
           <RosterOptimizerPanel hospitalId={hospitalId} />
+          <ShiftSwapPanel hospitalId={hospitalId} onSwapped={loadData} />
         </div>
       )}
     </div>
