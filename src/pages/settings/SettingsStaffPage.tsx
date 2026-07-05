@@ -1156,6 +1156,7 @@ const SettingsStaffPage: React.FC = () => {
                 <div>
                   <label className="text-[14px] font-medium text-muted-foreground mb-1 block">License Expiry Date</label>
                   <Input type="date" value={form.license_expiry_date} onChange={(e) => setForm({ ...form, license_expiry_date: e.target.value })} className="h-10" />
+                  <p className="text-[11px] text-muted-foreground mt-1">For multiple credentials with individual expiries, use HR → Credentials (the system of record); this single field also feeds the expiry alerts.</p>
                   {form.license_expiry_date && (() => {
                     const daysLeft = Math.ceil((new Date(form.license_expiry_date).getTime() - Date.now()) / 86400000);
                     if (daysLeft <= 60) return <p className={`text-[11px] mt-1 ${daysLeft <= 0 ? "text-destructive" : "text-amber-600"}`}>{daysLeft <= 0 ? "⚠ License EXPIRED" : `⚠ Expires in ${daysLeft} days`}</p>;
