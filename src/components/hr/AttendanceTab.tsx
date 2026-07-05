@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { format } from "date-fns";
-import { CalendarIcon, Download, CheckCircle2, LayoutList, CalendarDays, Upload } from "lucide-react";
+import { CalendarIcon, Download, CheckCircle2, LayoutList, CalendarDays, Upload, ClipboardCheck } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -13,6 +13,7 @@ import { useHospitalId } from "@/hooks/useHospitalId";
 import { useConfigValues } from "@/hooks/useConfigValues";
 import { cn } from "@/lib/utils";
 import AttendanceCalendarView from "./AttendanceCalendarView";
+import AttendanceApprovalsPanel from "./AttendanceApprovalsPanel";
 
 interface AttendanceRow {
   userId: string;
@@ -234,7 +235,7 @@ const AttendanceTab: React.FC = () => {
   const attendanceStatusOptions = useConfigValues("attendance_statuses");
   const { toast } = useToast();
   const { hospitalId } = useHospitalId();
-  const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
+  const [viewMode, setViewMode] = useState<"list" | "calendar" | "approvals">("list");
   const [importOpen, setImportOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [rows, setRows] = useState<AttendanceRow[]>([]);
@@ -353,6 +354,13 @@ const AttendanceTab: React.FC = () => {
           >
             <CalendarDays className="h-3 w-3" /> Calendar
           </button>
+          <button
+            onClick={() => setViewMode("approvals")}
+            className={cn("flex items-center gap-1 px-2.5 h-full text-xs transition-colors",
+              viewMode === "approvals" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/50")}
+          >
+            <ClipboardCheck className="h-3 w-3" /> Approvals
+          </button>
         </div>
 
         {viewMode === "list" && (
@@ -407,7 +415,9 @@ const AttendanceTab: React.FC = () => {
       </div>
 
       {/* Content */}
-      {viewMode === "calendar" ? (
+      {viewMode === "approvals" ? (
+        hospitalId ? <AttendanceApprovalsPanel hospitalId={hospitalId} /> : null
+      ) : viewMode === "calendar" ? (
         hospitalId ? <AttendanceCalendarView hospitalId={hospitalId} /> : null
       ) : (
         <div className="flex-1 overflow-auto">
