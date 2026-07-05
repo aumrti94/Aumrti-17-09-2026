@@ -48,7 +48,7 @@ const DisciplinaryGrievanceTab: React.FC = () => {
     setLoading(true);
     const [discRes, grvRes, staffRes] = await Promise.all([
       (supabase as any).from("disciplinary_actions").select("*, users!disciplinary_actions_user_id_fkey(full_name)").eq("hospital_id", hospitalId).order("created_at", { ascending: false }),
-      (supabase as any).from("grievances").select("*, users!grievances_raised_by_fkey(full_name)").eq("hospital_id", hospitalId).order("created_at", { ascending: false }),
+      (supabase as any).from("staff_grievances").select("*, users!staff_grievances_raised_by_fkey(full_name)").eq("hospital_id", hospitalId).order("created_at", { ascending: false }),
       supabase.from("users").select("id, full_name").eq("hospital_id", hospitalId).eq("is_active", true).order("full_name"),
     ]);
     setDisc((discRes.data || []).map((d: any) => ({ ...d, staff_name: d.users?.full_name })));
@@ -74,7 +74,7 @@ const DisciplinaryGrievanceTab: React.FC = () => {
 
   const saveGrv = async () => {
     if (!grvForm.description.trim()) { toast({ title: "Description required", variant: "destructive" }); return; }
-    const { error } = await (supabase as any).from("grievances").insert({
+    const { error } = await (supabase as any).from("staff_grievances").insert({
       hospital_id: hospitalId, raised_by: grvForm.raised_by || null, against_text: grvForm.against_text || null,
       category: grvForm.category, description: grvForm.description.trim(),
     });
@@ -90,7 +90,7 @@ const DisciplinaryGrievanceTab: React.FC = () => {
     setDisc((prev) => prev.map((d) => (d.id === id ? { ...d, status } : d)));
   };
   const updateGrvStatus = async (id: string, status: string, resolution?: string) => {
-    await (supabase as any).from("grievances").update({ status, ...(resolution !== undefined ? { resolution } : {}) }).eq("id", id);
+    await (supabase as any).from("staff_grievances").update({ status, ...(resolution !== undefined ? { resolution } : {}) }).eq("id", id);
     setGrv((prev) => prev.map((g) => (g.id === id ? { ...g, status, ...(resolution !== undefined ? { resolution } : {}) } : g)));
   };
 
