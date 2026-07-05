@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Plus, Layers, UserCog, Loader2 } from "lucide-react";
+import { Plus, Layers, UserCog, Loader2, DownloadCloud } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -127,6 +127,59 @@ const SalaryStructureSetup: React.FC<{
     }
   };
 
+  const [importing, setImporting] = useState(false);
+
+  // One-time bridge: seed staff_salary_assignments from staff_profiles.basic_salary
+  // (the legacy field set in the staff editor) for staff who have no assignment yet.
+  const importFromProfiles = async () => {
+    setImporting(true);
+    try {
+      // Ensure a default structure exists to link to
+      let structureId = structures[0]?.id;
+      if (!structureId) {
+        const { data: created, error: cErr } = await (supabase as any).from("salary_structures").insert({
+          hospital_id: hospitalId, name: "Default (Basic 40% / HRA 20% / DA 10%)",
+          basic_pct: 40, hra_pct: 20, da_pct: 10, ta_fixed: 1600, medical_allowance: 1250, pt_state: "AP",
+        }).select("id").maybeSingle();
+        if (cErr || !created) throw cErr || new Error("Could not create default structure");
+        structureId = created.id;
+      }
+
+      const { data: profiles } = await (supabase as any)
+        .from("staff_profiles")
+        .select("user_id, basic_salary, pan_number, uan_number")
+        .eq("hospital_id", hospitalId).eq("is_active", true);
+      const { data: existing } = await (supabase as any)
+        .from("staff_salary_assignments")
+        .select("staff_id").eq("hospital_id", hospitalId).is("effective_to", null);
+      const assigned = new Set((existing || []).map((a: any) => a.staff_id));
+
+      const today = new Date().toISOString().split("T")[0];
+      const toInsert = (profiles || [])
+        .filter((p: any) => Number(p.basic_salary) > 0 && !assigned.has(p.user_id))
+        .map((p: any) => ({
+          hospital_id: hospitalId, staff_id: p.user_id, structure_id: structureId,
+          // basic is 40% of gross → gross ≈ basic / 0.40
+          gross_monthly: Math.round(Number(p.basic_salary) / 0.40),
+          effective_from: today, effective_to: null,
+          pan_number: p.pan_number || null, pf_account_number: p.uan_number || null,
+        }));
+
+      if (toInsert.length === 0) {
+        toast({ title: "Nothing to import", description: "All staff with a basic salary already have an assignment." });
+      } else {
+        const { error } = await (supabase as any).from("staff_salary_assignments").upsert(toInsert, { onConflict: "staff_id,effective_from" });
+        if (error) throw error;
+        toast({ title: `Imported ${toInsert.length} salary assignment(s)` });
+      }
+      load();
+      onSaved();
+    } catch (err: any) {
+      toast({ title: "Import failed", description: err.message, variant: "destructive" });
+    }
+    setImporting(false);
+  };
+
   const saveAssignment = async () => {
     if (!selectedStaff || !assignment.structure_id || !assignment.gross_monthly) {
       toast({ title: "Select staff, structure and gross salary", variant: "destructive" });
@@ -211,9 +264,16 @@ const SalaryStructureSetup: React.FC<{
           </div>
         ) : tab === "assign" ? (
           <div className="space-y-4">
+            <div className="flex items-center justify-between gap-2 rounded-md bg-muted/40 border border-border px-3 py-2">
+              <span className="text-[11px] text-muted-foreground">Migrating from the old staff-editor basic salary? Seed assignments in one click.</span>
+              <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5 shrink-0" onClick={importFromProfiles} disabled={importing}>
+                {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <DownloadCloud className="h-3.5 w-3.5" />}
+                Import from staff profiles
+              </Button>
+            </div>
             {structures.length === 0 && (
               <div className="text-xs rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-amber-800">
-                No salary structures yet. Create one in the <strong>Salary Structures</strong> tab first.
+                No salary structures yet — "Import from staff profiles" will create a default one, or create your own in the <strong>Salary Structures</strong> tab.
               </div>
             )}
             <div className="grid grid-cols-2 gap-3">
