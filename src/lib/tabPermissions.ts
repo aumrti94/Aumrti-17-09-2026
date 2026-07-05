@@ -87,6 +87,7 @@ export const MODULE_TABS: Record<string, TabDef[]> = {
     { key: "occupational_health", label: "Occupational Health" },
     { key: "burnout", label: "Burnout Risk Monitor" },
     { key: "payroll_integrations", label: "Payroll Integrations" },
+    { key: "recruitment", label: "Recruitment" },
     { key: "reports", label: "Reports" },
   ],
   pharmacy: [

@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { useHospitalContext } from "@/contexts/HospitalContext";
 import { hasTabAccess } from "@/lib/tabPermissions";
-import { Calendar, CheckSquare, Palmtree, DollarSign, Users, FileText, ShieldCheck, AlertTriangle, Award, GraduationCap, Clock, BarChart2, Link2, Calculator, HeartPulse, Star, HeartHandshake } from "lucide-react";
+import { Calendar, CheckSquare, Palmtree, DollarSign, Users, FileText, ShieldCheck, AlertTriangle, Award, GraduationCap, Clock, BarChart2, Link2, Calculator, HeartPulse, Star, HeartHandshake, Briefcase } from "lucide-react";
 import NABHBadge from "@/components/nabh/NABHBadge";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -25,6 +25,7 @@ import OccupationalHealthTab from "@/components/hr/OccupationalHealthTab";
 import BurnoutRiskTab from "@/components/hr/BurnoutRiskTab";
 import SecondVictimTab from "@/components/hr/SecondVictimTab";
 import HRReportsTab from "@/components/hr/HRReportsTab";
+import RecruitmentTab from "@/components/hr/RecruitmentTab";
 import { Button } from "@/components/ui/button";
 import { useCredentialAlert } from "@/contexts/CredentialAlertContext";
 
@@ -63,7 +64,9 @@ const navGroups: { section: string; tabs: { id: string; label: string; icon: Rea
   },
   {
     section: "Talent Lifecycle",
-    tabs: [],
+    tabs: [
+      { id: "recruitment", label: "Recruitment", icon: Briefcase },
+    ],
   },
   {
     section: "",
@@ -154,6 +157,7 @@ const HRPage: React.FC = () => {
       case "occupational_health":    return hospitalId ? <OccupationalHealthTab hospitalId={hospitalId} /> : null;
       case "burnout":                return hospitalId ? <BurnoutRiskTab hospitalId={hospitalId} /> : null;
       case "second_victim":          return <SecondVictimTab />;
+      case "recruitment":            return <RecruitmentTab />;
       case "payroll_integrations":   return hospitalId ? <PayrollIntegrationsTab hospitalId={hospitalId} /> : null;
       case "reports":                return hospitalId ? <HRReportsTab hospitalId={hospitalId} /> : null;
       default:
