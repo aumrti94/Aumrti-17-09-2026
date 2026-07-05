@@ -90,6 +90,7 @@ export const MODULE_TABS: Record<string, TabDef[]> = {
     { key: "recruitment", label: "Recruitment" },
     { key: "offboarding", label: "Exit & Full-and-Final" },
     { key: "disciplinary", label: "Disciplinary & Grievance" },
+    { key: "documents", label: "Document Vault" },
     { key: "reports", label: "Reports" },
   ],
   pharmacy: [

@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { useHospitalContext } from "@/contexts/HospitalContext";
 import { hasTabAccess } from "@/lib/tabPermissions";
-import { Calendar, CheckSquare, Palmtree, DollarSign, Users, FileText, ShieldCheck, AlertTriangle, Award, GraduationCap, Clock, BarChart2, Link2, Calculator, HeartPulse, Star, HeartHandshake, Briefcase, UserMinus, Gavel } from "lucide-react";
+import { Calendar, CheckSquare, Palmtree, DollarSign, Users, FileText, ShieldCheck, AlertTriangle, Award, GraduationCap, Clock, BarChart2, Link2, Calculator, HeartPulse, Star, HeartHandshake, Briefcase, UserMinus, Gavel, FolderArchive } from "lucide-react";
 import NABHBadge from "@/components/nabh/NABHBadge";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -28,6 +28,7 @@ import HRReportsTab from "@/components/hr/HRReportsTab";
 import RecruitmentTab from "@/components/hr/RecruitmentTab";
 import OffboardingTab from "@/components/hr/OffboardingTab";
 import DisciplinaryGrievanceTab from "@/components/hr/DisciplinaryGrievanceTab";
+import StaffDocumentsTab from "@/components/hr/StaffDocumentsTab";
 import { Button } from "@/components/ui/button";
 import { useCredentialAlert } from "@/contexts/CredentialAlertContext";
 
@@ -70,6 +71,7 @@ const navGroups: { section: string; tabs: { id: string; label: string; icon: Rea
       { id: "recruitment", label: "Recruitment", icon: Briefcase },
       { id: "offboarding", label: "Exit & Full-and-Final", icon: UserMinus },
       { id: "disciplinary", label: "Disciplinary & Grievance", icon: Gavel },
+      { id: "documents", label: "Document Vault", icon: FolderArchive },
     ],
   },
   {
@@ -164,6 +166,7 @@ const HRPage: React.FC = () => {
       case "recruitment":            return <RecruitmentTab />;
       case "offboarding":            return <OffboardingTab />;
       case "disciplinary":           return <DisciplinaryGrievanceTab />;
+      case "documents":              return <StaffDocumentsTab />;
       case "payroll_integrations":   return hospitalId ? <PayrollIntegrationsTab hospitalId={hospitalId} /> : null;
       case "reports":                return hospitalId ? <HRReportsTab hospitalId={hospitalId} /> : null;
       default:
