@@ -88,7 +88,7 @@ const BurnoutRiskTab: React.FC<{ hospitalId: string }> = ({ hospitalId }) => {
           .gte("attendance_date", thirtyDaysAgo)
           .in("user_id", staffIds),
         (supabase as any).from("incident_reports")
-          .select("reported_by, severity_level, incident_date")
+          .select("reported_by, severity, incident_date")
           .eq("hospital_id", hospitalId)
           .gte("incident_date", thirtyDaysAgo),
         (supabase as any).from("staff_training_records")
@@ -113,7 +113,7 @@ const BurnoutRiskTab: React.FC<{ hospitalId: string }> = ({ hospitalId }) => {
 
         const memberIncidents = incidentData.filter((i: any) => i.reported_by === member.id).length;
         const sentinelInvolved = incidentData.filter((i: any) =>
-          i.reported_by === member.id && i.severity_level === "sentinel"
+          i.reported_by === member.id && i.severity === "sentinel"
         ).length;
         const incidentScore = Math.min(100, memberIncidents * 15 + sentinelInvolved * 40);
 

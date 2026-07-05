@@ -36,6 +36,8 @@ interface StaffRow {
   pan_number: string | null;
   pf_account_number: string | null;
   structure: SalaryStructure | null;
+  // derived from staff_attendance for the selected month
+  att?: { paid_leaves: number; lop_days: number; ot_hours: number; hasRows: boolean };
   // computed
   calc?: PayslipCalculation;
   attendance?: AttendanceInput;
@@ -161,6 +163,27 @@ const PayrollRunTab: React.FC = () => {
       });
     }
 
+    // Attendance for the month → paid-leave / LOP / OT per staff (one query for all)
+    const monthStart = `${selectedYear}-${String(selectedMonth).padStart(2, "0")}-01`;
+    const monthEnd = new Date(selectedYear, selectedMonth, 1).toISOString().split("T")[0]; // 1st of next month
+    const { data: attRows } = await (supabase as any)
+      .from("staff_attendance")
+      .select("user_id, status, overtime_hours")
+      .eq("hospital_id", hospitalId)
+      .gte("attendance_date", monthStart)
+      .lt("attendance_date", monthEnd);
+
+    const attByUser = new Map<string, { paid_leaves: number; lop_days: number; ot_hours: number; hasRows: boolean }>();
+    for (const a of (attRows || []) as any[]) {
+      const cur = attByUser.get(a.user_id) || { paid_leaves: 0, lop_days: 0, ot_hours: 0, hasRows: false };
+      cur.hasRows = true;
+      if (a.status === "on_leave") cur.paid_leaves += 1;
+      else if (a.status === "absent") cur.lop_days += 1;
+      cur.ot_hours += parseFloat(a.overtime_hours) || 0;
+      attByUser.set(a.user_id, cur);
+    }
+    for (const r of rows) r.att = attByUser.get(r.id) || { paid_leaves: 0, lop_days: 0, ot_hours: 0, hasRows: false };
+
     setStaff(rows);
     setLoading(false);
   }, [hospitalId, selectedMonth, selectedYear]);
@@ -175,12 +198,19 @@ const PayrollRunTab: React.FC = () => {
     const computed = staff.map(s => {
       if (!s.structure) return s;
 
+      // Default from staff_attendance (manual overrides still win). Staff with no
+      // attendance rows at all default to full presence (as legacy did) so payroll
+      // never underpays where attendance simply isn't tracked.
       const override = attendanceOverrides[s.id] || {};
+      const paid = override.paid_leaves ?? s.att?.paid_leaves ?? 0;
+      const lop  = override.lop_days    ?? s.att?.lop_days    ?? 0;
+      const total = override.total_days ?? workingDays;
+      const present = override.present_days ?? Math.max(0, total - lop - paid);
       const attendance: AttendanceInput = {
-        total_days:   override.total_days   ?? workingDays,
-        present_days: override.present_days ?? workingDays,
-        paid_leaves:  override.paid_leaves  ?? 0,
-        lop_days:     override.lop_days     ?? 0,
+        total_days:   total,
+        present_days: present,
+        paid_leaves:  paid,
+        lop_days:     lop,
       };
 
       const calc = calculatePayslip(
@@ -593,7 +623,12 @@ const PayrollRunTab: React.FC = () => {
                   <div className="px-8 py-3 bg-muted/20 border-t border-border/50 space-y-3">
                     {/* Attendance */}
                     <div className="grid grid-cols-4 gap-3">
-                      {(["present_days","paid_leaves","lop_days"] as const).map(key => (
+                      {(["present_days","paid_leaves","lop_days"] as const).map(key => {
+                        const attDefault =
+                          key === "present_days" ? Math.max(0, workDays - (s.att?.lop_days ?? 0) - (s.att?.paid_leaves ?? 0))
+                          : key === "paid_leaves" ? (s.att?.paid_leaves ?? 0)
+                          : (s.att?.lop_days ?? 0);
+                        return (
                         <div key={key}>
                           <Label className="text-[10px] uppercase text-muted-foreground">
                             {key === "present_days" ? "Present Days" : key === "paid_leaves" ? "Paid Leaves" : "LOP Days"}
@@ -601,15 +636,24 @@ const PayrollRunTab: React.FC = () => {
                           <Input
                             type="number"
                             className="mt-0.5 h-7 text-xs"
-                            value={override[key] ?? (key === "present_days" ? workDays : 0)}
+                            value={override[key] ?? attDefault}
                             onChange={e => setAttendanceOverrides(prev => ({
                               ...prev,
                               [s.id]: { ...prev[s.id], [key]: Number(e.target.value) },
                             }))}
                           />
                         </div>
-                      ))}
+                      ); })}
+                      <div>
+                        <Label className="text-[10px] uppercase text-muted-foreground">Overtime Hrs</Label>
+                        <Input type="number" className="mt-0.5 h-7 text-xs" value={s.att?.ot_hours ?? 0} readOnly title="Summed from approved attendance overtime" />
+                      </div>
                     </div>
+                    <p className="text-[10px] text-muted-foreground">
+                      {s.att?.hasRows
+                        ? "Defaults from this month's attendance (leave/absence auto-applied) — edit to override."
+                        : "No attendance recorded this month — defaulting to full presence. Edit if needed."}
+                    </p>
 
                     {/* Breakdown table */}
                     {s.calc && (
