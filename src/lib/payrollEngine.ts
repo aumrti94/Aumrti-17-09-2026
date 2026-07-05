@@ -17,6 +17,7 @@ export interface SalaryStructure {
   esi_employee_pct: number; // default 0.75
   esi_employer_pct: number; // default 3.25
   pt_state: string | null;
+  ot_multiplier?: number;   // overtime rate multiplier (default 1.5)
 }
 
 export interface AttendanceInput {
@@ -35,6 +36,7 @@ export interface PayslipCalculation {
   special_allowance: number;
   medical_allowance: number;
   other_allowances: number;
+  overtime_amount: number;
   gross_earned: number;
 
   // Deductions
@@ -152,6 +154,7 @@ export function calculatePayslip(
   attendance: AttendanceInput,
   ytdGross: number = 0,       // gross earned so far this financial year
   ytdTds: number = 0,         // TDS already deducted this financial year
+  otHours: number = 0,        // approved overtime hours for the month
 ): PayslipCalculation {
 
   // Proration factor
@@ -206,8 +209,13 @@ export function calculatePayslip(
   const balanceTax           = Math.max(0, totalAnnualTax - ytdTds);
   const tdsMonthly           = round2(balanceTax / monthsRemaining);
 
+  // Overtime pay — hourly rate from basic, × structure multiplier (default 1.5)
+  const otMultiplier = structure.ot_multiplier ?? 1.5;
+  const hourlyBasic  = attendance.total_days > 0 ? basic / (attendance.total_days * 8) : 0;
+  const overtimeAmount = round2((otHours || 0) * hourlyBasic * otMultiplier);
+
   const totalDeductions = round2(pfEmployee + esiEmployee + pt + tdsMonthly);
-  const netPay          = round2(grossEarned - totalDeductions);
+  const netPay          = round2(grossEarned + overtimeAmount - totalDeductions);
 
   return {
     basic,
@@ -217,6 +225,7 @@ export function calculatePayslip(
     special_allowance: specialAllowance,
     medical_allowance: medicalAllowance,
     other_allowances:  0,
+    overtime_amount:   overtimeAmount,
     gross_earned:      grossEarned,
 
     pf_employee:   pfEmployee,
@@ -347,8 +356,12 @@ export function generatePayslipHtml(params: {
     <td>Medical Allowance</td><td>${inr(calc.medical_allowance)}</td>
     <td></td><td></td>
   </tr>
+  <tr>
+    <td>Overtime</td><td>${inr(calc.overtime_amount)}</td>
+    <td></td><td></td>
+  </tr>
   <tr class="total-row">
-    <td>Gross Earnings</td><td>${inr(calc.gross_earned)}</td>
+    <td>Gross Earnings</td><td>${inr(calc.gross_earned + calc.overtime_amount)}</td>
     <td>Total Deductions</td><td>${inr(calc.total_deductions)}</td>
   </tr>
   <tr class="net-row">

@@ -219,6 +219,7 @@ const PayrollRunTab: React.FC = () => {
         attendance,
         s.ytdGross,
         s.ytdTds,
+        s.att?.ot_hours || 0,
       );
 
       return { ...s, calc, attendance };
@@ -284,6 +285,8 @@ const PayrollRunTab: React.FC = () => {
           ta:                s.calc.ta,
           special_allowance: s.calc.special_allowance,
           medical_allowance: s.calc.medical_allowance,
+          overtime_hours:    s.att?.ot_hours || 0,
+          overtime_amount:   s.calc.overtime_amount,
           gross_earned:      s.calc.gross_earned,
           pf_employee:       s.calc.pf_employee,
           esi_employee:      s.calc.esi_employee,
@@ -370,7 +373,7 @@ const PayrollRunTab: React.FC = () => {
       calc: {
         basic: slip.basic, hra: slip.hra, da: slip.da, ta: slip.ta,
         special_allowance: slip.special_allowance, medical_allowance: slip.medical_allowance,
-        other_allowances: slip.other_allowances || 0, gross_earned: slip.gross_earned,
+        other_allowances: slip.other_allowances || 0, overtime_amount: slip.overtime_amount || 0, gross_earned: slip.gross_earned,
         pf_employee: slip.pf_employee, esi_employee: slip.esi_employee, pt: slip.pt,
         tds_monthly: slip.tds_monthly, total_deductions: slip.total_deductions,
         pf_employer: slip.pf_employer, esi_employer: slip.esi_employer, net_pay: slip.net_pay,
