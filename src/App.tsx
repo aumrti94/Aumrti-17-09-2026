@@ -38,6 +38,7 @@ const PatientsPage = lazy(() => import("./pages/patients/PatientsPage"));
 const NursingPage = lazy(() => import("./pages/nursing/NursingPage"));
 const WardNursingBoard = lazy(() => import("./pages/tv/WardNursingBoard"));
 const HRPage = lazy(() => import("./pages/hr/HRPage"));
+const MyHRPage = lazy(() => import("./pages/hr/MyHRPage"));
 const InventoryPage = lazy(() => import("./pages/inventory/InventoryPage"));
 const SettingsPage = lazy(() => import("./pages/settings/SettingsPage"));
 const SettingsBankAccountsPage = lazy(() => import("./pages/settings/SettingsBankAccountsPage"));
@@ -293,6 +294,7 @@ const App = () => (
             <Route path="/insurance" element={<RG path="/insurance"><MG moduleKey="insurance"><SM name="Insurance"><InsurancePage /></SM></MG></RG>} />
             <Route path="/payments" element={<RG path="/payments"><SM name="Payments"><PaymentsPage /></SM></RG>} />
             <Route path="/hr" element={<RG path="/hr"><MG moduleKey="hr"><SM name="HR & Payroll"><HRPage /></SM></MG></RG>} />
+            <Route path="/my-hr" element={<RG path="/my-hr"><SM name="My HR"><MyHRPage /></SM></RG>} />
             <Route path="/inventory" element={<RG path="/inventory"><MG moduleKey="inventory"><SM name="Inventory"><InventoryPage /></SM></MG></RG>} />
             <Route path="/quality" element={<RG path="/quality"><MG moduleKey="quality"><SM name="Quality"><QualityPage /></SM></MG></RG>} />
             <Route path="/nabh/compliance" element={<RG path="/nabh/compliance"><MG moduleKey="quality"><SM name="NABH Compliance Matrix"><NABHMatrixPage /></SM></MG></RG>} />

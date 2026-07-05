@@ -216,6 +216,9 @@ const HRPage: React.FC = () => {
           )}
         </div>
         <NABHBadge standardCodes={["HRM.1", "HRM.2", "HRM.3", "HRM.5"]} />
+        <Button size="sm" variant="ghost" onClick={() => navigate("/my-hr")}>
+          My HR
+        </Button>
         <Button size="sm" variant="outline" onClick={() => navigate("/settings/staff")}>
           + Add Staff
         </Button>
