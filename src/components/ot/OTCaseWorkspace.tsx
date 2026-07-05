@@ -48,6 +48,10 @@ const OTCaseWorkspace: React.FC<Props> = ({ schedule, hospitalId, onRefresh }) =
   const [markingPac, setMarkingPac] = useState(false);
   const [privilegeWarning, setPrivilegeWarning] = useState(false);
   const [privilegeWarningDismissed, setPrivilegeWarningDismissed] = useState(false);
+  const [showPrivGate, setShowPrivGate] = useState(false);
+  const [privReason, setPrivReason] = useState("");
+  const [pendingAction, setPendingAction] = useState<"confirm" | "start" | null>(null);
+  const [savingOverride, setSavingOverride] = useState(false);
 
   useEffect(() => {
     if (!schedule?.surgeon_id || !hospitalId) return;
@@ -86,6 +90,37 @@ const OTCaseWorkspace: React.FC<Props> = ({ schedule, hospitalId, onRefresh }) =
       return;
     }
     updateStatus("confirmed");
+  };
+
+  // High-risk gate: block confirm/start for a surgeon without an active privilege
+  // unless the acting user records an override reason (audited on the record).
+  const gateAction = (action: "confirm" | "start") => {
+    if (privilegeWarning) { setPendingAction(action); setPrivReason(""); setShowPrivGate(true); return; }
+    runAction(action);
+  };
+
+  const runAction = (action: "confirm" | "start") => {
+    if (action === "confirm") handleConfirmCase();
+    else updateStatus("in_progress", { actual_start_time: new Date().toISOString() });
+  };
+
+  const submitOverride = async () => {
+    if (!schedule || !pendingAction) return;
+    if (!privReason.trim()) { toast({ title: "Override reason required", variant: "destructive" }); return; }
+    setSavingOverride(true);
+    const { data: u } = await supabase.auth.getUser();
+    const { data: cu } = await supabase.from("users").select("id").eq("auth_user_id", u.user?.id || "").maybeSingle();
+    await (supabase as any).from("ot_schedules").update({
+      privilege_override_reason: privReason.trim(),
+      privilege_override_by: cu?.id || null,
+      privilege_override_at: new Date().toISOString(),
+    }).eq("id", schedule.id);
+    setSavingOverride(false);
+    setShowPrivGate(false);
+    const action = pendingAction;
+    setPendingAction(null);
+    toast({ title: "Privilege override recorded", description: "Proceeding with the case." });
+    runAction(action);
   };
 
   const markPacAndConfirm = async () => {
@@ -186,12 +221,12 @@ const OTCaseWorkspace: React.FC<Props> = ({ schedule, hospitalId, onRefresh }) =
             </span>
           </div>
           {schedule.status === "scheduled" && (
-            <button onClick={handleConfirmCase} className="text-[11px] bg-emerald-500 text-white px-3 py-1 rounded-md font-semibold hover:bg-emerald-600 active:scale-95 transition-all">
+            <button onClick={() => gateAction("confirm")} className="text-[11px] bg-emerald-500 text-white px-3 py-1 rounded-md font-semibold hover:bg-emerald-600 active:scale-95 transition-all">
               Confirm Case
             </button>
           )}
           {schedule.status === "confirmed" && (
-            <button onClick={() => updateStatus("in_progress", { actual_start_time: new Date().toISOString() })} className="text-[11px] bg-orange-500 text-white px-3 py-1 rounded-md font-semibold hover:bg-orange-600 active:scale-95 transition-all">
+            <button onClick={() => gateAction("start")} className="text-[11px] bg-orange-500 text-white px-3 py-1 rounded-md font-semibold hover:bg-orange-600 active:scale-95 transition-all">
               Start Case ▶
             </button>
           )}
@@ -265,6 +300,37 @@ const OTCaseWorkspace: React.FC<Props> = ({ schedule, hospitalId, onRefresh }) =
                 >
                   <CheckCircle2 size={13} />
                   {markingPac ? "Clearing PAC…" : "Mark PAC Cleared & Confirm"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Privilege override gate */}
+      {showPrivGate && (
+        <div className="bg-red-50 border-b border-red-300 px-5 py-3 flex-shrink-0">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={18} className="text-red-600 mt-0.5 shrink-0" />
+            <div className="flex-1">
+              <p className="text-sm font-bold text-red-800">Surgeon Privilege Not Verified</p>
+              <p className="text-xs text-red-700 mt-0.5">This surgeon has no active clinical privilege on record. To {pendingAction === "start" ? "start" : "confirm"} this case anyway, record an override reason (this is logged against the case).</p>
+              <textarea
+                className="w-full text-xs border border-red-300 rounded-md px-2 py-1.5 bg-white mt-2 placeholder:text-red-400 focus:outline-none focus:ring-1 focus:ring-red-500"
+                rows={2}
+                placeholder="Override justification (required — e.g. emergency, privilege renewal pending)…"
+                value={privReason}
+                onChange={(e) => setPrivReason(e.target.value)}
+              />
+              <div className="flex gap-2 mt-2">
+                <button onClick={() => { setShowPrivGate(false); setPendingAction(null); setPrivReason(""); }}
+                  className="text-xs px-3 py-1.5 rounded-md border border-red-300 text-red-700 hover:bg-red-100 transition-colors">
+                  Cancel
+                </button>
+                <button onClick={submitOverride} disabled={savingOverride}
+                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-red-600 text-white font-semibold hover:bg-red-700 active:scale-95 transition-all disabled:opacity-50">
+                  <CheckCircle2 size={13} />
+                  {savingOverride ? "Recording…" : "Override & Proceed"}
                 </button>
               </div>
             </div>
