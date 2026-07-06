@@ -57,29 +57,40 @@ const ShiftSwapPanel: React.FC<{ hospitalId: string; onSwapped?: () => void }> =
   const decide = async (req: SwapReq, approve: boolean) => {
     const { data: u } = await supabase.auth.getUser();
     const { data: cu } = await supabase.from("users").select("id").eq("auth_user_id", u.user?.id || "").maybeSingle();
-    await (supabase as any).from("shift_swap_requests")
-      .update({ status: approve ? "approved" : "rejected", reviewed_by: cu?.id || null, reviewed_at: new Date().toISOString() }).eq("id", req.id);
 
-    if (approve) {
-      // Swap shift_id/is_off between the two roster rows.
-      const [{ data: rowA }, { data: rowB }] = await Promise.all([
-        (supabase as any).from("duty_roster").select("id, shift_id, is_off").eq("user_id", req.requester_id).eq("roster_date", req.requester_date).maybeSingle(),
-        (supabase as any).from("duty_roster").select("id, shift_id, is_off").eq("user_id", req.counterparty_id).eq("roster_date", req.counterparty_date).maybeSingle(),
-      ]);
-      if (rowA && rowB) {
-        await Promise.all([
-          (supabase as any).from("duty_roster").update({ shift_id: rowB.shift_id, is_off: rowB.is_off, published_at: null }).eq("id", rowA.id),
-          (supabase as any).from("duty_roster").update({ shift_id: rowA.shift_id, is_off: rowA.is_off, published_at: null }).eq("id", rowB.id),
-        ]);
-        toast({ title: "Shifts swapped" });
-        onSwapped?.();
-      } else {
-        toast({ title: "Approved, but roster rows missing", description: "One of the staff has no shift assigned on that date — assign it in the grid.", variant: "destructive" });
-      }
-    } else {
+    if (!approve) {
+      await (supabase as any).from("shift_swap_requests")
+        .update({ status: "rejected", reviewed_by: cu?.id || null, reviewed_at: new Date().toISOString() }).eq("id", req.id);
+      setReqs((prev) => prev.map((r) => (r.id === req.id ? { ...r, status: "rejected" } : r)));
       toast({ title: "Swap rejected" });
+      return;
     }
-    setReqs((prev) => prev.map((r) => (r.id === req.id ? { ...r, status: approve ? "approved" : "rejected" } : r)));
+
+    // Approve: both staff must have a shift assigned on their swap dates first.
+    const [{ data: rowA }, { data: rowB }] = await Promise.all([
+      (supabase as any).from("duty_roster").select("id, shift_id, is_off").eq("user_id", req.requester_id).eq("roster_date", req.requester_date).maybeSingle(),
+      (supabase as any).from("duty_roster").select("id, shift_id, is_off").eq("user_id", req.counterparty_id).eq("roster_date", req.counterparty_date).maybeSingle(),
+    ]);
+    if (!rowA || !rowB) {
+      const who = !rowA ? `${req.requester_name} (${req.requester_date})` : `${req.counterparty_name} (${req.counterparty_date})`;
+      toast({
+        title: "Can't swap — no shift assigned",
+        description: `${who} has no shift in the roster. Assign shifts to both staff on the swap dates in the grid above, then approve. (Request left pending.)`,
+        variant: "destructive",
+      });
+      return; // leave request pending
+    }
+
+    // Both rows exist → perform the swap, then mark approved.
+    await Promise.all([
+      (supabase as any).from("duty_roster").update({ shift_id: rowB.shift_id, is_off: rowB.is_off, published_at: null }).eq("id", rowA.id),
+      (supabase as any).from("duty_roster").update({ shift_id: rowA.shift_id, is_off: rowA.is_off, published_at: null }).eq("id", rowB.id),
+    ]);
+    await (supabase as any).from("shift_swap_requests")
+      .update({ status: "approved", reviewed_by: cu?.id || null, reviewed_at: new Date().toISOString() }).eq("id", req.id);
+    setReqs((prev) => prev.map((r) => (r.id === req.id ? { ...r, status: "approved" } : r)));
+    toast({ title: "Shifts swapped" });
+    onSwapped?.();
   };
 
   const statusPill = (s: string) => (
