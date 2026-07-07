@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import type { OTSchedule } from "@/pages/ot/OTPage";
+import { getOnDutyStaff } from "@/lib/roster";
 
 interface TeamMember {
   id: string;
@@ -49,6 +50,7 @@ const OTTeamTab: React.FC<Props> = ({ schedule }) => {
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [staff, setStaff] = useState<StaffOption[]>([]);
   const [equipment, setEquipment] = useState<EquipmentRow[]>([]);
+  const [onDutyIds, setOnDutyIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const fetchTeam = async () => {
@@ -103,10 +105,19 @@ const OTTeamTab: React.FC<Props> = ({ schedule }) => {
       setEquipment(rows);
     };
 
+    const fetchOnDuty = async () => {
+      const { data: hid } = await supabase.rpc("get_user_hospital_id");
+      if (hid && schedule.scheduled_date) {
+        const onDuty = await getOnDutyStaff(hid as string, schedule.scheduled_date);
+        setOnDutyIds(new Set(onDuty.map((s) => s.user_id)));
+      }
+    };
+
     fetchTeam();
     fetchStaff();
     fetchEquipment();
-  }, [schedule.id]);
+    fetchOnDuty();
+  }, [schedule.id, schedule.scheduled_date]);
 
   const toggleEquipment = async (row: EquipmentRow) => {
     const next = !row.checked;
@@ -145,8 +156,9 @@ const OTTeamTab: React.FC<Props> = ({ schedule }) => {
   const getAssigned = (roleKey: string) => team.find((t) => t.role_in_ot === roleKey);
 
   const getFilteredStaff = (filter: string | null) => {
-    if (!filter) return staff;
-    return staff.filter((s) => s.role === filter);
+    const list = filter ? staff.filter((s) => s.role === filter) : staff;
+    // Surface rostered-on-duty staff first
+    return [...list].sort((a, b) => (onDutyIds.has(b.id) ? 1 : 0) - (onDutyIds.has(a.id) ? 1 : 0));
   };
 
   return (
@@ -175,7 +187,7 @@ const OTTeamTab: React.FC<Props> = ({ schedule }) => {
                     >
                       <option value="">Select...</option>
                       {filteredStaff.map((s) => (
-                        <option key={s.id} value={s.id}>{s.full_name}</option>
+                        <option key={s.id} value={s.id}>{s.full_name}{onDutyIds.has(s.id) ? " • On duty" : ""}</option>
                       ))}
                     </select>
                   )}

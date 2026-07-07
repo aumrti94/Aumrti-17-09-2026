@@ -5,6 +5,7 @@ import { differenceInHours, format } from "date-fns";
 import { Clock, AlertCircle, Syringe, Activity, FlaskConical, LayoutGrid } from "lucide-react";
 import { useLocation } from "react-router-dom";
 import { computePendingDoses } from "@/lib/marPending";
+import { getOnDutyByRole, type OnDutyStaff } from "@/lib/roster";
 
 interface BoardRow {
   id: string; // admission_id
@@ -24,6 +25,7 @@ const WardNursingBoard: React.FC = () => {
   const [rows, setRows] = useState<BoardRow[]>([]);
   const [hospitalId, setHospitalId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [onDutyNurses, setOnDutyNurses] = useState<OnDutyStaff[]>([]);
   
   // allow ?ward=xyz filtering
   const location = useLocation();
@@ -48,6 +50,10 @@ const WardNursingBoard: React.FC = () => {
       if (hId) setHospitalId(hId);
     }
     if (!hId) return;
+
+    // Nurses rostered on duty today
+    const rosterTodayStr = format(new Date(), "yyyy-MM-dd");
+    getOnDutyByRole(hId, rosterTodayStr, "nurse").then(setOnDutyNurses).catch(() => setOnDutyNurses([]));
 
     // 2. Fetch Active Admissions
     let admQuery = supabase
@@ -227,6 +233,21 @@ const WardNursingBoard: React.FC = () => {
           </div>
         </div>
       </header>
+
+      {/* On-duty nurses (rostered today) */}
+      {onDutyNurses.length > 0 && (
+        <div className="bg-zinc-950 border-b border-zinc-800 px-6 py-2 flex items-center gap-3 shrink-0 overflow-x-auto">
+          <span className="text-[11px] uppercase tracking-widest text-zinc-500 font-bold shrink-0">On Duty Today</span>
+          <div className="flex items-center gap-2">
+            {onDutyNurses.map((n) => (
+              <span key={n.user_id} className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 rounded-full px-2.5 py-1 shrink-0">
+                <span className="text-xs text-zinc-200 font-medium">{n.full_name}</span>
+                {n.shift_code && <span className="text-[9px] text-emerald-400 font-bold">{n.shift_code}{n.start_time ? ` ${n.start_time.slice(0, 5)}` : ""}</span>}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Grid */}
       <main className="flex-1 p-6 overflow-hidden flex flex-col">
