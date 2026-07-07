@@ -12,6 +12,7 @@ import { sendLabResultReady } from "@/lib/whatsapp-notifications";
 import { printDocument, printHeader } from "@/lib/printUtils";
 import { logRecordAccess } from "@/lib/ims";
 import { getLatestQcWarnings } from "@/lib/labQc";
+import { useCredentialGate } from "@/components/hr/useCredentialGate";
 import { evaluateAutoVerify } from "@/lib/labAutoVerify";
 import { checkDeterministicMixupIndicators } from "@/lib/labSampleIntegrity";
 import SampleMixupPanel from "./SampleMixupPanel";
@@ -149,6 +150,7 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
   const [samples, setSamples] = useState<any[]>([]);
   const [history, setHistory] = useState<any[]>([]);
   const [labHospitalId, setLabHospitalId] = useState<string>("");
+  const { guard, gateElement } = useCredentialGate(labHospitalId);
   const [validating, setValidating] = useState(false);
   const [autoRunAnomaly, setAutoRunAnomaly] = useState(false);
   const [hospitalName, setHospitalName] = useState<string>("");
@@ -824,24 +826,8 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
     }
   };
 
-  const handleValidateAll = async () => {
-    if (!currentUserId || validating) return;
-    if (qcBlocksRelease) {
-      toast({ title: "QC is in reject state — supervisor override required before release", variant: "destructive" });
-      return;
-    }
-    if (mixupBlocksRelease) {
-      toast({ title: "Sample mix-up indicator unacknowledged — review before release", variant: "destructive" });
-      return;
-    }
+  const releaseNow = async () => {
     setValidating(true);
-    const unacknowledgedCritical = items.filter(i => (i.result_flag === "CH" || i.result_flag === "CL") && !i.critical_acknowledged);
-    if (unacknowledgedCritical.length > 0) {
-      toast({ title: "Acknowledge critical values before releasing", variant: "destructive" });
-      setValidating(false); // was missing — the early return left the button locked
-      return;
-    }
-
     await supabase.from("lab_order_items").update({
       status: "reported",
       validated_at: new Date().toISOString(),
@@ -856,6 +842,25 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
     setAutoRunAnomaly(true); // auto-trigger AI anomaly analysis after validation
     fetchItems(); onRefresh();
     toast({ title: "✓ Report released" });
+  };
+
+  const handleValidateAll = async () => {
+    if (!currentUserId || validating) return;
+    if (qcBlocksRelease) {
+      toast({ title: "QC is in reject state — supervisor override required before release", variant: "destructive" });
+      return;
+    }
+    if (mixupBlocksRelease) {
+      toast({ title: "Sample mix-up indicator unacknowledged — review before release", variant: "destructive" });
+      return;
+    }
+    const unacknowledgedCritical = items.filter(i => (i.result_flag === "CH" || i.result_flag === "CL") && !i.critical_acknowledged);
+    if (unacknowledgedCritical.length > 0) {
+      toast({ title: "Acknowledge critical values before releasing", variant: "destructive" });
+      return;
+    }
+    // License-validity gate on the validating clinician before release
+    guard({ clinicianId: currentUserId, module: "lab", action: "validate_result", recordId: order.id }, releaseNow);
   };
 
   const allResultsEntered = items.length > 0 && items.every(i => i.result_value || localValues[i.id]);
@@ -1094,6 +1099,7 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
   return (
     <>
     {waCard}
+    {gateElement}
     <div className="flex-1 flex flex-col overflow-hidden bg-muted/30">
       {/* Order Header */}
       <div className="h-[68px] shrink-0 bg-card border-b border-border px-5 flex items-center gap-4">

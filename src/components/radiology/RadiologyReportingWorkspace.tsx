@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useCredentialGate } from "@/components/hr/useCredentialGate";
 import { cn } from "@/lib/utils";
 import { useHospitalContext } from "@/contexts/HospitalContext";
 import { hasTabAccess } from "@/lib/tabPermissions";
@@ -101,6 +102,7 @@ const RadiologyReportingWorkspace: React.FC<Props> = ({ order, hospitalId, onSta
   const { toast } = useToast();
   const { logAudit } = useAIAudit();
   const { permissions, role } = useHospitalContext();
+  const { guard, gateElement } = useCredentialGate(hospitalId);
   const [report, setReport] = useState<Report | null>(null);
   const [pcpndt, setPcpndt] = useState<PcpndtForm | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -236,10 +238,15 @@ const RadiologyReportingWorkspace: React.FC<Props> = ({ order, hospitalId, onSta
     toast({ title: "Draft saved" });
   };
 
-  const validateAndSign = async () => {
+  const validateAndSign = async (overridden = false) => {
     if (!report || !currentUserId) return;
     if (!findings.trim() || !impression.trim()) {
       toast({ title: "Findings and Impression are required", variant: "destructive" });
+      return;
+    }
+    // License-validity gate on the reporting radiologist before signing
+    if (!overridden) {
+      guard({ clinicianId: currentUserId, module: "radiology", action: "validate_report", recordId: report.id }, () => validateAndSign(true));
       return;
     }
 
@@ -548,6 +555,7 @@ const RadiologyReportingWorkspace: React.FC<Props> = ({ order, hospitalId, onSta
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-muted/30">
+      {gateElement}
       {/* Study Header */}
       <div className="shrink-0 bg-card border-b border-border px-5 py-3 flex items-center gap-4">
         {/* Modality icon */}

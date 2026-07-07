@@ -9,6 +9,7 @@ import { Printer, Save, PenLine, CheckCircle2, Lock, Sparkles } from "lucide-rea
 import { printDocument, printHeader } from "@/lib/printUtils";
 import { logRecordAccess } from "@/lib/ims";
 import { draftHistopathImpression } from "@/lib/labReportNarrative";
+import { useCredentialGate } from "@/components/hr/useCredentialGate";
 
 // Pathology case detail / structured report / dual sign-off (lab plan Phase 7).
 
@@ -43,6 +44,7 @@ interface Props {
 
 const PathologyCaseWorkspace: React.FC<Props> = ({ caseId, hospitalId, onChanged }) => {
   const { toast } = useToast();
+  const { guard, gateElement } = useCredentialGate(hospitalId);
   const { role } = useHospitalContext();
   const [pcase, setPcase] = useState<PathologyCase | null>(null);
   const [gross, setGross] = useState("");
@@ -147,6 +149,12 @@ const PathologyCaseWorkspace: React.FC<Props> = ({ caseId, hospitalId, onChanged
       toast({ title: "Final sign-off must be a different pathologist", variant: "destructive" });
       return;
     }
+    // License-validity gate on the signing pathologist before release
+    guard({ clinicianId: currentUserId, module: "lab", action: "validate_result", recordId: pcase.id }, doFinalSignOff);
+  };
+
+  const doFinalSignOff = async () => {
+    if (!pcase || !currentUserId) return;
     setSaving(true);
     await (supabase as any).from("pathology_cases").update({
       status: "signed_off",
@@ -203,6 +211,7 @@ const PathologyCaseWorkspace: React.FC<Props> = ({ caseId, hospitalId, onChanged
 
   return (
     <div className="flex-1 overflow-y-auto p-5 space-y-4">
+      {gateElement}
       {/* Header */}
       <div className="flex items-center gap-3">
         <div>

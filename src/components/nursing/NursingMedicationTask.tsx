@@ -9,6 +9,7 @@ import type { NursingTask } from "@/pages/nursing/NursingPage";
 import { isHighAlert } from "@/lib/high-alert-meds";
 import HighAlertDoubleCheckModal from "./HighAlertDoubleCheckModal";
 import AllergyBanner from "@/components/clinical/AllergyBanner";
+import { useCredentialGate } from "@/components/hr/useCredentialGate";
 
 interface Props {
   task: NursingTask;
@@ -34,6 +35,7 @@ const holdReasons = [
 
 const NursingMedicationTask: React.FC<Props> = ({ task, onComplete }) => {
   const { toast } = useToast();
+  const { guard, gateElement } = useCredentialGate(task.hospitalId || null);
   const [checks, setChecks] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
   const [showHold, setShowHold] = useState(false);
@@ -55,6 +57,14 @@ const NursingMedicationTask: React.FC<Props> = ({ task, onComplete }) => {
   }, [task.patientId]);
 
   const allChecked = fiveRights(task).every((r) => checks[r.key]);
+
+  // License-validity gate on the administering nurse before "given"
+  const initiateGive = async () => {
+    const proceed = () => { if (drugIsHighAlert) setShowDoubleCheck(true); else saveOutcome("given"); };
+    const { data: u } = await supabase.auth.getUser();
+    const { data: cu } = await supabase.from("users").select("id").eq("auth_user_id", u.user?.id || "").maybeSingle();
+    guard({ clinicianId: cu?.id || "", module: "nursing", action: "medication_admin", recordId: task.medicationId || null }, proceed);
+  };
 
   // Returns the new/updated nursing_mar row's id on success, or undefined on failure — callers
   // that need to link a follow-up record (e.g. the high-alert double-check) to this exact dose
@@ -121,6 +131,7 @@ const NursingMedicationTask: React.FC<Props> = ({ task, onComplete }) => {
 
   return (
     <div className="max-w-xl mx-auto space-y-6">
+      {gateElement}
       {/* Allergy Banner — always shown before medication administration */}
       <AllergyBanner allergies={patientAllergies} />
 
@@ -183,10 +194,7 @@ const NursingMedicationTask: React.FC<Props> = ({ task, onComplete }) => {
       {!showHold && !showNotGiven && (
         <div className="flex gap-3">
           <Button
-            onClick={() => {
-              if (drugIsHighAlert) { setShowDoubleCheck(true); }
-              else { saveOutcome("given"); }
-            }}
+            onClick={initiateGive}
             disabled={!allChecked || saving}
             className="flex-1 h-[52px] text-sm font-bold bg-green-600 hover:bg-green-700"
           >
