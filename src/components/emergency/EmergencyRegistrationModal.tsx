@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { Search, Bot } from "lucide-react";
 import { classifyTriage, type TriageClassification } from "@/lib/clinicalPredictions";
 import { routeEdPatientToMortuary } from "@/lib/edMortuary";
+import OutstandingBalanceBanner from "@/components/billing/OutstandingBalanceBanner";
 
 interface Props {
   open: boolean;
@@ -279,6 +280,7 @@ const EmergencyRegistrationModal: React.FC<Props> = ({ open, onClose, hospitalId
                 <button onClick={() => { setLinkedPatient(null); setName("Unknown"); }} className="text-[10px] text-slate-500 hover:text-slate-300 mt-0.5">Unlink</button>
               </div>
             )}
+            {linkedPatient && <OutstandingBalanceBanner patientId={linkedPatient.id} hospitalId={hospitalId} variant="dark" />}
           </div>
 
           {/* Age + Gender */}

@@ -6,7 +6,7 @@ import { hasTabAccess, parseModuleTabs, MODULE_TABS } from "./tabPermissions";
 describe("nursing MODULE_TABS + hasTabAccess", () => {
   it("declares the nursing sub-tabs including the Phase 9 lab-collection tab", () => {
     const keys = MODULE_TABS.nursing.map((t) => t.key);
-    expect(keys).toEqual(["tasks", "kanban", "care_plans", "io", "restraints", "icu_monitor", "risk_assessments", "collection"]);
+    expect(keys).toEqual(["tasks", "kanban", "care_plans", "io", "restraints", "icu_monitor", "risk_assessments", "collection", "radiology"]);
   });
 
   it("default-allow: with no restriction configured, every nursing tab is accessible to a nurse", () => {
@@ -35,7 +35,7 @@ describe("nursing MODULE_TABS + hasTabAccess", () => {
   it("parseModuleTabs (the settings-page helper) surfaces all nursing tabs as true by default", () => {
     const parsed = parseModuleTabs("nursing", {});
     expect(Object.keys(parsed).sort()).toEqual(
-      ["care_plans", "collection", "icu_monitor", "io", "kanban", "restraints", "risk_assessments", "tasks"]
+      ["care_plans", "collection", "icu_monitor", "io", "kanban", "radiology", "restraints", "risk_assessments", "tasks"]
     );
     expect(Object.values(parsed).every((v) => v === true)).toBe(true);
   });

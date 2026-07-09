@@ -30,6 +30,24 @@ const RevenueIntelligencePanel: React.FC<Props> = ({ bill, hospitalId, lineItems
   const [alerts, setAlerts] = useState<RevenueAlert[]>([]);
   const [expanded, setExpanded] = useState(true);
 
+  // Load any already-persisted, unresolved alerts (e.g. the deterministic
+  // package_overage advisory written by LineItemsTab) so they're visible without
+  // requiring a manual AI scan click.
+  useEffect(() => {
+    if (!hospitalId || !bill.id) return;
+    supabase
+      .from("revenue_alerts")
+      .select("id, alert_type, description, estimated_amount, severity")
+      .eq("bill_id", bill.id)
+      .eq("resolved", false)
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          setAlerts(data as RevenueAlert[]);
+          setScanned(true);
+        }
+      });
+  }, [bill.id, hospitalId]);
+
   if (!bill.encounter_id && !bill.admission_id) return null;
 
   const runAIScan = async () => {
@@ -133,7 +151,9 @@ Return ONLY JSON array (empty array if no issues):
           success: true,
         });
 
-        setAlerts(validAlerts);
+        // Merge with (rather than replace) any deterministic alerts already shown —
+        // e.g. package_overage isn't AI-generated and shouldn't disappear on rescan.
+        setAlerts(prev => [...prev.filter(a => a.alert_type === "package_overage"), ...validAlerts]);
       } catch {
         setAlerts([]);
       }

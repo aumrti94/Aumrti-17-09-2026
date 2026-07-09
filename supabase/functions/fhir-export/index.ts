@@ -725,8 +725,19 @@ async function buildRadiologyReport(
   const practRes = fhirPractitioner(doctor ?? { id: "unknown", full_name: "Unknown" });
   const reportRes = fhirDiagnosticReportRadiology(sourceId, order as Record<string, unknown>, report, patient.id as string, practRes.id);
 
-  // ImagingStudy stub (DICOM if available)
-  const imagingStudy = {
+  // Radiology completion plan Phase 5: enrich ImagingStudy with real series/instance data from
+  // dicom_files when this order's images were uploaded via the Supabase DICOM path. Hospitals
+  // that only use an external PACS (or the legacy dicom_pacs_url) have no dicom_files rows —
+  // for those, fall back to the original stub shape unchanged.
+  const { data: dicomFiles } = await sb
+    .from("dicom_files")
+    .select("series_instance_uid, sop_instance_uid, sop_class_uid, modality, series_description, series_number, instance_number")
+    .eq("order_id", sourceId)
+    .eq("hospital_id", hospitalId)
+    .order("series_number", { ascending: true })
+    .order("instance_number", { ascending: true });
+
+  const imagingStudyBase = {
     resourceType: "ImagingStudy",
     id: `imaging-${sourceId}`,
     status: "available",
@@ -736,6 +747,40 @@ async function buildRadiologyReport(
     ...(order.accession_number ? { identifier: [{ system: "urn:dicom:uid", value: order.accession_number as string }] } : {}),
     basedOn: [{ reference: `DiagnosticReport/${sourceId}` }],
   };
+
+  let imagingStudy: Record<string, unknown> = imagingStudyBase;
+
+  if (dicomFiles && dicomFiles.length > 0) {
+    const seriesMap = new Map<string, typeof dicomFiles>();
+    for (const f of dicomFiles) {
+      const key = (f.series_instance_uid as string) || "unknown-series";
+      if (!seriesMap.has(key)) seriesMap.set(key, []);
+      seriesMap.get(key)!.push(f);
+    }
+
+    const series = Array.from(seriesMap.entries()).map(([uid, files], idx) => ({
+      uid,
+      number: idx + 1,
+      modality: {
+        system: "http://dicom.nema.org/resources/ontology/DCM",
+        code: (files[0].modality as string) || (order.modality_type as string),
+      },
+      ...(files[0].series_description ? { description: files[0].series_description as string } : {}),
+      numberOfInstances: files.length,
+      instance: files.map((f, i) => ({
+        uid: (f.sop_instance_uid as string) || `${uid}-instance-${i}`,
+        sopClass: { system: "urn:ietf:rfc:3986", value: (f.sop_class_uid as string) || "unknown" },
+        number: (f.instance_number as number) ?? i + 1,
+      })),
+    }));
+
+    imagingStudy = {
+      ...imagingStudyBase,
+      numberOfSeries: series.length,
+      numberOfInstances: dicomFiles.length,
+      series,
+    };
+  }
 
   const entries = [reportRes, patientRes, practRes, imagingStudy];
   return makeBundle("collection", sourceId, entries, (order.order_date ?? order.created_at) as string);

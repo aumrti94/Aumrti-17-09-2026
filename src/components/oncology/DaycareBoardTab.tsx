@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { autoPostJournalEntry } from "@/lib/accounting";
+import { recordServiceCharge } from "@/lib/serviceBilling";
 import { getRate } from "@/lib/serviceRates";
+import { calcGST, roundCurrency } from "@/lib/currency";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -222,6 +224,19 @@ const DaycareBoardTab: React.FC<DaycareBoardTabProps> = ({ showNewOrder, onClose
               const billDate = new Date().toISOString().split("T")[0];
               const billNum = await generateBillNumber(hospitalId, "CHEMO");
 
+              // Look up GST from service_master (same gst_applicable/gst_percent
+              // pattern used elsewhere) instead of hardcoding 0% regardless of
+              // configuration.
+              const { data: chemoSvc } = await supabase
+                .from("service_master")
+                .select("gst_percent, gst_applicable")
+                .eq("hospital_id", hospitalId)
+                .eq("item_type", "oncology")
+                .maybeSingle();
+              const gstPct = chemoSvc?.gst_applicable ? (Number(chemoSvc.gst_percent) || 0) : 0;
+              const gstAmt = calcGST(totalDrugCost, gstPct);
+              const grandTotal = roundCurrency(totalDrugCost + gstAmt);
+
               const { data: chemoBill } = await supabase.from("bills").insert({
                 hospital_id: hospitalId,
                 patient_id: order.patient_id,
@@ -231,11 +246,12 @@ const DaycareBoardTab: React.FC<DaycareBoardTabProps> = ({ showNewOrder, onClose
                 bill_date: billDate,
                 bill_status: "final",
                 payment_status: "unpaid",
-                total_amount: totalDrugCost,
-                balance_due: totalDrugCost,
+                total_amount: grandTotal,
+                balance_due: grandTotal,
                 subtotal: totalDrugCost,
+                gst_amount: gstAmt,
                 taxable_amount: totalDrugCost,
-                patient_payable: totalDrugCost,
+                patient_payable: grandTotal,
                 notes: `Chemotherapy: ${order.cycle_number ? "Cycle " + order.cycle_number : ""}`,
               }).select("id").maybeSingle();
 
@@ -251,11 +267,20 @@ const DaycareBoardTab: React.FC<DaycareBoardTabProps> = ({ showNewOrder, onClose
                     item_type: "daycare",
                     description: `Chemotherapy Cycle ${order.cycle_number || ""} — ${(order.chemo_order_drugs || []).map((d: any) => d.drug_name).join(", ")}`,
                     quantity: 1, unit_rate: totalDrugCost,
-                    taxable_amount: totalDrugCost, gst_percent: 0,
-                    gst_amount: 0, total_amount: totalDrugCost,
+                    taxable_amount: totalDrugCost, gst_percent: gstPct,
+                    gst_amount: gstAmt, total_amount: grandTotal,
                     source_module: "oncology",
                     source_record_id: orderId,
                     source_dedupe_key: dedupeKey,
+                  });
+
+                  recordServiceCharge({
+                    hospitalId, patientId: order.patient_id, admissionId: order.admission_id || null,
+                    serviceModule: "oncology",
+                    serviceRefId: orderId,
+                    serviceName: `Chemotherapy Cycle ${order.cycle_number || ""}`,
+                    unitRate: totalDrugCost, gstPercent: gstPct, gstAmount: gstAmt, totalAmount: grandTotal,
+                    billId: chemoBill.id,
                   });
                 }
 
@@ -264,7 +289,7 @@ const DaycareBoardTab: React.FC<DaycareBoardTabProps> = ({ showNewOrder, onClose
                   triggerEvent: "bill_finalized_oncology",
                   sourceModule: "oncology",
                   sourceId: chemoBill.id,
-                  amount: totalDrugCost,
+                  amount: grandTotal,
                   description: `Oncology Daycare Revenue - Bill ${billNum}`,
                   hospitalId,
                   postedBy: authUser?.id || "",

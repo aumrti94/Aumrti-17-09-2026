@@ -7,11 +7,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { AlertTriangle, Lock, Loader2, RotateCcw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { generateBillNumber } from "@/hooks/useBillNumber";
-import { autoPostJournalEntry } from "@/lib/accounting";
 import { formatCurrency } from "@/lib/currency";
+import { processPharmacyReturn, STOCK_ACTIONS, type StockAction } from "@/lib/pharmacyReturns";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
+import { useHospitalContext } from "@/contexts/HospitalContext";
+import { hasActionAccess } from "@/lib/tabPermissions";
 
 interface DispensedItem {
   id: string;
@@ -19,6 +21,7 @@ interface DispensedItem {
   batch_number: string;
   batch_id: string;
   drug_id: string;
+  drug_schedule: string | null;
   dispensing_id: string;
   quantity_dispensed: number;
   unit_price: number;
@@ -30,6 +33,7 @@ interface DispensedItem {
 interface ReturnLine {
   qty: number;
   reason: string;
+  stockAction: StockAction;
 }
 
 interface PharmacyUser {
@@ -58,6 +62,9 @@ const DrugReturnModal: React.FC<Props> = ({
   admissionId, patientId, patientName, hospitalId, onClose, onComplete,
 }) => {
   const { toast } = useToast();
+  const { permissions, role } = useHospitalContext();
+  const canProcessReturn = hasActionAccess("pharmacy", "process_return", permissions, role);
+  const canQuarantineDestroy = hasActionAccess("pharmacy", "quarantine_destroy_stock", permissions, role);
   const [items, setItems] = useState<DispensedItem[]>([]);
   const [lines, setLines] = useState<Record<string, ReturnLine>>({});
   const [step, setStep] = useState<"select" | "ndps_confirm">("select");
@@ -80,33 +87,36 @@ const DrugReturnModal: React.FC<Props> = ({
       .select(`
         id, drug_name, batch_number, batch_id, drug_id, dispensing_id,
         quantity_dispensed, unit_price, gst_percent, is_ndps, return_status,
-        return_quantity,
+        return_quantity, drug_master(drug_schedule),
         pharmacy_dispensing!inner(admission_id, hospital_id)
       `)
       .eq("pharmacy_dispensing.admission_id", admissionId)
       .eq("pharmacy_dispensing.hospital_id", hospitalId)
       .gt("quantity_dispensed", 0);
 
-    const unreturned = (data || []).filter(
-      (i: any) => !i.return_status || i.return_status === "none"
-    );
+    const unreturned = (data || [])
+      .filter((i: any) => !i.return_status || i.return_status === "none")
+      .map((i: any) => ({ ...i, drug_schedule: i.drug_master?.drug_schedule || null }));
     setItems(unreturned);
     setLoading(false);
   };
 
   const fetchPharmacists = async () => {
-    const { data } = await (supabase as any)
+    // app_role enum has no senior_pharmacist/chief_pharmacist value — querying for them
+    // throws (invalid enum literal), which silently emptied this dropdown.
+    const { data, error } = await (supabase as any)
       .from("users")
       .select("id, full_name, role")
       .eq("hospital_id", hospitalId)
-      .in("role", ["pharmacist", "senior_pharmacist", "chief_pharmacist", "hospital_admin"]);
+      .in("role", ["pharmacist", "hospital_admin"]);
+    if (error) console.error("fetchPharmacists failed:", error.message);
     setPharmacistUsers(data || []);
   };
 
   const updateLine = (itemId: string, patch: Partial<ReturnLine>) => {
     setLines(prev => ({
       ...prev,
-      [itemId]: { qty: 0, reason: "", ...prev[itemId], ...patch },
+      [itemId]: { qty: 0, reason: "", stockAction: "returned_to_stock", ...prev[itemId], ...patch },
     }));
   };
 
@@ -122,6 +132,10 @@ const DrugReturnModal: React.FC<Props> = ({
   }, 0);
 
   const handleProceed = () => {
+    if (!canProcessReturn) {
+      toast({ title: "You don't have permission to process returns", variant: "destructive" });
+      return;
+    }
     if (activeLines.length === 0) {
       toast({ title: "Select at least one item to return", variant: "destructive" });
       return;
@@ -154,7 +168,6 @@ const DrugReturnModal: React.FC<Props> = ({
       if (!userData) throw new Error("User not found");
 
       const userId = userData.id;
-      const now    = new Date().toISOString();
 
       // ── 1. Find original pharmacy bill for this admission ──────────────────
       const { data: pharmBill } = await supabase
@@ -167,166 +180,59 @@ const DrugReturnModal: React.FC<Props> = ({
         .limit(1)
         .maybeSingle();
 
-      // ── 2. Process each returned item ─────────────────────────────────────
-      let totalBase   = 0;
-      let totalGstCr  = 0;
-      const creditLinePayloads: any[] = [];
-
-      for (const item of activeLines) {
-        const l    = lines[item.id];
-        const base = l.qty * item.unit_price;
-        const gst  = parseFloat((base * (item.gst_percent / 100)).toFixed(2));
-
-        totalBase  += base;
-        totalGstCr += gst;
-
-        // 2a. Update dispensing item
-        await (supabase as any)
-          .from("pharmacy_dispensing_items")
-          .update({
-            return_quantity:     l.qty,
-            return_reason:       l.reason,
-            return_status:       "confirmed",
-            returned_at:         now,
-            returned_by:         userId,
-            return_confirmed_by: hasNdps && item.is_ndps ? ndpsPharmacistId || userId : userId,
-            ...(item.is_ndps && ndpsSeniorId ? { ndps_return_senior_id: ndpsSeniorId } : {}),
-          })
-          .eq("id", item.id);
-
-        // 2b. Restore batch stock
-        const { data: batchRow } = await supabase
-          .from("drug_batches")
-          .select("quantity_available")
-          .eq("id", item.batch_id)
-          .maybeSingle();
-
-        if (batchRow) {
-          await supabase
-            .from("drug_batches")
-            .update({ quantity_available: (batchRow.quantity_available ?? 0) + l.qty })
-            .eq("id", item.batch_id);
-        }
-
-        // 2c. NDPS return register entry (immutable — trigger prevents mutation)
-        if (item.is_ndps && item.drug_id) {
-          const { data: lastNdps } = await supabase
-            .from("ndps_register")
-            .select("balance_after")
-            .eq("drug_id", item.drug_id)
-            .eq("hospital_id", hospitalId)
-            .order("created_at", { ascending: false })
-            .limit(1)
-            .maybeSingle();
-
-          const newBalance = Number(lastNdps?.balance_after ?? 0) + l.qty;
-
-          await supabase.from("ndps_register").insert({
-            hospital_id:           hospitalId,
-            drug_id:               item.drug_id,
-            drug_name:             item.drug_name,
-            transaction_type:      "return",
-            quantity:              l.qty,
-            balance_after:         newBalance,
-            patient_name:          patientName,
-            pharmacist_id:         ndpsPharmacistId || userId,
-            second_pharmacist_id:  ndpsSeniorId || null,
-            remarks:               `Return: ${l.reason}. Dispensing item ${item.id}`,
-          });
-        }
-
-        creditLinePayloads.push({
-          itemId:      item.id,
-          drug_name:   item.drug_name,
-          qty:         l.qty,
-          unit_price:  item.unit_price,
-          gst_percent: item.gst_percent,
-          gst_credit:  gst,
-          line_credit: parseFloat((base + gst).toFixed(2)),
-        });
-      }
-
-      const totalCredit = parseFloat((totalBase + totalGstCr).toFixed(2));
-
-      // ── 3. Credit note ────────────────────────────────────────────────────
-      const cnNumber = await generateBillNumber(hospitalId, "CN");
-
       const isInsurance = pharmBill
         ? Number(pharmBill.insurance_amount ?? 0) > 0
         : false;
 
-      const { data: cn, error: cnErr } = await (supabase as any)
-        .from("credit_notes")
-        .insert({
-          hospital_id:                  hospitalId,
-          credit_note_number:           cnNumber,
-          patient_id:                   patientId,
-          admission_id:                 admissionId,
-          original_bill_id:             pharmBill?.id ?? null,
-          dispensing_id:                activeLines[0]?.dispensing_id ?? null,
-          credit_amount:                parseFloat(totalBase.toFixed(2)),
-          gst_credit:                   parseFloat(totalGstCr.toFixed(2)),
-          total_credit:                 totalCredit,
-          return_reason:                [...new Set(activeLines.map(i => lines[i.id].reason))].join(", "),
-          requires_insurance_amendment: isInsurance,
-          insurance_amendment_notes:    isInsurance && pharmBill?.payment_status === "paid"
+      // ── 2. Process the return through the shared pharmacy-return helper ────
+      const result = await processPharmacyReturn(
+        {
+          hospitalId,
+          patientId,
+          patientName,
+          admissionId,
+          billId: pharmBill?.id ?? null,
+          billPaymentStatus: pharmBill?.payment_status ?? null,
+          userId,
+          ndpsPharmacistId: ndpsPharmacistId || null,
+          ndpsSeniorId: ndpsSeniorId || null,
+          requiresInsuranceAmendment: isInsurance,
+          insuranceAmendmentNotes: isInsurance && pharmBill?.payment_status === "paid"
             ? "Claim amount reduced by credit note — amendment required if claim already submitted"
             : null,
-          status:        "approved",
-          created_by:    userId,
-          approved_by:   userId,
-          approved_at:   now,
+        },
+        activeLines.map(item => {
+          const l = lines[item.id];
+          return {
+            dispensingItemId: item.id,
+            dispensingId: item.dispensing_id,
+            drugId: item.drug_id,
+            drugSchedule: item.drug_schedule,
+            drugName: item.drug_name,
+            batchId: item.batch_id,
+            batchNumber: item.batch_number,
+            quantity: l.qty,
+            unitPrice: item.unit_price,
+            gstPercent: item.gst_percent,
+            isNdps: item.is_ndps,
+            reason: l.reason,
+            stockAction: l.stockAction || "returned_to_stock",
+          };
         })
-        .select("id")
-        .maybeSingle();
-
-      if (cnErr || !cn) throw new Error(`Credit note creation failed: ${cnErr?.message}`);
-
-      // 3a. Credit note line items
-      await (supabase as any).from("credit_note_items").insert(
-        creditLinePayloads.map(p => ({
-          hospital_id:       hospitalId,
-          credit_note_id:    cn.id,
-          dispensing_item_id: p.itemId,
-          drug_name:         p.drug_name,
-          return_quantity:   p.qty,
-          unit_rate:         p.unit_price,
-          gst_percent:       p.gst_percent,
-          gst_credit:        p.gst_credit,
-          line_credit:       p.line_credit,
-        }))
       );
 
-      // ── 4. Journal entry: reverse pharmacy revenue ────────────────────────
-      await autoPostJournalEntry({
-        triggerEvent:  "credit_note_pharmacy",
-        sourceModule:  "pharmacy",
-        sourceId:      cn.id,
-        amount:        totalCredit,
-        description:   `Drug Return Credit Note ${cnNumber} — ${patientName}`,
-        hospitalId,
-        postedBy:      user.id,
-      });
+      if (result.totalRefund > 0 && !result.creditNoteId) {
+        throw new Error("Credit note creation failed");
+      }
 
-      // ── 5. Refund payable — only when bill already paid ───────────────────
-      if (pharmBill?.payment_status === "paid" && totalCredit > 0) {
-        await (supabase as any).from("refund_payables").insert({
-          hospital_id:    hospitalId,
-          patient_id:     patientId,
-          admission_id:   admissionId,
-          credit_note_id: cn.id,
-          amount:         totalCredit,
-          status:         "pending_approval",
-          requested_by:   userId,
-          notes:          `Drug return: ${cnNumber}. Requires billing supervisor approval before processing.`,
-        });
+      if (result.refundPayableCreated) {
         toast({
           title: "Refund payable created",
-          description: `₹${formatCurrency(totalCredit)} pending billing supervisor approval.`,
+          description: `₹${formatCurrency(result.totalRefund)} pending billing supervisor approval.`,
         });
       }
 
-      // ── 6. Insurance flag ─────────────────────────────────────────────────
+      // ── 3. Insurance flag ─────────────────────────────────────────────────
       if (isInsurance) {
         const alreadySubmitted = await (async () => {
           const { data: claim } = await (supabase as any)
@@ -346,18 +252,18 @@ const DrugReturnModal: React.FC<Props> = ({
         }
       }
 
-      // ── 7. NABH evidence ──────────────────────────────────────────────────
+      // ── 4. NABH evidence ──────────────────────────────────────────────────
       logNABHEvidence(
         hospitalId,
         "MOM.7",
-        `Drug return processed: ${patientName}, CN ${cnNumber}, ` +
-        `${activeLines.length} item(s), Credit ₹${formatCurrency(totalCredit)}. ` +
+        `Drug return processed: ${patientName}, CN ${result.creditNoteNumber}, ` +
+        `${activeLines.length} item(s), Credit ₹${formatCurrency(result.totalRefund)}. ` +
         `Reasons: ${[...new Set(activeLines.map(i => lines[i.id].reason))].join(", ")}` +
         (hasNdps ? ". NDPS items returned — register entry created." : ""),
         "compliant"
       );
 
-      toast({ title: `Return processed — Credit Note ${cnNumber} (₹${formatCurrency(totalCredit)})` });
+      toast({ title: `Return processed — Credit Note ${result.creditNoteNumber} (₹${formatCurrency(result.totalRefund)})` });
       onComplete();
     } catch (err: any) {
       toast({ title: "Return failed", description: err.message, variant: "destructive" });
@@ -446,6 +352,25 @@ const DrugReturnModal: React.FC<Props> = ({
                             </SelectContent>
                           </Select>
                         </div>
+                        {!!line?.qty && (
+                          <div className="flex gap-1.5">
+                            {STOCK_ACTIONS.filter(a => a.value === "returned_to_stock" || canQuarantineDestroy).map(a => (
+                              <button
+                                key={a.value}
+                                type="button"
+                                onClick={() => updateLine(item.id, { stockAction: a.value })}
+                                className={cn(
+                                  "flex-1 px-2 py-1 text-[10px] rounded border font-medium transition-colors",
+                                  (line?.stockAction ?? "returned_to_stock") === a.value
+                                    ? a.cls
+                                    : "bg-background border-border hover:bg-muted"
+                                )}
+                              >
+                                {a.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -475,7 +400,8 @@ const DrugReturnModal: React.FC<Props> = ({
               <Button
                 size="sm"
                 className="flex-1"
-                disabled={activeLines.length === 0 || submitting}
+                disabled={activeLines.length === 0 || submitting || !canProcessReturn}
+                title={!canProcessReturn ? "You don't have permission to process returns" : undefined}
                 onClick={handleProceed}
               >
                 {hasNdps ? "Next: NDPS Confirmation →" : "Confirm Return"}
@@ -529,7 +455,7 @@ const DrugReturnModal: React.FC<Props> = ({
                   </SelectTrigger>
                   <SelectContent>
                     {pharmacistUsers
-                      .filter(u => ["senior_pharmacist", "chief_pharmacist", "hospital_admin"].includes(u.role))
+                      .filter(u => u.role === "hospital_admin")
                       .map(u => (
                         <SelectItem key={u.id} value={u.id} className="text-[13px]">
                           {u.full_name} ({u.role})
@@ -547,7 +473,8 @@ const DrugReturnModal: React.FC<Props> = ({
               <Button
                 size="sm"
                 className="flex-1 bg-destructive hover:bg-destructive/90"
-                disabled={!ndpsPharmacistId || !ndpsSeniorId || submitting}
+                disabled={!ndpsPharmacistId || !ndpsSeniorId || submitting || !canProcessReturn}
+                title={!canProcessReturn ? "You don't have permission to process returns" : undefined}
                 onClick={submitReturn}
               >
                 {submitting

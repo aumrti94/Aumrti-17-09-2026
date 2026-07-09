@@ -19,6 +19,11 @@ interface SystemTotals {
   net_banking: number;
   insurance: number;
   other: number;
+  /** Refunds processed today (refund_payables, status='processed') — net cash OUT. */
+  refunds: number;
+  /** Advance deposits received today not yet mirrored into bill_payments (syncAdvanceToBill
+   *  skips silently when no draft IPD bill exists yet) — net cash IN otherwise invisible here. */
+  advances: number;
   total: number;
 }
 
@@ -45,7 +50,7 @@ const MODE_LABELS: Record<string, string> = {
   cash: "Cash", upi: "UPI", card: "Card",
   cheque: "Cheque", net_banking: "Net Banking", insurance: "Insurance / TPA",
 };
-const EMPTY_TOTALS: SystemTotals = { cash: 0, upi: 0, card: 0, cheque: 0, net_banking: 0, insurance: 0, other: 0, total: 0 };
+const EMPTY_TOTALS: SystemTotals = { cash: 0, upi: 0, card: 0, cheque: 0, net_banking: 0, insurance: 0, other: 0, refunds: 0, advances: 0, total: 0 };
 
 // bill_line_items.item_type → Tally revenue head label
 const LINE_ITEM_GROUP: Record<string, string> = {
@@ -150,7 +155,41 @@ const DailyCashClosurePage: React.FC = () => {
         totals.insurance += r.amount;
       else totals.other += r.amount;
     }
-    totals.total = totals.cash + totals.upi + totals.card + totals.cheque + totals.net_banking + totals.insurance + totals.other;
+    // Refunds processed today — net cash OUT that bill_payments alone never showed,
+    // so a refund used to create an unexplained physical-count shortfall.
+    const { data: refundsData } = await (supabase as any)
+      .from("refund_payables")
+      .select("amount")
+      .eq("hospital_id", hospitalId)
+      .eq("status", "processed")
+      .gte("processed_at", closureDate)
+      .lte("processed_at", closureDate + "T23:59:59");
+    totals.refunds = (refundsData || []).reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
+
+    // Advance deposits received today that syncAdvanceToBill hasn't (yet) mirrored
+    // into bill_payments — e.g. collected before a draft IPD bill exists. Only the
+    // unmirrored portion counts here; the mirrored portion is already inside
+    // totals.cash/upi/etc via the bill_payments query above.
+    const { data: advancesData } = await (supabase as any)
+      .from("ipd_advances")
+      .select("amount")
+      .eq("hospital_id", hospitalId)
+      .eq("transaction_type", "deposit")
+      .gte("created_at", closureDate)
+      .lte("created_at", closureDate + "T23:59:59");
+    const advanceDepositsTotal = (advancesData || []).reduce((s: number, a: any) => s + Number(a.amount || 0), 0);
+
+    const { data: mirroredAdvancesData } = await (supabase as any)
+      .from("bill_payments")
+      .select("amount")
+      .eq("hospital_id", hospitalId)
+      .eq("payment_date", closureDate)
+      .eq("is_advance", true);
+    const advanceMirroredTotal = (mirroredAdvancesData || []).reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
+    totals.advances = Math.max(0, advanceDepositsTotal - advanceMirroredTotal);
+
+    totals.total = totals.cash + totals.upi + totals.card + totals.cheque + totals.net_banking + totals.insurance + totals.other
+      - totals.refunds + totals.advances;
     setSystemTotals(totals);
 
     // Fetch revenue by service type for today's finalized bills (for Tally summary)
@@ -298,6 +337,8 @@ const DailyCashClosurePage: React.FC = () => {
       systemTotals.cheque    > 0 && `<tr><td class="lbl">Bank — Cheque</td><td class="amt">₹ ${fmtAmt(systemTotals.cheque)}</td><td class="tag dr">DR</td></tr>`,
       systemTotals.insurance > 0 && `<tr><td class="lbl">AR — Insurance / TPA</td><td class="amt">₹ ${fmtAmt(systemTotals.insurance)}</td><td class="tag dr">DR</td></tr>`,
       systemTotals.other     > 0 && `<tr><td class="lbl">Other Receipts</td><td class="amt">₹ ${fmtAmt(systemTotals.other)}</td><td class="tag dr">DR</td></tr>`,
+      systemTotals.advances  > 0 && `<tr><td class="lbl">Advances (not yet billed)</td><td class="amt">₹ ${fmtAmt(systemTotals.advances)}</td><td class="tag dr">DR</td></tr>`,
+      systemTotals.refunds   > 0 && `<tr><td class="lbl">Refunds Paid Out</td><td class="amt">₹ ${fmtAmt(systemTotals.refunds)}</td><td class="tag cr">CR</td></tr>`,
     ].filter(Boolean).join("");
 
     const revenueRows = Object.entries(revenueByHead)
@@ -490,6 +531,18 @@ const DailyCashClosurePage: React.FC = () => {
               <div className="flex justify-between items-center text-[12px]">
                 <span className="text-muted-foreground w-32">Other</span>
                 <span className="font-mono font-semibold tabular-nums">{fmt(systemTotals.other)}</span>
+              </div>
+            )}
+            {systemTotals.advances > 0 && (
+              <div className="flex justify-between items-center text-[12px] text-emerald-700">
+                <span className="w-32">Advances (not yet billed)</span>
+                <span className="font-mono font-semibold tabular-nums">+{fmt(systemTotals.advances)}</span>
+              </div>
+            )}
+            {systemTotals.refunds > 0 && (
+              <div className="flex justify-between items-center text-[12px] text-destructive">
+                <span className="w-32">Refunds Paid Out</span>
+                <span className="font-mono font-semibold tabular-nums">-{fmt(systemTotals.refunds)}</span>
               </div>
             )}
           </div>

@@ -35,13 +35,20 @@ export const autoPostJournalEntry = async (data: PostingData) => {
       .maybeSingle();
 
     if (!rule) {
-      // Log the missed posting so the admin can see what's not being journalised
+      // Log the missed posting so the admin can see what's not being journalised.
+      // Stores enough of the original PostingData (description/posted_by/
+      // entry_date/cost_centre_id) that a later retry can re-post the exact
+      // same entry once the missing rule is added, not a reconstructed guess.
       (supabase as any).from("accounting_posting_failures").insert({
-        hospital_id:   data.hospitalId,
-        trigger_event: data.triggerEvent,
-        source_module: data.sourceModule,
-        source_id:     data.sourceId,
-        amount:        data.amount,
+        hospital_id:     data.hospitalId,
+        trigger_event:   data.triggerEvent,
+        source_module:   data.sourceModule,
+        source_id:       data.sourceId,
+        amount:          data.amount,
+        description:     data.description,
+        posted_by:       data.postedBy || null,
+        entry_date:      data.entryDate || null,
+        cost_centre_id:  data.costCentreId || null,
       }).catch(() => {});
       return null;
     }
@@ -185,6 +192,70 @@ export const postManualExpenseJournal = async (data: {
     return entry;
   } catch (err) {
     console.error("Manual expense posting failed:", err);
+    return null;
+  }
+};
+
+// Multi-line (>2) balanced journal by account CODE. Used where a single event splits across
+// more than two accounts (e.g. GRN: Dr goods + Dr GST input credit / Cr AP). If any account
+// code can't be resolved the whole entry is skipped and logged to accounting_posting_failures.
+export const postMultiLineJournal = async (data: {
+  hospitalId: string;
+  postedBy: string;
+  sourceModule: string;
+  sourceId: string;
+  description: string;
+  entryDate?: string;
+  triggerEvent?: string;
+  lines: { accountCode: string; debit?: number; credit?: number; description?: string }[];
+}) => {
+  try {
+    const codes = Array.from(new Set(data.lines.map((l) => l.accountCode)));
+    const { data: accts } = await (supabase as any)
+      .from("chart_of_accounts")
+      .select("id, code, name")
+      .eq("hospital_id", data.hospitalId)
+      .in("code", codes);
+    const byCode: Record<string, any> = {};
+    (accts || []).forEach((a: any) => { byCode[a.code] = a; });
+
+    const totalDebit = data.lines.reduce((s, l) => s + (l.debit || 0), 0);
+    const totalCredit = data.lines.reduce((s, l) => s + (l.credit || 0), 0);
+    const missing = data.lines.some((l) => !byCode[l.accountCode]);
+    if (missing || Math.abs(totalDebit - totalCredit) > 0.01) {
+      await (supabase as any).from("accounting_posting_failures").insert({
+        hospital_id: data.hospitalId, trigger_event: data.triggerEvent || "multi_line",
+        source_module: data.sourceModule, source_id: data.sourceId,
+        amount: totalDebit, description: data.description, posted_by: data.postedBy || null,
+        entry_date: data.entryDate || null,
+      }).catch(() => {});
+      return null;
+    }
+
+    const year = new Date().getFullYear();
+    const { data: seq } = await supabase.rpc("next_seq", { p_hospital_id: data.hospitalId, p_type: "journal" });
+    if (seq == null) return null;
+    const entryNumber = `JE-${year}-${String(seq).padStart(4, "0")}`;
+
+    const { data: entry, error } = await (supabase as any).from("journal_entries").insert({
+      hospital_id: data.hospitalId, entry_number: entryNumber,
+      entry_date: data.entryDate || new Date().toISOString().split("T")[0],
+      description: data.description, entry_type: `auto_${data.sourceModule}` as any,
+      source_module: data.sourceModule, source_id: data.sourceId,
+      total_debit: totalDebit, total_credit: totalCredit, is_balanced: true, posted_by: data.postedBy,
+    }).select().maybeSingle();
+    if (error || !entry) return null;
+
+    await supabase.from("journal_line_items").insert(
+      data.lines.map((l) => ({
+        hospital_id: data.hospitalId, journal_id: entry.id,
+        account_id: byCode[l.accountCode].id, account_code: l.accountCode, account_name: byCode[l.accountCode].name,
+        debit_amount: l.debit || 0, credit_amount: l.credit || 0, description: l.description || data.description,
+      }))
+    );
+    return entry;
+  } catch (err) {
+    console.error("Multi-line posting failed:", err);
     return null;
   }
 };

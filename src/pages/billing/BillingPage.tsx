@@ -19,6 +19,7 @@ import AdvanceReceiptModal from "@/components/billing/AdvanceReceiptModal";
 import CollectionsTab from "@/components/billing/tabs/CollectionsTab";
 import PendingCollectionsPanel from "@/components/billing/PendingCollectionsPanel";
 import DiscountApprovalsInbox from "@/components/billing/DiscountApprovalsInbox";
+import RefundApprovalsInbox from "@/components/billing/RefundApprovalsInbox";
 import LeakageDashboard from "@/components/billing/RevenueLeak/LeakageDashboard";
 
 export interface BillRecord {
@@ -57,6 +58,7 @@ const BILLING_TABS = [
   { key: "pending", label: "🔴 Pending Payments" },
   { key: "leakage", label: "📉 Revenue Leakage" },
   { key: "approvals", label: "🔐 Approvals", hasBadge: true },
+  { key: "refund_approvals", label: "💰 Refunds", hasBadge: true },
 ] as const;
 
 const BillingPage: React.FC = () => {
@@ -79,6 +81,7 @@ const BillingPage: React.FC = () => {
   const [dischargeBillCreated, setDischargeBillCreated] = useState(false);
   const [activeTab, setActiveTab] = useState("bills");
   const [pendingDiscountCount, setPendingDiscountCount] = useState(0);
+  const [pendingRefundCount, setPendingRefundCount] = useState(0);
 
   useEffect(() => {
     const loadHospital = async () => {
@@ -371,6 +374,16 @@ const BillingPage: React.FC = () => {
       .then(({ count }: any) => setPendingDiscountCount(count || 0));
   }, [hospitalId]);
 
+  useEffect(() => {
+    if (!hospitalId) return;
+    (supabase as any)
+      .from("refund_payables")
+      .select("id", { count: "exact", head: true })
+      .eq("hospital_id", hospitalId)
+      .eq("status", "pending_approval")
+      .then(({ count }: any) => setPendingRefundCount(count || 0));
+  }, [hospitalId]);
+
   const selectedBill = bills.find((b) => b.id === selectedBillId) || null;
 
   const todayCollection = bills
@@ -424,6 +437,14 @@ const BillingPage: React.FC = () => {
                 activeTab === "approvals" ? "bg-white text-primary" : "bg-amber-500 text-white"
               )}>
                 {pendingDiscountCount}
+              </span>
+            )}
+            {t.key === "refund_approvals" && pendingRefundCount > 0 && (
+              <span className={cn(
+                "text-[10px] px-1.5 py-0.5 rounded-full font-bold min-w-[18px] text-center",
+                activeTab === "refund_approvals" ? "bg-white text-primary" : "bg-amber-500 text-white"
+              )}>
+                {pendingRefundCount}
               </span>
             )}
           </button>
@@ -489,6 +510,19 @@ const BillingPage: React.FC = () => {
         <div className="flex-1 overflow-hidden">
           {hospitalId && (
             <DiscountApprovalsInbox
+              hospitalId={hospitalId}
+              onBillSelect={(billId) => {
+                setActiveTab("bills");
+                setSelectedBillId(billId);
+                setDateFilter("month");
+              }}
+            />
+          )}
+        </div>
+      ) : activeTab === "refund_approvals" ? (
+        <div className="flex-1 overflow-hidden">
+          {hospitalId && (
+            <RefundApprovalsInbox
               hospitalId={hospitalId}
               onBillSelect={(billId) => {
                 setActiveTab("bills");

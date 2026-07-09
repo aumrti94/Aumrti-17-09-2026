@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { logInsuranceUpdate } from "@/lib/billAmendmentLogger";
+import { recalculateBillTotalsSafe } from "@/lib/billTotals";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -182,8 +183,6 @@ const InsuranceTab: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
     // patientShare (room excess + deductible + co-pay) is already computed above.
     // Use insurancePays (net) so the patient's balance correctly reflects their share.
     const netInsurancePays = tpaConfig && showCopayCard ? insurancePays : (Number(coveredAmount) || 0);
-    const patientPayable   = Math.max(0, bill.total_amount - bill.advance_received - netInsurancePays);
-    const balanceDue       = Math.max(0, patientPayable - bill.paid_amount);
 
     const notesObj: Record<string, any> = {
       tpa: tpaName,
@@ -206,21 +205,77 @@ const InsuranceTab: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
       notesObj.reimbursement_bank = { bankName, accountNumber, ifsc, accountHolder };
     }
 
-    await supabase.from("bills").update({
+    const { error } = await supabase.from("bills").update({
       insurance_amount: netInsurancePays,
-      patient_payable:  patientPayable,
-      balance_due:      balanceDue,
       notes:            JSON.stringify(notesObj),
     }).eq("id", bill.id);
 
-    // Audit log
+    if (error) {
+      toast({ title: "Failed to save insurance details", variant: "destructive" });
+      return;
+    }
+
+    await recalculateBillTotalsSafe(bill.id);
+
+    // Audit log — re-fetch the authoritative post-recalculation patient_payable
+    // rather than hand-computing it, now that recalculateBillTotalsSafe (not this
+    // component) is what actually derives it.
+    const { data: updatedBill } = await supabase
+      .from("bills")
+      .select("patient_payable")
+      .eq("id", bill.id)
+      .maybeSingle();
+
     logInsuranceUpdate(bill.id, bill.hospital_id, {
       insurance_amount: bill.insurance_amount ?? 0,
       patient_payable:  bill.patient_payable ?? 0,
     }, {
       insurance_amount: netInsurancePays,
-      patient_payable:  patientPayable,
+      patient_payable:  updatedBill?.patient_payable ?? 0,
     });
+
+    // Keep the real claims pipeline in sync — a bill with genuine TPA info entered
+    // here was previously invisible to ClaimsToSubmit, which sources eligible bills
+    // purely from admissions.insurance_type != 'self_pay' plus "no existing claim
+    // row for this bill". Additive only: nothing above is removed or changed.
+    if (bill.admission_id && hospitalId && tpaName.trim() && netInsurancePays > 0) {
+      const { data: admission } = await supabase
+        .from("admissions")
+        .select("insurance_type")
+        .eq("id", bill.admission_id)
+        .maybeSingle();
+      if (admission && (!admission.insurance_type || admission.insurance_type === "self_pay")) {
+        await supabase.from("admissions").update({ insurance_type: tpaName.trim() }).eq("id", bill.admission_id);
+      }
+
+      const { data: existingClaim } = await (supabase as any)
+        .from("insurance_claims")
+        .select("id")
+        .eq("bill_id", bill.id)
+        .maybeSingle();
+
+      if (!existingClaim) {
+        const { data: preAuth } = await (supabase as any)
+          .from("insurance_pre_auth")
+          .select("id")
+          .eq("admission_id", bill.admission_id)
+          .eq("hospital_id", hospitalId)
+          .eq("status", "approved")
+          .order("approved_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        await (supabase as any).from("insurance_claims").insert({
+          hospital_id: hospitalId,
+          bill_id: bill.id,
+          patient_id: bill.patient_id,
+          pre_auth_id: preAuth?.id ?? null,
+          tpa_name: tpaName.trim(),
+          claimed_amount: netInsurancePays,
+          status: "draft",
+        });
+      }
+    }
 
     toast({ title: "Insurance details saved" });
     onRefresh();

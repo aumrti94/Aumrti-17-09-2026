@@ -11,9 +11,9 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 function openWhatsAppAlert(rec: any) {
-  const itemName = rec.item?.name ?? "Unknown Item";
+  const itemName = rec.item?.item_name ?? "Unknown Item";
   const qty = rec.recommended_quantity;
-  const unit = rec.item?.unit_of_measure ?? "";
+  const unit = rec.item?.uom ?? "";
   const priority = (rec.priority ?? "medium").toUpperCase();
   const stockout = rec.expected_stockout_date
     ? ` Expected stockout: ${new Date(rec.expected_stockout_date).toLocaleDateString("en-IN")}.`
@@ -37,6 +37,7 @@ export default function ProcurementRecommendationsPage() {
   const [filter, setFilter] = useState<"all" | "pending" | "critical">("all");
   const [refreshing, setRefreshing] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [forecasting, setForecasting] = useState(false);
   const [showCreatePO, setShowCreatePO] = useState(false);
   const [poVendorId, setPoVendorId] = useState("");
   const [creatingPO, setCreatingPO] = useState(false);
@@ -47,6 +48,21 @@ export default function ProcurementRecommendationsPage() {
     (supabase as any).from("vendors").select("id, vendor_name").eq("is_active", true)
       .then(({ data }: any) => setVendors(data || []));
   }, [hospitalId]);
+
+  const runForecast = async () => {
+    if (!hospitalId) return;
+    setForecasting(true);
+    try {
+      const { data, error } = await (supabase as any).rpc("run_inventory_forecast", { p_hospital_id: hospitalId });
+      if (error) throw error;
+      toast({ title: `Forecast complete — ${data ?? 0} at-risk item${data === 1 ? "" : "s"} predicted` });
+      qc.invalidateQueries({ queryKey: ["procurement-recommendations"] });
+    } catch (err: any) {
+      toast({ title: "Forecast failed", description: err.message, variant: "destructive" });
+    } finally {
+      setForecasting(false);
+    }
+  };
 
   const refreshStockoutEstimates = async () => {
     if (!hospitalId) return;
@@ -200,7 +216,7 @@ export default function ProcurementRecommendationsPage() {
       if (!hospitalId) return [];
       const { data, error } = await supabase
         .from("procurement_recommendations")
-        .select("*, item:inventory_items(name, unit_of_measure)")
+        .select("*, item:inventory_items(item_name, uom)")
         .eq("hospital_id", hospitalId)
         .order("priority_score", { ascending: false });
       if (error) throw error;
@@ -247,6 +263,10 @@ export default function ProcurementRecommendationsPage() {
           </div>
         </div>
         <div className="flex gap-2">
+          <Button size="sm" onClick={runForecast} disabled={forecasting} className="text-xs h-8 gap-1.5">
+            {forecasting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <TrendingUp className="h-3.5 w-3.5" />}
+            {forecasting ? "Forecasting…" : "Run AI Forecast"}
+          </Button>
           <Button size="sm" variant="outline" onClick={scanReorderBreaches} disabled={scanning} className="text-xs h-8 gap-1.5">
             {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ScanLine className="h-3.5 w-3.5" />}
             {scanning ? "Scanning…" : "Scan Reorder Breaches"}
@@ -313,10 +333,15 @@ export default function ProcurementRecommendationsPage() {
                       {rec.priority_score != null && (
                         <span className="text-[11px] text-muted-foreground">Score: {rec.priority_score}/100</span>
                       )}
+                      {(rec as any).confidence_score != null && (
+                        <span className={cn("text-[11px] font-medium", (rec as any).confidence_score >= 60 ? "text-emerald-600" : "text-amber-600")}>
+                          Confidence: {Math.round((rec as any).confidence_score)}%
+                        </span>
+                      )}
                     </div>
-                    <p className="font-semibold text-foreground">{(rec as any).item?.name ?? "Unknown Item"}</p>
+                    <p className="font-semibold text-foreground">{(rec as any).item?.item_name ?? "Unknown Item"}</p>
                     <p className="text-sm text-muted-foreground mt-0.5">
-                      Recommended qty: <strong>{rec.recommended_quantity} {(rec as any).item?.unit_of_measure}</strong>
+                      Recommended qty: <strong>{rec.recommended_quantity} {(rec as any).item?.uom}</strong>
                       {rec.current_stock != null && <> · Current stock: {rec.current_stock}</>}
                       {rec.forecast_7d != null && <> · 7-day forecast: {rec.forecast_7d}</>}
                     </p>

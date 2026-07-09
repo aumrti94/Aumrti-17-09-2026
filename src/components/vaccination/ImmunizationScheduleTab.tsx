@@ -8,6 +8,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { autoPostJournalEntry } from "@/lib/accounting";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
+import { recordServiceCharge } from "@/lib/serviceBilling";
+import { calcGST, roundCurrency } from "@/lib/currency";
 import { useToast } from "@/hooks/use-toast";
 
 interface Vaccine {
@@ -110,6 +112,18 @@ const ImmunizationScheduleTab: React.FC<ImmunizationScheduleTabProps> = ({ patie
                 const today = new Date().toISOString().split("T")[0];
                 const billNum = await generateBillNumber(hospitalId, "VACC");
 
+                // Look up GST from service_master (same lookup RecordVaccineTab.tsx
+                // already uses) instead of hardcoding 0% regardless of configuration.
+                const { data: vaccSvc } = await supabase
+                    .from("service_master")
+                    .select("gst_percent, gst_applicable")
+                    .eq("hospital_id", hospitalId)
+                    .ilike("name", `%${selectedVaccine.name}%`)
+                    .maybeSingle();
+                const gstPct = vaccSvc?.gst_applicable ? (Number(vaccSvc.gst_percent) || 0) : 0;
+                const gstAmt = calcGST(costNum, gstPct);
+                const grandTotal = roundCurrency(costNum + gstAmt);
+
                 const { data: newBill, error: billErr } = await supabase.from("bills").insert({
                     hospital_id: hospitalId,
                     patient_id: patientId,
@@ -118,12 +132,12 @@ const ImmunizationScheduleTab: React.FC<ImmunizationScheduleTabProps> = ({ patie
                     bill_date: today,
                     bill_status: "final",
                     payment_status: "unpaid",
-                    total_amount: costNum,
-                    balance_due: costNum,
+                    total_amount: grandTotal,
+                    balance_due: grandTotal,
                     subtotal: costNum,
-                    gst_amount: 0,
+                    gst_amount: gstAmt,
                     taxable_amount: costNum,
-                    patient_payable: costNum,
+                    patient_payable: grandTotal,
                 }).select("id").maybeSingle();
 
                 if (billErr || !newBill) throw billErr || new Error("Failed to create bill");
@@ -136,10 +150,18 @@ const ImmunizationScheduleTab: React.FC<ImmunizationScheduleTabProps> = ({ patie
                     quantity: 1,
                     unit_rate: costNum,
                     taxable_amount: costNum,
-                    gst_percent: 0,
-                    gst_amount: 0,
-                    total_amount: costNum,
+                    gst_percent: gstPct,
+                    gst_amount: gstAmt,
+                    total_amount: grandTotal,
                     source_module: "vaccination"
+                });
+
+                recordServiceCharge({
+                    hospitalId, patientId,
+                    serviceModule: "vaccination",
+                    serviceName: `Vaccine: ${selectedVaccine.name} (Batch: ${batchNo})`,
+                    unitRate: costNum, gstPercent: gstPct, gstAmount: gstAmt, totalAmount: grandTotal,
+                    billId: newBill.id,
                 });
 
                 await recalculateBillTotalsSafe(newBill.id);
@@ -148,7 +170,7 @@ const ImmunizationScheduleTab: React.FC<ImmunizationScheduleTabProps> = ({ patie
                     triggerEvent: "bill_finalized_vaccination",
                     sourceModule: "vaccination",
                     sourceId: newBill.id,
-                    amount: costNum,
+                    amount: grandTotal,
                     description: `Vaccination Revenue - ${selectedVaccine.name}`,
                     hospitalId,
                     postedBy: userId || "",

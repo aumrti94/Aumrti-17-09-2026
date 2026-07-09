@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Banknote, Smartphone, CreditCard, Building2, Printer, MessageSquare, FileText, RotateCcw, Check, Loader2 } from "lucide-react";
 import type { CartItem } from "./RetailCart";
 import { findPatientByPhone } from "@/lib/patient-records";
@@ -53,11 +54,39 @@ const RetailPayment: React.FC<Props> = ({
   const [amountReceived, setAmountReceived] = useState<number>(0);
   const [processing, setProcessing] = useState(false);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
+  const [pharmacistUsers, setPharmacistUsers] = useState<{ id: string; full_name: string; role: string }[]>([]);
+  const [secondPharmacistId, setSecondPharmacistId] = useState("");
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return;
+      supabase.from("users").select("id").eq("auth_user_id", user.id).maybeSingle()
+        .then(({ data }) => setCurrentUserId(data?.id || null));
+    });
+  }, []);
 
   const billableItems = items.filter(i => !i.out_of_stock);
   const change = Math.max(0, amountReceived - netTotal);
   const hasScheduleH = billableItems.some(i => i.drug_schedule === "H" || i.drug_schedule === "H1");
-  const canComplete = billableItems.length > 0 && netTotal > 0;
+  // NDPS/Schedule-X drugs need a dual-pharmacist sign-off at the point of sale, same control
+  // the IP dispensing workspace already enforces — H1 does not require this, only NDPS does.
+  const hasNdpsItem = billableItems.some(i => i.is_ndps);
+  const canComplete = billableItems.length > 0 && netTotal > 0 && (!hasNdpsItem || !!secondPharmacistId);
+
+  useEffect(() => {
+    if (!hasNdpsItem) return;
+    // app_role enum has no senior_pharmacist/chief_pharmacist value.
+    (supabase as any)
+      .from("users")
+      .select("id, full_name, role")
+      .eq("hospital_id", hospitalId)
+      .in("role", ["pharmacist", "hospital_admin"])
+      .then(({ data, error }: any) => {
+        if (error) console.error("fetch pharmacists for NDPS sign-off failed:", error.message);
+        setPharmacistUsers(data || []);
+      });
+  }, [hasNdpsItem, hospitalId]);
 
   const handleCompleteSale = async () => {
     if (!canComplete) return;
@@ -169,8 +198,9 @@ const RetailPayment: React.FC<Props> = ({
             .eq("id", item.batch_id);
         }
 
-        // NDPS register
-        if (item.is_ndps) {
+        // NDPS/Schedule-H1 register — H1 (Rule 65) needs register logging too, but never
+        // the NDPS dual-signoff step.
+        if (item.is_ndps || item.drug_schedule === "H1") {
           const { data: lastEntry } = await supabase
             .from("ndps_register")
             .select("balance_after")
@@ -190,6 +220,13 @@ const RetailPayment: React.FC<Props> = ({
             balance_after: Math.max(0, Number(lastEntry?.balance_after || 0) - item.qty),
             patient_name: resolvedCustomerName,
             pharmacist_id: userData.id,
+            ...(item.is_ndps && secondPharmacistId
+              ? {
+                  second_pharmacist_id: secondPharmacistId,
+                  countersigned_by: secondPharmacistId,
+                  countersigned_at: new Date().toISOString(),
+                }
+              : {}),
           });
         }
       }
@@ -431,6 +468,27 @@ const RetailPayment: React.FC<Props> = ({
               <p className="text-[11px] text-amber-800 dark:text-amber-300 font-medium">
                 ⚠️ Prescription required for {items.filter(i => i.drug_schedule === "H" || i.drug_schedule === "H1").length} drug(s)
               </p>
+            </div>
+          )}
+
+          {/* NDPS dual sign-off — required before a Schedule X/NDPS item can be sold */}
+          {hasNdpsItem && (
+            <div className="mt-3 bg-destructive/5 border border-destructive/20 rounded-lg p-3 space-y-2">
+              <p className="text-[11px] text-destructive font-semibold">
+                🔴 NDPS Drug — Second Pharmacist Sign-off Required
+              </p>
+              <Select value={secondPharmacistId} onValueChange={setSecondPharmacistId}>
+                <SelectTrigger className="h-9 text-[12px]">
+                  <SelectValue placeholder="Select confirming pharmacist…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {pharmacistUsers.filter(u => u.id !== currentUserId).map(u => (
+                    <SelectItem key={u.id} value={u.id} className="text-[12px]">
+                      {u.full_name} ({u.role})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           )}
         </div>

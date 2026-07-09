@@ -4,6 +4,7 @@ import { generateBillNumber } from "@/hooks/useBillNumber";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
 import { autoPostJournalEntry } from "@/lib/accounting";
 import { getModuleDefaultRate } from "@/lib/serviceRates";
+import { recordServiceCharge } from "@/lib/serviceBilling";
 
 export interface PostChargeOpts {
   hospitalId: string;
@@ -191,6 +192,18 @@ export async function postCharge(opts: PostChargeOpts): Promise<PostChargeResult
 
     // 5. Recalculate bill totals
     await recalculateBillTotalsSafe(billId);
+
+    // Record for LeakageDashboard.tsx — postCharge is a second, parallel
+    // billing engine (Dialysis/Physio) that never wrote service_charges.
+    recordServiceCharge({
+      hospitalId, patientId, admissionId, encounterId,
+      serviceModule: sourceModule,
+      serviceRefId: sourceId,
+      serviceName: description,
+      quantity, unitRate: resolvedRate,
+      gstPercent: gstPct, gstAmount, totalAmount,
+      billId, performedBy: orderedBy,
+    });
 
     // 6. IPD: debit the advance balance
     if (isIPD && admissionId && totalAmount > 0) {

@@ -14,6 +14,8 @@ import DischargeTATTimer from "@/components/ipd/DischargeTATTimer";
 import SepsisWarningBanner from "@/components/ipd/SepsisWarningBanner";
 import ADRDetectorPanel from "@/components/ipd/ADRDetectorPanel";
 import { autoPullAdmissionCharges } from "@/lib/ipdBilling";
+import { logAudit } from "@/lib/auditLog";
+import { Textarea } from "@/components/ui/textarea";
 
 interface Props {
   admissionId: string;
@@ -40,16 +42,29 @@ const IPDOverviewTab: React.FC<Props> = ({ admissionId, hospitalId, onTabChange,
   const [savingStep, setSavingStep] = useState<string | null>(null);
   const [workflowSteps, setWorkflowSteps] = useState<Array<{ name: string; role: string; required: boolean; timeLimit: number }> | null>(null);
   const [customClearances, setCustomClearances] = useState<Record<string, boolean>>({});
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
+  // Discharge billing-completeness gate (Phase 11 — hard block, not advisory)
+  const [otBillingOk, setOtBillingOk] = useState<boolean | null>(null);
+  const [checkingBilling, setCheckingBilling] = useState(false);
+  const [dischargeOverrideRecorded, setDischargeOverrideRecorded] = useState(false);
+  const [showDischargeOverridePrompt, setShowDischargeOverridePrompt] = useState(false);
+  const [dischargeOverrideReason, setDischargeOverrideReason] = useState("");
+  const [submittingOverride, setSubmittingOverride] = useState(false);
 
   useEffect(() => {
     if (!admissionId) return;
     // Fetch current user for reconciliation panel
     supabase.auth.getUser().then(({ data }) => {
       if (data.user) setReconUserId(data.user.id);
+      if (data.user) {
+        supabase.from("users").select("id").eq("auth_user_id", data.user.id).maybeSingle()
+          .then(({ data: userData }) => setCurrentUserId(userData?.id || null));
+      }
     });
     const loadStatus = async () => {
       const { data } = await (supabase as any).from("admissions")
-        .select("billing_cleared, admitting_diagnosis, medical_cleared, pharmacy_cleared, discharge_summary_done, discharge_type, discharge_ordered_at, discharged_at, custom_clearances, patient_id")
+        .select("billing_cleared, admitting_diagnosis, medical_cleared, pharmacy_cleared, discharge_summary_done, discharge_type, discharge_ordered_at, discharged_at, custom_clearances, patient_id, discharge_billing_override_reason")
         .eq("id", admissionId).maybeSingle() as { data: any };
       if (data?.patient_id) setReconPatientId(data.patient_id);
 
@@ -67,6 +82,11 @@ const IPDOverviewTab: React.FC<Props> = ({ admissionId, hospitalId, onTabChange,
             pharmacy_cleared: false,
             discharge_ordered_at: null,
             custom_clearances: {},
+            discharge_billing_override_reason: null,
+            discharge_billing_override_by: null,
+            discharge_billing_override_at: null,
+            lama_billing_ack_by: null,
+            lama_billing_ack_at: null,
           } as any).eq("id", admissionId);
 
           setMedicalCleared(false);
@@ -74,6 +94,8 @@ const IPDOverviewTab: React.FC<Props> = ({ admissionId, hospitalId, onTabChange,
           setPharmacyCleared(false);
           setDischargeSummaryDone(false);
           setCustomClearances({});
+          setDischargeOverrideRecorded(false);
+          setOtBillingOk(null);
           setAdmDiagnosis(data?.admitting_diagnosis || "");
           if (data?.discharge_type) setDischargeType(data.discharge_type);
           toast({
@@ -89,6 +111,7 @@ const IPDOverviewTab: React.FC<Props> = ({ admissionId, hospitalId, onTabChange,
       setCustomClearances((data?.custom_clearances as Record<string, boolean>) || {});
       setAdmDiagnosis(data?.admitting_diagnosis || "");
       if (data?.discharge_type) setDischargeType(data.discharge_type);
+      setDischargeOverrideRecorded(!!data?.discharge_billing_override_reason);
 
       // Only auto-sync when today's discharge workflow is active — prevents a stale paid bill
       // from re-setting billing_cleared=true right after a daily reset.
@@ -185,6 +208,11 @@ const IPDOverviewTab: React.FC<Props> = ({ admissionId, hospitalId, onTabChange,
       discharge_ordered_at: null,
       discharge_type: null,
       custom_clearances: {},
+      discharge_billing_override_reason: null,
+      discharge_billing_override_by: null,
+      discharge_billing_override_at: null,
+      lama_billing_ack_by: null,
+      lama_billing_ack_at: null,
     }).eq("id", admissionId);
     if (error) {
       toast({ title: "Reset failed", description: error.message, variant: "destructive" });
@@ -195,6 +223,8 @@ const IPDOverviewTab: React.FC<Props> = ({ admissionId, hospitalId, onTabChange,
       setDischargeSummaryDone(false);
       setCustomClearances({});
       setDischargeType("");
+      setDischargeOverrideRecorded(false);
+      setOtBillingOk(null);
       toast({ title: "Workflow reset", description: "All clearances cleared — start again" });
     }
     setSavingStep(null);
@@ -223,6 +253,97 @@ const IPDOverviewTab: React.FC<Props> = ({ admissionId, hospitalId, onTabChange,
 
   const toSlug = (name: string) =>
     name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+
+  /**
+   * Real check for "is OT/procedure billing complete for this admission" —
+   * item_type here must match what chargeOTCase/buildOTChargeLineItems (the
+   * actual OT billing engine) writes: ot_charge/surgeon_fee/anaesthesia_fee/
+   * implant. The previous inline check used a legacy procedure/ot/surgery
+   * list that never matched real OT-billed charges, so it would have always
+   * reported "unbilled" even for a correctly billed case.
+   */
+  const checkOTBilled = async (): Promise<boolean> => {
+    if (!hospitalId) return true;
+    const { data: otCases } = await (supabase as any)
+      .from("ot_schedules")
+      .select("id")
+      .eq("hospital_id", hospitalId)
+      .eq("admission_id", admissionId)
+      .eq("status", "completed");
+    if (!otCases || otCases.length === 0) return true; // nothing to check
+
+    const { data: activeBills } = await (supabase as any)
+      .from("bills")
+      .select("id")
+      .eq("admission_id", admissionId)
+      .not("payment_status", "eq", "cancelled");
+    const billIds = (activeBills || []).map((b: any) => b.id);
+    if (billIds.length === 0) return false;
+
+    const { data: otItems } = await (supabase as any)
+      .from("bill_line_items")
+      .select("id")
+      .eq("hospital_id", hospitalId)
+      .in("item_type", ["ot_charge", "surgeon_fee", "anaesthesia_fee", "implant"])
+      .in("bill_id", billIds)
+      .limit(1);
+    return !!(otItems && otItems.length > 0);
+  };
+
+  // Runs the real billing-completeness gate for every discharge, regardless
+  // of whether the hospital has configured a custom OT-Technician step —
+  // previously this only ran when that custom step existed. Self-heals by
+  // pulling any unbilled charges into the active bill first, then checks
+  // specifically for completed-but-unbilled OT cases.
+  const runDischargeBillingCheck = async () => {
+    if (!hospitalId) { setOtBillingOk(true); return; }
+    setCheckingBilling(true);
+    const { data: activeBills } = await (supabase as any)
+      .from("bills")
+      .select("id")
+      .eq("admission_id", admissionId)
+      .not("payment_status", "eq", "cancelled")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (activeBills && activeBills.length > 0) {
+      await autoPullAdmissionCharges(activeBills[0].id, admissionId, hospitalId);
+    }
+    const ok = await checkOTBilled();
+    setOtBillingOk(ok);
+    setCheckingBilling(false);
+  };
+
+  useEffect(() => {
+    if (!admissionId || !hospitalId) return;
+    if (!medicalCleared) return; // only worth checking once the patient is actually near discharge
+    if (!(billingCleared || dischargeType === "lama")) return;
+    runDischargeBillingCheck();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [admissionId, hospitalId, medicalCleared, billingCleared, dischargeType]);
+
+  const handleDischargeOverride = async () => {
+    if (!dischargeOverrideReason.trim()) {
+      toast({ title: "Enter a reason for overriding the unbilled-OT-charges block", variant: "destructive" });
+      return;
+    }
+    setSubmittingOverride(true);
+    await (supabase as any).from("admissions").update({
+      discharge_billing_override_reason: dischargeOverrideReason.trim(),
+      discharge_billing_override_by: currentUserId,
+      discharge_billing_override_at: new Date().toISOString(),
+    }).eq("id", admissionId);
+    logAudit({
+      action: "updated",
+      module: "ipd",
+      entityType: "admission",
+      entityId: admissionId,
+      details: { action: "discharge_billing_override", reason: dischargeOverrideReason.trim() },
+    });
+    setDischargeOverrideRecorded(true);
+    setShowDischargeOverridePrompt(false);
+    setSubmittingOverride(false);
+    toast({ title: "Override recorded", description: "This has been logged to the audit trail." });
+  };
 
   const handleSmartClear = async (stepName: string, stepRole: string) => {
     const slug = toSlug(stepName);
@@ -258,26 +379,19 @@ const IPDOverviewTab: React.FC<Props> = ({ admissionId, hospitalId, onTabChange,
         }
       }
 
-      // OT Technician: warn if no OT/procedure charges are in any bill for this admission
+      // OT Technician: block clearing if OT/procedure charges are missing
+      // from every bill for this admission, unless already overridden with
+      // a documented reason (entered at the Discharge Summary step).
       if (stepRole === "OT Technician" && hospitalId) {
-        const { data: otItems } = await (supabase as any)
-          .from("bill_line_items")
-          .select("id")
-          .eq("hospital_id", hospitalId)
-          .in("item_type", ["procedure", "ot", "surgery"])
-          .in("bill_id",
-            (await (supabase as any).from("bills").select("id")
-              .eq("admission_id", admissionId)
-              .not("payment_status", "eq", "cancelled")
-            ).data?.map((b: any) => b.id) || []
-          )
-          .limit(1);
-        if (!otItems || otItems.length === 0) {
+        const otOk = await checkOTBilled();
+        if (!otOk && !dischargeOverrideRecorded) {
           toast({
-            title: "No OT charges found in bill",
-            description: "Verify that OT / procedure charges have been added to the IPD bill.",
+            title: "Cannot clear — unbilled OT/procedure charges found",
+            description: "Bill the OT charges in Billing, or document an override at the Discharge Summary step.",
             variant: "destructive",
           });
+          setSavingStep(null);
+          return;
         }
       }
 
@@ -517,6 +631,43 @@ const IPDOverviewTab: React.FC<Props> = ({ admissionId, hospitalId, onTabChange,
                       <div className="bg-destructive/10 border border-destructive/30 rounded p-2 text-center">
                         <p className="text-[11px] text-destructive font-medium">⚠ Billing not cleared. Clear billing before discharge summary.</p>
                       </div>
+                    ) : checkingBilling || otBillingOk === null ? (
+                      <div className="flex items-center gap-2 text-[11px] text-muted-foreground p-2">
+                        <Loader2 className="h-3 w-3 animate-spin" /> Checking billing completeness…
+                      </div>
+                    ) : otBillingOk === false && !dischargeOverrideRecorded ? (
+                      <div className="bg-destructive/10 border border-destructive/30 rounded p-3 space-y-2">
+                        <p className="text-[11px] text-destructive font-medium">
+                          ⚠ Unbilled OT/procedure charges found for this admission. Bill them in Billing, or document why discharge must proceed anyway.
+                        </p>
+                        {!showDischargeOverridePrompt ? (
+                          <Button
+                            size="sm" variant="outline"
+                            className="h-7 text-[11px] w-full border-destructive/40 text-destructive hover:bg-destructive/10"
+                            onClick={() => setShowDischargeOverridePrompt(true)}
+                          >
+                            Document Override Reason
+                          </Button>
+                        ) : (
+                          <div className="space-y-2">
+                            <Textarea
+                              autoFocus
+                              value={dischargeOverrideReason}
+                              onChange={(e) => setDischargeOverrideReason(e.target.value)}
+                              placeholder="Reason for discharging with unbilled OT charges (required, logged to audit trail)"
+                              className="text-[11px] min-h-[60px]"
+                            />
+                            <div className="flex gap-2">
+                              <Button size="sm" variant="ghost" className="h-7 text-[11px] flex-1" onClick={() => { setShowDischargeOverridePrompt(false); setDischargeOverrideReason(""); }}>
+                                Cancel
+                              </Button>
+                              <Button size="sm" className="h-7 text-[11px] flex-1" disabled={submittingOverride} onClick={handleDischargeOverride}>
+                                {submittingOverride ? "Recording…" : "Confirm Override"}
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       <div className="space-y-3">
                         {hospitalId && (
@@ -537,7 +688,7 @@ const IPDOverviewTab: React.FC<Props> = ({ admissionId, hospitalId, onTabChange,
                         <DischargeSummaryGenerator
                           admissionId={admissionId}
                           hospitalId={hospitalId}
-                          billingCleared={billingCleared || dischargeType === "lama"}
+                          billingCleared={billingCleared}
                           dischargeType={dischargeType}
                           onSummaryDone={() => setDischargeSummaryDone(true)}
                         />

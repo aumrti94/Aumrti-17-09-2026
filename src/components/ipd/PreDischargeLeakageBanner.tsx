@@ -29,7 +29,7 @@ const PreDischargeLeakageBanner: React.FC<Props> = ({ admissionId, hospitalId })
       .from("bills")
       .select("id")
       .eq("admission_id", admissionId)
-      .neq("status", "cancelled") as any;
+      .neq("bill_status", "cancelled") as any;
 
     const billIds = (bills || []).map((b: any) => b.id);
 

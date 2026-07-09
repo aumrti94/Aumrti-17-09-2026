@@ -13,8 +13,11 @@ import { logAudit } from "@/lib/auditLog";
 import AddReferralDoctorModal from "@/components/shared/AddReferralDoctorModal";
 import { printDocument, printHeader } from "@/lib/printUtils";
 import { getErrorMessage } from "@/lib/errorMessage";
+import OutstandingBalanceBanner from "@/components/billing/OutstandingBalanceBanner";
 import { FormError } from "@/components/ui/FormError";
 import { sendWhatsApp } from "@/lib/whatsapp-send";
+import { recordServiceCharge } from "@/lib/serviceBilling";
+import { roundCurrency } from "@/lib/currency";
 
 export interface AppointmentSlotContext {
   id: string;
@@ -782,6 +785,22 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
       const isPaid = !skipPayment && fee > 0;
       const discountNote = revisitDiscountNote;
 
+      // Look up GST from service_master (same gst_applicable/gst_percent
+      // pattern used elsewhere) instead of omitting GST fields entirely.
+      // `fee` is treated as GST-inclusive — what the patient actually pays
+      // is unchanged, this only correctly decomposes it into taxable + GST
+      // for the ledger/GST invoice when the consultation fee is configured
+      // as GST-applicable.
+      const { data: consultSvc } = await supabase
+        .from("service_master")
+        .select("gst_percent, gst_applicable")
+        .eq("hospital_id", hospitalId)
+        .eq("item_type", "consultation")
+        .maybeSingle();
+      const gstPct = consultSvc?.gst_applicable ? (Number(consultSvc.gst_percent) || 0) : 0;
+      const taxableFee = gstPct > 0 ? roundCurrency(fee / (1 + gstPct / 100)) : fee;
+      const gstAmt = roundCurrency(fee - taxableFee);
+
       // Create bill
       const { data: bill, error: billErr } = await supabase.from("bills").insert({
         hospital_id: hospitalId,
@@ -789,7 +808,8 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
         bill_number: billNumber,
         bill_type: "opd",
         bill_date: today,
-        subtotal: fee,
+        subtotal: taxableFee,
+        gst_amount: gstAmt,
         total_amount: fee,
         patient_payable: fee,
         paid_amount: isPaid ? fee : 0,
@@ -813,10 +833,24 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
         unit_rate: revisitDiscount > 0 ? baseFee : fee,
         quantity: 1,
         discount_amount: revisitDiscount > 0 ? revisitDiscount : undefined,
+        taxable_amount: taxableFee,
+        gst_percent: gstPct,
+        gst_amount: gstAmt,
         total_amount: fee,
         source_module: "opd_walkin",
         source_dedupe_key: `opd_consult_walkin:${bill.id}`,
       } as any);
+
+      recordServiceCharge({
+        hospitalId, patientId,
+        serviceModule: "opd_walkin",
+        serviceName: discountNote ? `Consultation Fee (${discountNote})` : "Consultation Fee",
+        unitRate: revisitDiscount > 0 ? baseFee : fee,
+        gstPercent: gstPct, gstAmount: gstAmt,
+        totalAmount: fee,
+        billId: bill.id,
+        performedBy: userId,
+      });
 
       // Insert payment if paid
       if (isPaid) {
@@ -1081,6 +1115,7 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
                       )}
                     </div>
                   </div>
+                  <OutstandingBalanceBanner patientId={foundPatient.id} hospitalId={hospitalId} />
                   {showAbhaLink && !foundPatient.abha_id && (
                     <div className="p-3 border border-blue-200 rounded-lg bg-blue-50/30">
                       <ABHARegistrationPanel

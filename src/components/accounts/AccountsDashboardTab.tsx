@@ -5,6 +5,7 @@ import { ArrowUpRight, ArrowDownRight, TrendingUp, Wallet, Landmark, AlertTriang
 import { Badge } from "@/components/ui/badge";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, Legend } from "recharts";
 import FinancialAnomalyCard from "./FinancialAnomalyCard";
+import PostingFailuresCard from "./PostingFailuresCard";
 
 interface Props {
   hospitalId: string | null;
@@ -256,6 +257,9 @@ const AccountsDashboardTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
           </CardContent>
         </Card>
       </div>
+
+      {/* Unposted journal entries (no matching auto_posting_rules) */}
+      <PostingFailuresCard hospitalId={hospitalId} />
 
       {/* Financial Anomaly Detector */}
       <FinancialAnomalyCard hospitalId={hospitalId} />

@@ -182,9 +182,11 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
       // Pharmacy + labs in parallel for the estimate path
       const [pharmRes, labsRes] = await Promise.all([
         (supabase as any)
-          .from("pharmacy_dispensing_records")
-          .select("total_amount, dispensed_at, notes")
+          .from("pharmacy_dispensing")
+          .select("id, dispensed_at, net_amount, pharmacy_dispensing_items(drug_name)")
+          .eq("hospital_id", hospitalId)
           .eq("admission_id", admissionId)
+          .eq("billed", false)
           .order("dispensed_at", { ascending: true }),
         (supabase as any)
           .from("lab_orders")
@@ -194,11 +196,12 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
       ]);
 
       (pharmRes.data || []).forEach((r: any) => {
-        if (r.total_amount) {
+        if (r.net_amount) {
+          const drugNames = (r.pharmacy_dispensing_items || []).map((i: any) => i.drug_name).join(", ");
           charges.push({
             date: (r.dispensed_at || "").split("T")[0],
-            description: `Pharmacy${r.notes ? ` — ${r.notes}` : ""}`,
-            amount: Number(r.total_amount),
+            description: `Pharmacy${drugNames ? ` — ${drugNames}` : ""}`,
+            amount: Number(r.net_amount),
             category: "pharmacy",
           });
         }

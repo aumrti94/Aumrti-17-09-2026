@@ -4,9 +4,11 @@ import { useToast } from "@/hooks/use-toast";
 import { CheckCircle2, XCircle, RotateCcw, PackageCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
+import { issueStoreStock, returnStoreStock } from "@/lib/storeStock";
 
 interface IndentItem {
   id: string;
+  item_id: string | null;
   item_name: string;
   item_code: string | null;
   unit: string | null;
@@ -26,8 +28,8 @@ interface Indent {
   approved_at: string | null;
   received_at: string | null;
   remarks: string | null;
-  from_store: { name: string } | null;
-  to_store: { name: string } | null;
+  from_store: { name: string; type?: string } | null;
+  to_store: { name: string; type?: string } | null;
   requested_by_user: { full_name: string } | null;
   approved_by_user: { full_name: string } | null;
 }
@@ -66,7 +68,7 @@ const StoreIndentDetailModal: React.FC<Props> = ({ indentId, userRole, onClose, 
     const [{ data: ind }, { data: its }] = await Promise.all([
       (supabase as any)
         .from("store_indents")
-        .select("*, from_store:store_locations!store_indents_from_store_id_fkey(name), to_store:store_locations!store_indents_to_store_id_fkey(name), requested_by_user:users!store_indents_requested_by_fkey(full_name), approved_by_user:users!store_indents_approved_by_fkey(full_name)")
+        .select("*, from_store:store_locations!store_indents_from_store_id_fkey(name, type), to_store:store_locations!store_indents_to_store_id_fkey(name, type), requested_by_user:users!store_indents_requested_by_fkey(full_name), approved_by_user:users!store_indents_approved_by_fkey(full_name)")
         .eq("id", indentId)
         .single(),
       (supabase as any).from("store_indent_items").select("*").eq("indent_id", indentId).order("item_name"),
@@ -88,6 +90,32 @@ const StoreIndentDetailModal: React.FC<Props> = ({ indentId, userRole, onClose, 
   const approveAndIssue = async () => {
     if (!indent) return;
     setProcessing(true);
+
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    const { data: me } = await supabase.from("users").select("id, hospital_id").eq("auth_user_id", authUser?.id).maybeSingle();
+    const hospitalId = (indent as any).hospital_id || me?.hospital_id;
+
+    // Move real stock: deduct FEFO from the supplying store, increment the requester's store_stock.
+    const issueItems = items
+      .map((i) => ({ item_id: i.item_id, item_name: i.item_name, quantity: issuedQtys[i.id] ?? 0 }))
+      .filter((i) => i.quantity > 0);
+    const moveResult = await issueStoreStock({
+      hospitalId,
+      supplierStoreId: (indent as any).to_store_id,
+      supplierIsCentral: indent.to_store?.type === "central",
+      requesterStoreId: (indent as any).from_store_id,
+      movedById: me?.id ?? null,
+      indentId: indent.id,
+      indentNumber: indent.indent_number,
+    }, issueItems);
+
+    if (!moveResult.ok) {
+      const msg = moveResult.shortages.map((s) => `${s.item_name} (need ${s.requested}, have ${s.available})`).join("; ");
+      toast({ title: "Insufficient stock at supplying store", description: msg, variant: "destructive" });
+      setProcessing(false);
+      return;
+    }
+
     for (const item of items) {
       await (supabase as any).from("store_indent_items").update({
         approved_qty: approvedQtys[item.id] ?? item.requested_qty,
@@ -98,21 +126,26 @@ const StoreIndentDetailModal: React.FC<Props> = ({ indentId, userRole, onClose, 
     const newStatus = allFull ? "issued" : "partially_issued";
     await (supabase as any).from("store_indents").update({
       status: newStatus,
-      approved_by: (await supabase.auth.getUser()).data.user?.id,
+      approved_by: me?.id ?? null,
       approved_at: new Date().toISOString(),
     }).eq("id", indent.id);
 
-    // Log movements
-    const movementRows = items.map((i) => ({
-      hospital_id: (indent as any).hospital_id,
-      store_id: indent.from_store ? null : null,
-      indent_id: indent.id,
-      item_name: i.item_name,
-      item_code: i.item_code,
-      movement_type: "issue",
-      quantity: issuedQtys[i.id] ?? 0,
-      unit: i.unit,
-    })).filter((m) => m.quantity > 0);
+    // Log movements (audit ledger) — symmetric: an 'issue' out of the supplying store (to_store)
+    // and a matching 'receipt' into the requesting store (from_store), so each store's ledger
+    // is self-consistent and reconcilable against its store_stock balance.
+    const issuedItems = items.filter((i) => (issuedQtys[i.id] ?? 0) > 0);
+    const movementRows = issuedItems.flatMap((i) => ([
+      {
+        hospital_id: hospitalId, store_id: (indent as any).to_store_id ?? null, indent_id: indent.id,
+        item_id: i.item_id, item_name: i.item_name, item_code: i.item_code,
+        movement_type: "issue", quantity: issuedQtys[i.id] ?? 0, unit: i.unit, moved_by: me?.id ?? null,
+      },
+      {
+        hospital_id: hospitalId, store_id: (indent as any).from_store_id ?? null, indent_id: indent.id,
+        item_id: i.item_id, item_name: i.item_name, item_code: i.item_code,
+        movement_type: "receipt", quantity: issuedQtys[i.id] ?? 0, unit: i.unit, moved_by: me?.id ?? null,
+      },
+    ]));
     if (movementRows.length > 0) await (supabase as any).from("store_stock_movements").insert(movementRows);
 
     toast({ title: `Indent ${newStatus === "issued" ? "fully" : "partially"} issued` });
@@ -137,9 +170,11 @@ const StoreIndentDetailModal: React.FC<Props> = ({ indentId, userRole, onClose, 
   const markReceived = async () => {
     if (!indent) return;
     setProcessing(true);
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    const { data: me } = await supabase.from("users").select("id").eq("auth_user_id", authUser?.id).maybeSingle();
     await (supabase as any).from("store_indents").update({
       status: "received",
-      received_by: (await supabase.auth.getUser()).data.user?.id,
+      received_by: me?.id ?? null,
       received_at: new Date().toISOString(),
     }).eq("id", indent.id);
     toast({ title: "Items marked as received" });
@@ -153,6 +188,29 @@ const StoreIndentDetailModal: React.FC<Props> = ({ indentId, userRole, onClose, 
     const returnItems = items.filter((i) => (returnQtys[i.id] || 0) > 0);
     if (returnItems.length === 0) return;
     setProcessing(true);
+
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    const { data: me } = await supabase.from("users").select("id, hospital_id").eq("auth_user_id", authUser?.id).maybeSingle();
+    const hospitalId = (indent as any).hospital_id || me?.hospital_id;
+
+    // Move real stock back: deduct FEFO from the returning ward's store_stock, add to supplier.
+    const moveResult = await returnStoreStock({
+      hospitalId,
+      returningStoreId: (indent as any).from_store_id,
+      supplierStoreId: (indent as any).to_store_id,
+      supplierIsCentral: indent.to_store?.type === "central",
+      movedById: me?.id ?? null,
+      indentId: indent.id,
+      indentNumber: indent.indent_number,
+    }, returnItems.map((i) => ({ item_id: i.item_id, item_name: i.item_name, quantity: returnQtys[i.id] || 0 })));
+
+    if (!moveResult.ok) {
+      const msg = moveResult.shortages.map((s) => `${s.item_name} (returning ${s.requested}, only ${s.available} on hand)`).join("; ");
+      toast({ title: "Not enough stock in the ward to return", description: msg, variant: "destructive" });
+      setProcessing(false);
+      return;
+    }
+
     for (const item of returnItems) {
       await (supabase as any).from("store_indent_items").update({
         returned_qty: (item.returned_qty || 0) + (returnQtys[item.id] || 0),
@@ -160,16 +218,20 @@ const StoreIndentDetailModal: React.FC<Props> = ({ indentId, userRole, onClose, 
       }).eq("id", item.id);
     }
     const movRows = returnItems.map((i) => ({
-      hospital_id: (indent as any).hospital_id,
+      hospital_id: hospitalId,
+      // Returned stock goes back to the supplying store (to_store).
+      store_id: (indent as any).to_store_id ?? null,
       indent_id: indent.id,
+      item_id: i.item_id,
       item_name: i.item_name,
       item_code: i.item_code,
       movement_type: "return",
       quantity: returnQtys[i.id],
       unit: i.unit,
+      moved_by: me?.id ?? null,
     }));
     await (supabase as any).from("store_stock_movements").insert(movRows);
-    toast({ title: "Return recorded" });
+    toast({ title: "Return recorded — stock moved back to supplier" });
     setShowReturnForm(false);
     setProcessing(false);
     load();

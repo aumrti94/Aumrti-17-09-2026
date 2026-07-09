@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { format, formatDistanceToNow } from "date-fns";
 import RaiseIndentModal from "./RaiseIndentModal";
 import StoreIndentDetailModal from "./StoreIndentDetailModal";
+import StoreStockView from "./StoreStockView";
 
 interface StoreLocation {
   id: string;
@@ -51,7 +52,7 @@ const WardStorePanel: React.FC<Props> = ({ hospitalId }) => {
   const { toast } = useToast();
   const [stores, setStores] = useState<StoreLocation[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<string>("");
-  const [viewMode, setViewMode] = useState<"my_indents" | "issue_stock">("my_indents");
+  const [viewMode, setViewMode] = useState<"my_indents" | "issue_stock" | "on_hand">("my_indents");
   const [filterTab, setFilterTab] = useState("all");
   const [indents, setIndents] = useState<StoreIndent[]>([]);
   const [loading, setLoading] = useState(false);
@@ -75,7 +76,7 @@ const WardStorePanel: React.FC<Props> = ({ hospitalId }) => {
   }, [hospitalId, selectedStoreId]);
 
   const fetchIndents = useCallback(async () => {
-    if (!selectedStoreId) return;
+    if (!selectedStoreId || viewMode === "on_hand") return;
     setLoading(true);
     let query = (supabase as any)
       .from("store_indents")
@@ -130,6 +131,7 @@ const WardStorePanel: React.FC<Props> = ({ hospitalId }) => {
           {[
             { key: "my_indents", label: "My Indents" },
             { key: "issue_stock", label: "Issue Stock" },
+            { key: "on_hand", label: "Stock on Hand" },
           ].map((m) => (
             <button
               key={m.key}
@@ -147,6 +149,7 @@ const WardStorePanel: React.FC<Props> = ({ hospitalId }) => {
           ))}
         </div>
 
+        {viewMode !== "on_hand" && (
         <div className="flex gap-1 ml-2">
           {FILTER_TABS.map((t) => (
             <button
@@ -161,11 +164,14 @@ const WardStorePanel: React.FC<Props> = ({ hospitalId }) => {
             </button>
           ))}
         </div>
+        )}
 
         <div className="ml-auto flex items-center gap-2">
+          {viewMode !== "on_hand" && (
           <button onClick={fetchIndents} className="text-muted-foreground hover:text-primary transition-colors" title="Refresh">
             <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
           </button>
+          )}
           {viewMode === "my_indents" && (
             <button
               onClick={() => setShowRaise(true)}
@@ -178,7 +184,19 @@ const WardStorePanel: React.FC<Props> = ({ hospitalId }) => {
         </div>
       </div>
 
-      {/* Indent list */}
+      {/* On-hand stock view */}
+      {viewMode === "on_hand" ? (
+        <div className="flex-1 overflow-hidden">
+          {selectedStore ? (
+            <StoreStockView hospitalId={hospitalId} storeId={selectedStoreId} storeName={selectedStore.name} />
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full gap-2">
+              <p className="text-sm text-muted-foreground">Select a store to view its stock on hand</p>
+            </div>
+          )}
+        </div>
+      ) : (
+      /* Indent list */
       <div className="flex-1 overflow-y-auto">
         {stores.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full gap-2">
@@ -239,6 +257,7 @@ const WardStorePanel: React.FC<Props> = ({ hospitalId }) => {
           </div>
         )}
       </div>
+      )}
 
       {showRaise && selectedStore && (
         <RaiseIndentModal

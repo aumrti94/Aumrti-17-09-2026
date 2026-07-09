@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { markItemPaid } from "@/lib/chargePosting";
+import { recordBillPayment } from "@/lib/billPayments";
 import { Loader2, RefreshCw, Search, CheckCircle2, AlertCircle, IndianRupee } from "lucide-react";
 
 interface PendingItem {
@@ -23,6 +24,10 @@ interface PendingItem {
   payment_status: string;
   created_at: string;
   service_date: string;
+  bill_paid_amount: number;
+  bill_balance_due: number;
+  bill_patient_id: string | null;
+  bill_admission_id: string | null;
 }
 
 const MODULE_LABELS: Record<string, string> = {
@@ -53,7 +58,7 @@ export default function PendingCollectionsPanel() {
         .select(`
           id, bill_id, description, item_type, source_module,
           total_amount, payment_status, created_at, service_date,
-          bills!inner(bill_number, payment_status, patients!inner(full_name, uhid))
+          bills!inner(bill_number, payment_status, paid_amount, balance_due, patient_id, admission_id, patients!inner(full_name, uhid))
         `)
         .eq("hospital_id", hospitalId)
         .eq("payment_status", "pending_payment")
@@ -77,6 +82,10 @@ export default function PendingCollectionsPanel() {
         payment_status: r.payment_status,
         created_at: r.created_at,
         service_date: r.service_date,
+        bill_paid_amount: Number(r.bills?.paid_amount) || 0,
+        bill_balance_due: Number(r.bills?.balance_due) || 0,
+        bill_patient_id: r.bills?.patient_id ?? null,
+        bill_admission_id: r.bills?.admission_id ?? null,
       }));
       setItems(mapped);
     } finally {
@@ -87,15 +96,36 @@ export default function PendingCollectionsPanel() {
   useEffect(() => { load(); }, [load]);
 
   const collectPayment = async (item: PendingItem) => {
-    if (!userId) return;
+    if (!userId || !hospitalId) return;
     setPaying(item.id);
     try {
-      const ok = await markItemPaid({ billItemId: item.id, collectedBy: userId });
-      if (ok) {
+      const newPaid = item.bill_paid_amount + item.total_amount;
+      const newBalance = Math.max(0, item.bill_balance_due - item.total_amount);
+      const newStatus: "paid" | "partial" = newBalance <= 0 ? "paid" : "partial";
+
+      const result = await recordBillPayment({
+        hospitalId,
+        billId: item.bill_id,
+        billNumber: item.bill_number,
+        patientId: item.bill_patient_id,
+        admissionId: item.bill_admission_id,
+        rows: [{ mode: "cash", amount: item.total_amount }],
+        collectedBy: userId,
+        newPaidAmount: newPaid,
+        newBalanceDue: newBalance,
+        newPaymentStatus: newStatus,
+      });
+
+      if (result.ok) {
+        await markItemPaid({ billItemId: item.id, collectedBy: userId });
         toast.success(`Payment collected for ${item.description}`);
-        setItems(prev => prev.filter(i => i.id !== item.id));
+        setItems(prev => prev
+          .filter(i => i.id !== item.id)
+          .map(i => i.bill_id === item.bill_id
+            ? { ...i, bill_paid_amount: newPaid, bill_balance_due: newBalance }
+            : i));
       } else {
-        toast.error("Failed to mark payment");
+        toast.error(result.error || "Failed to record payment");
       }
     } finally {
       setPaying(null);
@@ -103,14 +133,39 @@ export default function PendingCollectionsPanel() {
   };
 
   const collectAllForBill = async (billId: string) => {
-    if (!userId) return;
+    if (!userId || !hospitalId) return;
     const billItems = items.filter(i => i.bill_id === billId);
-    for (const item of billItems) {
-      setPaying(item.id);
-      await markItemPaid({ billItemId: item.id, collectedBy: userId });
+    if (billItems.length === 0) return;
+    const first = billItems[0];
+    const sum = billItems.reduce((s, i) => s + i.total_amount, 0);
+
+    const newPaid = first.bill_paid_amount + sum;
+    const newBalance = Math.max(0, first.bill_balance_due - sum);
+    const newStatus: "paid" | "partial" = newBalance <= 0 ? "paid" : "partial";
+
+    const result = await recordBillPayment({
+      hospitalId,
+      billId,
+      billNumber: first.bill_number,
+      patientId: first.bill_patient_id,
+      admissionId: first.bill_admission_id,
+      rows: [{ mode: "cash", amount: sum }],
+      collectedBy: userId,
+      newPaidAmount: newPaid,
+      newBalanceDue: newBalance,
+      newPaymentStatus: newStatus,
+    });
+
+    if (result.ok) {
+      for (const item of billItems) {
+        setPaying(item.id);
+        await markItemPaid({ billItemId: item.id, collectedBy: userId });
+      }
+      toast.success(`All payments collected for bill`);
+      setItems(prev => prev.filter(i => i.bill_id !== billId));
+    } else {
+      toast.error(result.error || "Failed to record payment");
     }
-    toast.success(`All payments collected for bill`);
-    setItems(prev => prev.filter(i => i.bill_id !== billId));
     setPaying(null);
   };
 

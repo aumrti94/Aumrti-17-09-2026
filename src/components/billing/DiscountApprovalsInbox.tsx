@@ -5,6 +5,7 @@ import { CheckCircle2, XCircle, Clock, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatINR } from "@/lib/currency";
 import { format, formatDistanceToNow } from "date-fns";
+import { recalculateBillTotalsSafe } from "@/lib/billTotals";
 
 interface ApprovalRow {
   id: string;
@@ -72,24 +73,14 @@ const DiscountApprovalsInbox: React.FC<Props> = ({ hospitalId, onBillSelect }) =
 
   const applyDiscountAndApprove = async (row: ApprovalRow) => {
     setProcessingId(row.id);
-    // Fetch bill to get subtotal
-    const { data: billData } = await supabase.from("bills")
-      .select("subtotal, gst_amount, advance_received, insurance_amount, paid_amount")
-      .eq("id", row.bill_id).maybeSingle();
-    if (!billData) { toast({ title: "Bill not found", variant: "destructive" }); setProcessingId(null); return; }
-    const subtotal = Number(billData.subtotal) || 0;
-    const newTotal = Math.max(0, subtotal + Number(billData.gst_amount) - row.discount_amount);
-    const newPatientPayable = Math.max(0, newTotal - Number(billData.advance_received) - Number(billData.insurance_amount));
-    const newBalance = Math.max(0, newPatientPayable - Number(billData.paid_amount));
     const { error: billErr } = await supabase.from("bills").update({
       discount_amount: row.discount_amount,
       discount_percent: row.discount_pct,
-      total_amount: Math.round(newTotal * 100) / 100,
-      patient_payable: Math.round(newPatientPayable * 100) / 100,
-      balance_due: Math.round(newBalance * 100) / 100,
       bill_status: "draft",
     } as any).eq("id", row.bill_id);
     if (billErr) { toast({ title: "Failed to apply discount", variant: "destructive" }); setProcessingId(null); return; }
+    const recalc = await recalculateBillTotalsSafe(row.bill_id);
+    if (!recalc.ok) { toast({ title: "Discount saved but totals recalculation failed", variant: "destructive" }); }
     await (supabase as any).from("bill_discount_approvals").update({
       status: "approved",
       approved_by: currentUserId,

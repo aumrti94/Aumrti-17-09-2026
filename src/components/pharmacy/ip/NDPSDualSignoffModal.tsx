@@ -87,12 +87,16 @@ const NDPSDualSignoffModal: React.FC<NDPSDualSignoffModalProps> = ({
   }, [open]);
 
   const loadSeniorPharmacists = async () => {
-    const { data } = await (supabase as any)
+    // app_role enum has no senior_pharmacist/chief_pharmacist value — querying for them
+    // throws (invalid enum literal), which silently emptied this dropdown. hospital_admin
+    // is the only role above plain "pharmacist" that actually exists.
+    const { data, error } = await (supabase as any)
       .from("users")
       .select("id, full_name, email")
       .eq("hospital_id", hospitalId)
-      .in("role", ["senior_pharmacist", "chief_pharmacist", "hospital_admin"])
+      .in("role", ["hospital_admin"])
       .eq("is_active", true);
+    if (error) console.error("loadSeniorPharmacists failed:", error.message);
     setSeniorPharmacists(data || []);
   };
 

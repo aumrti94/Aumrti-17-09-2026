@@ -112,3 +112,34 @@ export function checkServiceAgainstPackage(
 
   return { status: "allowed" };
 }
+
+export interface PackageInclusionValue {
+  inclusionValue: number;
+  overage: number;
+  isOverage: boolean;
+}
+
+/**
+ * Advisory-only check: sums service_master market rates for every service_id-matched
+ * inclusion in this package and compares against the package's own base_price.
+ * A package whose promised inclusions are worth more (at market rate) than what the
+ * hospital charges for it is a structural revenue-leakage risk, even though no
+ * individual charge is ever "missing" (inclusions are correctly never billed
+ * separately). Never blocks anything — purely informational.
+ */
+export async function computePackageInclusionValue(ctx: PackageContext): Promise<PackageInclusionValue> {
+  const serviceIds = Array.from(new Set(ctx.inclusions.map((i) => i.service_id).filter(Boolean))) as string[];
+
+  let inclusionValue = 0;
+  if (serviceIds.length > 0) {
+    const { data } = await (supabase as any)
+      .from("service_master")
+      .select("id, fee")
+      .in("id", serviceIds);
+    inclusionValue = (data || []).reduce((s: number, r: any) => s + (Number(r.fee) || 0), 0);
+  }
+
+  const basePrice = Number(ctx.package.base_price) || 0;
+  const overage = Math.max(0, inclusionValue - basePrice);
+  return { inclusionValue, overage, isOverage: inclusionValue > basePrice };
+}

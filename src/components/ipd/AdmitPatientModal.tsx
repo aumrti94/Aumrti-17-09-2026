@@ -13,6 +13,7 @@ import { logAudit } from "@/lib/auditLog";
 import { getErrorMessage } from "@/lib/errorMessage";
 import { FormError } from "@/components/ui/FormError";
 import { useConfigValues } from "@/hooks/useConfigValues";
+import OutstandingBalanceBanner from "@/components/billing/OutstandingBalanceBanner";
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { printAdmissionSlip } from "@/lib/admissionSlip";
 import AdvanceReceiptModal from "@/components/billing/AdvanceReceiptModal";
@@ -541,10 +542,13 @@ const AdmitPatientModal: React.FC<Props> = ({
               )}
 
               {selectedPatient && (
-                <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
-                  <p className="text-xs text-emerald-700 font-medium mb-1">✓ Patient selected</p>
-                  <p className="text-sm font-bold text-slate-900">{selectedPatient.full_name}</p>
-                  <p className="text-[11px] text-slate-600">{selectedPatient.uhid} · {selectedPatient.gender} · {selectedPatient.blood_group || "—"}</p>
+                <div className="space-y-2">
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                    <p className="text-xs text-emerald-700 font-medium mb-1">✓ Patient selected</p>
+                    <p className="text-sm font-bold text-slate-900">{selectedPatient.full_name}</p>
+                    <p className="text-[11px] text-slate-600">{selectedPatient.uhid} · {selectedPatient.gender} · {selectedPatient.blood_group || "—"}</p>
+                  </div>
+                  <OutstandingBalanceBanner patientId={selectedPatient.id} hospitalId={hospitalId} />
                 </div>
               )}
 

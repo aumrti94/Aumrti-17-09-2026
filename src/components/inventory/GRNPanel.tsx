@@ -7,9 +7,10 @@ import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { autoPostJournalEntry } from "@/lib/accounting";
+import { autoPostJournalEntry, postMultiLineJournal } from "@/lib/accounting";
 import { cn } from "@/lib/utils";
 import InvoiceScanZone, { type ExtractedInvoiceData } from "./InvoiceScanZone";
+import ScanItemField from "./ScanItemField";
 
 const qcColors: Record<string, string> = {
   pass: "bg-emerald-100 text-emerald-700",
@@ -35,6 +36,15 @@ const GRNPanel: React.FC = () => {
   const [scanImageFile, setScanImageFile] = useState<File | null>(null);
   const [extractionConfidence, setExtractionConfidence] = useState<number | null>(null);
   const [itemsExtractedCount, setItemsExtractedCount] = useState(0);
+  const [hospitalId, setHospitalId] = useState("");
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return;
+      supabase.from("users").select("hospital_id").eq("auth_user_id", user.id).maybeSingle()
+        .then(({ data }) => { if (data) setHospitalId(data.hospital_id); });
+    });
+  }, []);
 
   const handleInvoiceExtracted = async (data: ExtractedInvoiceData, imageFile: File) => {
     setScanImageFile(imageFile);
@@ -92,7 +102,7 @@ const GRNPanel: React.FC = () => {
     const [poRes, vendorRes, itemRes] = await Promise.all([
       (supabase as any).from("purchase_orders").select("id, po_number, vendor_id, vendors(vendor_name)").in("status", ["approved", "sent", "partial_grn"]),
       (supabase as any).from("vendors").select("id, vendor_name").eq("is_active", true),
-      (supabase as any).from("inventory_items").select("id, item_name, category").eq("is_active", true),
+      (supabase as any).from("inventory_items").select("id, item_name, category, gst_percent").eq("is_active", true),
     ]);
     setPOs(poRes.data || []);
     setVendors(vendorRes.data || []);
@@ -152,7 +162,8 @@ const GRNPanel: React.FC = () => {
     const validItems = newGRNItems.filter((gi: any) => gi.quantity_received > 0);
     if (validItems.length === 0) { toast({ title: "Add items to GRN", variant: "destructive" }); return; }
     setSaving(true);
-    const { data: userData } = await supabase.from("users").select("id, hospital_id").limit(1).maybeSingle();
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    const { data: userData } = await supabase.from("users").select("id, hospital_id").eq("auth_user_id", authUser?.id).maybeSingle();
     if (!userData) { setSaving(false); return; }
 
     const vendorId = newGRN.vendor_id || (fromPO && selectedPO ? pos.find((p) => p.id === selectedPO)?.vendor_id : null);
@@ -192,13 +203,17 @@ const GRNPanel: React.FC = () => {
 
     // Parallel: stock updates, transaction logs, PO item updates
     await Promise.all(validItems.map(async (gi: any) => {
-      const { data: existingStock } = await (supabase as any)
+      // Match the exact batch so distinct batches remain separate rows (preserves per-batch
+      // expiry/FEFO). Only accumulate into an existing row when the batch number matches.
+      let stockQuery = (supabase as any)
         .from("inventory_stock")
-        .select("id, quantity_available")
+        .select("id, quantity_available, expiry_date")
         .eq("item_id", gi.item_id)
-        .eq("hospital_id", userData.hospital_id)
-        .limit(1)
-        .maybeSingle();
+        .eq("hospital_id", userData.hospital_id);
+      stockQuery = gi.batch_number
+        ? stockQuery.eq("batch_number", gi.batch_number)
+        : stockQuery.is("batch_number", null);
+      const { data: existingStock } = await stockQuery.limit(1).maybeSingle();
 
       const consignmentFields = newGRN.is_consignment ? {
         is_consignment: true,
@@ -210,7 +225,6 @@ const GRNPanel: React.FC = () => {
             quantity_available: existingStock.quantity_available + gi.quantity_received,
             last_received_date: new Date().toISOString().slice(0, 10),
             cost_price: gi.unit_rate,
-            batch_number: gi.batch_number || existingStock.batch_number,
             expiry_date: gi.expiry_date || existingStock.expiry_date,
             ...consignmentFields,
           }).eq("id", existingStock.id)
@@ -280,15 +294,33 @@ const GRNPanel: React.FC = () => {
 
     // Auto-post journal entry for GRN
     const vendorName = vendors.find(v => v.id === vendorId)?.vendor_name || "Vendor";
-    await autoPostJournalEntry({
-      triggerEvent: "grn_received",
-      sourceModule: "inventory",
-      sourceId: grn.id,
-      amount: totalAmount,
-      description: `GRN ${grnNumber} - ${vendorName}`,
-      hospitalId: userData.hospital_id,
-      postedBy: userData.id,
-    });
+    // GST input credit split: Dr goods (5011) + Dr ITC (1050) / Cr AP (2001). GST computed
+    // from each item's rate. Falls back gracefully to the legacy grn_received rule if the
+    // ITC/goods accounts aren't in the chart of accounts.
+    const gstValue = validItems.reduce((s: number, gi: any) => {
+      const pct = items.find((i) => i.id === gi.item_id)?.gst_percent || 0;
+      return s + (gi.quantity_received * gi.unit_rate) * (pct / 100);
+    }, 0);
+    if (gstValue > 0) {
+      const posted = await postMultiLineJournal({
+        hospitalId: userData.hospital_id, postedBy: userData.id, sourceModule: "inventory", sourceId: grn.id,
+        triggerEvent: "grn_received", description: `GRN ${grnNumber} - ${vendorName}`,
+        lines: [
+          { accountCode: "5011", debit: totalAmount, description: "Goods" },
+          { accountCode: "1050", debit: gstValue, description: "GST input credit" },
+          { accountCode: "2001", credit: totalAmount + gstValue, description: "Vendor payable" },
+        ],
+      });
+      if (!posted) {
+        await autoPostJournalEntry({ triggerEvent: "grn_received", sourceModule: "inventory", sourceId: grn.id, amount: totalAmount, description: `GRN ${grnNumber} - ${vendorName}`, hospitalId: userData.hospital_id, postedBy: userData.id });
+      }
+    } else {
+      await autoPostJournalEntry({
+        triggerEvent: "grn_received", sourceModule: "inventory", sourceId: grn.id,
+        amount: totalAmount, description: `GRN ${grnNumber} - ${vendorName}`,
+        hospitalId: userData.hospital_id, postedBy: userData.id,
+      });
+    }
     setShowNew(false);
     setNewGRNItems([]);
     setSelectedPO("");
@@ -463,6 +495,8 @@ const GRNPanel: React.FC = () => {
             </div>
 
             {!fromPO && (
+              <>
+              {hospitalId && <ScanItemField hospitalId={hospitalId} onItem={(it) => addManualItem(it.id)} placeholder="Scan barcode to add item…" />}
               <div className="relative">
                 <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
                 <Input placeholder="Search items to add..." value={itemSearch} onChange={(e) => setItemSearch(e.target.value)} className="pl-8 h-8 text-xs" />
@@ -474,6 +508,7 @@ const GRNPanel: React.FC = () => {
                   </div>
                 )}
               </div>
+              </>
             )}
 
             {newGRNItems.length > 0 && (

@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2 } from "lucide-react";
+import { useHospitalContext } from "@/contexts/HospitalContext";
+import { hasActionAccess } from "@/lib/tabPermissions";
 
 interface Props {
   open: boolean;
@@ -23,6 +25,8 @@ const RefundModal: React.FC<Props> = ({
   open, onClose, billId, patientId, admissionId, hospitalId, refundAmount, onRefunded,
 }) => {
   const { toast } = useToast();
+  const { permissions, role } = useHospitalContext();
+  const canApproveRefund = hasActionAccess("billing", "approve_refund", permissions, role);
   const [amount, setAmount] = useState(String(refundAmount));
   const [mode, setMode] = useState("cash");
   const [reference, setReference] = useState("");
@@ -30,6 +34,10 @@ const RefundModal: React.FC<Props> = ({
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async () => {
+    if (!canApproveRefund) {
+      toast({ title: "You don't have permission to process refunds", variant: "destructive" });
+      return;
+    }
     const amt = Number(amount);
     if (!amt || amt <= 0) {
       toast({ title: "Enter a valid refund amount", variant: "destructive" });
@@ -49,7 +57,11 @@ const RefundModal: React.FC<Props> = ({
         .maybeSingle();
       const userId = userData?.id ?? null;
 
-      // 1. Record in refund_payables
+      // Record a refund request only — same pending_approval convention as
+      // pharmacy-return refunds. Nothing is disbursed and the bill is not
+      // touched here; a second person must approve it in the Refund Approval
+      // Inbox before the bill balance changes, the advance ledger is
+      // adjusted, or GL posting happens.
       const { error: rpErr } = await (supabase as any).from("refund_payables").insert({
         hospital_id: hospitalId,
         patient_id: patientId,
@@ -58,52 +70,13 @@ const RefundModal: React.FC<Props> = ({
         credit_note_id: null,
         amount: amt,
         refund_mode: mode,
-        status: "processed",
+        status: "pending_approval",
         requested_by: userId,
-        approved_by: userId,
-        processed_at: new Date().toISOString(),
-        notes: notes || null,
+        notes: [notes, reference ? `Ref: ${reference}` : null].filter(Boolean).join(" — ") || null,
       });
       if (rpErr) throw rpErr;
 
-      // 2. IPD advance ledger entry (audit trail)
-      if (admissionId) {
-        const { error: advErr } = await (supabase as any).from("ipd_advances").insert({
-          hospital_id: hospitalId,
-          admission_id: admissionId,
-          patient_id: patientId,
-          amount: amt,
-          transaction_type: "refund",
-          payment_mode: mode,
-          reference_no: reference || null,
-          description: "Refund disbursed",
-          collected_by: userId,
-        });
-        if (advErr) throw advErr;
-      }
-
-      // 3. Mark bill as refunded and reduce paid_amount by the refund
-      const { data: billData } = await (supabase as any)
-        .from("bills")
-        .select("paid_amount, total_amount")
-        .eq("id", billId)
-        .maybeSingle();
-      const currentPaid   = Number(billData?.paid_amount  || 0);
-      const totalAmt      = Number(billData?.total_amount || 0);
-      const newPaidAmount = Math.max(0, currentPaid - amt);
-      const newBalanceDue = Math.max(0, totalAmt - newPaidAmount);
-
-      const { error: billErr } = await (supabase as any)
-        .from("bills")
-        .update({
-          payment_status: "refunded",
-          paid_amount:    newPaidAmount,
-          balance_due:    newBalanceDue,
-        })
-        .eq("id", billId);
-      if (billErr) throw billErr;
-
-      toast({ title: `Refund of ₹${amt.toLocaleString("en-IN")} recorded` });
+      toast({ title: `Refund of ₹${amt.toLocaleString("en-IN")} submitted for approval` });
       onRefunded();
     } catch (err: any) {
       toast({ title: "Failed to record refund", description: err?.message, variant: "destructive" });
@@ -178,7 +151,12 @@ const RefundModal: React.FC<Props> = ({
             <Button variant="ghost" size="sm" onClick={onClose} disabled={submitting}>
               Cancel
             </Button>
-            <Button size="sm" onClick={handleSubmit} disabled={submitting}>
+            <Button
+              size="sm"
+              onClick={handleSubmit}
+              disabled={submitting || !canApproveRefund}
+              title={!canApproveRefund ? "You don't have permission to process refunds" : undefined}
+            >
               {submitting ? <Loader2 size={14} className="animate-spin mr-1" /> : null}
               Confirm Refund
             </Button>

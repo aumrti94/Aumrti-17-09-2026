@@ -1,0 +1,38 @@
+-- Critical bug found while verifying Phase 11's OT-billing check live:
+-- bill_line_items.item_type has a CHECK constraint that only ever allowed 14
+-- legacy values (consultation, procedure, room_charge, lab, radiology,
+-- pharmacy, surgery, package, nursing, consumable, blood, oxygen, other,
+-- service) — but the actual billing code writes many values never in that
+-- list, including:
+--   - The shared billing engine (autoChargeService in serviceBilling.ts)
+--     writes item_type = the service module string for Dialysis
+--     ('dialysis'), Physiotherapy ('physiotherapy'), Home Care ('home_care'),
+--     Mental Health ('mental_health'), Mortuary ('mortuary'), Dietetics
+--     ('dietetics'), Ambulance ('ambulance'), ED ('ed'), Oncology
+--     ('oncology'), Blood Bank ('blood_bank'), Vaccination ('vaccination'),
+--     Dental ('dental'), IVF ('ivf'), OT ('ot') — none of which are allowed.
+--   - OT's own buildOTChargeLineItems writes 'ot_charge' / 'surgeon_fee' /
+--     'anaesthesia_fee' / 'implant' — also none allowed.
+--   - Several hand-rolled modules write their own descriptive strings
+--     (ayush, bed_charge, blood_product, daycare, ed_consultation,
+--     ed_observation, ed_specialist_consult, nursing_procedure, physio,
+--     vaccine, ward, etc.) — same problem.
+--
+-- Confirmed live: INSERT ... item_type='dialysis' (exactly what the shared
+-- engine writes for a real Dialysis charge) fails outright with
+-- "violates check constraint bill_line_items_item_type_check". This affects
+-- real money — a charge that fails to insert here never reaches the bill at
+-- all — across most specialty modules, not just the ones touched in this
+-- plan.
+--
+-- Same class of bug as auto_posting_rules.trigger_event (see
+-- 20260613110000_seed_hospital_defaults.sql), which was dropped entirely
+-- rather than chasing an ever-growing allow-list that nobody kept in sync
+-- as new modules were added over time. Same fix here: item_type becomes a
+-- free-text descriptive column, matching service_charges.service_module's
+-- already-unconstrained convention (also confirmed to have no CHECK
+-- constraint). Purely additive/permissive — removes a broken guardrail,
+-- does not change any existing data.
+
+ALTER TABLE public.bill_line_items
+  DROP CONSTRAINT IF EXISTS bill_line_items_item_type_check;

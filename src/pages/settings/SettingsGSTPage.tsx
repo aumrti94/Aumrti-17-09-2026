@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import SettingsPageWrapper from "@/components/settings/SettingsPageWrapper";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,7 +19,28 @@ const SettingsGSTPage: React.FC = () => {
     irpUser: "", irpPassword: "", irpClientId: "", irpClientSecret: "", irpBaseUrl: "https://einvoice1-uat.nic.in", irpMode: "sandbox",
   });
 
-  const handleSave = () => { setSaving(true); setTimeout(() => { toast({ title: "GST config saved" }); setSaving(false); }, 500); };
+  useEffect(() => {
+    (async () => {
+      const hospitalId = await getHospitalId();
+      if (!hospitalId) return;
+      const { data } = await (supabase as any).from("hospitals").select("gstin, state_code, state").eq("id", hospitalId).maybeSingle();
+      if (data) setConfig((c) => ({ ...c, gstin: data.gstin || "", stateCode: data.state_code || "", placeOfSupply: data.state || "" }));
+    })();
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    const hospitalId = await getHospitalId();
+    if (hospitalId) {
+      await (supabase as any).from("hospitals").update({
+        gstin: config.gstin || null,
+        state_code: config.stateCode || null,
+        state: config.placeOfSupply || null,
+      }).eq("id", hospitalId);
+    }
+    toast({ title: "GST config saved" });
+    setSaving(false);
+  };
 
   const handleTestIrn = async () => {
     setTesting(true);

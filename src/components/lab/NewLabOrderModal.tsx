@@ -5,6 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { X, Search, ArrowLeft, CheckCircle2, Printer, IndianRupee, Loader2, AlertTriangle } from "lucide-react";
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { autoPostJournalEntry } from "@/lib/accounting";
+import { recordServiceCharge } from "@/lib/serviceBilling";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { printDocument } from "@/lib/printUtils";
 import { cn } from "@/lib/utils";
@@ -464,6 +465,16 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
             }))
           );
 
+          for (const r of rates) {
+            recordServiceCharge({
+              hospitalId, patientId: selectedPatient!.id, admissionId: linkedAdmission,
+              serviceModule: "lab", serviceRefId: order.id,
+              serviceName: `Lab: ${r.name}`,
+              unitRate: r.rate, gstPercent: r.gstPct, gstAmount: r.gstAmount, totalAmount: r.total,
+              billId: bill.id, performedBy: userData.id,
+            });
+          }
+
           await autoPostJournalEntry({
             triggerEvent: "bill_finalized_lab",
             sourceModule: "lab",
@@ -585,6 +596,16 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
           ordered_by: userData.id,
         }))
       );
+
+      for (const t of testRates) {
+        recordServiceCharge({
+          hospitalId, patientId: selectedPatient!.id, encounterId: linkedEncounter || null,
+          serviceModule: "lab",
+          serviceName: `Lab: ${t.name}`,
+          unitRate: t.rate, gstPercent: t.gstPct, gstAmount: t.gstAmount, totalAmount: t.total,
+          billId: bill.id, performedBy: userData.id,
+        });
+      }
 
       // 3. Create lab order (billing_status: billed — payment was just collected above)
       const { data: order, error: orderErr } = await supabase.from("lab_orders").insert({

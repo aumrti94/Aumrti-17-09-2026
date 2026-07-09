@@ -363,14 +363,6 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
 
   const isIRNLocked = !!bill?.irn;
 
-  const handleGenerateGST = () => {
-    toast({
-      title: "Live e-Invoice not configured",
-      description: "NIC IRP API integration is required for GST e-Invoice generation. Contact your implementation partner to enable this feature.",
-      variant: "destructive",
-    });
-  };
-
   const recalcBillTotals = async () => {
     if (!bill || !hospitalId) return;
     const result = await recalculateBillTotalsSafe(bill.id);
@@ -429,7 +421,7 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
             </div>
           )}
           {bill.bill_status === "final" && bill.gst_amount > 0 && !isIRNLocked && (
-            <Button size="sm" className="h-7 text-[11px] gap-1 bg-emerald-700 hover:bg-emerald-800 text-white" onClick={handleGenerateGST}>
+            <Button size="sm" className="h-7 text-[11px] gap-1 bg-emerald-700 hover:bg-emerald-800 text-white" onClick={() => setShowGstInvoice(true)}>
               <FileText size={12} /> GST Invoice
             </Button>
           )}

@@ -16,6 +16,7 @@ const SettingsProfilePage: React.FC = () => {
     name: "", address: "", state: "", pincode: "",
     gstin: "", nabh_number: "", primary_color: "#0EA5E9",
     nabl_accreditation_number: "", nabl_valid_upto: "",
+    drug_license_number: "", drug_license_valid_upto: "",
     registration_80g: "", trust_pan: "",
     uhid_prefix: "UHID", uhid_date_format: "YYYYMMDD",
   });
@@ -88,6 +89,8 @@ const SettingsProfilePage: React.FC = () => {
         primary_color: hospital.primary_color || "#0EA5E9",
         nabl_accreditation_number: (hospital as any).nabl_accreditation_number || "",
         nabl_valid_upto: (hospital as any).nabl_valid_upto || "",
+        drug_license_number: (hospital as any).drug_license_number || "",
+        drug_license_valid_upto: (hospital as any).drug_license_valid_upto || "",
         registration_80g: (hospital as any).registration_80g || "",
         trust_pan: (hospital as any).trust_pan || "",
         uhid_prefix: (hospital as any).uhid_prefix || "UHID",
@@ -115,6 +118,8 @@ const SettingsProfilePage: React.FC = () => {
         primary_color: form.primary_color,
         nabl_accreditation_number: form.nabl_accreditation_number || null,
         nabl_valid_upto: form.nabl_valid_upto || null,
+        drug_license_number: form.drug_license_number || null,
+        drug_license_valid_upto: form.drug_license_valid_upto || null,
         registration_80g: form.registration_80g || null,
         trust_pan: form.trust_pan || null,
         patient_languages: patientLanguages,
@@ -180,6 +185,16 @@ const SettingsProfilePage: React.FC = () => {
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">NABL Valid Up To</label>
               <Input type="date" value={form.nabl_valid_upto} onChange={(e) => setForm({ ...form, nabl_valid_upto: e.target.value })} className="h-10" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Drug License No. (Form 20B/21B)</label>
+              <Input value={form.drug_license_number} onChange={(e) => setForm({ ...form, drug_license_number: e.target.value })} placeholder="e.g. 20B/21B-XXXXX" className="h-10" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Drug License Valid Up To</label>
+              <Input type="date" value={form.drug_license_valid_upto} onChange={(e) => setForm({ ...form, drug_license_valid_upto: e.target.value })} className="h-10" />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">

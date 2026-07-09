@@ -13,6 +13,7 @@ import { generateBillNumber } from "@/hooks/useBillNumber";
 import { getRate } from "@/lib/serviceRates";
 import { autoPostJournalEntry } from "@/lib/accounting";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
+import { recordServiceCharge } from "@/lib/serviceBilling";
 
 const STATUS_COLS = [
   { key: "stimulation", label: "Stimulation", color: "bg-blue-50 border-blue-200" },
@@ -94,6 +95,14 @@ async function billIVFMilestone(opts: {
       gst_percent: gstPct,
       gst_amount: gstAmt,
       total_amount: total,
+    });
+
+    recordServiceCharge({
+      hospitalId, patientId,
+      serviceModule: "ivf",
+      serviceName: `IVF: ${milestoneLabel} - ${coupleCode} Cycle #${cycleNumber}`,
+      unitRate: fee, gstPercent: gstPct, gstAmount: gstAmt, totalAmount: total,
+      billId: bill.id, performedBy: userId,
     });
 
     await recalculateBillTotalsSafe(bill.id);

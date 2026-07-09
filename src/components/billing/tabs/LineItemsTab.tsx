@@ -4,7 +4,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Plus, X, ChevronDown, ChevronUp, Sparkles, RefreshCw, AlertTriangle, ShieldAlert, RotateCw, Package, CheckCircle2, Ban } from "lucide-react";
+import { Plus, X, ChevronDown, ChevronUp, Sparkles, RefreshCw, AlertTriangle, ShieldAlert, RotateCw, Package, CheckCircle2, Ban, Lock, Unlock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { BillRecord } from "@/pages/billing/BillingPage";
 import type { LineItem, PaymentRecord } from "@/components/billing/BillEditor";
@@ -18,8 +18,10 @@ import { fetchPreAuthCeiling, type PreAuthCeiling } from "@/lib/insuranceCeiling
 import {
   fetchPackageContext,
   checkServiceAgainstPackage,
+  computePackageInclusionValue,
   type PackageContext,
 } from "@/lib/packageGuard";
+import { logAudit } from "@/lib/auditLog";
 
 function numberToWords(n: number): string {
   if (n === 0) return "Zero";
@@ -79,6 +81,20 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
   // Net advance balance for IPD bills — fetched from ipd_advance_balances view
   // so the footer "Refund Due" stays in sync with the Advance tab.
   const [netAdvance, setNetAdvance] = useState<number | null>(null);
+
+  // Reopen-for-correction gate — a finalized bill is read-only by default;
+  // editing it again requires an explicit, audited reason each time (resets
+  // whenever a different bill is selected, so it's never a standing unlock).
+  const [reopenedForCorrection, setReopenedForCorrection] = useState(false);
+  const [showReopenPrompt, setShowReopenPrompt] = useState(false);
+  const [reopenReason, setReopenReason] = useState("");
+  const [reopening, setReopening] = useState(false);
+
+  useEffect(() => {
+    setReopenedForCorrection(false);
+    setShowReopenPrompt(false);
+    setReopenReason("");
+  }, [bill.id]);
 
   const refreshCeiling = async () => {
     if (!bill.admission_id || !hospitalId) return;
@@ -145,7 +161,31 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
     onRefresh();
   };
 
-  const isEditable = bill.bill_status === "draft" || bill.bill_status === "final";
+  const isFinalized = bill.bill_status === "final";
+  // A finalized bill (already printed/handed to the patient) is read-only
+  // until someone explicitly reopens it with a logged reason. irn_locked
+  // (GST e-invoice generated) stays fully non-editable — that requires a
+  // real IRP cancel/amend flow, not a quick reopen toggle.
+  const isEditable = bill.bill_status === "draft" || (isFinalized && reopenedForCorrection);
+
+  const handleReopenForCorrection = () => {
+    if (!reopenReason.trim()) {
+      toast({ title: "Enter a reason for reopening this finalized bill", variant: "destructive" });
+      return;
+    }
+    setReopening(true);
+    logAudit({
+      action: "updated",
+      module: "billing",
+      entityType: "bill",
+      entityId: bill.id,
+      details: { action: "reopened_for_correction", reason: reopenReason.trim(), billNumber: bill.bill_number },
+    });
+    setReopenedForCorrection(true);
+    setShowReopenPrompt(false);
+    setReopening(false);
+    toast({ title: "Bill reopened for correction", description: "This has been logged to the audit trail." });
+  };
 
   const handleServiceSearch = async (q: string) => {
     setServiceSearch(q);
@@ -231,6 +271,32 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
           description: `"${svc.name}" is included in the active package "${packageCtx.package.package_name}". It cannot be billed separately.`,
           variant: "destructive",
         });
+
+        // Advisory-only package overage check — never blocks. If this package's
+        // promised inclusions are worth more at market rate than the package price
+        // itself, that's a structural revenue-leakage risk worth surfacing, even
+        // though no individual charge here is ever "missing".
+        const { isOverage, inclusionValue, overage } = await computePackageInclusionValue(packageCtx);
+        if (isOverage && hospitalId) {
+          const { data: existingAlert } = await (supabase as any)
+            .from("revenue_alerts")
+            .select("id")
+            .eq("bill_id", bill.id)
+            .eq("alert_type", "package_overage")
+            .eq("resolved", false)
+            .maybeSingle();
+          if (!existingAlert) {
+            await (supabase as any).from("revenue_alerts").insert({
+              hospital_id: hospitalId,
+              bill_id: bill.id,
+              patient_id: bill.patient_id,
+              alert_type: "package_overage",
+              description: `Package "${packageCtx.package.package_name}" inclusions are worth ~${formatINR(inclusionValue)} against a package price of ${formatINR(packageCtx.package.base_price)} — ${formatINR(overage)} over.`,
+              estimated_amount: overage,
+              severity: "medium",
+            });
+          }
+        }
         return;
       }
       if (guard.status === "extra") {
@@ -305,14 +371,24 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
   };
 
   const deleteItem = async (itemId: string) => {
+    const item = lineItems.find((i) => i.id === itemId);
     // Hard delete (is_deleted column not in schema yet)
     await (supabase as any).from("bill_line_items").delete().eq("id", itemId);
+    logAudit({
+      action: "deleted",
+      module: "billing",
+      entityType: "bill_line_item",
+      entityId: itemId,
+      details: { billId: bill.id, billNumber: bill.bill_number, description: item?.description, amount: item?.total_amount },
+    });
     onRefresh();
   };
 
-  const updateItem = async (itemId: string, field: string, value: number) => {
+  const updateItem = async (itemId: string, field: "quantity" | "unit_rate" | "discount_percent" | "gst_percent", value: number) => {
     const item = lineItems.find((i) => i.id === itemId);
     if (!item) return;
+    const previous = item[field];
+    if (previous === value) return;
     const updated = { ...item, [field]: value };
     const taxable = updated.quantity * updated.unit_rate * (1 - updated.discount_percent / 100);
     const gstAmt = taxable * updated.gst_percent / 100;
@@ -327,7 +403,27 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
       ...(field === "discount_percent" ? { discount_percent: value } : {}),
       ...(field === "gst_percent" ? { gst_percent: value } : {}),
     } as any).eq("id", itemId);
+    logAudit({
+      action: "updated",
+      module: "billing",
+      entityType: "bill_line_item",
+      entityId: itemId,
+      details: { field, from: previous, to: value, billId: bill.id, billNumber: bill.bill_number, description: item.description },
+    });
     onRefresh();
+  };
+
+  const commitFieldEdit = (item: LineItem, field: "quantity" | "unit_rate" | "discount_percent", raw: string) => {
+    const value = Number(raw);
+    if (Number.isNaN(value) || value < 0) {
+      toast({ title: "Enter a valid non-negative number", variant: "destructive" });
+      return;
+    }
+    if (field === "discount_percent" && value > 100) {
+      toast({ title: "Discount % cannot exceed 100", variant: "destructive" });
+      return;
+    }
+    updateItem(item.id, field, value);
   };
 
   // Calculate totals
@@ -423,6 +519,48 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
 
       {/* ── Scrollable content: toolbar + headers + items + totals ── */}
       <div className="flex-1 overflow-y-auto min-h-0">
+
+      {/* ── Reopen-for-correction gate (finalized bills only; irn_locked bills have no reopen path) ── */}
+      {isFinalized && (
+        reopenedForCorrection ? (
+          <div className="border-b border-border bg-emerald-50 px-4 py-2 flex items-center gap-2 text-emerald-800 flex-shrink-0">
+            <Unlock size={13} className="shrink-0" />
+            <span className="text-xs font-semibold">Reopened for correction this session — edits are being logged.</span>
+          </div>
+        ) : (
+          <div className="border-b border-border bg-amber-50 px-4 py-2.5 flex-shrink-0">
+            <div className="flex items-center gap-2 text-amber-800">
+              <Lock size={14} className="shrink-0" />
+              <span className="text-xs font-semibold">This bill is finalized and read-only.</span>
+              {!showReopenPrompt && (
+                <button
+                  onClick={() => setShowReopenPrompt(true)}
+                  className="ml-auto flex items-center gap-1 text-xs font-medium text-amber-800 underline hover:text-amber-900"
+                >
+                  <Unlock size={12} /> Reopen for Correction
+                </button>
+              )}
+            </div>
+            {showReopenPrompt && (
+              <div className="mt-2 flex items-center gap-2">
+                <Input
+                  autoFocus
+                  placeholder="Reason for reopening (required, logged to audit trail)"
+                  value={reopenReason}
+                  onChange={(e) => setReopenReason(e.target.value)}
+                  className="h-8 text-xs flex-1"
+                />
+                <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => { setShowReopenPrompt(false); setReopenReason(""); }}>
+                  Cancel
+                </Button>
+                <Button size="sm" className="h-8 text-xs" onClick={handleReopenForCorrection} disabled={reopening}>
+                  {reopening ? "Reopening…" : "Confirm Reopen"}
+                </Button>
+              </div>
+            )}
+          </div>
+        )
+      )}
 
       {/* ── Action toolbar ── */}
       {isEditable && (
@@ -543,15 +681,42 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
               </div>
 
               <div className="flex justify-center">
-                <span className="text-sm text-center">{item.quantity}</span>
+                {isEditable ? (
+                  <input
+                    key={item.id}
+                    type="number" min={0} step="1" defaultValue={item.quantity}
+                    className="w-12 text-sm text-center border border-border rounded px-1 py-0.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                    onBlur={(e) => commitFieldEdit(item, "quantity", e.target.value)}
+                  />
+                ) : (
+                  <span className="text-sm text-center">{item.quantity}</span>
+                )}
               </div>
 
               <div className="flex justify-center">
-                <span className="text-sm text-center">{formatINR(item.unit_rate)}</span>
+                {isEditable ? (
+                  <input
+                    key={item.id}
+                    type="number" min={0} step="0.01" defaultValue={item.unit_rate}
+                    className="w-20 text-sm text-center border border-border rounded px-1 py-0.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                    onBlur={(e) => commitFieldEdit(item, "unit_rate", e.target.value)}
+                  />
+                ) : (
+                  <span className="text-sm text-center">{formatINR(item.unit_rate)}</span>
+                )}
               </div>
 
               <div className="flex justify-center">
-                <span className="text-sm text-center">{item.discount_percent}%</span>
+                {isEditable ? (
+                  <input
+                    key={item.id}
+                    type="number" min={0} max={100} step="0.5" defaultValue={item.discount_percent}
+                    className="w-12 text-sm text-center border border-border rounded px-1 py-0.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                    onBlur={(e) => commitFieldEdit(item, "discount_percent", e.target.value)}
+                  />
+                ) : (
+                  <span className="text-sm text-center">{item.discount_percent}%</span>
+                )}
               </div>
 
               <span className="text-xs text-center">{item.gst_percent}%</span>

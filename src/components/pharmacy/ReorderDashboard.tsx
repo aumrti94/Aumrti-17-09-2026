@@ -47,13 +47,13 @@ const ReorderDashboard: React.FC<Props> = ({ hospitalId }) => {
       const [trigRes, stockRes] = await Promise.all([
         (supabase as any)
           .from("stock_reorder_triggers")
-          .select("id, trigger_reason, current_qty, reorder_qty, status, batch_info, notes, created_at, drug_master(generic_name, brand_name)")
+          .select("id, trigger_reason, current_qty, reorder_qty, status, batch_info, notes, created_at, drug_master(generic_name, drug_name)")
           .eq("hospital_id", hospitalId)
           .order("created_at", { ascending: false })
           .limit(100),
         (supabase as any)
           .from("drug_master")
-          .select("id, generic_name, brand_name, min_stock_level, reorder_qty, auto_reorder_enabled")
+          .select("id, generic_name, drug_name, min_stock_level, reorder_qty, auto_reorder_enabled")
           .eq("hospital_id", hospitalId)
           .gt("min_stock_level", 0)
           .limit(200),
@@ -61,7 +61,7 @@ const ReorderDashboard: React.FC<Props> = ({ hospitalId }) => {
 
       const triggerRows: ReorderTrigger[] = (trigRes.data || []).map((t: any) => ({
         id: t.id,
-        drug_name: t.drug_master?.brand_name || t.drug_master?.generic_name || "Unknown",
+        drug_name: t.drug_master?.drug_name || t.drug_master?.generic_name || "Unknown",
         trigger_reason: t.trigger_reason,
         current_qty: t.current_qty,
         reorder_qty: t.reorder_qty,
@@ -90,7 +90,7 @@ const ReorderDashboard: React.FC<Props> = ({ hospitalId }) => {
         const lowStockRows: LowStockDrug[] = stockRes.data
           .map((d: any) => ({
             drug_id: d.id,
-            drug_name: d.brand_name || d.generic_name,
+            drug_name: d.drug_name || d.generic_name,
             current_stock: stockByDrug[d.id] || 0,
             min_stock_level: d.min_stock_level || 0,
             reorder_qty: d.reorder_qty || 0,

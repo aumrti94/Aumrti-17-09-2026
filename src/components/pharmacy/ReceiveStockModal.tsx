@@ -155,6 +155,22 @@ const ReceiveStockModal: React.FC<Props> = ({ hospitalId, onClose, onSaved }) =>
       return;
     }
 
+    // MRP cap: selling above the printed MRP is illegal (Legal Metrology Act) — reject bad
+    // pricing here since this is the only place in the app that ever sets these values.
+    const invalidPricing = saveableItems.filter((it) => {
+      const salePrice = Math.round(it.mrp * 0.95 * 100) / 100;
+      return it.mrp <= 0 || it.costPrice <= 0 || salePrice > it.mrp;
+    });
+    if (invalidPricing.length > 0) {
+      const names = invalidPricing.map((it) => it.drugName || it.extractedName || "Unnamed item").join(", ");
+      toast({
+        title: "Invalid pricing",
+        description: `MRP and cost price must be greater than zero: ${names}`,
+        variant: "destructive",
+      });
+      return;
+    }
+
     setSaving(true);
 
     // For unmatched items: check exact match first, then auto-create only if truly missing

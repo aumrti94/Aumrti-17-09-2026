@@ -1,7 +1,16 @@
 import { supabase } from "@/integrations/supabase/client";
 import { calcGST } from "@/lib/currency";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
-import { buildOTChargeLineItems, recordOTServiceCharges } from "@/lib/serviceBilling";
+import { buildOTChargeLineItems, recordOTServiceCharges, recordServiceCharge } from "@/lib/serviceBilling";
+import { getRoomChargeGSTRate } from "@/lib/gstRules";
+
+// service_charges.service_module for sweep-added item_types that don't already
+// match a canonical MODULE_ string (lab/radiology/pharmacy already do).
+const SWEEP_SERVICE_MODULE_MAP: Record<string, string> = {
+  nursing_procedure: "nursing",
+  room_charge: "ipd_room",
+  consultation: "ipd_consultation",
+};
 
 export interface AutoPullResult {
   ok: boolean;
@@ -20,6 +29,20 @@ export const IPD_FALLBACK_BED_RATES: Record<string, number> = {
   hdu: 3000, isolation: 2500,
   private: 2000, semi_private: 1200, general: 600,
 };
+
+/**
+ * Excludes bill_types that already have dedicated, correctly-deduped handling
+ * earlier in autoPullAdmissionCharges (lab: lab_order_items pull, keyed
+ * lab:{id}; pharmacy: pharmacy_dispensing_items pull, keyed
+ * pharmacy:dispense-item:{id}) from the generic sibling-bill-copy sweep.
+ * Those sibling bills' own line items were never given a matching
+ * source_dedupe_key, so copying them too would double-charge the discharge
+ * bill for the same lab test or drug. Extracted as a pure function so the
+ * exact double-charge regression can be unit tested directly.
+ */
+export function filterSiblingBillsForSweep<T extends { bill_type: string | null }>(bills: T[]): T[] {
+  return bills.filter((rb) => rb.bill_type !== "lab" && rb.bill_type !== "pharmacy");
+}
 
 /**
  * Resolve the room rate/day for the ledger estimate: prefer the ward's configured
@@ -545,10 +568,10 @@ export async function autoPullAdmissionCharges(
         ? Number(roomRate.fee)
         : 500;
     if (wardDbRate <= 0 && !categoryRate?.rate && !roomRate?.fee) usedFallbackRate = true;
-    const effectiveRate = categoryRate ?? roomRate;
-    const roomGstPct = effectiveRate?.gst_applicable
-      ? Number(effectiveRate.gst_percent) || 0
-      : 0;
+    // GST on room charges is a matter of law (ICU-exempt; >₹5000/day non-ICU = 5%), not
+    // hospital-configurable pricing — deterministic from bed category + rate, independent of
+    // whether a matching service_rates/service_master row happens to exist.
+    const roomGstPct = getRoomChargeGSTRate(bedCategory, ratePerDay);
     const roomTotal = ratePerDay * days;
     const roomGst = calcGST(roomTotal, roomGstPct);
 
@@ -586,12 +609,17 @@ export async function autoPullAdmissionCharges(
   }
 
   // ----- Sibling bills linked to the admission -----
-  const { data: relatedBills } = await supabase
+  const { data: relatedBillsRaw } = await supabase
     .from("bills")
     .select("id, bill_number, bill_type, subtotal, gst_amount, total_amount, notes")
     .eq("hospital_id", hospitalId)
     .eq("admission_id", admissionId)
     .neq("id", billId);
+
+  // Every other bill_type (radiology, ot, daycare, etc.) still needs this
+  // generic sweep, since they have no dedicated pull above — only lab/
+  // pharmacy are excluded (see filterSiblingBillsForSweep).
+  const relatedBills = filterSiblingBillsForSweep(relatedBillsRaw || []);
 
   if (relatedBills?.length) {
     const relatedBillMap = new Map(relatedBills.map((rb) => [rb.id, rb]));
@@ -699,6 +727,30 @@ export async function autoPullAdmissionCharges(
           scheduleId, billId, items: caseItems,
         });
       }
+    }
+
+    // Record every other newly-pulled charge into service_charges too, so
+    // LeakageDashboard.tsx can see lab/radiology/pharmacy/nursing/room/
+    // consultation revenue billed via this sweep — previously invisible.
+    // OT items are skipped: recordOTServiceCharges above already covers them.
+    const otItemsSet = new Set(otServiceChargeItems);
+    for (const item of items) {
+      if (otItemsSet.has(item)) continue;
+      recordServiceCharge({
+        hospitalId,
+        patientId: admPatientId || "",
+        admissionId,
+        serviceModule: SWEEP_SERVICE_MODULE_MAP[item.item_type] || item.item_type,
+        serviceRefId: item.source_record_id ?? null,
+        serviceName: item.description,
+        quantity: item.quantity,
+        unitRate: item.unit_rate,
+        gstPercent: item.gst_percent,
+        gstAmount: item.gst_amount,
+        totalAmount: item.total_amount,
+        billId,
+        performedBy: item.ordered_by ?? null,
+      });
     }
   }
 

@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import CollectionCampaignModal from "@/components/billing/CollectionCampaignModal";
+import { recordBillPayment } from "@/lib/billPayments";
+import { generatePaymentLink } from "@/lib/paymentLinks";
 
 interface OutstandingBill {
   id: string;
@@ -27,6 +29,8 @@ interface OutstandingBill {
   balance_due: number;
   bill_type: string;
   days_overdue: number;
+  paid_amount: number;
+  admission_id: string | null;
 }
 
 interface EMIPlan {
@@ -101,7 +105,7 @@ const CollectionsTab: React.FC<CollectionsTabProps> = ({ hospitalId }) => {
     // Outstanding bills
     const { data: billsData } = await supabase
       .from("bills")
-      .select("id, bill_number, patient_id, bill_date, total_amount, balance_due, bill_type, patients(full_name, uhid)")
+      .select("id, bill_number, patient_id, bill_date, total_amount, balance_due, bill_type, paid_amount, admission_id, patients(full_name, uhid)")
       .eq("hospital_id", hospitalId)
       .gt("balance_due", 0)
       .order("bill_date", { ascending: true })
@@ -118,6 +122,8 @@ const CollectionsTab: React.FC<CollectionsTabProps> = ({ hospitalId }) => {
       balance_due: Number(b.balance_due) || 0,
       bill_type: b.bill_type,
       days_overdue: differenceInDays(new Date(), new Date(b.bill_date)),
+      paid_amount: Number(b.paid_amount) || 0,
+      admission_id: b.admission_id ?? null,
     }));
     setBills(outstanding);
 
@@ -179,6 +185,16 @@ const CollectionsTab: React.FC<CollectionsTabProps> = ({ hospitalId }) => {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // Per-patient outstanding rollup — derived from the bills already loaded above
+  // (no extra query needed) so each row can note "₹X from N other visit(s)".
+  const patientOutstandingTotals = new Map<string, { total: number; count: number }>();
+  for (const b of bills) {
+    const entry = patientOutstandingTotals.get(b.patient_id) || { total: 0, count: 0 };
+    entry.total += b.balance_due;
+    entry.count += 1;
+    patientOutstandingTotals.set(b.patient_id, entry);
+  }
+
   // KPIs
   const totalOutstanding = bills.reduce((s, b) => s + b.balance_due, 0);
   const over30 = bills.filter(b => b.days_overdue > 30).reduce((s, b) => s + b.balance_due, 0);
@@ -211,55 +227,22 @@ const CollectionsTab: React.FC<CollectionsTabProps> = ({ hospitalId }) => {
     if (!payLinkModal) return;
     setPayLinkGenerating(true);
     const { data: userData } = await supabase.from("users").select("id").limit(1).maybeSingle();
-    const token = crypto.randomUUID();
-    const expiresAt = new Date(Date.now() + payLinkExpiry * 86400000).toISOString();
-
-    // Try to create a real Razorpay payment link
-    let razorpayLinkId: string | null = null;
-    let razorpayLinkUrl: string | null = null;
-    let shortUrl: string | null = null;
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const rzpRes = await supabase.functions.invoke("create-razorpay-payment-link", {
-        body: {
-          bill_id: payLinkModal.id,
-          amount: payLinkAmount,
-          patient_name: payLinkModal.patient_name,
-          phone: payLinkModal.phone || null,
-          hospital_id: hospitalId,
-        },
+      const result = await generatePaymentLink({
+        hospitalId,
+        billId: payLinkModal.id,
+        patientId: payLinkModal.patient_id,
+        patientName: payLinkModal.patient_name,
+        amount: payLinkAmount,
+        expiryDays: payLinkExpiry,
+        createdBy: userData?.id ?? null,
       });
-      if (!rzpRes.error && rzpRes.data?.razorpay_link_id) {
-        razorpayLinkId = rzpRes.data.razorpay_link_id;
-        razorpayLinkUrl = rzpRes.data.razorpay_link_url;
-        shortUrl = rzpRes.data.short_url;
-      }
-    } catch {
-      // Razorpay not configured — fall through to local link
-    }
-
-    const { error } = await supabase.from("payment_links" as any).insert({
-      hospital_id: hospitalId,
-      bill_id: payLinkModal.id,
-      patient_id: payLinkModal.patient_id,
-      link_token: token,
-      amount: payLinkAmount,
-      expires_at: expiresAt,
-      created_by: userData?.id,
-      sent_via: [],
-      razorpay_link_id: razorpayLinkId,
-      razorpay_link_url: razorpayLinkUrl,
-      short_url: shortUrl,
-    });
-
-    if (error) {
-      toast({ title: "Failed to create pay link", variant: "destructive" });
-    } else {
-      const url = shortUrl || `${window.location.origin}/pay/${token}`;
-      setGeneratedPayUrl(url);
-      setGeneratedPayToken(token);
-      toast({ title: razorpayLinkId ? "Razorpay payment link generated ✓" : "Payment link generated ✓" });
+      setGeneratedPayUrl(result.url);
+      setGeneratedPayToken(result.linkToken);
+      toast({ title: result.isRazorpay ? "Razorpay payment link generated ✓" : "Payment link generated ✓" });
       loadData();
+    } catch {
+      toast({ title: "Failed to create pay link", variant: "destructive" });
     }
     setPayLinkGenerating(false);
   };
@@ -440,26 +423,27 @@ const CollectionsTab: React.FC<CollectionsTabProps> = ({ hospitalId }) => {
     }
 
     const { data: userData } = await supabase.from("users").select("id").limit(1).maybeSingle();
-    const { error } = await supabase.from("bill_payments").insert({
-      hospital_id: hospitalId,
-      bill_id: collectModal.id,
-      amount,
-      payment_mode: collectMode,
-      received_by: userData?.id,
+
+    const newPaid = collectModal.paid_amount + amount;
+    const newBalance = Math.max(0, collectModal.balance_due - amount);
+    const newStatus: "paid" | "partial" = newBalance <= 0 ? "paid" : "partial";
+
+    const result = await recordBillPayment({
+      hospitalId,
+      billId: collectModal.id,
+      billNumber: collectModal.bill_number,
+      patientId: collectModal.patient_id,
+      admissionId: collectModal.admission_id,
+      rows: [{ mode: collectMode, amount }],
+      collectedBy: userData?.id || null,
+      newPaidAmount: newPaid,
+      newBalanceDue: newBalance,
+      newPaymentStatus: newStatus,
     });
 
-    if (error) {
-      toast({ title: "Failed to record payment", variant: "destructive" });
+    if (!result.ok) {
+      toast({ title: result.error || "Failed to record payment", variant: "destructive" });
     } else {
-      // Update bill
-      const newPaid = amount;
-      const newBalance = Math.max(0, collectModal.balance_due - amount);
-      await supabase.from("bills").update({
-        paid_amount: supabase.rpc ? newPaid : newPaid,
-        balance_due: newBalance,
-        payment_status: newBalance <= 0 ? "paid" : "partially_paid",
-      }).eq("id", collectModal.id);
-
       toast({ title: `${fmt(amount)} collected via ${collectMode}` });
     }
 
@@ -544,9 +528,20 @@ const CollectionsTab: React.FC<CollectionsTabProps> = ({ hospitalId }) => {
               <tbody>
                 {filtered.length === 0 ? (
                   <tr><td colSpan={7} className="px-3 py-6 text-center text-xs text-muted-foreground">No outstanding bills</td></tr>
-                ) : filtered.slice(0, 100).map((b) => (
+                ) : filtered.slice(0, 100).map((b) => {
+                  const patientTotals = patientOutstandingTotals.get(b.patient_id);
+                  const otherCount = (patientTotals?.count || 1) - 1;
+                  const otherTotal = (patientTotals?.total || 0) - b.balance_due;
+                  return (
                   <tr key={b.id} className={cn("border-t border-border", overdueRowBg(b.days_overdue))}>
-                    <td className="px-3 py-2 text-xs font-medium truncate max-w-[120px]">{b.patient_name}</td>
+                    <td className="px-3 py-2 text-xs font-medium truncate max-w-[120px]">
+                      {b.patient_name}
+                      {otherCount > 0 && (
+                        <p className="text-[10px] text-amber-600 font-normal truncate">
+                          +{fmt(otherTotal)} from {otherCount} other visit{otherCount !== 1 ? "s" : ""}
+                        </p>
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-[11px] font-mono text-muted-foreground">{b.uhid}</td>
                     <td className="px-3 py-2 text-[11px] font-mono">{b.bill_number}</td>
                     <td className="px-3 py-2 text-xs">{format(new Date(b.bill_date), "dd/MM/yyyy")}</td>
@@ -576,7 +571,8 @@ const CollectionsTab: React.FC<CollectionsTabProps> = ({ hospitalId }) => {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

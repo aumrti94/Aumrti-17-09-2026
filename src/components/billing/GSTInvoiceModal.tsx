@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Printer, MessageSquare, Mail, Info, Lock, Sparkles, Loader2 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { printDocument, printHeader } from "@/lib/printUtils";
+import { sendWhatsApp } from "@/lib/whatsapp-send";
 
 import type { BillRecord } from "@/pages/billing/BillingPage";
 import type { LineItem } from "@/components/billing/BillEditor";
@@ -33,6 +34,7 @@ const GSTInvoiceModal: React.FC<Props> = ({
   );
   const [lockingIrn, setLockingIrn] = useState(false);
   const [generatingIrn, setGeneratingIrn] = useState(false);
+  const [sendingWhatsApp, setSendingWhatsApp] = useState(false);
   const irn = initialIrn || generatedIrn || manualIrn;
   const isLocked = bill.bill_status === "irn_locked";
 
@@ -96,6 +98,33 @@ const GSTInvoiceModal: React.FC<Props> = ({
   const totalSgst = Object.values(gstBreakdown).reduce((s, g) => s + g.sgst, 0);
 
   const fmt = (n: number) => n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const handleSendWhatsApp = async () => {
+    const hospitalId = (bill as any).hospital_id;
+    if (!hospitalId) {
+      toast({ title: "Missing hospital context", variant: "destructive" });
+      return;
+    }
+    setSendingWhatsApp(true);
+    try {
+      const { data: patient } = await supabase
+        .from("patients").select("phone, full_name").eq("id", bill.patient_id).maybeSingle();
+      if (!patient?.phone) {
+        toast({ title: "Patient phone not found", variant: "destructive" });
+        return;
+      }
+      const grandTotal = totalTaxable + totalCgst + totalSgst;
+      const message = `🧾 *${hospitalName}* — Tax Invoice\n\nInvoice #: ${bill.bill_number}\nDate: ${bill.bill_date}\n${irn ? `IRN: ${irn}\n` : ""}Total: ₹${fmt(grandTotal)}\n\nThank you for choosing us.`;
+      const cleanPhone = patient.phone.replace(/\D/g, "");
+      const fullPhone = cleanPhone.startsWith("91") ? cleanPhone : `91${cleanPhone}`;
+      await sendWhatsApp({ hospitalId, phone: fullPhone, message });
+      toast({ title: "Invoice sent via WhatsApp ✓" });
+    } catch (err: any) {
+      toast({ title: "Failed to send invoice", description: err?.message, variant: "destructive" });
+    } finally {
+      setSendingWhatsApp(false);
+    }
+  };
 
   return (
     <Dialog open onOpenChange={onClose}>
@@ -312,10 +341,17 @@ const GSTInvoiceModal: React.FC<Props> = ({
           }}>
             <Printer size={14} /> Print Invoice
           </Button>
-          <Button variant="outline" size="sm" className="gap-1 text-xs">
-            <MessageSquare size={14} /> WhatsApp
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1 text-xs"
+            onClick={handleSendWhatsApp}
+            disabled={sendingWhatsApp}
+          >
+            {sendingWhatsApp ? <Loader2 size={14} className="animate-spin" /> : <MessageSquare size={14} />}
+            WhatsApp
           </Button>
-          <Button variant="outline" size="sm" className="gap-1 text-xs">
+          <Button variant="outline" size="sm" className="gap-1 text-xs" disabled title="Email sending isn't configured yet">
             <Mail size={14} /> Email
           </Button>
         </div>

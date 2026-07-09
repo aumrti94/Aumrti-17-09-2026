@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getDefaultGSTRate, GST_RATE_RULES } from "./gstRules";
+import { getDefaultGSTRate, getRoomChargeGSTRate, GST_RATE_RULES } from "./gstRules";
 
 /**
  * Regression suite for the healthcare GST rate engine
@@ -84,6 +84,40 @@ describe("getDefaultGSTRate — robustness / known gaps (pinned)", () => {
     // The > 5000 branch only applies to room_charge; pharmacy stays 12%
     // regardless of unit price.
     expect(getDefaultGSTRate("pharmacy", 9999)).toBe(12);
+  });
+});
+
+describe("getRoomChargeGSTRate — deterministic, config-independent room GST", () => {
+  // ICU/CCU/ICCU/NICU are fully exempt regardless of room rent (CBIC clarification on
+  // Notification 12/2017). SICU/PICU treated as ICU-equivalent. HDU is deliberately NOT
+  // exempt — not covered by the ICU carve-out, so it follows the ordinary >5000 rule.
+  it.each(["icu", "nicu", "sicu", "picu", "ccu", "iccu"])(
+    "%s is exempt regardless of rate, even well above ₹5,000/day",
+    (category) => {
+      expect(getRoomChargeGSTRate(category, 50000)).toBe(0);
+    }
+  );
+
+  it.each(["ICU", "Nicu", "SICU"])("%s — case-insensitive match", (category) => {
+    expect(getRoomChargeGSTRate(category, 50000)).toBe(0);
+  });
+
+  it("hdu is NOT treated as ICU-equivalent — follows the ordinary >5000 rule", () => {
+    expect(getRoomChargeGSTRate("hdu", 6000)).toBe(5);
+    expect(getRoomChargeGSTRate("hdu", 4000)).toBe(0);
+  });
+
+  it("general/private rooms follow the ordinary >5000 rule", () => {
+    expect(getRoomChargeGSTRate("general", 4000)).toBe(0);
+    expect(getRoomChargeGSTRate("general", 5000)).toBe(0);
+    expect(getRoomChargeGSTRate("private", 5001)).toBe(5);
+    expect(getRoomChargeGSTRate("semi_private", 12000)).toBe(5);
+  });
+
+  it("is deterministic even with no bed category at all", () => {
+    expect(getRoomChargeGSTRate(null, 6000)).toBe(5);
+    expect(getRoomChargeGSTRate(undefined, 6000)).toBe(5);
+    expect(getRoomChargeGSTRate("", 4000)).toBe(0);
   });
 });
 

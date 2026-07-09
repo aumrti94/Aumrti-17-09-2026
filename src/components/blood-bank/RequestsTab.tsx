@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { autoPostJournalEntry } from "@/lib/accounting";
+import { recordServiceCharge } from "@/lib/serviceBilling";
 import { calcGST } from "@/lib/currency";
 import { getRate } from "@/lib/serviceRates";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
@@ -155,7 +156,7 @@ const RequestsTab: React.FC<Props> = ({ showModal, onCloseModal, onRefresh }) =>
     // Find IPD bill
     const { data: bill } = await supabase
       .from("bills")
-      .select("id")
+      .select("id, patient_id")
       .eq("hospital_id", hospitalId)
       .eq("admission_id", issue.admission_id)
       .eq("bill_type", "ipd")
@@ -188,6 +189,15 @@ const RequestsTab: React.FC<Props> = ({ showModal, onCloseModal, onRefresh }) =>
       source_module: "blood_bank",
       source_record_id: issue.id ?? null,
       source_dedupe_key: dedupeKey,
+    });
+
+    recordServiceCharge({
+      hospitalId, patientId: bill.patient_id, admissionId: issue.admission_id,
+      serviceModule: "blood_bank",
+      serviceRefId: issue.id ?? null,
+      serviceName: `Blood Product: ${(unit.component || "Blood").toUpperCase()}`,
+      unitRate: fee, gstPercent: gstPct, gstAmount: gst, totalAmount: fee + gst,
+      billId: bill.id,
     });
 
     // Mark blood_issues as billed
@@ -254,6 +264,14 @@ const RequestsTab: React.FC<Props> = ({ showModal, onCloseModal, onRefresh }) =>
         total_amount: fee + gst,
         hsn_code: "999316",
         source_module: "blood_bank",
+      });
+
+      recordServiceCharge({
+        hospitalId, patientId,
+        serviceModule: "blood_bank",
+        serviceName: `Blood Product: ${(unit.component || "Blood").toUpperCase()}`,
+        unitRate: fee, gstPercent: gstPct, gstAmount: gst, totalAmount: fee + gst,
+        billId: newBill.id,
       });
 
       const { data: { user: authUser } } = await supabase.auth.getUser();

@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { ExternalLink, Mic, FileText, Bot, Loader2, X, FlaskConical } from "lucide-react";
+import { ExternalLink, Mic, FileText, Bot, Loader2, X, FlaskConical, ScanLine } from "lucide-react";
 import AIAttestationModal from "@/components/ai/AIAttestationModal";
 import { printDocument, printHeader } from "@/lib/printUtils";
 import { useVoiceScribe } from "@/contexts/VoiceScribeContext";
@@ -17,6 +17,7 @@ import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, A
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import AdmitPatientModal from "@/components/ipd/AdmitPatientModal";
 import NewLabOrderModal from "@/components/lab/NewLabOrderModal";
+import NewRadiologyOrderModal from "@/components/radiology/NewRadiologyOrderModal";
 import BookOTModal from "@/components/ot/BookOTModal";
 import EDChargesPanel from "@/components/emergency/EDChargesPanel";
 import EDDischargeSummaryModal from "@/components/emergency/EDDischargeSummaryModal";
@@ -60,6 +61,8 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
   // Modal states
   const [showAdmitModal, setShowAdmitModal] = useState(false);
   const [showLabModal, setShowLabModal] = useState(false);
+  const [showRadModal, setShowRadModal] = useState(false);
+  const [radModalities, setRadModalities] = useState<{ id: string; name: string; modality_type: string; is_active: boolean }[]>([]);
   const [showBloodDialog, setShowBloodDialog] = useState(false);
   const [showSpecialistDialog, setShowSpecialistDialog] = useState(false);
   const [showDischargeConfirm, setShowDischargeConfirm] = useState(false);
@@ -95,6 +98,10 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
   const [showConsent, setShowConsent] = useState(false);
   // ED bill balance surfaced in the discharge dialog (settlement prompt)
   const [edBillInfo, setEdBillInfo] = useState<{ id: string; balance: number } | null>(null);
+  // Advisory-only unbilled ancillary services (lab/radiology/pharmacy) for this ED visit,
+  // surfaced in the discharge dialog. Never blocks discharge — informational, matching
+  // IPD's PreDischargeLeakageBanner.
+  const [edUnbilled, setEdUnbilled] = useState<{ type: string; count: number }[]>([]);
   // Additional dispositions (LAMA/DAMA/LWBS/absconded/referred-out)
   const [pendingDisp, setPendingDisp] = useState<string | null>(null);
   const [showReferralModal, setShowReferralModal] = useState(false);
@@ -147,6 +154,62 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
   const edLabsHasResults = edLabs.some(o => o.status !== "ordered");
   const edLabsHasCritical = edLabs.some(o => o.items.some(i => i.result_flag === "CH" || i.result_flag === "CL"));
 
+  // ED radiology results-return (Radiology completion plan Phase 2, mirrors edLabs above).
+  // ED can order STAT radiology but the "Imaging" timeline step needs its own fetch since
+  // ED visits have no encounter FK that radiology_orders can join against — same
+  // patient_id + order_time-since-arrival heuristic as loadEdLabs.
+  const [edRads, setEdRads] = useState<Array<{ id: string; status: string; accession: string | null; study_name: string; report: { findings: string | null; impression: string | null; is_critical: boolean | null; is_signed: boolean | null } | null }>>([]);
+
+  const loadEdRads = useCallback(async () => {
+    if (!visit?.patient_id || !hospitalId) { setEdRads([]); return; }
+    const { data } = await (supabase as any)
+      .from("radiology_orders")
+      .select(`id, status, accession_number, study_name, order_time,
+        radiology_reports(findings, impression, is_critical, is_signed)`)
+      .eq("hospital_id", hospitalId)
+      .eq("patient_id", visit.patient_id)
+      .gte("order_time", visit.arrival_time)
+      .neq("status", "cancelled")
+      .order("order_time", { ascending: false });
+    setEdRads((data || []).map((o: any) => ({
+      id: o.id,
+      status: o.status,
+      accession: o.accession_number,
+      study_name: o.study_name,
+      report: Array.isArray(o.radiology_reports) ? (o.radiology_reports[0] || null) : (o.radiology_reports || null),
+    })));
+  }, [visit?.patient_id, visit?.arrival_time, hospitalId]);
+
+  useEffect(() => { loadEdRads(); }, [loadEdRads]);
+
+  useEffect(() => {
+    if (!hospitalId || !visit?.patient_id) return;
+    const channel = supabase
+      .channel(`ed-rads-${visit.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "radiology_reports", filter: `hospital_id=eq.${hospitalId}` }, () => loadEdRads())
+      .on("postgres_changes", { event: "*", schema: "public", table: "radiology_orders", filter: `hospital_id=eq.${hospitalId}` }, () => loadEdRads())
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [hospitalId, visit?.id, visit?.patient_id, loadEdRads]);
+
+  const edRadsHasResults = edRads.some(o => o.status === "reported" || o.status === "validated");
+  const edRadsHasCritical = edRads.some(o => o.report?.is_critical);
+
+  // Active radiology modalities for the STAT Radiology order modal (loaded eagerly so the
+  // modal opens instantly, mirroring RadiologyPage.tsx's own fetch).
+  const loadRadModalities = useCallback(async () => {
+    if (!hospitalId) { setRadModalities([]); return; }
+    const { data } = await supabase
+      .from("radiology_modalities")
+      .select("*")
+      .eq("hospital_id", hospitalId)
+      .eq("is_active", true)
+      .order("name");
+    setRadModalities((data as any) || []);
+  }, [hospitalId]);
+
+  useEffect(() => { loadRadModalities(); }, [loadRadModalities]);
+
   const loadEdCharges = useCallback(async () => {
     if (!visit?.id || !hospitalId) {
       setEdBilling({ status: "unbilled", billId: null, total: 0, itemizedTotal: 0, itemizedBillId: null });
@@ -188,6 +251,32 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
       .order("created_at", { ascending: false }).limit(1).maybeSingle()
       .then(({ data }: any) => setEdBillInfo(data ? { id: data.id, balance: Number(data.balance_due || 0) } : null));
   }, [showDischargeConfirm, visit?.id]);
+
+  // When the discharge dialog opens, advisory-check for unbilled ancillary services
+  // (lab/radiology/pharmacy) from this ED visit. ED visits have no FK those tables can
+  // join against, so this reuses the same patient_id + order_time-since-arrival heuristic
+  // as loadEdLabs/loadEdRads above. Non-blocking — informational only.
+  useEffect(() => {
+    if (!showDischargeConfirm || !visit?.patient_id || !hospitalId) { setEdUnbilled([]); return; }
+    (async () => {
+      const [{ data: labs }, { data: rads }, { data: pharm }] = await Promise.all([
+        (supabase as any).from("lab_orders").select("id")
+          .eq("hospital_id", hospitalId).eq("patient_id", visit.patient_id)
+          .gte("order_time", visit.arrival_time).neq("status", "cancelled").eq("billed", false),
+        (supabase as any).from("radiology_orders").select("id")
+          .eq("hospital_id", hospitalId).eq("patient_id", visit.patient_id)
+          .gte("order_time", visit.arrival_time).neq("status", "cancelled").eq("billed", false),
+        (supabase as any).from("pharmacy_dispensing").select("id")
+          .eq("hospital_id", hospitalId).eq("patient_id", visit.patient_id)
+          .gte("dispensed_at", visit.arrival_time).eq("billed", false),
+      ]);
+      const items: { type: string; count: number }[] = [];
+      if ((labs || []).length) items.push({ type: "Lab", count: labs.length });
+      if ((rads || []).length) items.push({ type: "Radiology", count: rads.length });
+      if ((pharm || []).length) items.push({ type: "Pharmacy", count: pharm.length });
+      setEdUnbilled(items);
+    })();
+  }, [showDischargeConfirm, visit?.patient_id, visit?.arrival_time, hospitalId]);
 
   // Load departments for specialist dialog + configured in-ED specialist consult rate
   useEffect(() => {
@@ -530,6 +619,11 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
             label={edLabs.length > 0 ? `Investigation (${edLabs.length})` : "Investigation"}
             time={edLabsHasCritical ? "🔴 Critical" : edLabsHasResults ? "Results in" : ""}
           />
+          <TimelineItem
+            filled={edRadsHasResults}
+            label={edRads.length > 0 ? `Imaging (${edRads.length})` : "Imaging"}
+            time={edRadsHasCritical ? "🔴 Critical" : edRadsHasResults ? "Results in" : ""}
+          />
           <TimelineItem filled={visit.disposition !== "awaiting"} label={visit.disposition !== "awaiting" ? `Disposition: ${visit.disposition}` : "Disposition"} time={visit.disposition !== "awaiting" ? "Done" : ""} />
         </div>
         <div className="mt-2 bg-red-900/20 rounded-md p-2 flex items-center gap-2">
@@ -631,6 +725,31 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
                       );
                     })}
                   </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ED radiology results (Radiology completion plan Phase 2) — realtime results-return for STAT imaging */}
+        {edRads.length > 0 && (
+          <div className={cn("rounded-lg p-2.5 border", edRadsHasCritical ? "bg-red-900/30 border-red-700/50" : "bg-slate-800/50 border-slate-700")}>
+            <p className={cn("text-[10px] font-bold uppercase mb-1.5 flex items-center gap-1.5", edRadsHasCritical ? "text-red-300" : "text-slate-400")}>
+              <ScanLine className="h-3 w-3" /> Radiology Results {edRadsHasCritical && "— CRITICAL FINDING"}
+            </p>
+            <div className="space-y-1.5">
+              {edRads.map(o => (
+                <div key={o.id} className="text-[11px]">
+                  <div className="flex items-center gap-2 text-slate-500">
+                    <span className="font-mono text-[10px]">{o.accession || "—"}</span>
+                    <span>{o.study_name}</span>
+                    <span className="capitalize">{o.status.replace(/_/g, " ")}</span>
+                  </div>
+                  {o.report?.impression && (
+                    <p className={cn("mt-0.5", o.report.is_critical ? "text-red-400 font-bold" : "text-slate-300")}>
+                      {o.report.impression}{o.report.is_critical ? " 🔴" : ""}
+                    </p>
+                  )}
                 </div>
               ))}
             </div>
@@ -803,6 +922,7 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
         </button>
         <ActionBtn label="🛏️ Admit to IPD" bg="#3B82F6" onClick={() => setShowAdmitModal(true)} />
         <ActionBtn label="🔬 STAT Lab" bg="#8B5CF6" onClick={() => { if (hospitalId) setShowLabModal(true); }} />
+        <ActionBtn label="🩻 STAT Radiology" bg="#0369A1" onClick={() => { if (hospitalId) setShowRadModal(true); }} />
         <ActionBtn label="💉 Medications" bg="#7C3AED" onClick={() => setShowMedications(true)} />
         <ActionBtn label="🗒️ Handover Note" bg="#475569" onClick={() => setShowHandoverNote(true)} />
         <ActionBtn label="📝 Consent" bg="#0891B2" onClick={() => setShowConsent(true)} />
@@ -948,6 +1068,19 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
         />
       )}
 
+      {/* STAT Radiology */}
+      {showRadModal && hospitalId && (
+        <NewRadiologyOrderModal
+          hospitalId={hospitalId}
+          modalities={radModalities}
+          onClose={() => setShowRadModal(false)}
+          onCreated={() => {
+            setShowRadModal(false);
+            toast({ title: "✓ STAT radiology order created from ED" });
+          }}
+        />
+      )}
+
       {/* Refer to OT */}
       {showOTModal && (
         <BookOTModal
@@ -1088,6 +1221,16 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
                     onClick={() => navigate(`/billing?bill_id=${edBillInfo.id}`)}
                     className="ml-2 text-amber-900 underline font-medium">
                     Collect payment in Billing →
+                  </button>
+                </span>
+              )}
+              {edUnbilled.length > 0 && (
+                <span className="block mt-2 rounded-md bg-amber-50 border border-amber-200 px-2.5 py-1.5 text-amber-800">
+                  {edUnbilled.map(u => `${u.count} ${u.type}`).join(", ")} item{edUnbilled.reduce((s, u) => s + u.count, 0) !== 1 ? "s" : ""} from this visit may not be billed yet.
+                  <button
+                    onClick={() => navigate(edBillInfo ? `/billing?bill_id=${edBillInfo.id}` : "/billing")}
+                    className="ml-2 text-amber-900 underline font-medium">
+                    Review in Billing →
                   </button>
                 </span>
               )}

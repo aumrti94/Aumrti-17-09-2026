@@ -1,8 +1,6 @@
 import React, { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { autoPostJournalEntry } from "@/lib/accounting";
-import { logAudit } from "@/lib/auditLog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -10,8 +8,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, X } from "lucide-react";
 import type { BillRecord } from "@/pages/billing/BillingPage";
 import type { PaymentRecord } from "@/components/billing/BillEditor";
-import { sendWhatsApp } from "@/lib/whatsapp-send";
 import RefundModal from "@/components/billing/RefundModal";
+import { recordBillPayment } from "@/lib/billPayments";
 
 const PAYMENT_MODES = [
   { value: "cash", label: "💵 Cash" },
@@ -79,67 +77,34 @@ const PaymentsTab: React.FC<Props> = ({ bill, hospitalId, payments, netAdvanceBa
       .eq("auth_user_id", user?.id || "")
       .maybeSingle();
 
-    for (const row of rows) {
-      const amt = Number(row.amount) || 0;
-      if (amt <= 0) continue;
-      await supabase.from("bill_payments").insert({
-        hospital_id: hospitalId,
-        bill_id: bill.id,
-        payment_mode: row.mode,
-        amount: amt,
-        transaction_id: row.reference || null,
-        received_by: userData?.id || null,
-      });
-    }
-
-    // Auto-post journal entries for each payment
-    for (const row of rows) {
-      const amt = Number(row.amount) || 0;
-      if (amt <= 0) continue;
-      await autoPostJournalEntry({
-        triggerEvent: `bill_payment_${row.mode}`,
-        sourceModule: "billing",
-        sourceId: bill.id,
-        amount: amt,
-        description: `Payment - Bill ${bill.bill_number} - ${row.mode}`,
-        hospitalId: hospitalId,
-        postedBy: userData?.id || "",
-      });
-    }
-
     const newPaid = bill.paid_amount + totalCollecting;
     // For IPD bills, advance + all direct cash payments determine true balance
     const advanceCovered = (bill.bill_type === "ipd" && netAdvanceBalance != null) ? netAdvanceBalance : 0;
     const allDirectPaid = totalDirectPaid + totalCollecting;
     const newBalance = Math.max(0, netPatientPayable - advanceCovered - allDirectPaid);
-    const newStatus = newBalance <= 0 ? "paid" : "partial";
+    const newStatus: "paid" | "partial" = newBalance <= 0 ? "paid" : "partial";
 
-    await supabase.from("bills").update({
-      paid_amount: newPaid,
-      balance_due: newBalance,
-      payment_status: newStatus,
-    }).eq("id", bill.id);
+    const result = await recordBillPayment({
+      hospitalId,
+      billId: bill.id,
+      billNumber: bill.bill_number,
+      patientId: bill.patient_id,
+      admissionId: bill.admission_id ?? null,
+      rows: rows.map((r) => ({ mode: r.mode, amount: Number(r.amount) || 0, reference: r.reference })),
+      collectedBy: userData?.id || null,
+      newPaidAmount: newPaid,
+      newBalanceDue: newBalance,
+      newPaymentStatus: newStatus,
+      sendReceipt: autoReceipt,
+    });
 
-    // Auto-sync: mark billing cleared on admission when fully paid
-    if (newStatus === "paid" && bill.admission_id) {
-      await supabase.from("admissions")
-        .update({ billing_cleared: true })
-        .eq("id", bill.admission_id);
-    }
-
-    // Auto-receipt via WhatsApp
-    if (autoReceipt) {
-      const { data: patient } = await supabase.from("patients").select("phone, full_name").eq("id", bill.patient_id).maybeSingle();
-      if (patient?.phone) {
-        const receiptMsg = `✅ Payment Received\n\nPatient: ${patient.full_name}\nBill #: ${bill.bill_number}\nAmount Paid: ₹${totalCollecting.toLocaleString("en-IN")}\nMode: ${rows.map(r => r.mode).join(", ").toUpperCase()}\nDate: ${new Date().toLocaleDateString("en-IN")}\nBalance: ₹${newBalance.toLocaleString("en-IN")}\n\nThank you!`;
-        const cleanPhone = patient.phone.replace(/\D/g, "");
-        const fullPhone = cleanPhone.startsWith("91") ? cleanPhone : `91${cleanPhone}`;
-        await sendWhatsApp({ hospitalId: hospitalId ?? "", phone: fullPhone, message: receiptMsg });
-      }
+    if (!result.ok) {
+      toast({ title: result.error || "Failed to record payment", variant: "destructive" });
+      setSubmitting(false);
+      return;
     }
 
     toast({ title: `Payment of ₹${totalCollecting.toLocaleString("en-IN")} collected ✓` });
-    logAudit({ action: "created", module: "billing", entityType: "payment", entityId: bill.id, details: { amount: totalCollecting, modes: rows.map(r => r.mode) } });
     setSubmitting(false);
     onRefresh();
   };

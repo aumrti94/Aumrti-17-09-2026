@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { MessageSquare, Copy, Info, Loader2, ExternalLink, QrCode } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import type { BillRecord } from "@/pages/billing/BillingPage";
+import { generatePaymentLink } from "@/lib/paymentLinks";
 
 interface Props {
   bill: BillRecord;
@@ -36,21 +37,28 @@ const PaymentLinkModal: React.FC<Props> = ({
   const buildMessage = (link: string) =>
     `🏥 *${hospitalName}*\n\nDear Patient,\nYour bill #${bill.bill_number} is ready.\n\n💰 *Amount Due: ₹${amount.toLocaleString("en-IN")}*\n\nPay securely online:\n👉 ${link}\n\nFor queries: ${hospitalPhone || "Contact hospital"}`;
 
-  /** Attempt Razorpay edge fn, return the short URL. Throws on hard failure. */
-  const generateRazorpayLink = async (): Promise<string> => {
-    const { data, error } = await supabase.functions.invoke("create-razorpay-payment-link", {
-      body: {
-        bill_id: bill.id,
-        amount,
-        patient_name: bill.patient_name,
-        phone: phone || undefined,
-        hospital_id: hospitalId,
-      },
+  /**
+   * The one real way to get a link: try Razorpay, always persist a
+   * payment_links row, and return a real, resolvable /pay/:token URL —
+   * never a placeholder domain the hospital doesn't own. Cached in
+   * generatedLink so Copy and Send don't create two link records.
+   */
+  const ensureLink = async (): Promise<string> => {
+    if (generatedLink) return generatedLink;
+    const { data: { user } } = await supabase.auth.getUser();
+    const { data: userData } = await supabase
+      .from("users").select("id").eq("auth_user_id", user?.id || "").maybeSingle();
+    const result = await generatePaymentLink({
+      hospitalId,
+      billId: bill.id,
+      patientId: bill.patient_id,
+      patientName: bill.patient_name,
+      amount,
+      phone: phone || null,
+      createdBy: userData?.id ?? null,
     });
-    if (error) throw new Error(error.message);
-    const url = data?.short_url || data?.razorpay_link_url;
-    if (!url) throw new Error("No URL returned by Razorpay");
-    return url as string;
+    setGeneratedLink(result.url);
+    return result.url;
   };
 
   const handleSend = async () => {
@@ -60,20 +68,7 @@ const PaymentLinkModal: React.FC<Props> = ({
     }
     setSending(true);
     try {
-      let paymentLink: string;
-
-      if (razorpayConfigured) {
-        try {
-          paymentLink = await generateRazorpayLink();
-          setGeneratedLink(paymentLink);
-        } catch (rzpErr: unknown) {
-          const msg = rzpErr instanceof Error ? rzpErr.message : String(rzpErr);
-          console.debug("Razorpay link failed, falling back to demo link:", msg);
-          paymentLink = `https://pay.hospital.app/pay/${bill.id.slice(0, 8)}`;
-        }
-      } else {
-        paymentLink = `https://pay.hospital.app/pay/${bill.id.slice(0, 8)}`;
-      }
+      const paymentLink = await ensureLink();
 
       // Send via WhatsApp
       const cleanPhone = phone.replace(/\D/g, "");
@@ -98,24 +93,17 @@ const PaymentLinkModal: React.FC<Props> = ({
   };
 
   const handleCopy = async () => {
-    let link = generatedLink;
-    if (!link) {
-      if (razorpayConfigured) {
-        try {
-          link = await generateRazorpayLink();
-          setGeneratedLink(link);
-        } catch {
-          link = `https://pay.hospital.app/pay/${bill.id.slice(0, 8)}`;
-        }
-      } else {
-        link = `https://pay.hospital.app/pay/${bill.id.slice(0, 8)}`;
-      }
+    try {
+      const link = await ensureLink();
+      await navigator.clipboard.writeText(link);
+      toast({ title: "Payment link copied ✓" });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast({ title: "Failed to generate payment link", description: msg, variant: "destructive" });
     }
-    await navigator.clipboard.writeText(link);
-    toast({ title: "Payment link copied ✓" });
   };
 
-  const previewLink = generatedLink || `https://pay.hospital.app/pay/${bill.id.slice(0, 8)}`;
+  const previewLink = generatedLink || "[link generated when you Send or Copy]";
 
   return (
     <Dialog open onOpenChange={onClose}>

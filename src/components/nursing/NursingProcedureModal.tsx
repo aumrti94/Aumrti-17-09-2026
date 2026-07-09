@@ -12,6 +12,9 @@ import PatientSearchPicker from "@/components/shared/PatientSearchPicker";
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { autoPostJournalEntry } from "@/lib/accounting";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
+import { recordServiceCharge } from "@/lib/serviceBilling";
+import { deductCentralFEFO } from "@/lib/inventoryStock";
+import { Search, X } from "lucide-react";
 
 const PROCEDURES = [
   "Dressing Change", "Wound Care", "IV Cannulation", "Catheterisation",
@@ -36,6 +39,25 @@ export default function NursingProcedureModal({ open, onClose, hospitalId, defau
   const [quantity, setQuantity] = useState(1);
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  // Consumables used during the procedure — deducted from central inventory
+  const [consumables, setConsumables] = useState<{ item_id: string; item_name: string; quantity: number }[]>([]);
+  const [itemSearch, setItemSearch] = useState("");
+  const [itemResults, setItemResults] = useState<any[]>([]);
+
+  const searchItems = async (q: string) => {
+    setItemSearch(q);
+    if (q.length < 2) { setItemResults([]); return; }
+    const { data } = await (supabase as any).from("inventory_items")
+      .select("id, item_name, uom").eq("hospital_id", hospitalId).eq("is_active", true)
+      .ilike("item_name", `%${q}%`).limit(6);
+    setItemResults(data || []);
+  };
+  const addConsumable = (item: any) => {
+    if (!consumables.find((c) => c.item_id === item.id)) {
+      setConsumables([...consumables, { item_id: item.id, item_name: item.item_name, quantity: 1 }]);
+    }
+    setItemSearch(""); setItemResults([]);
+  };
 
   const handleLogAndBill = async () => {
     if (!patientId || !procedureName) {
@@ -135,14 +157,36 @@ export default function NursingProcedureModal({ open, onClose, hospitalId, defau
         }
       }
 
+      if (billId) {
+        recordServiceCharge({
+          hospitalId, patientId, admissionId: activeAdmissionId,
+          serviceModule: "nursing",
+          serviceName: `Nursing: ${procedureName}`,
+          quantity, unitRate, gstPercent: gstPct, gstAmount: gstAmt, totalAmount: grandTotal,
+          billId, performedBy: userId,
+        });
+      }
+
       // Insert nursing_procedures record
-      await (supabase as any).from("nursing_procedures").insert({
+      const { data: procRow } = await (supabase as any).from("nursing_procedures").insert({
         hospital_id: hospitalId, patient_id: patientId,
         admission_id: activeAdmissionId || null,
         procedure_name: procedureName, procedure_type: "general",
         quantity, performed_by: userId, notes: notes || null,
         billed: !!billId, bill_id: billId,
-      });
+      }).select("id").maybeSingle();
+
+      // Record consumables used and deduct them from central inventory (FEFO)
+      for (const c of consumables) {
+        await (supabase as any).from("nursing_procedure_consumables").insert({
+          hospital_id: hospitalId, nursing_procedure_id: procRow?.id || null,
+          inventory_item_id: c.item_id, item_name: c.item_name, quantity: c.quantity, stock_deducted: true,
+        });
+        await deductCentralFEFO({
+          hospitalId, itemId: c.item_id, qty: c.quantity,
+          ledger: { transactionType: "nursing_consumption", referenceId: procRow?.id || null, referenceType: "nursing", createdBy: userId, notes: `Nursing consumable — ${c.item_name}` },
+        });
+      }
 
       // Post journal entry
       if (billId) {
@@ -190,6 +234,27 @@ export default function NursingProcedureModal({ open, onClose, hospitalId, defau
             <div className="flex items-end">
               <p className="text-xs text-muted-foreground pb-2">e.g. O₂ hours, dressing count</p>
             </div>
+          </div>
+          <div>
+            <Label>Consumables used (deducted from stock)</Label>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+              <Input placeholder="Search inventory item…" value={itemSearch} onChange={e => searchItems(e.target.value)} className="pl-8" />
+              {itemResults.length > 0 && (
+                <div className="absolute z-20 left-0 right-0 mt-0.5 max-h-40 overflow-auto border border-border rounded-md bg-popover shadow">
+                  {itemResults.map((it) => (
+                    <div key={it.id} onClick={() => addConsumable(it)} className="px-3 py-1.5 text-sm hover:bg-muted cursor-pointer">{it.item_name} <span className="text-xs text-muted-foreground">({it.uom})</span></div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {consumables.map((c, idx) => (
+              <div key={c.item_id} className="flex items-center gap-2 mt-1.5">
+                <span className="text-sm flex-1 truncate">{c.item_name}</span>
+                <Input type="number" min={1} value={c.quantity} onChange={e => { const cp = [...consumables]; cp[idx].quantity = Number(e.target.value) || 1; setConsumables(cp); }} className="h-8 w-16" />
+                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive" onClick={() => setConsumables(consumables.filter((_, i) => i !== idx))}><X className="h-3.5 w-3.5" /></Button>
+              </div>
+            ))}
           </div>
           <div>
             <Label>Notes</Label>

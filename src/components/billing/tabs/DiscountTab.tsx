@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { formatINR } from "@/lib/currency";
 import { format, formatDistanceToNow } from "date-fns";
 import type { BillRecord } from "@/pages/billing/BillingPage";
+import { recalculateBillTotalsSafe } from "@/lib/billTotals";
 
 interface DiscountRules {
   t1_amount: number;
@@ -102,17 +103,13 @@ const DiscountTab: React.FC<Props> = ({ bill, hospitalId, onRefresh, userRole })
   const requiredRole = getRequiredRole(previewAmt, previewPct);
 
   const applyDiscount = async (amount: number, pct: number) => {
-    const newTotal = Math.max(0, subtotal + bill.gst_amount - amount);
-    const newPatientPayable = Math.max(0, newTotal - bill.advance_received - bill.insurance_amount);
-    const newBalance = Math.max(0, newPatientPayable - bill.paid_amount);
     const { error } = await supabase.from("bills").update({
       discount_amount: Math.round(amount * 100) / 100,
       discount_percent: Math.round(pct * 100) / 100,
-      total_amount: Math.round(newTotal * 100) / 100,
-      patient_payable: Math.round(newPatientPayable * 100) / 100,
-      balance_due: Math.round(newBalance * 100) / 100,
     } as any).eq("id", bill.id);
-    return !error;
+    if (error) return false;
+    const result = await recalculateBillTotalsSafe(bill.id);
+    return result.ok;
   };
 
   const handleSubmit = async () => {
@@ -225,16 +222,11 @@ const DiscountTab: React.FC<Props> = ({ bill, hospitalId, onRefresh, userRole })
   };
 
   const handleRemoveDiscount = async () => {
-    const newTotal = subtotal + bill.gst_amount;
-    const newPatientPayable = Math.max(0, newTotal - bill.advance_received - bill.insurance_amount);
-    const newBalance = Math.max(0, newPatientPayable - bill.paid_amount);
     await supabase.from("bills").update({
       discount_amount: 0,
       discount_percent: 0,
-      total_amount: Math.round(newTotal * 100) / 100,
-      patient_payable: Math.round(newPatientPayable * 100) / 100,
-      balance_due: Math.round(newBalance * 100) / 100,
     } as any).eq("id", bill.id);
+    await recalculateBillTotalsSafe(bill.id);
     toast({ title: "Discount removed" });
     onRefresh();
     loadRulesAndApproval();

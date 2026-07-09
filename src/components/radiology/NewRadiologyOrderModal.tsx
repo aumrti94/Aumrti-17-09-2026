@@ -4,9 +4,11 @@ import { useToast } from "@/hooks/use-toast";
 import { X, Search, ArrowLeft, CheckCircle2, Printer, IndianRupee, Loader2 } from "lucide-react";
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { autoPostJournalEntry } from "@/lib/accounting";
+import { recordServiceCharge } from "@/lib/serviceBilling";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { printDocument } from "@/lib/printUtils";
 import { cn } from "@/lib/utils";
+import { calcGST, roundCurrency } from "@/lib/currency";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -60,7 +62,29 @@ interface StudyRate {
   name: string;
   modalityType: string;
   rate: number;
+  gstPct: number;
+  gstAmt: number;
   total: number;
+}
+
+/**
+ * Looks up each study's GST% from service_master (same gst_applicable/
+ * gst_percent lookup pattern used elsewhere — e.g. RecordVaccineTab.tsx) —
+ * previously this hardcoded gst_percent/gst_amount to 0 regardless of
+ * configuration.
+ */
+async function buildStudyRates(hospitalId: string, studies: SelectedStudy[]): Promise<StudyRate[]> {
+  return Promise.all(studies.map(async (s) => {
+    const { data: svc } = await supabase
+      .from("service_master")
+      .select("gst_percent, gst_applicable")
+      .eq("hospital_id", hospitalId)
+      .ilike("name", `%${s.name}%`)
+      .maybeSingle();
+    const gstPct = svc?.gst_applicable ? (Number(svc.gst_percent) || 0) : 0;
+    const gstAmt = calcGST(s.fee, gstPct);
+    return { name: s.name, modalityType: s.modalityType, rate: s.fee, gstPct, gstAmt, total: roundCurrency(s.fee + gstAmt) };
+  }));
 }
 
 type Step = "order" | "payment" | "success";
@@ -272,7 +296,7 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
     if (linkedAdmission && !linkedEncounterId) { await createOrdersIPD(); return; }
 
     setLoadingRates(true);
-    const rates: StudyRate[] = selectedStudies.map(s => ({ name: s.name, modalityType: s.modalityType, rate: s.fee, total: s.fee }));
+    const rates = await buildStudyRates(hospitalId, selectedStudies);
     setStudyRates(rates);
     setLoadingRates(false);
     setStep("payment");
@@ -289,7 +313,9 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
       await batchCreateRadiologyOrders(currentUserId, "advance_covered");
 
       // 2. Create bill for IPD charge-to-advance
-      const rates: StudyRate[] = selectedStudies.map(s => ({ name: s.name, modalityType: s.modalityType, rate: s.fee, total: s.fee }));
+      const rates = await buildStudyRates(hospitalId, selectedStudies);
+      const subtotalAmount = rates.reduce((s, r) => s + r.rate, 0);
+      const gstTotal = rates.reduce((s, r) => s + r.gstAmt, 0);
       const totalAmount = rates.reduce((s, r) => s + r.total, 0);
 
       if (totalAmount > 0) {
@@ -303,8 +329,8 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
           bill_status: "final",
           bill_date: new Date().toISOString().split("T")[0],
           total_amount: totalAmount,
-          subtotal: totalAmount,
-          gst_amount: 0,
+          subtotal: subtotalAmount,
+          gst_amount: gstTotal,
           paid_amount: 0,
           balance_due: totalAmount,
           payment_status: "unpaid",
@@ -321,14 +347,24 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
               quantity: 1,
               unit_rate: r.rate,
               taxable_amount: r.rate,
-              gst_percent: 0,
-              gst_amount: 0,
+              gst_percent: r.gstPct,
+              gst_amount: r.gstAmt,
               total_amount: r.total,
               service_date: new Date().toISOString().split("T")[0],
               source_module: "radiology",
               ordered_by: currentUserId,
             }))
           );
+
+          for (const r of rates) {
+            recordServiceCharge({
+              hospitalId, patientId: selectedPatient.id, admissionId: linkedAdmission,
+              serviceModule: "radiology",
+              serviceName: `Radiology: ${r.name}`,
+              unitRate: r.rate, gstPercent: r.gstPct, gstAmount: r.gstAmt, totalAmount: r.total,
+              billId: bill.id, performedBy: currentUserId,
+            });
+          }
 
           await autoPostJournalEntry({
             triggerEvent: "bill_finalized_radiology",
@@ -434,6 +470,8 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
     }
     setSubmitting(true);
     try {
+      const subtotalAmount = studyRates.reduce((s, r) => s + r.rate, 0);
+      const gstTotal = studyRates.reduce((s, r) => s + r.gstAmt, 0);
       const grandTotal = studyRates.reduce((s, r) => s + r.total, 0);
       const today = new Date().toISOString().split("T")[0];
       const pmodeMap: Record<string, string> = { cash: "cash", upi: "upi", card: "card", neft: "net_banking" };
@@ -444,7 +482,7 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
         encounter_id: linkedEncounter || null, bill_number: billNumber,
         bill_type: "radiology", bill_date: today, bill_status: "final", payment_status: "paid",
         notes: paymentRef ? `Payment ref: ${paymentRef}` : null,
-        subtotal: grandTotal, gst_amount: 0, total_amount: grandTotal,
+        subtotal: subtotalAmount, gst_amount: gstTotal, total_amount: grandTotal,
         patient_payable: grandTotal, paid_amount: grandTotal, balance_due: 0,
         created_by: currentUserId,
       }).select("id").maybeSingle();
@@ -465,10 +503,20 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
           hospital_id: hospitalId, bill_id: bill.id,
           description: `Radiology: ${r.name}`, item_type: "radiology",
           quantity: 1, unit_rate: r.rate, taxable_amount: r.rate,
-          gst_percent: 0, gst_amount: 0, total_amount: r.total,
+          gst_percent: r.gstPct, gst_amount: r.gstAmt, total_amount: r.total,
           service_date: today, source_module: "radiology", ordered_by: currentUserId,
         }))
       );
+
+      for (const r of studyRates) {
+        recordServiceCharge({
+          hospitalId, patientId: selectedPatient.id, encounterId: linkedEncounter || null,
+          serviceModule: "radiology",
+          serviceName: `Radiology: ${r.name}`,
+          unitRate: r.rate, gstPercent: r.gstPct, gstAmount: r.gstAmt, totalAmount: r.total,
+          billId: bill.id, performedBy: currentUserId,
+        });
+      }
 
       try {
         await autoPostJournalEntry({
@@ -686,7 +734,11 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
                           placeholder="Enter fee"
                           onChange={e => {
                             const val = parseFloat(e.target.value) || 0;
-                            setStudyRates(prev => prev.map((x, idx) => idx === i ? { ...x, rate: val, total: val } : x));
+                            setStudyRates(prev => prev.map((x, idx) => {
+                              if (idx !== i) return x;
+                              const gstAmt = calcGST(val, x.gstPct);
+                              return { ...x, rate: val, gstAmt, total: roundCurrency(val + gstAmt) };
+                            }));
                           }}
                           className={cn("w-24 text-right border rounded px-2 py-1 text-sm font-medium focus:outline-none focus:ring-1 focus:ring-primary",
                             r.rate === 0 ? "border-amber-400 bg-amber-50 placeholder-amber-400" : "border-border bg-background"

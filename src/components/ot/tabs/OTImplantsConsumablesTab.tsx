@@ -6,6 +6,10 @@ import { cn } from "@/lib/utils";
 import { calcGST, roundCurrency } from "@/lib/currency";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
 import { generateBillNumber } from "@/hooks/useBillNumber";
+import { fetchPreAuthCeiling, type PreAuthCeiling } from "@/lib/insuranceCeiling";
+import { deductCentralFEFO, reverseCentral } from "@/lib/inventoryStock";
+import { Search } from "lucide-react";
+import EnhancementRequestModal from "@/components/billing/EnhancementRequestModal";
 import type { OTSchedule } from "@/pages/ot/OTPage";
 
 interface OTImplant {
@@ -29,6 +33,8 @@ interface OTConsumable {
   unit_cost: number;
   quantity: number;
   billed: boolean;
+  inventory_item_id?: string | null;
+  stock_deducted?: boolean;
 }
 
 interface Props {
@@ -55,6 +61,39 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
   const [addingImplant, setAddingImplant] = useState(false);
   const [addingConsumable, setAddingConsumable] = useState(false);
   const [billing, setBilling] = useState(false);
+  // Inventory link for consumables (enables stock deduction)
+  const [conLinkedItemId, setConLinkedItemId] = useState<string | null>(null);
+  const [conItemSearch, setConItemSearch] = useState("");
+  const [conItemResults, setConItemResults] = useState<any[]>([]);
+
+  const searchConItems = async (q: string) => {
+    setConItemSearch(q);
+    if (!hospitalId || q.length < 2) { setConItemResults([]); return; }
+    const { data } = await (supabase as any).from("inventory_items")
+      .select("id, item_name, item_code, uom").eq("hospital_id", hospitalId).eq("is_active", true)
+      .ilike("item_name", `%${q}%`).limit(6);
+    setConItemResults(data || []);
+  };
+  const pickConItem = (it: any) => {
+    setNewConsumable({ ...newConsumable, item_name: it.item_name, item_code: it.item_code || "", unit: it.uom || "pcs" });
+    setConLinkedItemId(it.id);
+    setConItemSearch(""); setConItemResults([]);
+  };
+
+  // Pre-auth ceiling enforcement (same convention as LineItemsTab) — implants can be
+  // expensive enough on their own to blow past a TPA-approved ceiling that ordinary
+  // line-item entry already respects.
+  const [preAuthCeiling, setPreAuthCeiling] = useState<PreAuthCeiling | null>(null);
+  const [enhancementBlocked, setEnhancementBlocked] = useState<{
+    implants: OTImplant[];
+    total: number;
+    runningNow: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!schedule.admission_id || !hospitalId) { setPreAuthCeiling(null); return; }
+    fetchPreAuthCeiling(schedule.admission_id, hospitalId).then(setPreAuthCeiling);
+  }, [schedule.admission_id, hospitalId]);
 
   const fetchData = useCallback(async () => {
     const [{ data: imp }, { data: con }] = await Promise.all([
@@ -93,6 +132,7 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
 
   const addConsumable = async () => {
     if (!newConsumable.item_name?.trim() || !hospitalId) return;
+    const qty = Number(newConsumable.quantity) || 1;
     const { error } = await (supabase as any).from("ot_consumables").insert({
       hospital_id: hospitalId,
       schedule_id: schedule.id,
@@ -100,10 +140,20 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
       item_code: newConsumable.item_code || null,
       unit: newConsumable.unit || "pcs",
       unit_cost: Number(newConsumable.unit_cost) || 0,
-      quantity: Number(newConsumable.quantity) || 1,
+      quantity: qty,
+      inventory_item_id: conLinkedItemId,
+      stock_deducted: !!conLinkedItemId,
     });
     if (error) { toast({ title: "Failed to add consumable", variant: "destructive" }); return; }
+    // Deduct from central inventory when linked to a master item
+    if (conLinkedItemId) {
+      await deductCentralFEFO({
+        hospitalId, itemId: conLinkedItemId, qty,
+        ledger: { transactionType: "ot_consumption", referenceId: schedule.id, referenceType: "ot", notes: `OT consumable — ${newConsumable.item_name.trim()}` },
+      });
+    }
     setNewConsumable(emptyConsumable());
+    setConLinkedItemId(null);
     setAddingConsumable(false);
     fetchData();
   };
@@ -114,13 +164,20 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
   };
 
   const deleteConsumable = async (id: string) => {
+    const row = consumables.find((c) => c.id === id);
     await (supabase as any).from("ot_consumables").delete().eq("id", id);
+    if (row?.inventory_item_id && row.stock_deducted && hospitalId) {
+      await reverseCentral({
+        hospitalId, itemId: row.inventory_item_id, qty: row.quantity || 0,
+        ledger: { transactionType: "ot_consumption_reversal", referenceId: schedule.id, referenceType: "ot", notes: `OT consumable removed — ${row.item_name}` },
+      });
+    }
     fetchData();
   };
 
   // Implants bill through bill_line_items (same table/GST/dedupe scheme as OT charges &
   // fees) so they land on the real OT bill instead of a separate, GST-less list.
-  const billImplants = async (unbilled: OTImplant[]): Promise<number> => {
+  const insertImplantLineItems = async (unbilled: OTImplant[], opts?: { isInsuranceCovered?: boolean }): Promise<number> => {
     if (unbilled.length === 0 || !hospitalId || !schedule.admission_id) return 0;
 
     const { data: existingBill } = await supabase
@@ -165,7 +222,7 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
       .map((i) => {
         const total = roundCurrency(i.unit_cost * i.quantity);
         const gst = calcGST(total, 12);
-        return {
+        const li: Record<string, unknown> = {
           hospital_id: hospitalId, bill_id: billId,
           item_type: "implant",
           description: `Implant: ${i.item_name}`,
@@ -176,16 +233,59 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
           source_record_id: schedule.id,
           source_dedupe_key: `ot:${schedule.id}:implant:${i.id}`,
         };
+        if (opts?.isInsuranceCovered === false) li.is_insurance_covered = false;
+        return li;
       })
-      .filter((li) => !existingSet.has(li.source_dedupe_key));
+      .filter((li) => !existingSet.has(li.source_dedupe_key as string));
 
     if (lineItems.length > 0) {
-      await supabase.from("bill_line_items").insert(lineItems);
+      await supabase.from("bill_line_items").insert(lineItems as never[]);
       await recalculateBillTotalsSafe(billId);
     }
 
     await (supabase as any).from("ot_implants").update({ billed: true }).in("id", unbilled.map((i) => i.id));
     return unbilled.length;
+  };
+
+  // Pre-auth ceiling enforcement (IPD insurance bills only) — mirrors LineItemsTab's
+  // addServiceItem guard. Implants can be expensive enough on their own to exceed a
+  // TPA-approved ceiling that ordinary line-item entry already blocks on.
+  const billImplants = async (unbilled: OTImplant[]): Promise<number> => {
+    if (unbilled.length === 0 || !hospitalId || !schedule.admission_id) return 0;
+
+    if (preAuthCeiling) {
+      const { data: existingBill } = await supabase
+        .from("bills")
+        .select("id")
+        .eq("hospital_id", hospitalId)
+        .eq("admission_id", schedule.admission_id)
+        .eq("bill_type", "ipd")
+        .maybeSingle();
+
+      let runningNow = 0;
+      if (existingBill?.id) {
+        const { data: items } = await supabase
+          .from("bill_line_items")
+          .select("total_amount")
+          .eq("bill_id", existingBill.id);
+        runningNow = roundCurrency((items || []).reduce((s, i: any) => s + Number(i.total_amount), 0));
+      }
+
+      const newImplantsTotal = roundCurrency(
+        unbilled.reduce((s, i) => {
+          const total = roundCurrency(i.unit_cost * i.quantity);
+          return s + roundCurrency(total + calcGST(total, 12));
+        }, 0)
+      );
+      const projectedTotal = roundCurrency(runningNow + newImplantsTotal);
+
+      if (projectedTotal > preAuthCeiling.ceiling) {
+        setEnhancementBlocked({ implants: unbilled, total: newImplantsTotal, runningNow });
+        return 0;
+      }
+    }
+
+    return insertImplantLineItems(unbilled);
   };
 
   const billAll = async () => {
@@ -484,6 +584,23 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
         {/* Add consumable form */}
         {addingConsumable && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
+            <div className="relative">
+              <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
+              <input
+                className="w-full pl-7 pr-2 py-1.5 text-xs border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+                placeholder="Search inventory item to deduct stock (optional)…"
+                value={conItemSearch}
+                onChange={(e) => searchConItems(e.target.value)}
+              />
+              {conItemResults.length > 0 && (
+                <div className="absolute z-20 left-0 right-0 mt-0.5 max-h-36 overflow-auto border border-border rounded-md bg-popover shadow">
+                  {conItemResults.map((it) => (
+                    <div key={it.id} onClick={() => pickConItem(it)} className="px-3 py-1.5 text-xs hover:bg-muted cursor-pointer">{it.item_name} <span className="text-muted-foreground">({it.uom})</span></div>
+                  ))}
+                </div>
+              )}
+              {conLinkedItemId && <p className="text-[10px] text-emerald-600 mt-0.5">✓ Linked — stock will be deducted on add</p>}
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="text-[10px] text-muted-foreground font-medium">Item Name *</label>
@@ -546,6 +663,39 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
           </div>
         )}
       </section>
+
+      {/* Pre-auth ceiling breach — enhancement request modal */}
+      {enhancementBlocked && preAuthCeiling && hospitalId && schedule.admission_id && (
+        <EnhancementRequestModal
+          hospitalId={hospitalId}
+          admissionId={schedule.admission_id}
+          preAuthId={preAuthCeiling.preAuthId}
+          preAuthNumber={preAuthCeiling.preAuthNumber}
+          tpaName={preAuthCeiling.tpaName}
+          currentApproved={preAuthCeiling.ceiling}
+          runningTotal={enhancementBlocked.runningNow}
+          serviceName={
+            enhancementBlocked.implants.length === 1
+              ? enhancementBlocked.implants[0].item_name
+              : `${enhancementBlocked.implants.length} implants: ${enhancementBlocked.implants.map((i) => i.item_name).join(", ")}`
+          }
+          serviceAmount={enhancementBlocked.total}
+          onMarkPatientPayable={async () => {
+            const blocked = enhancementBlocked;
+            setEnhancementBlocked(null);
+            await insertImplantLineItems(blocked.implants, { isInsuranceCovered: false });
+            if (schedule.admission_id && hospitalId) {
+              fetchPreAuthCeiling(schedule.admission_id, hospitalId).then(setPreAuthCeiling);
+            }
+            toast({
+              title: `${blocked.implants.length} implant(s) marked as patient payable`,
+              description: "Excluded from the TPA claim.",
+            });
+            fetchData();
+          }}
+          onClose={() => setEnhancementBlocked(null)}
+        />
+      )}
     </div>
   );
 };

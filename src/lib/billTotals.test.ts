@@ -63,6 +63,66 @@ describe("computeBillTotals — patient payable & balance", () => {
   });
 });
 
+describe("computeBillTotals — discount survives recalculation", () => {
+  it("subtracts discount_amount from the total (net-of-discount convention)", () => {
+    const r = computeBillTotals({
+      items: [{ taxable_amount: 1000, gst_amount: 180 }],
+      discountAmount: 200,
+    });
+    expect(r.total).toBe(980); // 1000 + 180 - 200
+    expect(r.patientPayable).toBe(980);
+  });
+
+  it("a later line-item addition preserves the previously-applied discount instead of silently dropping it", () => {
+    // Regression for the exact bug found in the audit: a discount is approved,
+    // then an unrelated line-item edit triggers recalculation — the discount
+    // must still be reflected, not reset to the pre-discount total.
+    const beforeNewItem = computeBillTotals({
+      items: [{ taxable_amount: 1000, gst_amount: 180 }],
+      discountAmount: 200,
+    });
+    expect(beforeNewItem.total).toBe(980);
+
+    const afterNewItem = computeBillTotals({
+      items: [
+        { taxable_amount: 1000, gst_amount: 180 },
+        { taxable_amount: 100, gst_amount: 18 },
+      ],
+      discountAmount: 200, // same approved discount, unchanged
+    });
+    expect(afterNewItem.total).toBe(1098); // 1100 + 198 - 200, discount still applied
+  });
+
+  it("never produces a negative total when discount exceeds subtotal+GST", () => {
+    const r = computeBillTotals({
+      items: [{ taxable_amount: 100, gst_amount: 0 }],
+      discountAmount: 500,
+    });
+    expect(r.total).toBe(0);
+    expect(r.patientPayable).toBe(0);
+    expect(r.balanceDue).toBe(0);
+  });
+
+  it("nets discount, advance, and insurance together off the total", () => {
+    const r = computeBillTotals({
+      items: [{ taxable_amount: 10000, gst_amount: 0 }],
+      discountAmount: 1000,
+      advanceReceived: 2000,
+      insuranceAmount: 3000,
+    });
+    // total = 10000 - 1000 = 9000; payable = 9000 - 2000 - 3000 = 4000
+    expect(r.total).toBe(9000);
+    expect(r.patientPayable).toBe(4000);
+  });
+
+  it("a bill with no discount behaves exactly as before (backward compatible)", () => {
+    const r = computeBillTotals({
+      items: [{ taxable_amount: 1000, gst_amount: 180 }],
+    });
+    expect(r.total).toBe(1180);
+  });
+});
+
 describe("computeBillTotals — payment status transitions", () => {
   it("fully paid → 'paid' with zero balance", () => {
     const r = computeBillTotals({

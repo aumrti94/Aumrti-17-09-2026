@@ -5,8 +5,9 @@ import { useHospitalId } from "@/hooks/useHospitalId";
 import { useHospitalContext } from "@/contexts/HospitalContext";
 import { hasTabAccess } from "@/lib/tabPermissions";
 import { Button } from "@/components/ui/button";
-import { ClipboardPlus, ListChecks, ClipboardList, LayoutDashboard, Tv, X as XIcon, Droplets, ShieldAlert, Monitor, RefreshCw, AlertTriangle, Activity, TestTube2 } from "lucide-react";
+import { ClipboardPlus, ListChecks, ClipboardList, LayoutDashboard, Tv, X as XIcon, Droplets, ShieldAlert, Monitor, RefreshCw, AlertTriangle, Activity, TestTube2, ScanLine } from "lucide-react";
 import CollectionWorkstation from "@/components/lab/CollectionWorkstation";
+import NursingRadiologyResultsTab from "@/components/nursing/NursingRadiologyResultsTab";
 import { getNEWS2BadgeClasses, calculateNEWS2 } from "@/lib/news2";
 import NursingTaskList from "@/components/nursing/NursingTaskList";
 import NursingTaskExecution from "@/components/nursing/NursingTaskExecution";
@@ -23,7 +24,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 
 const NURSING_TAB_DEFS: {
-  key: "tasks" | "kanban" | "care_plans" | "io" | "restraints" | "icu_monitor" | "risk_assessments" | "collection";
+  key: "tasks" | "kanban" | "care_plans" | "io" | "restraints" | "icu_monitor" | "risk_assessments" | "collection" | "radiology";
   label: string;
   icon: React.ComponentType<{ className?: string }>;
 }[] = [
@@ -35,6 +36,7 @@ const NURSING_TAB_DEFS: {
   { key: "icu_monitor", label: "ICU Monitor", icon: Monitor },
   { key: "risk_assessments", label: "Risk Assess", icon: Activity },
   { key: "collection", label: "Lab Collection", icon: TestTube2 },
+  { key: "radiology", label: "Radiology", icon: ScanLine },
 ];
 
 export interface NursingTask {
@@ -603,7 +605,7 @@ const NursingPage: React.FC = () => {
   const [selectedWard, setSelectedWard] = useState<string>("all");
   const [filter, setFilter] = useState<string>("all");
   const [showProcedureModal, setShowProcedureModal] = useState(false);
-  const [activeTab, setActiveTab] = useState<"tasks" | "kanban" | "care_plans" | "io" | "restraints" | "icu_monitor" | "risk_assessments" | "collection">("tasks");
+  const [activeTab, setActiveTab] = useState<"tasks" | "kanban" | "care_plans" | "io" | "restraints" | "icu_monitor" | "risk_assessments" | "collection" | "radiology">("tasks");
 
   // If a super_admin restricts the currently-active tab for this role, fall back to the first
   // tab still allowed rather than leaving the UI stuck on a tab whose trigger just disappeared.
@@ -1055,6 +1057,12 @@ const NursingPage: React.FC = () => {
             <div className="flex-1 overflow-y-auto">
               <CollectionWorkstation hospitalId={hospitalId} admittedOnly />
             </div>
+          ) : (
+            <div className="flex items-center justify-center h-full text-sm text-muted-foreground">Hospital context not available</div>
+          )
+        ) : activeTab === "radiology" ? (
+          hospitalId ? (
+            <NursingRadiologyResultsTab hospitalId={hospitalId} wards={wards} />
           ) : (
             <div className="flex items-center justify-center h-full text-sm text-muted-foreground">Hospital context not available</div>
           )

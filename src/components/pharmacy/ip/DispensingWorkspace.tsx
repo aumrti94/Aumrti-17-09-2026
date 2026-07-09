@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { autoPostJournalEntry } from "@/lib/accounting";
 import { calcGST } from "@/lib/currency";
+import { DEFAULT_PHARMACY_GST_PERCENT } from "@/lib/gstRules";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -183,7 +184,7 @@ const DispensingWorkspace: React.FC<Props> = ({ hospitalId, prescription, onDisp
         quantity_available: b.quantity_available,
         mrp: Number(b.mrp),
         sale_price: Number(b.sale_price),
-        gst_percent: Number(b.gst_percent || 12),
+        gst_percent: Number(b.gst_percent ?? DEFAULT_PHARMACY_GST_PERCENT),
         is_expiring: new Date(b.expiry_date) <= new Date(Date.now() + 30 * 86400000),
       }));
 
@@ -347,8 +348,10 @@ const DispensingWorkspace: React.FC<Props> = ({ hospitalId, prescription, onDisp
             ndps_second_pharmacist_id: row.ndps_second_pharmacist_id || null,
           });
 
-        // NDPS register entry
-        if (row.is_ndps && row.drug_id) {
+        // NDPS/Schedule-H1 register entry — H1 (Rule 65) needs register logging too,
+        // but never the NDPS dual-signoff step, so this stays independent of the
+        // is_ndps-only confirmation-step gate used elsewhere in this file.
+        if ((row.is_ndps || row.drug_schedule === "H1") && row.drug_id) {
           // Get current balance
           const { data: lastEntry } = await supabase
             .from("ndps_register")
@@ -405,7 +408,7 @@ const DispensingWorkspace: React.FC<Props> = ({ hospitalId, prescription, onDisp
         for (const row of drugRows) {
           if (row.dispense_qty <= 0 || !row.selected_batch_id) continue;
           const batch = row.batches.find(b => b.id === row.selected_batch_id);
-          const batchGst = batch?.gst_percent || 5; // essential meds default 5%
+          const batchGst = batch?.gst_percent ?? DEFAULT_PHARMACY_GST_PERCENT;
           const itemTotal = row.mrp * row.dispense_qty;
           totalGst += calcGST(itemTotal, batchGst);
         }

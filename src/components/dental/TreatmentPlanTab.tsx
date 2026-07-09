@@ -11,6 +11,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
+import { recordServiceCharge } from "@/lib/serviceBilling";
+import { calcGST } from "@/lib/currency";
 import { Plus, Save } from "lucide-react";
 
 const PROCEDURES = [
@@ -100,7 +102,18 @@ const TreatmentPlanTab: React.FC<TreatmentPlanTabProps> = ({ patientId, hospital
         const today = new Date().toISOString().split("T")[0];
         const billNum = await generateBillNumber(hospitalId, "DENT");
 
-        const gst = Math.round(Number(item.cost) * 0.18 * 100) / 100;
+        // Look up GST from service_master (same gst_applicable/gst_percent
+        // pattern used elsewhere) instead of a flat 18% regardless of the
+        // procedure's actual configured rate.
+        const { data: dentalSvc } = await supabase
+          .from("service_master")
+          .select("gst_percent, gst_applicable")
+          .eq("hospital_id", hospitalId)
+          .eq("item_type", "dental")
+          .ilike("name", `%${item.procedure}%`)
+          .maybeSingle();
+        const gstPct = dentalSvc?.gst_applicable ? (Number(dentalSvc.gst_percent) || 0) : 0;
+        const gst = calcGST(Number(item.cost), gstPct);
 
         const { data: newBill } = await supabase.from("bills").insert({
           hospital_id: hospitalId,
@@ -122,9 +135,17 @@ const TreatmentPlanTab: React.FC<TreatmentPlanTabProps> = ({ patientId, hospital
             item_type: "dental",
             description: `Dental: ${item.procedure} ${item.icd_10_code ? `[${item.icd_10_code}]` : ''} — Tooth ${item.tooth_number}`,
             quantity: 1, unit_rate: Number(item.cost),
-            taxable_amount: Number(item.cost), gst_percent: 18,
+            taxable_amount: Number(item.cost), gst_percent: gstPct,
             gst_amount: gst, total_amount: Number(item.cost) + gst,
             source_module: "dental",
+          });
+
+          recordServiceCharge({
+            hospitalId, patientId: currentPlan?.patient_id,
+            serviceModule: "dental",
+            serviceName: `Dental: ${item.procedure}${item.icd_10_code ? ` [${item.icd_10_code}]` : ""} — Tooth ${item.tooth_number}`,
+            unitRate: Number(item.cost), gstPercent: gstPct, gstAmount: gst, totalAmount: Number(item.cost) + gst,
+            billId: newBill.id,
           });
 
           await recalculateBillTotalsSafe(newBill.id);

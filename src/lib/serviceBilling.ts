@@ -415,6 +415,57 @@ export async function autoChargeService(
   return { billId, lineItemId: lineItem?.id, total, isNewBill };
 }
 
+export interface RecordServiceChargeOpts {
+  hospitalId: string;
+  patientId: string;
+  admissionId?: string | null;
+  encounterId?: string | null;
+  serviceModule: string;
+  serviceRefId?: string | null;
+  serviceDate?: string;
+  serviceName: string;
+  quantity?: number;
+  unitRate: number;
+  gstPercent?: number;
+  gstAmount?: number;
+  totalAmount: number;
+  billId: string;
+  performedBy?: string | null;
+  notes?: string | null;
+}
+
+/**
+ * Additive-only: records an already-billed charge (a bill_line_item a module
+ * created by hand, not through autoChargeService above) into service_charges
+ * too, so LeakageDashboard.tsx's revenue figures — and any other reporting
+ * that reads this table — can see it. Mirrors the exact fields/convention
+ * autoChargeService itself writes (billing_status:"billed", bill_id set).
+ * Never throws — a reporting-visibility write must not be able to break the
+ * actual billing action it's attached to.
+ */
+export async function recordServiceCharge(opts: RecordServiceChargeOpts): Promise<void> {
+  await (supabase as any).from("service_charges").insert({
+    hospital_id:    opts.hospitalId,
+    patient_id:     opts.patientId,
+    admission_id:   opts.admissionId ?? null,
+    encounter_id:   opts.encounterId ?? null,
+    service_module: opts.serviceModule,
+    service_ref_id: opts.serviceRefId ?? null,
+    service_date:   opts.serviceDate || new Date().toISOString().split("T")[0],
+    service_name:   opts.serviceName,
+    quantity:       opts.quantity ?? 1,
+    unit_rate:      opts.unitRate,
+    gst_percent:    opts.gstPercent ?? 0,
+    gst_amount:     opts.gstAmount ?? 0,
+    total_amount:   opts.totalAmount,
+    billing_status: "billed",
+    bill_id:        opts.billId,
+    billed_at:      new Date().toISOString(),
+    created_by:     opts.performedBy ?? null,
+    notes:          opts.notes ?? null,
+  }).catch(() => {});
+}
+
 /**
  * Read the configured Casualty / Emergency consultation fee from service_master
  * (item_type = 'ed_consultation', set in Settings → Services & Fees → Emergency).

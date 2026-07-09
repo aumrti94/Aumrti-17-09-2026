@@ -3,13 +3,27 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AlertTriangle, Download, RefreshCw, Trash2, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { logNABHEvidence } from "@/lib/nabh-evidence";
+
+const WASTE_CATEGORIES = [
+  { value: "yellow",    label: "Yellow — Human/animal anatomical waste" },
+  { value: "red",       label: "Red — Contaminated recyclables" },
+  { value: "blue",      label: "Blue — Glassware/metallic implants" },
+  { value: "white",     label: "White — Sharps" },
+  { value: "black",     label: "Black — General/expired non-hazardous" },
+  { value: "cytotoxic", label: "Cytotoxic — Chemotherapy/hazardous drugs" },
+];
 
 interface BatchRow {
   id: string;
+  drug_id: string;
   batch_number: string;
   expiry_date: string;
   quantity_available: number;
@@ -19,10 +33,10 @@ interface BatchRow {
   supplier_name: string | null;
 }
 
-type ExpiryGroup = "expired" | "critical" | "warning" | "ok";
+export type ExpiryGroup = "expired" | "critical" | "warning" | "ok";
 type ActiveFilter = ExpiryGroup | "all" | "quarantined";
 
-function getGroup(expiryDate: string): ExpiryGroup {
+export function getGroup(expiryDate: string): ExpiryGroup {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const expiry = new Date(expiryDate);
@@ -58,14 +72,30 @@ const ExpiryControlTab: React.FC<Props> = ({ hospitalId }) => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [activeGroup, setActiveGroup] = useState<ActiveFilter>("all");
+  const [userId, setUserId] = useState<string | null>(null);
+  const [wasteModal, setWasteModal] = useState<BatchRow | null>(null);
+  const [wasteCategory, setWasteCategory] = useState("");
+  const [disposalAgency, setDisposalAgency] = useState("");
+  const [cpcbManifestNo, setCpcbManifestNo] = useState("");
+  const [wasteSaving, setWasteSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data } = await supabase.from("users").select("id").eq("auth_user_id", user.id).maybeSingle();
+      setUserId(data?.id || null);
+    })();
+  }, []);
 
   const mapRow = (b: any): BatchRow => ({
     id: b.id,
+    drug_id: b.drug_id,
     batch_number: b.batch_number,
     expiry_date: b.expiry_date,
     quantity_available: b.quantity_available,
     cost_price: b.cost_price,
-    drug_name: b.drug_master?.brand_name || b.drug_master?.generic_name || "Unknown",
+    drug_name: b.drug_master?.drug_name || b.drug_master?.generic_name || "Unknown",
     manufacturer: b.manufacturer,
     supplier_name: b.supplier_name,
   });
@@ -78,7 +108,7 @@ const ExpiryControlTab: React.FC<Props> = ({ hospitalId }) => {
     const [expiryRes, quarantineRes] = await Promise.all([
       (supabase as any)
         .from("drug_batches")
-        .select("id, batch_number, expiry_date, quantity_available, cost_price, manufacturer, supplier_name, drug_master(generic_name, brand_name)")
+        .select("id, drug_id, batch_number, expiry_date, quantity_available, cost_price, manufacturer, supplier_name, drug_master(generic_name, drug_name)")
         .eq("hospital_id", hospitalId)
         .neq("status", "quarantined")
         .neq("status", "destroyed")
@@ -88,7 +118,7 @@ const ExpiryControlTab: React.FC<Props> = ({ hospitalId }) => {
         .limit(300),
       (supabase as any)
         .from("drug_batches")
-        .select("id, batch_number, expiry_date, quantity_available, cost_price, manufacturer, supplier_name, drug_master(generic_name, brand_name)")
+        .select("id, drug_id, batch_number, expiry_date, quantity_available, cost_price, manufacturer, supplier_name, drug_master(generic_name, drug_name)")
         .eq("hospital_id", hospitalId)
         .eq("status", "quarantined")
         .eq("is_active", true)
@@ -118,9 +148,46 @@ const ExpiryControlTab: React.FC<Props> = ({ hospitalId }) => {
     quarantined: quarantinedBatches.length,
   };
 
-  const markDestroyed = async (batchId: string, drugName: string) => {
-    await (supabase as any).from("drug_batches").update({ status: "destroyed", quantity_available: 0 }).eq("id", batchId);
-    toast.success(`${drugName} marked as destroyed`);
+  const confirmDestroy = async () => {
+    if (!wasteModal || !wasteCategory || !disposalAgency.trim() || !cpcbManifestNo.trim()) {
+      toast.error("Waste category, disposal agency, and manifest number are required");
+      return;
+    }
+    setWasteSaving(true);
+
+    const { error } = await (supabase as any).from("pharmacy_waste_disposal").insert({
+      hospital_id: hospitalId,
+      batch_id: wasteModal.id,
+      drug_id: wasteModal.drug_id,
+      drug_name: wasteModal.drug_name,
+      batch_number: wasteModal.batch_number,
+      quantity_disposed: wasteModal.quantity_available,
+      waste_category: wasteCategory,
+      disposal_agency: disposalAgency.trim(),
+      cpcb_manifest_no: cpcbManifestNo.trim(),
+      disposed_by: userId,
+    });
+
+    if (error) {
+      toast.error(`Failed to record disposal: ${error.message}`);
+      setWasteSaving(false);
+      return;
+    }
+
+    await (supabase as any).from("drug_batches").update({ status: "destroyed", quantity_available: 0 }).eq("id", wasteModal.id);
+    logNABHEvidence(
+      hospitalId,
+      "HIC.8",
+      `${wasteModal.quantity_available} units of ${wasteModal.drug_name} (batch ${wasteModal.batch_number}) destroyed — ${wasteCategory} category, manifest ${cpcbManifestNo.trim()}, agency ${disposalAgency.trim()}.`,
+      "compliant"
+    );
+
+    toast.success(`${wasteModal.drug_name} marked as destroyed`);
+    setWasteModal(null);
+    setWasteCategory("");
+    setDisposalAgency("");
+    setCpcbManifestNo("");
+    setWasteSaving(false);
     fetch();
   };
 
@@ -148,14 +215,24 @@ const ExpiryControlTab: React.FC<Props> = ({ hospitalId }) => {
     toast.success("Expiry report exported");
   };
 
-  const markForReturn = async (batchId: string, drugName: string) => {
-    await (supabase as any).from("pharmacy_stock_alerts").insert({
+  const markForReturn = async (batch: BatchRow) => {
+    const { error } = await (supabase as any).from("pharmacy_supplier_returns").insert({
       hospital_id: hospitalId,
-      alert_type: "expiring",
-      batch_id: batchId,
-      alert_message: `${drugName} marked for supplier return`,
+      batch_id: batch.id,
+      drug_id: batch.drug_id,
+      drug_name: batch.drug_name,
+      batch_number: batch.batch_number,
+      quantity: batch.quantity_available,
+      reason: "expiring",
+      supplier_name: batch.supplier_name,
+      status: "pending",
+      created_by: userId,
     });
-    toast.success(`${drugName} marked for return`);
+    if (error) {
+      toast.error(`Failed to mark ${batch.drug_name} for return: ${error.message}`);
+      return;
+    }
+    toast.success(`${batch.drug_name} marked for supplier return (${batch.quantity_available} units)`);
   };
 
   return (
@@ -258,7 +335,7 @@ const ExpiryControlTab: React.FC<Props> = ({ hospitalId }) => {
                             size="sm"
                             variant="ghost"
                             className="h-6 text-[10px] px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
-                            onClick={() => markDestroyed(b.id, b.drug_name)}
+                            onClick={() => setWasteModal(b)}
                           >
                             <Trash2 className="h-3 w-3 mr-1" /> Mark Destroyed
                           </Button>
@@ -312,7 +389,7 @@ const ExpiryControlTab: React.FC<Props> = ({ hospitalId }) => {
                         size="sm"
                         variant="ghost"
                         className="h-6 text-[10px] px-2 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
-                        onClick={() => markForReturn(b.id, b.drug_name)}
+                        onClick={() => markForReturn(b)}
                       >
                         <Trash2 className="h-3 w-3 mr-1" /> Mark Return
                       </Button>
@@ -331,6 +408,45 @@ const ExpiryControlTab: React.FC<Props> = ({ hospitalId }) => {
           <span>Total batches: <strong>{batches.length}</strong></span>
           <span>Total value at risk: <strong>₹{batches.reduce((sum, b) => sum + b.quantity_available * b.cost_price, 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</strong></span>
         </div>
+      )}
+
+      {/* Biomedical-waste manifest — required before a batch can be marked destroyed */}
+      {wasteModal && (
+        <Dialog open onOpenChange={() => setWasteModal(null)}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Dispose Batch: {wasteModal.drug_name}</DialogTitle></DialogHeader>
+            <div className="space-y-3 py-2">
+              <p className="text-sm text-muted-foreground">
+                Batch {wasteModal.batch_number} · {wasteModal.quantity_available} units will be marked destroyed.
+              </p>
+              <div>
+                <Label>Waste Category *</Label>
+                <Select value={wasteCategory} onValueChange={setWasteCategory}>
+                  <SelectTrigger className="mt-1"><SelectValue placeholder="Select waste category…" /></SelectTrigger>
+                  <SelectContent>
+                    {WASTE_CATEGORIES.map(c => (
+                      <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Disposal Agency *</Label>
+                <Input value={disposalAgency} onChange={(e) => setDisposalAgency(e.target.value)} placeholder="e.g. common biomedical waste treatment facility name" className="mt-1" />
+              </div>
+              <div>
+                <Label>CPCB Manifest No. *</Label>
+                <Input value={cpcbManifestNo} onChange={(e) => setCpcbManifestNo(e.target.value)} placeholder="Manifest / tracking number" className="mt-1" />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setWasteModal(null)}>Cancel</Button>
+              <Button variant="destructive" onClick={confirmDestroy} disabled={wasteSaving}>
+                {wasteSaving ? "Recording…" : "Confirm Disposal"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );

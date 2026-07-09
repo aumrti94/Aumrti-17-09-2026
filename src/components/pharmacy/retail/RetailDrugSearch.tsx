@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
+import { DEFAULT_PHARMACY_GST_PERCENT } from "@/lib/gstRules";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Search } from "lucide-react";
@@ -86,13 +87,13 @@ const RetailDrugSearch: React.FC<Props> = ({ hospitalId, onAddToCart }) => {
         category: d.category,
         is_ndps: d.is_ndps || false,
         drug_schedule: d.drug_schedule,
-        gst_percent: Number(d.gst_percent || 12),
+        gst_percent: Number(d.gst_percent ?? DEFAULT_PHARMACY_GST_PERCENT),
         best_batch: best
           ? {
               ...best,
               mrp: Number(best.mrp),
               sale_price: Number(best.sale_price),
-              gst_percent: Number(best.gst_percent || 12),
+              gst_percent: Number(best.gst_percent ?? DEFAULT_PHARMACY_GST_PERCENT),
               is_expiring: new Date(best.expiry_date) <= new Date(Date.now() + 30 * 86400000),
             }
           : null,

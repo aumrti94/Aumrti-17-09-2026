@@ -7,6 +7,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { autoPostJournalEntry } from "@/lib/accounting";
+import { splitGst, resolveStateCode } from "@/lib/gst";
 
 const statusColors: Record<string, string> = {
   draft: "bg-muted text-muted-foreground",
@@ -15,6 +17,7 @@ const statusColors: Record<string, string> = {
   partial_grn: "bg-amber-100 text-amber-700",
   completed: "bg-emerald-100 text-emerald-700",
   cancelled: "bg-red-100 text-red-700",
+  rejected: "bg-red-100 text-red-700",
 };
 
 const matchColors: Record<string, string> = {
@@ -35,11 +38,56 @@ const PurchaseOrdersPanel: React.FC = () => {
   const [items, setItems] = useState<any[]>([]);
   const [stockMap, setStockMap] = useState<Record<string, number>>({});
   const [reorderMap, setReorderMap] = useState<Record<string, number>>({});
-  const [newPO, setNewPO] = useState({ vendor_id: "", expected_delivery: "", notes: "" });
+  const [newPO, setNewPO] = useState({ vendor_id: "", expected_delivery: "", notes: "", cost_centre_id: "" });
+  const [departments, setDepartments] = useState<any[]>([]);
   const [newItems, setNewItems] = useState<{ item_id: string; quantity: number; unit_rate: number; gst_percent: number }[]>([]);
   const [itemSearch, setItemSearch] = useState("");
   const [invoiceEntry, setInvoiceEntry] = useState({ invoice_number: "", invoice_amount: "" });
   const [savingInvoice, setSavingInvoice] = useState(false);
+  const [grnValue, setGrnValue] = useState(0);
+  const [payingPO, setPayingPO] = useState(false);
+  const [contractRates, setContractRates] = useState<Record<string, { rate: number; gst: number }>>({});
+  const [showRules, setShowRules] = useState(false);
+  const [approvalRules, setApprovalRules] = useState<any[]>([]);
+  const [ruleForm, setRuleForm] = useState({ min_amount: "", max_amount: "", required_role: "" });
+  const [showPayment, setShowPayment] = useState(false);
+  const [tdsSections, setTdsSections] = useState<any[]>([]);
+  const [payForm, setPayForm] = useState({ amount: "", tds_section: "" });
+
+  const loadApprovalRules = async () => {
+    const { data } = await (supabase as any).from("po_approval_rules").select("*").order("min_amount");
+    setApprovalRules(data || []);
+  };
+  const addApprovalRule = async () => {
+    if (!ruleForm.required_role) { toast({ title: "Enter a required role", variant: "destructive" }); return; }
+    const { data: userData } = await supabase.from("users").select("hospital_id").limit(1).maybeSingle();
+    if (!userData) return;
+    await (supabase as any).from("po_approval_rules").insert({
+      hospital_id: userData.hospital_id, min_amount: Number(ruleForm.min_amount) || 0,
+      max_amount: ruleForm.max_amount ? Number(ruleForm.max_amount) : null, required_role: ruleForm.required_role.trim(),
+    });
+    setRuleForm({ min_amount: "", max_amount: "", required_role: "" });
+    loadApprovalRules();
+  };
+  const deleteApprovalRule = async (id: string) => {
+    await (supabase as any).from("po_approval_rules").delete().eq("id", id);
+    loadApprovalRules();
+  };
+
+  const loadContractRates = async (vendorId: string) => {
+    if (!vendorId) { setContractRates({}); return; }
+    const today = new Date().toISOString().slice(0, 10);
+    const { data } = await (supabase as any).from("vendor_rate_contracts")
+      .select("item_id, rate, gst_percent, valid_from, valid_to")
+      .eq("vendor_id", vendorId).eq("is_active", true);
+    const map: Record<string, { rate: number; gst: number }> = {};
+    (data || []).forEach((c: any) => {
+      const okFrom = !c.valid_from || c.valid_from <= today;
+      const okTo = !c.valid_to || c.valid_to >= today;
+      if (okFrom && okTo && c.item_id) map[c.item_id] = { rate: Number(c.rate), gst: Number(c.gst_percent) || 12 };
+    });
+    setContractRates(map);
+  };
 
   const loadOrders = async () => {
     const { data } = await (supabase as any)
@@ -52,9 +100,11 @@ const PurchaseOrdersPanel: React.FC = () => {
   const loadMaster = async () => {
     const [vendorRes, itemRes, stockRes] = await Promise.all([
       (supabase as any).from("vendors").select("id, vendor_name").eq("is_active", true),
-      (supabase as any).from("inventory_items").select("id, item_name, category, gst_percent, reorder_level").eq("is_active", true),
+      (supabase as any).from("inventory_items").select("id, item_name, category, gst_percent, reorder_level, minimum_order_qty").eq("is_active", true),
       (supabase as any).from("inventory_stock").select("item_id, quantity_available"),
     ]);
+    supabase.from("departments").select("id, name").eq("is_active", true).order("name").then(({ data }) => setDepartments(data || []));
+    (supabase as any).from("tds_sections").select("*").eq("is_active", true).order("section").then(({ data }: any) => setTdsSections(data || []));
     setVendors(vendorRes.data || []);
     setItems(itemRes.data || []);
     const sm: Record<string, number> = {};
@@ -79,6 +129,12 @@ const PurchaseOrdersPanel: React.FC = () => {
     setSelected(po);
     loadPoItems(po.id);
     setInvoiceEntry({ invoice_number: po.invoice_number || "", invoice_amount: po.invoice_amount || "" });
+    loadGrnValue(po.id);
+  };
+
+  const loadGrnValue = async (poId: string) => {
+    const { data } = await (supabase as any).from("grn_records").select("total_amount").eq("po_id", poId);
+    setGrnValue((data || []).reduce((s: number, g: any) => s + (g.total_amount || 0), 0));
   };
 
   const saveInvoiceAndMatch = async () => {
@@ -88,8 +144,12 @@ const PurchaseOrdersPanel: React.FC = () => {
     setSavingInvoice(true);
     const invoiceAmt = Number(invoiceEntry.invoice_amount);
     const poAmt = Number(selected.net_amount || 0);
-    const variance = poAmt > 0 ? Math.abs(invoiceAmt - poAmt) / poAmt : 0;
-    const matchStatus = variance <= 0.05 ? "matched" : "discrepancy";
+    const grnAmt = grnValue;
+    // True 3-way: invoice must align with the PO AND, once goods are received, with the GRN value.
+    const poVar = poAmt > 0 ? Math.abs(invoiceAmt - poAmt) / poAmt : 0;
+    const grnVar = grnAmt > 0 ? Math.abs(invoiceAmt - grnAmt) / grnAmt : 0;
+    const grnOk = grnAmt === 0 || grnVar <= 0.05;
+    const matchStatus = poVar <= 0.05 && grnOk ? "matched" : "discrepancy";
 
     await (supabase as any).from("purchase_orders").update({
       invoice_number: invoiceEntry.invoice_number,
@@ -102,14 +162,66 @@ const PurchaseOrdersPanel: React.FC = () => {
     setSavingInvoice(false);
 
     if (matchStatus === "discrepancy") {
+      const grnNote = grnAmt > 0 && grnVar > 0.05 ? ` GRN received ₹${grnAmt.toLocaleString("en-IN")} (${(grnVar * 100).toFixed(1)}% off).` : "";
       toast({
-        title: "Invoice Discrepancy Detected",
-        description: `PO amount ₹${poAmt.toLocaleString("en-IN")} vs Invoice ₹${invoiceAmt.toLocaleString("en-IN")} — variance ${(variance * 100).toFixed(1)}%. Payment blocked until resolved.`,
+        title: "3-Way Match Failed",
+        description: `PO ₹${poAmt.toLocaleString("en-IN")} vs Invoice ₹${invoiceAmt.toLocaleString("en-IN")} — ${(poVar * 100).toFixed(1)}% off.${grnNote} Payment blocked until resolved.`,
         variant: "destructive",
       });
     } else {
-      toast({ title: "3-Way Match: Verified ✓", description: "PO, GRN, and Invoice amounts align within 5% tolerance." });
+      toast({ title: "3-Way Match: Verified ✓", description: grnAmt > 0 ? "PO, GRN, and Invoice amounts align within 5% tolerance." : "PO and Invoice align (no GRN received yet)." });
     }
+  };
+
+  const openPayment = () => {
+    if (!selected) return;
+    if (!(selected.match_status === "matched" || selected.match_status === "override")) {
+      toast({ title: "Payment blocked", description: "Complete the 3-way match (or supervisor override) before paying.", variant: "destructive" });
+      return;
+    }
+    const outstanding = Number(selected.invoice_amount || selected.net_amount || 0) - Number(selected.paid_amount || 0);
+    setPayForm({ amount: String(Math.max(0, outstanding)), tds_section: "" });
+    setShowPayment(true);
+  };
+
+  const submitPayment = async () => {
+    if (!selected) return;
+    const amount = Number(payForm.amount);
+    if (!amount || amount <= 0) { toast({ title: "Enter a valid amount", variant: "destructive" }); return; }
+    setPayingPO(true);
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    const { data: userData } = await supabase.from("users").select("id, hospital_id").eq("auth_user_id", authUser?.id).maybeSingle();
+    if (!userData) { setPayingPO(false); return; }
+
+    const section = tdsSections.find((s) => s.section === payForm.tds_section);
+    const tds = section ? Math.round(amount * (Number(section.rate) / 100) * 100) / 100 : 0;
+    const net = Number(selected.invoice_amount || selected.net_amount || 0);
+    const newPaid = Number(selected.paid_amount || 0) + amount;
+    const status = newPaid >= net - 0.01 ? "paid" : "partial";
+
+    await (supabase as any).from("purchase_orders").update({
+      payment_status: status, paid_amount: newPaid, paid_at: new Date().toISOString(), paid_by: userData.id,
+      tds_amount: Number(selected.tds_amount || 0) + tds, tds_section: section?.section || selected.tds_section || null,
+    }).eq("id", selected.id);
+    setSelected((s: any) => ({ ...s, payment_status: status, paid_amount: newPaid }));
+    loadOrders();
+
+    // Dr AP / Cr Bank (+ Cr TDS Payable when TDS deducted)
+    const lines: { accountCode: string; debit?: number; credit?: number; description?: string }[] = [
+      { accountCode: "2001", debit: amount, description: "Vendor payable cleared" },
+      { accountCode: "1002", credit: amount - tds, description: "Bank payment" },
+    ];
+    if (tds > 0) lines.push({ accountCode: "2013", credit: tds, description: `TDS ${section.section}` });
+    const posted = await postMultiLineJournal({
+      hospitalId: userData.hospital_id, postedBy: userData.id, sourceModule: "inventory", sourceId: selected.id,
+      triggerEvent: "vendor_payment", description: `${selected.po_number} — ${selected.vendors?.vendor_name || "Vendor"}`, lines,
+    });
+    if (!posted) {
+      await autoPostJournalEntry({ triggerEvent: "vendor_payment", sourceModule: "inventory", sourceId: selected.id, amount, description: `${selected.po_number} — ${selected.vendors?.vendor_name || "Vendor"}`, hospitalId: userData.hospital_id, postedBy: userData.id });
+    }
+    setPayingPO(false);
+    setShowPayment(false);
+    toast({ title: `Payment recorded${tds > 0 ? ` (TDS ₹${tds.toLocaleString("en-IN")})` : ""}`, description: `${status === "paid" ? "Fully paid" : `₹${newPaid.toLocaleString("en-IN")} of ₹${net.toLocaleString("en-IN")}`}.` });
   };
 
   const overrideMatch = async () => {
@@ -138,8 +250,27 @@ const PurchaseOrdersPanel: React.FC = () => {
 
   const updatePOStatus = async (id: string, status: string) => {
     const update: any = { status };
-    const { data: userData } = await supabase.from("users").select("id, hospital_id").limit(1).maybeSingle();
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    const { data: userData } = await supabase.from("users").select("id, hospital_id").eq("auth_user_id", authUser?.id).maybeSingle();
     if (status === "approved") {
+      // Segregation of duties: the creator cannot approve their own PO.
+      const po = orders.find((o) => o.id === id);
+      if (po?.created_by && po.created_by === userData?.id) {
+        toast({ title: "Segregation of duties", description: "You cannot approve a PO you created — another authorised user must approve it.", variant: "destructive" });
+        return;
+      }
+      // Value-threshold approval matrix
+      const net = Number(po?.net_amount || 0);
+      const { data: rules } = await (supabase as any).from("po_approval_rules").select("min_amount, max_amount, required_role").eq("hospital_id", userData?.hospital_id);
+      const band = (rules || []).find((r: any) => net >= Number(r.min_amount || 0) && (r.max_amount == null || net <= Number(r.max_amount)));
+      if (band?.required_role) {
+        const { data: roleRow } = await (supabase as any).from("users").select("role").eq("id", userData?.id).maybeSingle();
+        const myRole = roleRow?.role;
+        if (myRole && myRole !== band.required_role && myRole !== "admin" && myRole !== "super_admin") {
+          toast({ title: "Higher approval required", description: `POs of ₹${net.toLocaleString("en-IN")} require ${band.required_role} approval.`, variant: "destructive" });
+          return;
+        }
+      }
       update.approved_by = userData?.id;
     }
     await (supabase as any).from("purchase_orders").update(update).eq("id", id);
@@ -188,7 +319,8 @@ const PurchaseOrdersPanel: React.FC = () => {
   const addItemRow = (itemId: string) => {
     if (newItems.find((n) => n.item_id === itemId)) return;
     const item = items.find((i) => i.id === itemId);
-    setNewItems([...newItems, { item_id: itemId, quantity: (reorderMap[itemId] || 10) * 2, unit_rate: 0, gst_percent: item?.gst_percent || 12 }]);
+    const contract = contractRates[itemId];
+    setNewItems([...newItems, { item_id: itemId, quantity: (reorderMap[itemId] || 10) * 2, unit_rate: contract?.rate ?? 0, gst_percent: contract?.gst ?? item?.gst_percent ?? 12 }]);
     setItemSearch("");
   };
 
@@ -197,18 +329,24 @@ const PurchaseOrdersPanel: React.FC = () => {
       toast({ title: "Select vendor and add items", variant: "destructive" });
       return;
     }
-    const { data: userData } = await supabase.from("users").select("id, hospital_id").limit(1).maybeSingle();
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    const { data: userData } = await supabase.from("users").select("id, hospital_id").eq("auth_user_id", authUser?.id).maybeSingle();
     if (!userData) return;
 
+    const [{ data: hosp }, { data: vend }] = await Promise.all([
+      (supabase as any).from("hospitals").select("state_code, gstin").eq("id", userData.hospital_id).maybeSingle(),
+      (supabase as any).from("vendors").select("state_code, gstin").eq("id", newPO.vendor_id).maybeSingle(),
+    ]);
+    const sellerState = resolveStateCode(hosp?.state_code, hosp?.gstin);
+    const buyerState = resolveStateCode(vend?.state_code, vend?.gstin);
+
     const poNumber = `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${Math.floor(Math.random() * 900 + 100)}`;
-    let subtotal = 0;
-    let gstTotal = 0;
+    let subtotal = 0, gstTotal = 0, cgstTotal = 0, sgstTotal = 0, igstTotal = 0;
     const processedItems = newItems.map((ni) => {
       const amt = ni.quantity * ni.unit_rate;
-      const gst = amt * (ni.gst_percent / 100);
-      subtotal += amt;
-      gstTotal += gst;
-      return { ...ni, total_amount: amt + gst };
+      const s = splitGst({ amount: amt, gstPercent: ni.gst_percent, sellerStateCode: sellerState, buyerStateCode: buyerState });
+      subtotal += amt; gstTotal += s.gst; cgstTotal += s.cgst; sgstTotal += s.sgst; igstTotal += s.igst;
+      return { ...ni, total_amount: amt + s.gst, cgst: s.cgst, sgst: s.sgst, igst: s.igst };
     });
 
     const { data: po, error } = await (supabase as any).from("purchase_orders").insert({
@@ -217,8 +355,12 @@ const PurchaseOrdersPanel: React.FC = () => {
       vendor_id: newPO.vendor_id,
       expected_delivery: newPO.expected_delivery || null,
       notes: newPO.notes || null,
+      cost_centre_id: newPO.cost_centre_id || null,
       total_amount: subtotal,
       gst_amount: gstTotal,
+      cgst_amount: cgstTotal,
+      sgst_amount: sgstTotal,
+      igst_amount: igstTotal,
       net_amount: subtotal + gstTotal,
       created_by: userData.id,
       status: "draft",
@@ -235,12 +377,15 @@ const PurchaseOrdersPanel: React.FC = () => {
         unit_rate: pi.unit_rate,
         gst_percent: pi.gst_percent,
         total_amount: pi.total_amount,
+        cgst_amount: pi.cgst,
+        sgst_amount: pi.sgst,
+        igst_amount: pi.igst,
       });
     }
 
     toast({ title: `PO ${poNumber} created` });
     setShowNew(false);
-    setNewPO({ vendor_id: "", expected_delivery: "", notes: "" });
+    setNewPO({ vendor_id: "", expected_delivery: "", notes: "", cost_centre_id: "" });
     setNewItems([]);
     loadOrders();
   };
@@ -256,10 +401,11 @@ const PurchaseOrdersPanel: React.FC = () => {
             </button>
           ))}
         </div>
-        <div className="flex-shrink-0 px-3 py-2 border-b border-border">
-          <Button size="sm" className="w-full text-xs gap-1.5" onClick={() => setShowNew(true)}>
+        <div className="flex-shrink-0 px-3 py-2 border-b border-border flex gap-1.5">
+          <Button size="sm" className="flex-1 text-xs gap-1.5" onClick={() => setShowNew(true)}>
             <Plus className="h-3 w-3" /> New PO
           </Button>
+          <Button size="sm" variant="outline" className="text-xs" onClick={() => { setShowRules(true); loadApprovalRules(); }} title="Approval thresholds">⚙</Button>
         </div>
         <div className="flex-1 overflow-auto">
           {filtered.map((po) => (
@@ -312,6 +458,11 @@ const PurchaseOrdersPanel: React.FC = () => {
                     <Check className="h-3 w-3" /> Approve
                   </Button>
                 )}
+                {selected.status === "draft" && (
+                  <Button size="sm" variant="outline" className="text-[10px] h-6 gap-1 text-red-700 border-red-300 hover:bg-red-50" onClick={() => updatePOStatus(selected.id, "rejected")}>
+                    <X className="h-3 w-3" /> Reject
+                  </Button>
+                )}
                 {selected.status === "approved" && (
                   <Button size="sm" className="text-[10px] h-6 gap-1" onClick={() => updatePOStatus(selected.id, "sent")}>
                     <Send className="h-3 w-3" /> Send to Vendor
@@ -321,6 +472,12 @@ const PurchaseOrdersPanel: React.FC = () => {
                   <Button size="sm" variant="outline" className="text-[10px] h-6 gap-1 text-green-700 border-green-300 hover:bg-green-50"
                     onClick={() => sendPOToVendorWhatsApp(selected, poItems)}>
                     <MessageCircle className="h-3 w-3" /> WhatsApp Vendor
+                  </Button>
+                )}
+                {["draft", "approved", "sent"].includes(selected.status) && (
+                  <Button size="sm" variant="ghost" className="text-[10px] h-6 gap-1 text-muted-foreground hover:text-destructive"
+                    onClick={() => { if (window.confirm(`Cancel PO ${selected.po_number}?`)) updatePOStatus(selected.id, "cancelled"); }}>
+                    <X className="h-3 w-3" /> Cancel
                   </Button>
                 )}
               </div>
@@ -374,7 +531,14 @@ const PurchaseOrdersPanel: React.FC = () => {
             <div className="flex-shrink-0 border-t border-border bg-card px-4 py-2.5 space-y-2">
               <div className="flex items-center justify-end gap-4 text-xs">
                 <span className="text-muted-foreground">Subtotal: ₹{(selected.total_amount || 0).toLocaleString("en-IN")}</span>
-                <span className="text-muted-foreground">GST: ₹{(selected.gst_amount || 0).toLocaleString("en-IN")}</span>
+                {Number(selected.igst_amount || 0) > 0 ? (
+                  <span className="text-muted-foreground">IGST: ₹{Number(selected.igst_amount || 0).toLocaleString("en-IN")}</span>
+                ) : (Number(selected.cgst_amount || 0) > 0 || Number(selected.sgst_amount || 0) > 0) ? (
+                  <span className="text-muted-foreground">CGST ₹{Number(selected.cgst_amount || 0).toLocaleString("en-IN")} · SGST ₹{Number(selected.sgst_amount || 0).toLocaleString("en-IN")}</span>
+                ) : (
+                  <span className="text-muted-foreground">GST: ₹{(selected.gst_amount || 0).toLocaleString("en-IN")}</span>
+                )}
+                <span className="text-muted-foreground">GRN Recd: ₹{grnValue.toLocaleString("en-IN")}</span>
                 <span className="font-bold text-foreground">PO Total: ₹{(selected.net_amount || 0).toLocaleString("en-IN")}</span>
               </div>
               {/* 3-Way Match Invoice Entry */}
@@ -398,14 +562,22 @@ const PurchaseOrdersPanel: React.FC = () => {
                     Supervisor Override
                   </Button>
                 )}
-                {selected.match_status === "matched" && (
-                  <span className="text-[10px] text-emerald-700 font-semibold">✓ Payment Cleared</span>
-                )}
                 {selected.match_status === "discrepancy" && (
                   <span className="text-[10px] text-red-700 font-semibold flex items-center gap-1">
                     <AlertTriangle className="h-3 w-3" /> Payment Blocked
                   </span>
                 )}
+                {/* Payment gate — only after a passed match / override */}
+                {selected.payment_status === "paid" ? (
+                  <span className="text-[10px] text-emerald-700 font-semibold ml-auto">✓ Paid ₹{Number(selected.paid_amount || 0).toLocaleString("en-IN")}{Number(selected.tds_amount || 0) > 0 ? ` · TDS ₹${Number(selected.tds_amount).toLocaleString("en-IN")}` : ""}</span>
+                ) : (selected.match_status === "matched" || selected.match_status === "override") ? (
+                  <div className="ml-auto flex items-center gap-2">
+                    {Number(selected.paid_amount || 0) > 0 && <span className="text-[10px] text-amber-700 font-semibold">Part-paid ₹{Number(selected.paid_amount).toLocaleString("en-IN")}</span>}
+                    <Button size="sm" className="h-7 text-xs" onClick={openPayment} disabled={payingPO}>
+                      {Number(selected.paid_amount || 0) > 0 ? "Pay Balance" : "Record Payment"}
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             </div>
           </>
@@ -417,11 +589,69 @@ const PurchaseOrdersPanel: React.FC = () => {
       </div>
 
       {/* New PO Modal */}
+      {/* Payment Modal */}
+      <Dialog open={showPayment} onOpenChange={setShowPayment}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle className="text-sm">Record Vendor Payment</DialogTitle></DialogHeader>
+          {selected && (
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">Invoice ₹{Number(selected.invoice_amount || selected.net_amount || 0).toLocaleString("en-IN")} · already paid ₹{Number(selected.paid_amount || 0).toLocaleString("en-IN")}</p>
+              <div>
+                <label className="text-[11px] text-muted-foreground">Payment amount</label>
+                <Input type="number" value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })} className="h-8 text-xs" />
+              </div>
+              <div>
+                <label className="text-[11px] text-muted-foreground">TDS section (optional)</label>
+                <Select value={payForm.tds_section} onValueChange={(v) => setPayForm({ ...payForm, tds_section: v })}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="No TDS" /></SelectTrigger>
+                  <SelectContent>
+                    {tdsSections.map((s) => <SelectItem key={s.id} value={s.section} className="text-xs">{s.section} — {s.rate}% ({s.description})</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              {payForm.tds_section && (() => {
+                const sec = tdsSections.find((s) => s.section === payForm.tds_section);
+                const tds = sec ? Number(payForm.amount || 0) * (Number(sec.rate) / 100) : 0;
+                return <p className="text-[11px] text-amber-700">TDS ₹{tds.toLocaleString("en-IN")} withheld · Bank pay-out ₹{(Number(payForm.amount || 0) - tds).toLocaleString("en-IN")}</p>;
+              })()}
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" size="sm" onClick={() => setShowPayment(false)} className="text-xs">Cancel</Button>
+                <Button size="sm" onClick={submitPayment} disabled={payingPO} className="text-xs">{payingPO ? "Posting…" : "Post Payment"}</Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Approval Rules Modal */}
+      <Dialog open={showRules} onOpenChange={setShowRules}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle className="text-sm">PO Approval Thresholds</DialogTitle></DialogHeader>
+          <p className="text-[11px] text-muted-foreground">POs whose total falls in a band require the given role to approve (segregation of duties always applies).</p>
+          <div className="space-y-1.5">
+            {approvalRules.map((r) => (
+              <div key={r.id} className="flex items-center gap-2 text-xs border-b border-border/50 py-1">
+                <span className="flex-1">₹{Number(r.min_amount).toLocaleString("en-IN")} – {r.max_amount != null ? `₹${Number(r.max_amount).toLocaleString("en-IN")}` : "∞"}</span>
+                <span className="font-semibold">{r.required_role}</span>
+                <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive" onClick={() => deleteApprovalRule(r.id)}><X className="h-3 w-3" /></Button>
+              </div>
+            ))}
+            {approvalRules.length === 0 && <p className="text-xs text-muted-foreground">No thresholds — any authorised user can approve.</p>}
+          </div>
+          <div className="flex items-center gap-2 pt-2 border-t border-border">
+            <Input type="number" placeholder="Min ₹" value={ruleForm.min_amount} onChange={(e) => setRuleForm({ ...ruleForm, min_amount: e.target.value })} className="h-8 text-xs w-24" />
+            <Input type="number" placeholder="Max ₹" value={ruleForm.max_amount} onChange={(e) => setRuleForm({ ...ruleForm, max_amount: e.target.value })} className="h-8 text-xs w-24" />
+            <Input placeholder="Role" value={ruleForm.required_role} onChange={(e) => setRuleForm({ ...ruleForm, required_role: e.target.value })} className="h-8 text-xs flex-1" />
+            <Button size="sm" className="h-8 text-xs" onClick={addApprovalRule}>Add</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={showNew} onOpenChange={setShowNew}>
         <DialogContent className="max-w-xl max-h-[85vh] overflow-auto">
           <DialogHeader><DialogTitle className="text-sm">Create Purchase Order</DialogTitle></DialogHeader>
           <div className="space-y-3">
-            <Select value={newPO.vendor_id} onValueChange={(v) => setNewPO({ ...newPO, vendor_id: v })}>
+            <Select value={newPO.vendor_id} onValueChange={(v) => { setNewPO({ ...newPO, vendor_id: v }); loadContractRates(v); }}>
               <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select Vendor" /></SelectTrigger>
               <SelectContent>
                 {vendors.map((v) => <SelectItem key={v.id} value={v.id} className="text-xs">{v.vendor_name}</SelectItem>)}
@@ -431,6 +661,12 @@ const PurchaseOrdersPanel: React.FC = () => {
               <Input type="date" value={newPO.expected_delivery} onChange={(e) => setNewPO({ ...newPO, expected_delivery: e.target.value })} className="h-8 text-xs" placeholder="Expected Delivery" />
               <Input placeholder="Notes" value={newPO.notes} onChange={(e) => setNewPO({ ...newPO, notes: e.target.value })} className="h-8 text-xs" />
             </div>
+            <Select value={newPO.cost_centre_id} onValueChange={(v) => setNewPO({ ...newPO, cost_centre_id: v })}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Cost centre / department (optional)" /></SelectTrigger>
+              <SelectContent>
+                {departments.map((d) => <SelectItem key={d.id} value={d.id} className="text-xs">{d.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
 
             {/* Smart suggestions */}
             {lowStockItems.length > 0 && (
@@ -467,15 +703,28 @@ const PurchaseOrdersPanel: React.FC = () => {
               {newItems.map((ni, idx) => {
                 const item = items.find((i) => i.id === ni.item_id);
                 const lineTotal = ni.quantity * ni.unit_rate * (1 + ni.gst_percent / 100);
+                const moq = item?.minimum_order_qty || 1;
+                const belowMoq = ni.quantity < moq;
+                const contract = contractRates[ni.item_id];
+                const offContract = contract && ni.unit_rate !== contract.rate;
                 return (
-                  <div key={ni.item_id} className="flex items-center gap-2 mb-1.5">
-                    <span className="text-xs flex-1 truncate min-w-0">{item?.item_name}</span>
-                    <Input type="number" min={1} value={ni.quantity} onChange={(e) => { const c = [...newItems]; c[idx].quantity = parseInt(e.target.value) || 1; setNewItems(c); }} className="h-7 w-14 text-xs" placeholder="Qty" />
-                    <Input type="number" min={0} value={ni.unit_rate} onChange={(e) => { const c = [...newItems]; c[idx].unit_rate = parseFloat(e.target.value) || 0; setNewItems(c); }} className="h-7 w-20 text-xs" placeholder="Rate" />
-                    <span className="text-[10px] text-muted-foreground w-16 text-right">₹{lineTotal.toFixed(0)}</span>
-                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive" onClick={() => setNewItems(newItems.filter((_, i) => i !== idx))}>
-                      <X className="h-3 w-3" />
-                    </Button>
+                  <div key={ni.item_id} className="mb-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs flex-1 truncate min-w-0">
+                        {item?.item_name}
+                        {contract && !offContract && <span className="ml-1 text-[8px] px-1 py-0.5 rounded bg-emerald-100 text-emerald-700 font-semibold">contract</span>}
+                        {offContract && <span className="ml-1 text-[8px] px-1 py-0.5 rounded bg-amber-100 text-amber-700 font-semibold">off-contract ₹{contract.rate}</span>}
+                      </span>
+                      <Input type="number" min={1} value={ni.quantity} onChange={(e) => { const c = [...newItems]; c[idx].quantity = parseInt(e.target.value) || 1; setNewItems(c); }} className={cn("h-7 w-14 text-xs", belowMoq && "border-amber-400")} placeholder="Qty" />
+                      <Input type="number" min={0} value={ni.unit_rate} onChange={(e) => { const c = [...newItems]; c[idx].unit_rate = parseFloat(e.target.value) || 0; setNewItems(c); }} className="h-7 w-20 text-xs" placeholder="Rate" />
+                      <span className="text-[10px] text-muted-foreground w-16 text-right">₹{lineTotal.toFixed(0)}</span>
+                      <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive" onClick={() => setNewItems(newItems.filter((_, i) => i !== idx))}>
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                    {belowMoq && (
+                      <p className="text-[9px] text-amber-600 mt-0.5 ml-0.5">⚠ Below minimum order qty ({moq})</p>
+                    )}
                   </div>
                 );
               })}

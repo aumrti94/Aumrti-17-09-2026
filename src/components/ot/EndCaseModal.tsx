@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { roundCurrency, formatINR } from "@/lib/currency";
 import { chargeOTCase } from "@/lib/serviceBilling";
+import { deductCentralFEFO, reverseCentral } from "@/lib/inventoryStock";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { useToast } from "@/hooks/use-toast";
 import type { OTSchedule } from "@/pages/ot/OTPage";
@@ -57,7 +58,7 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
   const fetchImplants = async () => {
     const { data } = await (supabase as any)
       .from("ot_implants")
-      .select("id, item_name, manufacturer, lot_number, expiry_date, unit_cost, quantity, cdsco_registration_number, billed")
+      .select("id, item_name, manufacturer, lot_number, expiry_date, unit_cost, quantity, cdsco_registration_number, billed, inventory_item_id, stock_deducted")
       .eq("schedule_id", schedule.id)
       .order("created_at");
     setImplants(data || []);
@@ -95,9 +96,9 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
     if (!hospitalId || q.length < 2) { setSearchResults([]); setShowDropdown(false); return; }
     const { data } = await (supabase as any)
       .from("inventory_items")
-      .select("id, name, item_code, inventory_stock(cost_price, mrp, batch_number, expiry_date)")
+      .select("id, item_name, item_code, inventory_stock(cost_price, mrp, batch_number, expiry_date)")
       .eq("hospital_id", hospitalId)
-      .ilike("name", `%${q}%`)
+      .ilike("item_name", `%${q}%`)
       .limit(8);
     setSearchResults(data || []);
     setShowDropdown(true);
@@ -108,7 +109,7 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
       ? item.inventory_stock[0]
       : null;
     setDraft({
-      name: item.name || "",
+      name: item.item_name || "",
       manufacturer: "",
       lot_number: stock?.batch_number || "",
       expiry_date: stock?.expiry_date ? String(stock.expiry_date).split("T")[0] : "",
@@ -116,7 +117,7 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
       quantity: "1",
       inventory_item_id: item.id,
     });
-    setImplantQuery(item.name || "");
+    setImplantQuery(item.item_name || "");
     setShowDropdown(false);
   };
 
@@ -132,6 +133,8 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
       return;
     }
     if (!hospitalId) return;
+    // If this implant came from the central inventory master, consume the stock (FEFO).
+    const linkedItemId = draft.inventory_item_id || null;
     const { error } = await (supabase as any).from("ot_implants").insert({
       hospital_id: hospitalId,
       schedule_id: schedule.id,
@@ -142,11 +145,21 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
       cdsco_registration_number: draft.cdsco_registration_number.trim(),
       unit_cost: roundCurrency(cost),
       quantity: qty,
+      inventory_item_id: linkedItemId,
+      stock_deducted: !!linkedItemId,
     });
     if (error) {
       toast({ title: "Failed to add implant", description: error.message, variant: "destructive" });
       return;
     }
+
+    if (linkedItemId) {
+      await deductCentralFEFO({
+        hospitalId, itemId: linkedItemId, qty,
+        ledger: { transactionType: "ot_consumption", referenceId: schedule.id, referenceType: "ot", notes: `OT implant/consumable — ${draft.name.trim()}` },
+      });
+    }
+
     setDraft({ ...BLANK_DRAFT });
     setImplantQuery("");
     setSearchResults([]);
@@ -154,7 +167,15 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
   };
 
   const removeImplant = async (id: string) => {
+    const imp: any = implants.find((i) => i.id === id);
     await (supabase as any).from("ot_implants").delete().eq("id", id);
+    // Reverse the consumption if this line had deducted central stock.
+    if (imp?.inventory_item_id && imp.stock_deducted && hospitalId) {
+      await reverseCentral({
+        hospitalId, itemId: imp.inventory_item_id, qty: imp.quantity || 0,
+        ledger: { transactionType: "ot_consumption_reversal", referenceId: schedule.id, referenceType: "ot", notes: `OT implant removed — ${imp.item_name}` },
+      });
+    }
     fetchImplants();
   };
 
@@ -452,7 +473,7 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
                             onMouseDown={() => selectInventoryItem(item)}
                             className="w-full text-left px-3 py-2 hover:bg-muted/50 text-xs flex items-center justify-between"
                           >
-                            <span className="font-medium">{item.name}</span>
+                            <span className="font-medium">{item.item_name}</span>
                             {stock?.cost_price && (
                               <span className="text-muted-foreground ml-2">{formatINR(Number(stock.cost_price))}</span>
                             )}

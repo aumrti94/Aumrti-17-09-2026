@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { autoPostJournalEntry } from "@/lib/accounting";
+import { recordServiceCharge } from "@/lib/serviceBilling";
 import { calcGST } from "@/lib/currency";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -217,6 +218,15 @@ export default function PanchakarmaTab({ showNew, onShowNewDone }: Props) {
                 source_module: "ayush",
                 source_record_id: selectedSchedule.id,
                 source_dedupe_key: dedupeKey,
+              });
+
+              recordServiceCharge({
+                hospitalId, patientId: session.patient_id,
+                serviceModule: "ayush",
+                serviceRefId: selectedSchedule.id,
+                serviceName: `AYUSH Panchakarma: ${session.procedure_type?.replace(/_/g, " ") || "Session"}`,
+                unitRate: fee, gstPercent: gstPct, gstAmount: gst, totalAmount: fee + gst,
+                billId: newBill.id,
               });
             }
 

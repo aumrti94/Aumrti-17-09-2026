@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
+import { deductCentralFEFO } from "@/lib/inventoryStock";
 
 const statusColors: Record<string, string> = {
   pending: "bg-amber-100 text-amber-700",
@@ -81,7 +82,8 @@ const IndentsPanel: React.FC = () => {
     setIndents((prev) => prev.map((i) => i.id === id ? { ...i, status } : i));
     if (selected?.id === id) setSelected((prev: any) => prev ? { ...prev, status } : prev);
 
-    const { data: userData } = await supabase.from("users").select("id").limit(1).maybeSingle();
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    const { data: userData } = await supabase.from("users").select("id").eq("auth_user_id", authUser?.id).maybeSingle();
     await (supabase as any).from("department_indents").update({
       status,
       approved_by: userData?.id,
@@ -96,7 +98,8 @@ const IndentsPanel: React.FC = () => {
   const issueItems = async () => {
     if (!selected) return;
     setSaving(true);
-    const { data: userData } = await supabase.from("users").select("id, hospital_id").limit(1).maybeSingle();
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    const { data: userData } = await supabase.from("users").select("id, hospital_id").eq("auth_user_id", authUser?.id).maybeSingle();
     if (!userData) { setSaving(false); return; }
 
     const validItems = indentItems.filter((item) => (issueQtys[item.id] || 0) > 0);
@@ -111,37 +114,22 @@ const IndentsPanel: React.FC = () => {
       (supabase as any).from("indent_items").update({ quantity_issued: issueQtys[item.id] }).eq("id", item.id)
     ));
 
-    // Parallel: stock deduction + transaction logging
-    await Promise.all(validItems.map(async (item) => {
-      const qty = issueQtys[item.id];
-      const { data: stockRows } = await (supabase as any)
-        .from("inventory_stock")
-        .select("id, quantity_available")
-        .eq("item_id", item.item_id)
-        .gt("quantity_available", 0)
-        .order("expiry_date", { ascending: true })
-        .limit(1);
-
-      const stockUpdate = stockRows?.[0]
-        ? (supabase as any).from("inventory_stock").update({
-            quantity_available: Math.max(0, stockRows[0].quantity_available - qty),
-          }).eq("id", stockRows[0].id)
-        : Promise.resolve();
-
-      const txInsert = (supabase as any).from("stock_transactions").insert({
-        hospital_id: userData.hospital_id,
-        item_id: item.item_id,
-        transaction_type: "indent_issue",
-        quantity: -qty,
-        reference_id: selected.id,
-        reference_type: "indent",
-        department_id: selected.department_id,
-        created_by: userData.id,
-        notes: `Issued against indent ${selected.indent_number}`,
-      });
-
-      await Promise.all([stockUpdate, txInsert]);
-    }));
+    // Stock deduction + ledger (FEFO across batches) via shared helper
+    await Promise.all(validItems.map((item) =>
+      deductCentralFEFO({
+        hospitalId: userData.hospital_id,
+        itemId: item.item_id,
+        qty: issueQtys[item.id],
+        ledger: {
+          transactionType: "indent_issue",
+          referenceId: selected.id,
+          referenceType: "indent",
+          departmentId: selected.department_id,
+          createdBy: userData.id,
+          notes: `Issued against indent ${selected.indent_number}`,
+        },
+      })
+    ));
 
     const newStatus = allIssued ? "issued" : "partially_issued";
     await (supabase as any).from("department_indents").update({ status: newStatus }).eq("id", selected.id);
@@ -161,7 +149,8 @@ const IndentsPanel: React.FC = () => {
       return;
     }
     setSaving(true);
-    const { data: userData } = await supabase.from("users").select("id, hospital_id").limit(1).maybeSingle();
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    const { data: userData } = await supabase.from("users").select("id, hospital_id").eq("auth_user_id", authUser?.id).maybeSingle();
     if (!userData) { setSaving(false); return; }
 
     const indentNumber = `IND-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${Math.floor(Math.random() * 900 + 100)}`;

@@ -23,6 +23,10 @@ const VendorsPanel: React.FC = () => {
   const [selected, setSelected] = useState<any>(null);
   const [vendorPOs, setVendorPOs] = useState<any[]>([]);
   const [metrics, setMetrics] = useState<VendorMetrics | null>(null);
+  const [contracts, setContracts] = useState<any[]>([]);
+  const [apInfo, setApInfo] = useState<{ outstanding: number; aging: number[] } | null>(null);
+  const [contractItemResults, setContractItemResults] = useState<any[]>([]);
+  const [contractForm, setContractForm] = useState({ item_id: "", item_name: "", rate: "", gst: "12", valid_to: "", itemSearch: "" });
   const [form, setForm] = useState({ vendor_name: "", vendor_code: "", gstin: "", contact_name: "", contact_phone: "", contact_email: "", address: "", credit_days: "30" });
   const [syncingScore, setSyncingScore] = useState(false);
   const [batchScoring, setBatchScoring] = useState(false);
@@ -38,10 +42,10 @@ const VendorsPanel: React.FC = () => {
     const [posRes, grnsRes] = await Promise.all([
       (supabase as any)
         .from("purchase_orders")
-        .select("po_number, po_date, expected_delivery, net_amount, status")
+        .select("id, po_number, po_date, expected_delivery, net_amount, status, paid_amount, payment_status")
         .eq("vendor_id", vendorId)
         .order("po_date", { ascending: false })
-        .limit(10),
+        .limit(100),
       (supabase as any)
         .from("grn_records")
         .select("grn_date, quality_check, total_amount, po_id")
@@ -78,6 +82,19 @@ const VendorsPanel: React.FC = () => {
       qualityPassPct: grns.length > 0 ? Math.round((qualityPass / grns.length) * 100) : -1,
       grnCount: grns.length,
     });
+
+    // AP outstanding + aging (POs where goods received — partial_grn/completed — minus payments)
+    const aging = [0, 0, 0, 0]; // 0-30, 31-60, 61-90, 90+
+    let outstanding = 0;
+    pos.filter((p: any) => ["partial_grn", "completed"].includes(p.status)).forEach((p: any) => {
+      const due = Number(p.net_amount || 0) - Number(p.paid_amount || 0);
+      if (due <= 0) return;
+      outstanding += due;
+      const days = p.po_date ? Math.floor((Date.now() - new Date(p.po_date).getTime()) / 86400000) : 0;
+      const bucket = days <= 30 ? 0 : days <= 60 ? 1 : days <= 90 ? 2 : 3;
+      aging[bucket] += due;
+    });
+    setApInfo({ outstanding, aging });
   };
 
   const contactVendorWhatsApp = (vendor: any) => {
@@ -86,7 +103,37 @@ const VendorsPanel: React.FC = () => {
     window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank", "noopener,noreferrer");
   };
 
-  const selectVendor = (v: any) => { setSelected(v); setMetrics(null); loadVendorPOs(v.id); };
+  const selectVendor = (v: any) => { setSelected(v); setMetrics(null); loadVendorPOs(v.id); loadContracts(v.id); };
+
+  const loadContracts = async (vendorId: string) => {
+    const { data } = await (supabase as any).from("vendor_rate_contracts")
+      .select("id, rate, gst_percent, valid_to, is_active, inventory_items(item_name)")
+      .eq("vendor_id", vendorId).eq("is_active", true).order("created_at", { ascending: false });
+    setContracts(data || []);
+  };
+  const searchContractItems = async (q: string) => {
+    setContractForm((f) => ({ ...f, itemSearch: q }));
+    if (q.length < 2) { setContractItemResults([]); return; }
+    const { data } = await (supabase as any).from("inventory_items").select("id, item_name, gst_percent").eq("is_active", true).ilike("item_name", `%${q}%`).limit(6);
+    setContractItemResults(data || []);
+  };
+  const addContract = async () => {
+    if (!selected || !contractForm.item_id || !contractForm.rate) { toast({ title: "Pick item and rate", variant: "destructive" }); return; }
+    const { data: userData } = await supabase.from("users").select("hospital_id").limit(1).maybeSingle();
+    if (!userData) return;
+    await (supabase as any).from("vendor_rate_contracts").insert({
+      hospital_id: userData.hospital_id, vendor_id: selected.id, item_id: contractForm.item_id,
+      rate: Number(contractForm.rate), gst_percent: Number(contractForm.gst) || 12, valid_to: contractForm.valid_to || null,
+    });
+    toast({ title: "Rate contract added" });
+    setContractForm({ item_id: "", item_name: "", rate: "", gst: "12", valid_to: "", itemSearch: "" });
+    setContractItemResults([]);
+    loadContracts(selected.id);
+  };
+  const removeContract = async (id: string) => {
+    await (supabase as any).from("vendor_rate_contracts").update({ is_active: false }).eq("id", id);
+    if (selected) loadContracts(selected.id);
+  };
 
   const syncVendorScore = async () => {
     if (!selected || !metrics || metrics.grnCount === 0) {
@@ -355,6 +402,61 @@ const VendorsPanel: React.FC = () => {
                 </table>
               ) : (
                 <p className="text-xs text-muted-foreground">No orders yet.</p>
+              )}
+            </div>
+
+            {/* Accounts Payable */}
+            {apInfo && (
+              <div className="bg-card border border-border rounded-lg p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold text-foreground">Accounts Payable</p>
+                  <p className="text-xs font-bold text-foreground">Outstanding ₹{apInfo.outstanding.toLocaleString("en-IN")}</p>
+                </div>
+                <div className="grid grid-cols-4 gap-2 text-center">
+                  {["0–30d", "31–60d", "61–90d", "90d+"].map((label, i) => (
+                    <div key={label} className={cn("rounded-lg p-2", i >= 2 && apInfo.aging[i] > 0 ? "bg-destructive/10" : "bg-muted/30")}>
+                      <p className={cn("text-sm font-bold", i >= 2 && apInfo.aging[i] > 0 ? "text-destructive" : "text-foreground")}>₹{apInfo.aging[i].toLocaleString("en-IN", { maximumFractionDigits: 0 })}</p>
+                      <p className="text-[9px] text-muted-foreground">{label}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Rate Contracts */}
+            <div className="bg-card border border-border rounded-lg p-4">
+              <p className="text-xs font-semibold text-foreground mb-2">Rate Contracts</p>
+              {contracts.length > 0 ? (
+                <table className="w-full text-xs mb-3">
+                  <tbody>
+                    {contracts.map((c) => (
+                      <tr key={c.id} className="border-b border-border/50">
+                        <td className="py-1.5">{c.inventory_items?.item_name || "—"}</td>
+                        <td className="py-1.5 text-right">₹{c.rate} <span className="text-muted-foreground">+{c.gst_percent}%</span></td>
+                        <td className="py-1.5 text-right text-muted-foreground">{c.valid_to ? `till ${c.valid_to}` : "open"}</td>
+                        <td className="py-1.5 text-right"><button onClick={() => removeContract(c.id)} className="text-destructive"><X className="h-3 w-3" /></button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : <p className="text-xs text-muted-foreground mb-3">No active rate contracts.</p>}
+              <div className="relative">
+                <Input placeholder="Search item to add contract…" value={contractForm.itemSearch} onChange={(e) => searchContractItems(e.target.value)} className="h-8 text-xs" />
+                {contractItemResults.length > 0 && (
+                  <div className="absolute z-20 left-0 right-0 mt-0.5 max-h-32 overflow-auto border border-border rounded bg-popover">
+                    {contractItemResults.map((it) => (
+                      <div key={it.id} onClick={() => { setContractForm((f) => ({ ...f, item_id: it.id, item_name: it.item_name, gst: String(it.gst_percent || 12), itemSearch: it.item_name })); setContractItemResults([]); }} className="px-3 py-1.5 text-xs hover:bg-muted cursor-pointer">{it.item_name}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {contractForm.item_id && (
+                <div className="flex items-center gap-2 mt-2">
+                  <Input type="number" placeholder="Rate" value={contractForm.rate} onChange={(e) => setContractForm((f) => ({ ...f, rate: e.target.value }))} className="h-8 text-xs w-24" />
+                  <Input type="number" placeholder="GST%" value={contractForm.gst} onChange={(e) => setContractForm((f) => ({ ...f, gst: e.target.value }))} className="h-8 text-xs w-20" />
+                  <Input type="date" value={contractForm.valid_to} onChange={(e) => setContractForm((f) => ({ ...f, valid_to: e.target.value }))} className="h-8 text-xs" />
+                  <Button size="sm" className="h-8 text-xs" onClick={addContract}>Add</Button>
+                </div>
               )}
             </div>
           </div>

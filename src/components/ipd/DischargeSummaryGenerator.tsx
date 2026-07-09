@@ -121,6 +121,7 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
   } | null>(null);
   const [dischargeWarnings, setDischargeWarnings] = useState<string[]>([]);
   const [warningsAcknowledged, setWarningsAcknowledged] = useState(false);
+  const [lamaBillingAcknowledged, setLamaBillingAcknowledged] = useState(false);
   const [showSigModal, setShowSigModal] = useState(false);
   const [sigDataUrl, setSigDataUrl] = useState<string | null>(null);
   const [sigClearCount, setSigClearCount] = useState(0);
@@ -307,8 +308,13 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
       toast.error("Summary is empty");
       return;
     }
-    if (!billingCleared) {
-      toast.error("Cannot discharge — billing not cleared");
+    const lamaBillingWaived = dischargeType === "lama" && !billingCleared;
+    if (!billingCleared && !(lamaBillingWaived && lamaBillingAcknowledged)) {
+      toast.error(
+        lamaBillingWaived
+          ? "Please acknowledge the billing-waiver checkbox before discharging"
+          : "Cannot discharge — billing not cleared"
+      );
       return;
     }
 
@@ -347,6 +353,8 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
     const now = new Date().toISOString();
     const signatureHash = await sha256(sigDataUrl + now);
 
+    const lamaBillingWaived = dischargeType === "lama" && !billingCleared;
+
     const { error } = await supabase.from("admissions").update({
       discharge_summary_done: true,
       discharge_notes: summary,
@@ -356,6 +364,7 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
       discharge_signed_by: dbUserId,
       discharge_signed_at: now,
       discharge_signature_hash: signatureHash,
+      ...(lamaBillingWaived ? { lama_billing_ack_by: dbUserId, lama_billing_ack_at: now } : {}),
     } as any).eq("id", admissionId);
 
     if (error) {
@@ -400,6 +409,9 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
     setSigned(true);
     setSigning(false);
     logAudit({ action: "updated", module: "ipd", entityType: "admission", entityId: admissionId, details: { action: "discharged" } });
+    if (lamaBillingWaived) {
+      logAudit({ action: "updated", module: "ipd", entityType: "admission", entityId: admissionId, details: { action: "lama_billing_waived_ack" } });
+    }
 
     // Fire-and-forget ABHA care context linking (non-blocking)
     if (adm?.patient_id) {
@@ -581,11 +593,32 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
         </div>
       )}
 
+      {dischargeType === "lama" && !billingCleared && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-3">
+          <label className="flex items-start gap-2 text-xs text-amber-800 dark:text-amber-400 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={lamaBillingAcknowledged}
+              onChange={(e) => setLamaBillingAcknowledged(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              I acknowledge this patient is being discharged Against Medical Advice with billing <strong>not yet cleared</strong>,
+              and confirm this has been documented. This will be logged to the audit trail.
+            </span>
+          </label>
+        </div>
+      )}
+
       <div className="flex gap-2">
         <Button variant="outline" onClick={generate} disabled={generating} size="sm">
           {generating ? <><Loader2 className="h-3 w-3 animate-spin mr-1" /> Analysing...</> : <><Bot className="h-4 w-4 mr-1" /> Generate with AI</>}
         </Button>
-        <Button onClick={signSummary} disabled={signing} className="flex-1">
+        <Button
+          onClick={signSummary}
+          disabled={signing || (dischargeType === "lama" && !billingCleared && !lamaBillingAcknowledged)}
+          className="flex-1"
+        >
           {signing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <FileText className="h-4 w-4 mr-2" />}
           Sign Discharge Summary & Discharge
         </Button>

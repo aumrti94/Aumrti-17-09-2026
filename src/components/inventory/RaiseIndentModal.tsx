@@ -10,6 +10,7 @@ interface StoreLocation {
 }
 
 interface IndentRow {
+  item_id: string;
   item_name: string;
   item_code: string;
   requested_qty: number;
@@ -24,7 +25,7 @@ interface Props {
   onCreated: () => void;
 }
 
-const emptyRow = (): IndentRow => ({ item_name: "", item_code: "", requested_qty: 1, unit: "nos", remarks: "" });
+const emptyRow = (): IndentRow => ({ item_id: "", item_name: "", item_code: "", requested_qty: 1, unit: "nos", remarks: "" });
 
 const RaiseIndentModal: React.FC<Props> = ({ hospitalId, fromStore, onClose, onCreated }) => {
   const { toast } = useToast();
@@ -72,7 +73,7 @@ const RaiseIndentModal: React.FC<Props> = ({ hospitalId, fromStore, onClose, onC
   };
 
   const selectItem = (idx: number, item: typeof inventoryItems[0]) => {
-    setRows((prev) => prev.map((r, i) => i === idx ? { ...r, item_name: item.item_name, item_code: item.item_code || "", unit: item.uom } : r));
+    setRows((prev) => prev.map((r, i) => i === idx ? { ...r, item_id: item.id, item_name: item.item_name, item_code: item.item_code || "", unit: item.uom } : r));
     setSearch("");
     setFocusedRow(null);
   };
@@ -99,6 +100,7 @@ const RaiseIndentModal: React.FC<Props> = ({ hospitalId, fromStore, onClose, onC
 
     const itemsPayload = validRows.map((r) => ({
       indent_id: indent.id,
+      item_id: r.item_id || null,
       item_name: r.item_name.trim(),
       item_code: r.item_code || null,
       requested_qty: r.requested_qty,
@@ -194,7 +196,7 @@ const RaiseIndentModal: React.FC<Props> = ({ hospitalId, fromStore, onClose, onC
                           placeholder="Search item…"
                           value={focusedRow === idx ? search || row.item_name : row.item_name}
                           onFocus={() => { setFocusedRow(idx); setSearch(row.item_name); }}
-                          onChange={(e) => { setSearch(e.target.value); updateRow(idx, "item_name", e.target.value); }}
+                          onChange={(e) => { setSearch(e.target.value); setRows((prev) => prev.map((r, i) => i === idx ? { ...r, item_name: e.target.value, item_id: "" } : r)); }}
                           onBlur={() => setTimeout(() => setFocusedRow(null), 150)}
                         />
                         {focusedRow === idx && search && filteredItems.length > 0 && (
