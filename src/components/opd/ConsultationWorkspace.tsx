@@ -264,7 +264,23 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
       // Follow-up now lands reliably in encounter.follow_up_notes (set above),
       // so it is no longer dropped when there are no drugs/orders.
     };
-    registerScreen("opd_consultation", fillFn);
+    // Snapshot the current form (mapped back to the AI's field names) so a
+    // follow-up recording MERGES with what's already here instead of wiping it.
+    // Text fields only — prescriptions/investigations are appended by fillFn, so
+    // sending them here too would double them up.
+    const getExistingData = (): Record<string, unknown> | null => {
+      const enc = encounterRef.current;
+      const data: Record<string, unknown> = {};
+      if (enc.chief_complaint?.trim()) data.chief_complaint = enc.chief_complaint;
+      if (enc.history_of_present_illness?.trim()) data.history_of_present_illness = enc.history_of_present_illness;
+      if (enc.examination_notes?.trim()) data.examination_findings = enc.examination_notes;
+      if (enc.diagnosis?.trim()) data.diagnosis = enc.diagnosis;
+      if (enc.icd10_code?.trim()) data.icd_suggestion = enc.icd10_code;
+      if (enc.soap_plan?.trim()) data.plan = enc.soap_plan;
+      if (enc.follow_up_notes?.trim()) data.follow_up = enc.follow_up_notes;
+      return Object.keys(data).length > 0 ? data : null;
+    };
+    registerScreen("opd_consultation", fillFn, getExistingData);
     return () => unregisterScreen("opd_consultation");
   }, [registerScreen, unregisterScreen]);
 

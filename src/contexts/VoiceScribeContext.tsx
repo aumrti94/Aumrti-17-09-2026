@@ -56,9 +56,17 @@ interface VoiceScribeContextType {
   setCurrentSessionType: (v: SessionType) => void;
   setCurrentPatientId: (v: string | null) => void;
   setFallbackReason: (v: string) => void;
-  registerScreen: (screenId: string, fillFn: (data: Record<string, unknown>) => void) => void;
+  registerScreen: (
+    screenId: string,
+    fillFn: (data: Record<string, unknown>) => void,
+    getExistingData?: () => Record<string, unknown> | null,
+  ) => void;
   unregisterScreen: (screenId: string) => void;
   applyToCurrentScreen: () => void;
+  // Snapshot of what the active screen already has in its form, mapped to the
+  // AI's field schema — sent as `existing_data` so a follow-up recording MERGES
+  // with (rather than overwrites) the current note. Null when nothing is filled.
+  getExistingDataForCurrentScreen: () => Record<string, unknown> | null;
   resetSession: () => void;
   detectedSessionType: SessionType;
 }
@@ -96,6 +104,7 @@ export const VoiceScribeProvider: React.FC<{ children: React.ReactNode }> = ({ c
     () => localStorage.getItem("vscribe_preferred_language") || "auto"
   );
   const screenFillFns = useRef<Map<string, (data: Record<string, unknown>) => void>>(new Map());
+  const screenExistingDataFns = useRef<Map<string, () => Record<string, unknown> | null>>(new Map());
 
   const setSelectedLanguage = useCallback((lang: string) => {
     setSelectedLanguageState(lang);
@@ -110,18 +119,34 @@ export const VoiceScribeProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
   }, [detectedSessionType, isRecording]);
 
-  const registerScreen = useCallback((screenId: string, fillFn: (data: Record<string, unknown>) => void) => {
+  const registerScreen = useCallback((
+    screenId: string,
+    fillFn: (data: Record<string, unknown>) => void,
+    getExistingData?: () => Record<string, unknown> | null,
+  ) => {
     screenFillFns.current.set(screenId, fillFn);
+    if (getExistingData) screenExistingDataFns.current.set(screenId, getExistingData);
+    else screenExistingDataFns.current.delete(screenId);
   }, []);
 
   const unregisterScreen = useCallback((screenId: string) => {
     screenFillFns.current.delete(screenId);
+    screenExistingDataFns.current.delete(screenId);
   }, []);
 
   const applyToCurrentScreen = useCallback(() => {
     if (!structuredOutput) return;
     screenFillFns.current.forEach((fn) => fn(structuredOutput));
   }, [structuredOutput]);
+
+  const getExistingDataForCurrentScreen = useCallback((): Record<string, unknown> | null => {
+    let merged: Record<string, unknown> | null = null;
+    screenExistingDataFns.current.forEach((fn) => {
+      const d = fn();
+      if (d && Object.keys(d).length > 0) merged = { ...(merged || {}), ...d };
+    });
+    return merged;
+  }, []);
 
   const resetSession = useCallback(() => {
     setIsRecording(false);
@@ -137,7 +162,7 @@ export const VoiceScribeProvider: React.FC<{ children: React.ReactNode }> = ({ c
       currentSessionType, currentPatientId, selectedLanguage, fallbackReason, setSelectedLanguage,
       setIsRecording, setIsPanelOpen, setPanelState,
       setRawTranscript, setStructuredOutput, setCurrentSessionType, setCurrentPatientId, setFallbackReason,
-      registerScreen, unregisterScreen, applyToCurrentScreen, resetSession,
+      registerScreen, unregisterScreen, applyToCurrentScreen, getExistingDataForCurrentScreen, resetSession,
       detectedSessionType,
     }}>
       {children}

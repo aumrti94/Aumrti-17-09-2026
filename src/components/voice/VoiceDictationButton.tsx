@@ -33,7 +33,7 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
     setIsPanelOpen, setPanelState,
     setRawTranscript, setStructuredOutput,
     setCurrentSessionType, setCurrentPatientId, selectedLanguage, setSelectedLanguage,
-    setFallbackReason,
+    setFallbackReason, getExistingDataForCurrentScreen,
   } = useVoiceScribe();
 
   // Keep the panel's notion of "current patient" in sync with whichever
@@ -129,8 +129,12 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
     setIsPanelOpen(true);
 
     try {
+      // Send whatever the form already holds so a repeat recording adds to it
+      // (e.g. the doctor forgot to mention fever the first time) instead of
+      // overwriting the earlier note.
+      const existingData = getExistingDataForCurrentScreen();
       const { data, error } = await supabase.functions.invoke("ai-clinical-voice", {
-        body: { transcript: rawText, context_type: sessionType, language_code: selectedLanguage, patient_id: patientId ?? undefined },
+        body: { transcript: rawText, context_type: sessionType, language_code: selectedLanguage, existing_data: existingData ?? undefined, patient_id: patientId ?? undefined },
       });
       if (error || data?.error) throw new Error(data?.error || error?.message);
       setStructuredOutput(data.structured);
@@ -141,7 +145,7 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
       setFallbackReason(reason);
       setPanelState("fallback");
     }
-  }, [sessionType, patientId, setPanelState, setIsPanelOpen, setStructuredOutput, setFallbackReason]);
+  }, [sessionType, patientId, selectedLanguage, getExistingDataForCurrentScreen, setPanelState, setIsPanelOpen, setStructuredOutput, setFallbackReason]);
 
   const sendChunkToSarvam = useCallback(async (audioBlob: Blob): Promise<string> => {
     const base64 = await new Promise<string>((resolve, reject) => {

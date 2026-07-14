@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { useDebounce } from "@/hooks/useDebounce";
 import { cn } from "@/lib/utils";
 import { X, Plus, AlertTriangle, ShieldX, CheckCircle2, Pencil, RotateCcw } from "lucide-react";
 import type { PrescriptionData, DrugEntry, LabOrder, RadiologyOrder, EncounterData } from "../ConsultationWorkspace";
@@ -14,6 +13,7 @@ import { useConfigValues } from "@/hooks/useConfigValues";
 import { useDoctorQuickPicks } from "@/hooks/useDoctorQuickPicks";
 import type { RxQuickPickTemplate } from "@/lib/quickPickDefaults";
 import QuickPickManagerPanel from "@/components/opd/QuickPickManagerPanel";
+import DrugMasterSearchInput from "@/components/opd/DrugMasterSearchInput";
 
 interface Props {
   prescription: PrescriptionData;
@@ -82,7 +82,6 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
   const { items: radTemplates, isLoading: radTplLoading, save: saveRadTpl, reset: resetRadTpl } =
     useDoctorQuickPicks<string>("radiology_templates");
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<{ drug_name: string; generic_name: string | null; is_ndps: boolean }[]>([]);
   const [newDrug, setNewDrug] = useState<DrugEntry>({ drug_name: "", dose: "", route: "Oral", frequency: "OD", duration_days: "", instructions: "", quantity: "", is_stat: false });
   const [labInput, setLabInput] = useState("");
   const [radInput, setRadInput] = useState("");
@@ -103,22 +102,6 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
   const [drugSafetyMeta, setDrugSafetyMeta] = useState<Map<number, DrugSafetyMeta>>(new Map());
   const [showAntibioticModal, setShowAntibioticModal] = useState(false);
   const [antibioticJustified, setAntibioticJustified] = useState(false);
-
-  // Drug search (debounced)
-  const debouncedDrugSearch = useDebounce(searchQuery, 250);
-  useEffect(() => {
-    if (!debouncedDrugSearch || debouncedDrugSearch.length < 2 || !hospitalId) { setSearchResults([]); return; }
-    (async () => {
-      const { data } = await supabase
-        .from("drug_master")
-        .select("drug_name, generic_name, is_ndps, routes, category, schedule_type")
-        .eq("hospital_id", hospitalId)
-        .eq("is_active", true)
-        .or(`drug_name.ilike.%${debouncedDrugSearch}%,generic_name.ilike.%${debouncedDrugSearch}%`)
-        .limit(10);
-      setSearchResults(data || []);
-    })();
-  }, [debouncedDrugSearch, hospitalId]);
 
   // Fetch lab tests, groups, and radiology modalities from DB
   useEffect(() => {
@@ -225,6 +208,32 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
     setSearchQuery("");
     setShowAddDrug(false);
     setPendingDrug(null);
+  };
+
+  // Save the drug currently in the Add Drug form as a reusable Quick Template
+  // (doctor's rx_templates). Save-only: it does NOT add the drug to this
+  // prescription — the doctor clicks the resulting chip to add it.
+  const saveNewDrugAsTemplate = async () => {
+    if (!newDrug.drug_name.trim()) return;
+    const tpl: RxQuickPickTemplate = {
+      drug_name: newDrug.drug_name,
+      dose: newDrug.dose,
+      route: newDrug.route,
+      frequency: newDrug.frequency,
+      duration_days: newDrug.duration_days,
+      instructions: newDrug.instructions,
+      quantity: newDrug.quantity,
+    };
+    const dupe = rxTemplates.some((t) =>
+      t.drug_name.trim().toLowerCase() === tpl.drug_name.trim().toLowerCase() &&
+      t.dose === tpl.dose && t.frequency === tpl.frequency);
+    if (dupe) { toast({ title: "Template already exists" }); return; }
+    try {
+      await saveRx([...rxTemplates, tpl]);
+      toast({ title: "✓ Saved to Quick templates" });
+    } catch {
+      toast({ title: "Couldn't save template", variant: "destructive" });
+    }
   };
 
   const handleSafetyAddAnyway = () => {
@@ -395,29 +404,14 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
 
           {showAddDrug && (
             <div className="border border-border rounded-lg p-3 mt-2 bg-background">
-              <div className="relative">
-                <input
-                  value={searchQuery}
-                  onChange={(e) => { setSearchQuery(e.target.value); setNewDrug((d) => ({ ...d, drug_name: e.target.value })); }}
-                  placeholder="Search drug name..."
-                  className="w-full h-9 px-3 border border-border rounded-lg text-sm outline-none focus:border-primary bg-background text-foreground"
-                />
-                {searchResults.length > 0 && (
-                  <div className="absolute z-10 top-10 left-0 right-0 bg-background border border-border rounded-lg shadow-lg max-h-40 overflow-y-auto">
-                    {searchResults.map((r, i) => (
-                      <button key={i} onClick={() => { setNewDrug((d) => ({ ...d, drug_name: r.drug_name, is_ndps: r.is_ndps })); setSearchQuery(r.drug_name); setSearchResults([]); }}
-                        className="w-full text-left px-3 py-2 text-sm hover:bg-muted border-b border-border/50">
-                        <span className="font-medium text-foreground">{r.drug_name}</span>
-                        {r.schedule_type && <span className={`ml-1.5 text-[10px] px-1 py-0.5 rounded font-bold ${r.schedule_type === "H" || r.schedule_type === "H1" ? "bg-amber-100 text-amber-700" : r.schedule_type === "X" ? "bg-red-100 text-red-700" : "bg-muted text-muted-foreground"}`}>Sch {r.schedule_type}</span>}
-                        <div className="text-muted-foreground text-xs mt-0.5">
-                          {r.generic_name && <span>{r.generic_name}</span>}
-                          {r.routes?.length > 0 && <span className="ml-2 text-muted-foreground/70">· {r.routes.join("/")} </span>}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <DrugMasterSearchInput
+                value={searchQuery}
+                hospitalId={hospitalId}
+                onChange={(text) => { setSearchQuery(text); setNewDrug((d) => ({ ...d, drug_name: text })); }}
+                onSelect={(r) => { setNewDrug((d) => ({ ...d, drug_name: r.drug_name, is_ndps: r.is_ndps })); setSearchQuery(r.drug_name); }}
+                placeholder="Search drug name..."
+                inputClassName="w-full h-9 px-3 border border-border rounded-lg text-sm outline-none focus:border-primary bg-background text-foreground"
+              />
               <div className="grid grid-cols-4 gap-2 mt-2">
                 <input
                   value={newDrug.dose}
@@ -490,6 +484,14 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
                     "Add to Prescription"
                   )}
                 </button>
+                <button
+                  onClick={saveNewDrugAsTemplate}
+                  disabled={!newDrug.drug_name}
+                  className="text-xs text-primary px-3 py-1.5 hover:underline disabled:opacity-50 disabled:no-underline flex items-center gap-1"
+                  title="Save this drug as a reusable Quick Template"
+                >
+                  <Plus className="h-3 w-3" /> Save as template
+                </button>
                 <button onClick={() => { setShowAddDrug(false); setSearchQuery(""); }} className="text-xs text-muted-foreground px-3 py-1.5">Cancel</button>
               </div>
             </div>
@@ -554,11 +556,14 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
                 {addingTemplate ? (
                   <div className="border border-border rounded-lg p-2.5 bg-background space-y-2">
                     <div className="grid grid-cols-2 gap-2">
-                      <input
+                      <DrugMasterSearchInput
                         value={newTemplate.drug_name}
-                        onChange={e => setNewTemplate(d => ({ ...d, drug_name: e.target.value }))}
+                        hospitalId={hospitalId}
+                        onChange={text => setNewTemplate(d => ({ ...d, drug_name: text }))}
+                        onSelect={r => setNewTemplate(d => ({ ...d, drug_name: r.drug_name }))}
                         placeholder="Drug name"
-                        className="col-span-2 h-8 px-2 border border-border rounded text-xs outline-none bg-background text-foreground"
+                        className="col-span-2"
+                        inputClassName="w-full h-8 px-2 border border-border rounded text-xs outline-none bg-background text-foreground"
                       />
                       <input
                         value={newTemplate.dose}

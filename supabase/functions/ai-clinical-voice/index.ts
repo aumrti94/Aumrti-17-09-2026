@@ -9,17 +9,24 @@ const corsHeaders = {
 };
 
 const CONTEXT_PROMPTS: Record<string, string> = {
-  opd_consultation: `You are a clinical documentation AI for an Indian hospital. A doctor dictated the following during an OPD consultation. Extract and structure the clinical information.
+  opd_consultation: `You are a clinical documentation AI for an Indian hospital. The following is a transcript of a LIVE OPD CONSULTATION — a two-way CONVERSATION between a doctor and a patient (either or both may speak, and it may be in an Indian language). It is NOT a clean dictation of finished notes. Read the whole conversation and extract the clinical information into structured fields.
 
-List every symptom the patient EXPLICITLY states (do not omit a clearly-stated symptom), but NEVER add, infer, or invent a symptom that was not actually said.
+Capture clinical facts stated by EITHER speaker:
+- What the PATIENT says — their complaints, symptoms, duration, severity, and any history they report (including as answers to the doctor's questions).
+- What the DOCTOR says — examination findings, any lab/vital VALUES read aloud (e.g. "sugar 165", "BP 130 by 80"), advice/instructions, medications, and any diagnosis actually spoken.
+- When the doctor asks a question and the patient answers (e.g. "since when is the pain?" → "3 days"), combine them into the fact (pain × 3 days).
+- Spoken advice or instructions (e.g. "reduce sweets", "come back in a week") go into "plan" and/or "follow_up".
+- Spoken lab/vital VALUES (e.g. blood sugar 165, BP 130/80) go into "examination_findings" and/or "investigations", recorded verbatim WITH the value (do not drop the number).
+
+List every symptom/finding EXPLICITLY stated (do not omit a clearly-stated one), but NEVER add, infer, or invent anything that was not actually said.
 
 Return ONLY a JSON object with this exact structure:
 {
   "chief_complaint": "the presenting complaints/symptoms the patient actually stated, comma-separated, with duration if mentioned",
   "history_of_present_illness": "history based strictly on what was said — as a BULLET LIST (see FORMATTING): one point per line for each symptom, duration, severity and any aggravating/relieving factor the patient actually mentioned; do not pad with assumptions",
   "examination_findings": "clinical examination findings as a BULLET LIST — one finding per line",
-  "diagnosis": "primary diagnosis or working diagnosis",
-  "icd_suggestion": "suggested ICD-10 code if identifiable",
+  "diagnosis": "the diagnosis ONLY IF it was explicitly spoken in the conversation, else empty string — do not infer your own",
+  "icd_suggestion": "ICD-10 code for a diagnosis that was actually spoken, else empty string",
   "plan": "management plan as a BULLET LIST — one action per line",
   "prescription": [
     {
@@ -203,7 +210,13 @@ serve(async (req) => {
     const contextPrompt = CONTEXT_PROMPTS[context_type] || CONTEXT_PROMPTS.opd_consultation;
 
     const existingContext = existing_data
-      ? `\n\nExisting data already in the form (merge with, don't overwrite unless corrected):\n${JSON.stringify(existing_data)}`
+      ? `\n\nEXISTING NOTE already in the form (from an earlier recording) — you MUST MERGE, not replace:
+${JSON.stringify(existing_data)}
+Merge rules:
+- Return the COMPLETE note: keep EVERY existing point AND add the new information from this transcript.
+- For bullet-list fields, append the new bullets to the existing ones; do NOT drop or rewrite existing bullets.
+- Remove exact duplicates only. Do NOT overwrite an existing value unless the new dictation EXPLICITLY corrects it.
+- If this transcript adds nothing to a field, return that field's existing value unchanged.`
       : "";
 
     // Language instruction: the doctor may dictate in any language, but the structured
@@ -222,15 +235,20 @@ serve(async (req) => {
     };
     const langLabel = language_code ? LANG_LABELS[language_code] : null;
     const langNote = langLabel
-      ? `\n\nIMPORTANT: The doctor dictated in ${langLabel}. TRANSLATE and return ALL text field VALUES in clear, professional English. Keep JSON keys in English. Preserve medical drug names and ICD codes exactly.`
-      : `\n\nIMPORTANT: Return all text field VALUES in clear, professional English. Keep JSON keys in English.`;
+      ? `\n\nIMPORTANT: The conversation is in ${langLabel}. TRANSLATE and return ALL text field VALUES in clear, professional English. Keep JSON keys in English. Preserve medical drug names and ICD codes exactly.`
+      // No specific language given (e.g. "auto"/multilingual, or a language not in the label
+      // map): the transcript is still most likely an Indian regional language, so tell the
+      // model to detect it and translate — don't leave it guessing.
+      : `\n\nIMPORTANT: The conversation may be in English or an Indian regional language (e.g. Telugu, Hindi, Tamil). Detect the language, then TRANSLATE and return ALL text field VALUES in clear, professional English. Keep JSON keys in English. Preserve medical drug names and ICD codes exactly.`;
 
     // Accuracy guardrails — applied to EVERY session type. Symptoms must be strict
     // (no fabrication); only the diagnosis fields may carry a working diagnosis,
     // derived from the described symptoms and NOT from any mis-heard disease word.
     const guardNote = `\n\nACCURACY RULES (most important):
-- For chief_complaint, history_of_present_illness and examination_findings: record ONLY symptoms/findings the patient or doctor EXPLICITLY states. NEVER invent, infer, assume, exaggerate, or add any symptom, body location, severity, or detail not clearly present. Preserve the EXACT anatomical location (e.g. lower back / waist must NOT become "abdomen"). Ignore the doctor's questions, filler, and unclear/garbled words — never turn them into clinical findings. If a symptom is ambiguous, leave it out.
-- For "diagnosis" and "icd_suggestion" ONLY: you MAY give a single most-likely WORKING diagnosis based strictly on the clearly-described physical symptoms (e.g. one-sided vesicles/blisters with severe localised pain → Herpes Zoster). This is the ONLY place clinical reasoning is allowed. Do NOT let a mis-heard or garbled disease-name word drive the diagnosis — diagnose from the described symptoms, not from an uncertain word. If the symptoms are too vague, leave these fields empty. In "reasoning", note it is a provisional AI-suggested diagnosis to verify.`;
+- Use ONLY the doctor↔patient conversation as your source. NEVER invent, infer, assume, exaggerate, add, or "recommend" anything that was not actually spoken.
+- For chief_complaint, history_of_present_illness and examination_findings: record ONLY symptoms/findings/values a speaker EXPLICITLY states. A clinical fact stated inside a question or an answer STILL counts — capture it (e.g. doctor "since when the fever?" + patient "3 days" → fever × 3 days). Only ignore PURE social pleasantries, filler, and unclear/garbled audio — never turn those into clinical findings. Preserve the EXACT anatomical location (e.g. lower back / waist must NOT become "abdomen"). If a symptom is genuinely ambiguous, leave it out.
+- For "diagnosis" and "icd_suggestion": EXTRACT-ONLY. Fill these ONLY if a diagnosis is explicitly spoken in the conversation (by the doctor or patient). If no diagnosis is stated, leave BOTH empty ("" and ""). Do NOT derive, infer, or suggest a diagnosis of your own from the symptoms — no AI-generated working diagnosis.
+- confidence: base it on how much was actually extractable. If few or no clinical facts could be captured, set confidence to 0.3 or lower and explain in "reasoning" what was missing or unclear. Do NOT report high confidence for an empty or near-empty result.`;
 
     const prompt = `${contextPrompt}${existingContext}${langNote}${guardNote}
 
@@ -267,7 +285,9 @@ Dictation transcript:
         estimated_cost_usd: costUsd,
         latency_ms: Date.now() - aiCallStartedAt,
         success: true,
-      }).catch(() => {});
+        // NOTE: a supabase-js query builder is a thenable but has NO .catch() —
+        // use .then(ok, err) to swallow logging failures without a TypeError.
+      }).then(() => {}, () => {});
       // Roll up into the same daily-aggregate table ai-proxy feeds, so this
       // function's usage shows up on AIPerformancePage and the tenant's own
       // usage card — not just in the raw log.
@@ -282,7 +302,7 @@ Dictation transcript:
           p_cache_read_tokens: result.usage.cacheReadTokens,
           p_cache_hit: result.usage.cacheReadTokens > 0,
           p_cost_usd: costUsd,
-        }).catch(() => {});
+        }).then(() => {}, () => {});
       }
     } catch (callErr) {
       // Best-effort — tokens/cost are unknown on a failed call, but
@@ -295,7 +315,7 @@ Dictation transcript:
         latency_ms: Date.now() - aiCallStartedAt,
         success: false,
         error_message: callErr instanceof Error ? callErr.message : String(callErr),
-      }).catch(() => {});
+      }).then(() => {}, () => {});
       throw callErr;
     }
     console.log("AI raw response (first 500):", sanitizeForLog(rawContent.substring(0, 500)));

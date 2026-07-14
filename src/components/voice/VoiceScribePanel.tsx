@@ -20,7 +20,7 @@ const VoiceScribePanel: React.FC = () => {
     isPanelOpen, setIsPanelOpen, panelState, setPanelState,
     rawTranscript, setRawTranscript, structuredOutput, setStructuredOutput,
     currentSessionType, currentPatientId, applyToCurrentScreen, resetSession,
-    selectedLanguage, fallbackReason, setFallbackReason,
+    selectedLanguage, fallbackReason, setFallbackReason, getExistingDataForCurrentScreen,
   } = useVoiceScribe();
   const { toast } = useToast();
   const { logAudit } = useAIAudit();
@@ -49,8 +49,23 @@ const VoiceScribePanel: React.FC = () => {
 
   if (!isPanelOpen) return null;
 
-  const confidence = typeof editableData.confidence === "number" ? editableData.confidence : 1;
-  const confidencePercent = Math.round(confidence * 100);
+  // Confidence is only meaningful when the model actually returned a number.
+  // Do NOT default a missing confidence to 1 (100%) — that disguised empty/uncertain
+  // extractions as high-confidence results. Unknown → hide the badge/warning.
+  const confidence = typeof editableData.confidence === "number" ? editableData.confidence : null;
+  const confidencePercent = confidence !== null ? Math.round(confidence * 100) : null;
+
+  // Did the model extract any clinical content at all? A conversation with nothing
+  // extractable yields a valid-but-empty JSON; surface that honestly instead of
+  // rendering a green "structured" note with all fields blank.
+  const isExtractionEmpty = (() => {
+    const anyText = Object.entries(editableData).some(
+      ([k, v]) => k !== "confidence" && k !== "reasoning" && k !== "icd_suggestion" &&
+        typeof v === "string" && v.trim().length > 0
+    );
+    const anyList = Object.values(editableData).some((v) => Array.isArray(v) && v.length > 0);
+    return !anyText && !anyList;
+  })();
 
   const updateField = (key: string, value: unknown) => {
     const next = { ...editableData, [key]: value };
@@ -152,7 +167,7 @@ Handover: ${editableData.handover_note || ""}`;
     setPanelState("processing");
     try {
       const { data, error } = await supabase.functions.invoke("ai-clinical-voice", {
-        body: { transcript: rawTranscript, context_type: currentSessionType, patient_id: currentPatientId ?? undefined },
+        body: { transcript: rawTranscript, context_type: currentSessionType, language_code: selectedLanguage, existing_data: getExistingDataForCurrentScreen() ?? undefined, patient_id: currentPatientId ?? undefined },
       });
       if (error || data?.error) throw new Error(data?.error || error?.message);
       setStructuredOutput(data.structured);
@@ -211,7 +226,7 @@ Handover: ${editableData.handover_note || ""}`;
               {currentLangOption.flag} {currentLangOption.label}
             </span>
           )}
-          {panelState === "output" && (
+          {panelState === "output" && confidencePercent !== null && (
             <span className="text-[11px] text-white bg-white/20 rounded-full px-2 py-0.5">
               {confidencePercent}%
             </span>
@@ -256,8 +271,19 @@ Handover: ${editableData.handover_note || ""}`;
       {/* OUTPUT STATE */}
       {panelState === "output" && (
         <>
+          {/* Empty-extraction notice — nothing clinical could be pulled from the conversation */}
+          {isExtractionEmpty && (
+            <div className="mx-3 mt-3 bg-amber-50 border border-amber-200 rounded-lg p-2 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-medium text-amber-800">No clinical details could be extracted from this conversation</p>
+                <p className="text-[10px] text-amber-600 mt-0.5">Review the full transcript below, edit the fields manually, or re-record.</p>
+              </div>
+            </div>
+          )}
+
           {/* Confidence warning */}
-          {confidence < 0.6 && (
+          {!isExtractionEmpty && confidence !== null && confidence < 0.6 && (
             <div className="mx-3 mt-3 bg-amber-50 border border-amber-200 rounded-lg p-2 flex items-start gap-2">
               <AlertTriangle className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
               <div>

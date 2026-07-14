@@ -407,9 +407,9 @@ const SettingsLabTestsPage: React.FC = () => {
 
       {/* ── Add/Edit Test Dialog ── */}
       <Dialog open={showAdd || !!editId} onOpenChange={(open) => { if (!open) { setShowAdd(false); setEditId(null); setForm(blankForm); } }}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] flex flex-col">
           <DialogHeader><DialogTitle>{editId ? "Edit Lab Test" : "Add Lab Test"}</DialogTitle></DialogHeader>
-          <div className="space-y-3">
+          <div className="flex-1 overflow-y-auto space-y-3 pr-1">
             <div><Label>Test Name *</Label><Input value={form.test_name} onChange={(e) => setForm({ ...form, test_name: e.target.value })} className="mt-1" /></div>
             <div className="grid grid-cols-2 gap-3">
               <div><Label>Code *</Label><Input value={form.test_code} onChange={(e) => setForm({ ...form, test_code: e.target.value })} className="mt-1" /></div>
