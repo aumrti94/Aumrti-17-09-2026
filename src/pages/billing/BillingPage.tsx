@@ -12,6 +12,7 @@ import { AlertTriangle, Lock, X, Receipt } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import NABHBadge from "@/components/nabh/NABHBadge";
 
+import OnboardingTour from "@/components/onboarding/OnboardingTour";
 import BillQueue from "@/components/billing/BillQueue";
 import BillEditor from "@/components/billing/BillEditor";
 import NewBillModal from "@/components/billing/NewBillModal";
@@ -466,6 +467,7 @@ const BillingPage: React.FC = () => {
 
       {activeTab === "bills" ? (
         <div className="flex-1 overflow-hidden flex">
+          <OnboardingTour tourKey="billing_intro" />
           <BillQueue
             bills={bills}
             loading={loading}

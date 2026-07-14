@@ -2,7 +2,9 @@ import React from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
-import type { DoctorScore } from "@/hooks/useDoctorDeptData";
+import { useDoctorRevenueByCategory, type DoctorScore } from "@/hooks/useDoctorDeptData";
+import type { DateRange } from "@/hooks/useAnalyticsData";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const fmt = (n: number) => {
   if (n >= 10000000) return `₹${(n / 10000000).toFixed(1)}Cr`;
@@ -17,9 +19,11 @@ interface Props {
   doc: DoctorScore | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  range: DateRange;
 }
 
-const DoctorDetailModal: React.FC<Props> = ({ doc, open, onOpenChange }) => {
+const DoctorDetailModal: React.FC<Props> = ({ doc, open, onOpenChange, range }) => {
+  const { data: revenueByCategory, isLoading: categoryLoading } = useDoctorRevenueByCategory(doc?.id ?? null, range);
   if (!doc) return null;
 
   const initials = doc.full_name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
@@ -108,6 +112,40 @@ const DoctorDetailModal: React.FC<Props> = ({ doc, open, onOpenChange }) => {
             </div>
           </div>
         )}
+
+        {/* Revenue by Category (Billed) — bill_line_items grouped by category. Distinct from
+            the collected-₹ "Total Revenue" KPI above since payments aren't itemized. */}
+        <div className="bg-card border border-border rounded-xl p-4 mt-3">
+          <h4 className="text-sm font-semibold text-foreground mb-3">Revenue by Category (Billed)</h4>
+          {categoryLoading ? (
+            <Skeleton className="h-32 w-full" />
+          ) : revenueByCategory && revenueByCategory.length > 0 ? (
+            <div className="flex items-center gap-6">
+              <ResponsiveContainer width={140} height={140}>
+                <PieChart>
+                  <Pie data={revenueByCategory} cx="50%" cy="50%" innerRadius={35} outerRadius={55} dataKey="value" paddingAngle={2}>
+                    {revenueByCategory.map((entry, i) => (
+                      <Cell key={i} fill={entry.fill} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(v: number) => fmt(v)} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="flex-1 space-y-1.5">
+                {revenueByCategory.map(item => (
+                  <div key={item.name} className="flex items-center gap-2 text-[11px]">
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ background: item.fill }} />
+                    <span className="flex-1 text-muted-foreground">{item.name}</span>
+                    <span className="font-medium text-foreground">{fmt(item.value)}</span>
+                    <span className="text-muted-foreground">{item.pct}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground text-center py-8">No billed line items for this period</p>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );

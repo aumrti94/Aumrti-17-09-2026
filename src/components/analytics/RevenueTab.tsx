@@ -6,7 +6,9 @@ import {
 import AnalyticsKPICard from "./AnalyticsKPICard";
 import {
   useRevenueKPIs, useRevenueTrend, useRevenueBreakdown,
-  usePaymentModes, useInsuranceSummary, useDailyHeatmap, type DateRange,
+  usePaymentModes, useInsuranceSummary, useDailyHeatmap,
+  usePMJAYClaimsSummary, usePayrollCostRatio, useInventoryValueOnHand,
+  useServiceLineBilled, type DateRange,
 } from "@/hooks/useAnalyticsData";
 import { Skeleton } from "@/components/ui/skeleton";
 import RevenueForecastCard from "./RevenueForecastCard";
@@ -27,10 +29,20 @@ const RevenueTab: React.FC<{ range: DateRange }> = ({ range }) => {
   const { data: payModes } = usePaymentModes(range);
   const { data: insurance } = useInsuranceSummary(range);
   const { data: heatmap } = useDailyHeatmap(range);
+  const { data: pmjay } = usePMJAYClaimsSummary(range);
+  const { data: payrollRatio } = usePayrollCostRatio(range);
+  const { data: inventoryValue } = useInventoryValueOnHand();
+  const { data: serviceLineBilled } = useServiceLineBilled(range);
 
   if (kpiLoading) return <div className="p-5 space-y-4">{[1,2,3].map(i => <Skeleton key={i} className="h-28 w-full" />)}</div>;
 
-  const k = kpis || { totalRevenue: 0, outstanding: 0, outstandingCount: 0, opdRevenue: 0, opdCount: 0, ipdRevenue: 0, ipdCount: 0, pharmacyRevenue: 0, pharmacyCount: 0 };
+  const k = kpis || {
+    totalRevenue: 0, outstanding: 0, outstandingCount: 0, opdRevenue: 0, opdCount: 0, ipdRevenue: 0, ipdCount: 0, pharmacyRevenue: 0, pharmacyCount: 0,
+    labRevenue: 0, labCount: 0, radiologyRevenue: 0, radiologyCount: 0, emergencyRevenue: 0, emergencyCount: 0,
+    daycareRevenue: 0, daycareCount: 0, packageRevenue: 0, packageCount: 0, dialysisOpdRevenue: 0, dialysisOpdCount: 0,
+    physioRevenue: 0, physioCount: 0,
+  };
+  const svcLine = serviceLineBilled || { otBilled: 0, dialysisBilled: 0 };
 
   // Build calendar grid from heatmap data
   const heatmapDays = heatmap || [];
@@ -55,6 +67,25 @@ const RevenueTab: React.FC<{ range: DateRange }> = ({ range }) => {
         <AnalyticsKPICard icon="🏥" iconBg="bg-blue-100" value={fmt(k.opdRevenue)} valueColor="text-blue-500" label="OPD Collections" subtitle={`${k.opdCount} consultations`} />
         <AnalyticsKPICard icon="🛏️" iconBg="bg-purple-100" value={fmt(k.ipdRevenue)} valueColor="text-purple-500" label="IPD Collections" subtitle={`${k.ipdCount} discharges`} />
         <AnalyticsKPICard icon="💊" iconBg="bg-red-100" value={fmt(k.pharmacyRevenue)} valueColor="text-red-500" label="Pharmacy Sales" subtitle={`${k.pharmacyCount} bills`} />
+      </div>
+
+      {/* Additional revenue category collections */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+        <AnalyticsKPICard icon="🧪" iconBg="bg-green-100" value={fmt(k.labRevenue)} valueColor="text-green-600" label="Lab Collections" subtitle={`${k.labCount} bills`} />
+        <AnalyticsKPICard icon="📷" iconBg="bg-orange-100" value={fmt(k.radiologyRevenue)} valueColor="text-orange-600" label="Radiology Collections" subtitle={`${k.radiologyCount} bills`} />
+        <AnalyticsKPICard icon="🏛️" iconBg="bg-indigo-100" value={insurance ? fmt(insurance.settledAmount) : "—"} valueColor="text-indigo-500" label="Insurance Settled" subtitle={insurance ? `${insurance.settledCount} claims` : "No claims in range"} />
+        <AnalyticsKPICard icon="🚑" iconBg="bg-rose-100" value={fmt(k.emergencyRevenue)} valueColor="text-rose-600" label="Emergency Collections" subtitle={`${k.emergencyCount} bills`} />
+        <AnalyticsKPICard icon="🌤️" iconBg="bg-sky-100" value={fmt(k.daycareRevenue)} valueColor="text-sky-600" label="Daycare Collections" subtitle={`${k.daycareCount} bills`} />
+        <AnalyticsKPICard icon="📦" iconBg="bg-violet-100" value={fmt(k.packageRevenue)} valueColor="text-violet-600" label="Package Collections" subtitle={`${k.packageCount} bills`} />
+      </div>
+
+      {/* OT/Dialysis(IPD) never get their own bill — only billed ₹ is derivable, not collected ₹.
+          Kept visually distinct and explicitly labeled to avoid conflating with the Collections cards above. */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <AnalyticsKPICard icon="🔪" iconBg="bg-pink-100" value={fmt(svcLine.otBilled)} valueColor="text-pink-600" label="OT Charges (Billed)" subtitle="Not yet reconciled to payments" />
+        <AnalyticsKPICard icon="🩸" iconBg="bg-cyan-100" value={fmt(svcLine.dialysisBilled)} valueColor="text-cyan-600" label="Dialysis (Billed, all patients)" subtitle="Includes OPD + IPD sessions" />
+        <AnalyticsKPICard icon="🚶" iconBg="bg-yellow-100" value={fmt(k.physioRevenue)} valueColor="text-yellow-600" label="Physio Collections (OPD)" subtitle={`${k.physioCount} bills`} />
+        <AnalyticsKPICard icon="🩺" iconBg="bg-teal-100" value={fmt(k.dialysisOpdRevenue)} valueColor="text-teal-600" label="Dialysis Collections (OPD)" subtitle={`${k.dialysisOpdCount} bills`} />
       </div>
 
       {/* AI Revenue Forecast */}
@@ -164,6 +195,28 @@ const RevenueTab: React.FC<{ range: DateRange }> = ({ range }) => {
             </div>
           ) : <Skeleton className="h-32 w-full" />}
         </div>
+      </div>
+
+      {/* Scheme & Ops — PMJAY, payroll cost ratio, inventory value (previously siloed modules) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <AnalyticsKPICard icon="🏛️" iconBg="bg-indigo-100"
+          value={pmjay ? fmt(pmjay.settledAmount) : "—"}
+          valueColor="text-indigo-500"
+          label="PMJAY Settled"
+          subtitle={pmjay ? `${pmjay.totalClaims} claims · ${pmjay.denialRatePct ?? 0}% denial rate` : "No PMJAY claims in range"}
+        />
+        <AnalyticsKPICard icon="👥" iconBg="bg-cyan-100"
+          value={payrollRatio?.costToRevenuePct != null ? `${payrollRatio.costToRevenuePct}%` : "—"}
+          valueColor="text-cyan-600"
+          label="Payroll Cost / Revenue"
+          subtitle={payrollRatio ? `${fmt(payrollRatio.totalNet)} net payroll` : "No payroll runs in range"}
+        />
+        <AnalyticsKPICard icon="📦" iconBg="bg-lime-100"
+          value={inventoryValue ? fmt(inventoryValue.valueOnHand) : "—"}
+          valueColor="text-lime-600"
+          label="Inventory Value on Hand"
+          subtitle="Current stock, cost price"
+        />
       </div>
 
       {/* Daily Collection Calendar Heatmap */}

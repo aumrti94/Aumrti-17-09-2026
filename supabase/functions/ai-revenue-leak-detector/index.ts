@@ -201,8 +201,42 @@ Rules:
       latency_ms:     latencyMs,
     });
 
+    // Persist each finding as a real row (insert-if-new, never overwrite an
+    // already-assigned/resolved status) so Assign/Resolve has a stable id to act on.
+    const patterns = analysisResult.patterns || [];
+    if (patterns.length > 0) {
+      await (sb as any).from("revenue_leak_actions").upsert(
+        patterns.map((p) => ({
+          hospital_id: hospitalId,
+          issue: p.issue,
+          department: p.department,
+          amount_at_risk: p.amount_at_risk,
+          severity: p.severity,
+        })),
+        { onConflict: "hospital_id,finding_key", ignoreDuplicates: true },
+      );
+    }
+
+    // Read back the persisted rows (existing ones keep whatever status they already had)
+    // and attach id/status to each pattern so the frontend can act on a real row.
+    const { data: actionRows } = await (sb as any)
+      .from("revenue_leak_actions")
+      .select("id, issue, department, status, assigned_at, resolved_at")
+      .eq("hospital_id", hospitalId);
+
+    const patternsWithStatus = patterns.map((p) => {
+      const row = (actionRows || []).find(
+        (r: any) => r.issue === p.issue && (r.department || "") === (p.department || ""),
+      );
+      return {
+        ...p,
+        id: row?.id ?? null,
+        status: row?.status ?? "open",
+      };
+    });
+
     return new Response(
-      JSON.stringify({ ...analysisResult, data_summary: dataSummary }),
+      JSON.stringify({ ...analysisResult, patterns: patternsWithStatus, data_summary: dataSummary }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err: any) {

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import type { DateRange } from "./useAnalyticsData";
+import { categorizeLineItem, LINE_ITEM_CATEGORIES, type DateRange } from "./useAnalyticsData";
 
 async function getHospitalId(): Promise<string | null> {
   const { data: { user } } = await supabase.auth.getUser();
@@ -411,6 +411,109 @@ export function useDeptTopServices(deptId: string | null, range: DateRange) {
         .map(([name, v]) => ({ name, total: v.total, count: v.count }))
         .sort((a, b) => b.total - a.total)
         .slice(0, 8);
+    },
+    refetchInterval: 5 * 60 * 1000,
+  });
+}
+
+export interface RevenueByCategoryItem {
+  name: string;
+  value: number;
+  pct: number;
+  fill: string;
+}
+
+// Billed ₹ (not collected ₹) — see useServiceLineBilled in useAnalyticsData.ts for why:
+// OT and IPD-embedded dialysis/physio never get a standalone bill, so paid_amount can't
+// be split by category. Grouping bill_line_items via categorizeLineItem is the only
+// clean way to attribute those categories to a doctor/department.
+async function fetchRevenueByCategoryForBillIds(hospitalId: string, billIds: string[]): Promise<RevenueByCategoryItem[]> {
+  if (!billIds.length) return [];
+
+  const { data } = await supabase.from("bill_line_items")
+    .select("item_type, source_module, total_amount")
+    .eq("hospital_id", hospitalId)
+    .in("bill_id", billIds)
+    .limit(5000);
+
+  const typeMap: Record<string, number> = {};
+  (data || []).forEach(row => {
+    const t = categorizeLineItem(row.item_type, row.source_module);
+    typeMap[t] = (typeMap[t] || 0) + (Number(row.total_amount) || 0);
+  });
+
+  const total = Object.values(typeMap).reduce((s, v) => s + v, 0);
+  return Object.entries(typeMap)
+    .map(([key, value]) => ({
+      name: LINE_ITEM_CATEGORIES[key]?.label || LINE_ITEM_CATEGORIES.other.label,
+      value,
+      pct: total > 0 ? Math.round((value / total) * 1000) / 10 : 0,
+      fill: LINE_ITEM_CATEGORIES[key]?.color || LINE_ITEM_CATEGORIES.other.color,
+    }))
+    .sort((a, b) => b.value - a.value);
+}
+
+async function billIdsForDoctors(hospitalId: string, doctorIds: string[], range: DateRange): Promise<string[]> {
+  const [encRes, admRes] = await Promise.all([
+    supabase.from("opd_encounters").select("id")
+      .eq("hospital_id", hospitalId)
+      .in("doctor_id", doctorIds)
+      .gte("created_at", range.from).lte("created_at", range.to + "T23:59:59")
+      .limit(5000),
+    supabase.from("admissions").select("id")
+      .eq("hospital_id", hospitalId)
+      .in("admitting_doctor_id", doctorIds)
+      .gte("admitted_at", range.from).lte("admitted_at", range.to + "T23:59:59")
+      .limit(5000),
+  ]);
+
+  const encIds = (encRes.data || []).map(e => e.id);
+  const admIds = (admRes.data || []).map(a => a.id);
+
+  const billQueries = [];
+  if (encIds.length > 0) {
+    billQueries.push(supabase.from("bills").select("id")
+      .eq("hospital_id", hospitalId).in("encounter_id", encIds).limit(5000));
+  }
+  if (admIds.length > 0) {
+    billQueries.push(supabase.from("bills").select("id")
+      .eq("hospital_id", hospitalId).in("admission_id", admIds).limit(5000));
+  }
+  if (billQueries.length === 0) return [];
+
+  const billResults = await Promise.all(billQueries);
+  return billResults.flatMap(r => (r.data || []).map(b => b.id));
+}
+
+export function useDoctorRevenueByCategory(doctorId: string | null, range: DateRange) {
+  return useQuery({
+    queryKey: ["analytics-doctor-revenue-category", doctorId, range],
+    enabled: !!doctorId,
+    queryFn: async (): Promise<RevenueByCategoryItem[]> => {
+      const hospitalId = await getHospitalId();
+      if (!hospitalId || !doctorId) return [];
+
+      const billIds = await billIdsForDoctors(hospitalId, [doctorId], range);
+      return fetchRevenueByCategoryForBillIds(hospitalId, billIds);
+    },
+    refetchInterval: 5 * 60 * 1000,
+  });
+}
+
+export function useDeptRevenueByCategory(deptId: string | null, range: DateRange) {
+  return useQuery({
+    queryKey: ["analytics-dept-revenue-category", deptId, range],
+    enabled: !!deptId,
+    queryFn: async (): Promise<RevenueByCategoryItem[]> => {
+      const hospitalId = await getHospitalId();
+      if (!hospitalId || !deptId) return [];
+
+      const { data: doctors } = await supabase.from("users")
+        .select("id").eq("hospital_id", hospitalId).eq("department_id", deptId).eq("role", "doctor");
+      if (!doctors?.length) return [];
+
+      const billIds = await billIdsForDoctors(hospitalId, doctors.map(d => d.id), range);
+      return fetchRevenueByCategoryForBillIds(hospitalId, billIds);
     },
     refetchInterval: 5 * 60 * 1000,
   });

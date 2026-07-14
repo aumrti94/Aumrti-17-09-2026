@@ -2,6 +2,33 @@ import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { callAI } from "@/lib/aiProvider";
+import { autoPostJournalEntry } from "@/lib/accounting";
+
+/** Resolve the current app user id (for journal posted_by). Best-effort. */
+async function currentAppUserId(): Promise<string> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return "";
+  const { data } = await supabase.from("users").select("id").eq("auth_user_id", user.id).maybeSingle();
+  return (data as any)?.id ?? "";
+}
+
+/**
+ * Reclassify a raised claim's receivable from the patient to the insurer:
+ * Dr AR-Insurance/TPA / Cr AR-Patients. Posted once per claim when it is
+ * submitted (never for drafts) so the insurer receivable appears in the GL.
+ */
+async function postClaimReclass(hospitalId: string, claimId: string, patientName: string, amount: number, postedBy: string) {
+  if (!amount || amount <= 0) return;
+  await autoPostJournalEntry({
+    triggerEvent: "insurance_claim_raised",
+    sourceModule: "insurance",
+    sourceId: claimId,
+    amount,
+    description: `Insurance claim raised - ${patientName}`,
+    hospitalId,
+    postedBy,
+  });
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -254,6 +281,9 @@ Claim Reference: ${claimNumber}`;
         submitted_at:    new Date().toISOString(),
         submission_mode: "ai_assisted",
       }).eq("id", claimData.claimId);
+      // Reclass to insurer AR now that the draft claim is actually submitted.
+      const postedBy = await currentAppUserId();
+      await postClaimReclass(hospitalId, claimData.claimId, claimData.patient_name, claimData.total_amount, postedBy);
       const r: SubmissionResult = {
         success: true, mode: "ai_assisted", submissionMode: "ai_assisted",
         claimNumber: claimData.claimNumber,
@@ -279,16 +309,19 @@ Claim Reference: ${claimNumber}`;
     setSubmitting(true);
     setResult(null);
 
-    const claimNumber = `CLM-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${
-      Math.floor(Math.random() * 9000 + 1000)
-    }`;
     const finalRisk = row.ai_score ?? row.denial_risk;
+    let claimNumber = "";
 
     try {
+      // Atomic, gap-free claim number via the shared per-hospital sequence —
+      // never Math.random() (collision-prone) or SELECT MAX+1.
+      const { data: seq } = await supabase.rpc("next_seq", { p_hospital_id: hospitalId, p_type: "claim" });
+      claimNumber = `CLM-${new Date().getFullYear()}-${String(seq ?? Date.now()).padStart(5, "0")}`;
+      const postedBy = await currentAppUserId();
       // ─ Manual ──────────────────────────────────────────────────────────────
       if (mode === "manual") {
         setProgress("Recording claim…");
-        const { error } = await (supabase as any).from("insurance_claims").insert({
+        const { data: claimRow, error } = await (supabase as any).from("insurance_claims").insert({
           hospital_id:        hospitalId,
           bill_id:            row.bill_id,
           patient_id:         row.patient_id,
@@ -299,8 +332,9 @@ Claim Reference: ${claimNumber}`;
           submitted_at:       new Date().toISOString(),
           submission_mode:    "manual",
           ai_denial_risk_score: finalRisk,
-        });
+        }).select("id").maybeSingle();
         if (error) throw new Error(error.message);
+        if (claimRow?.id) await postClaimReclass(hospitalId, claimRow.id, row.patient_name, row.total_amount, postedBy);
 
         const r: SubmissionResult = {
           success: true, mode, claimNumber, submissionMode: "manual",
@@ -373,6 +407,9 @@ Claim Reference: ${claimNumber}`;
 
       if (insertErr) throw new Error(insertErr.message);
       if (!claimRow?.id) throw new Error("Claim insert returned no row");
+
+      // Reclass the receivable to the insurer as soon as the claim is on record.
+      await postClaimReclass(hospitalId, claimRow.id, row.patient_name, row.total_amount, postedBy);
 
       // Invoke HCX claim submission
       const { data, error } = await supabase.functions.invoke("hcx-claim-submit", {

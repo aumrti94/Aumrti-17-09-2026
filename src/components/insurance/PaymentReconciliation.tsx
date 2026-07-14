@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { callAI } from "@/lib/aiProvider";
+import { autoPostJournalEntry } from "@/lib/accounting";
 import { formatINR } from "@/lib/currency";
 import { cn } from "@/lib/utils";
 import {
@@ -115,7 +116,7 @@ const KpiCard: React.FC<KpiCardProps> = ({ icon, label, value, sub, accent = "te
 // ── Component ──────────────────────────────────────────────────────────────
 
 const PaymentReconciliation: React.FC = () => {
-  const { hospitalId } = useHospitalId();
+  const { hospitalId, userId } = useHospitalId() as any;
   const { toast }      = useToast();
 
   const [tab,              setTab]              = useState<AppTab>("pending");
@@ -366,6 +367,19 @@ const PaymentReconciliation: React.FC = () => {
         reconciled:          isSettled,
       }).eq("id", selected.id);
 
+      // GL: TPA payment received — Dr Bank / Cr AR-Insurance.
+      if (recon?.id) {
+        await autoPostJournalEntry({
+          triggerEvent: "insurance_payment_received",
+          sourceModule: "insurance",
+          sourceId:     recon.id,
+          amount:       paid,
+          description:  `TPA payment - ${selected.tpa_name} - ${selected.patient_name}`,
+          hospitalId,
+          postedBy:     userId || "",
+        });
+      }
+
       toast({ title: isSettled ? "Claim fully reconciled ✓" : `Payment recorded — ₹${Math.round(diff).toLocaleString("en-IN")} underpayment` });
 
       // Pre-populate dispute if underpayment
@@ -390,6 +404,20 @@ const PaymentReconciliation: React.FC = () => {
       (supabase as any).from("insurance_claims")
         .update({ reconciled: true }).eq("id", selected.id),
     ]);
+    // GL: write off the unrecovered shortfall — Dr Misc Expense / Cr AR-Insurance,
+    // clearing the insurer receivable that will never be collected.
+    const shortfall = Math.max(0, selected.claimed_amount - (selected.recon_paid_amount ?? 0));
+    if (shortfall > 0) {
+      await autoPostJournalEntry({
+        triggerEvent: "insurance_shortfall_writeoff",
+        sourceModule: "insurance",
+        sourceId:     selected.recon_id,
+        amount:       shortfall,
+        description:  `Claim shortfall write-off - ${selected.tpa_name} - ${selected.patient_name}`,
+        hospitalId,
+        postedBy:     userId || "",
+      });
+    }
     toast({ title: "Underpayment accepted — claim marked as reconciled" });
     setShowDispute(false);
     loadData();

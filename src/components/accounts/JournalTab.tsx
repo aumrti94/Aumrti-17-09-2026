@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ChevronDown, ChevronRight, Download, Search } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, Search, Undo2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
 
 interface Props {
   hospitalId: string | null;
@@ -15,10 +16,21 @@ interface Props {
 }
 
 const JournalTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
+  const { toast } = useToast();
   const [entries, setEntries] = useState<any[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [lineItems, setLineItems] = useState<Record<string, any[]>>({});
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [reversingId, setReversingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return;
+      supabase.from("users").select("id").eq("auth_user_id", user.id).maybeSingle()
+        .then(({ data }) => setCurrentUserId(data?.id || null));
+    });
+  }, []);
 
   // Filters
   const [fromDate, setFromDate] = useState(dateRange.start);
@@ -65,6 +77,24 @@ const JournalTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
     }
 
     setEntries(results);
+  };
+
+  const reverseEntry = async (entry: any) => {
+    if (!hospitalId || !currentUserId) return;
+    if (!confirm(`Reverse journal entry ${entry.entry_number}? This posts a new balanced entry with debits/credits swapped and marks the original as reversed.`)) return;
+    setReversingId(entry.id);
+    const { data, error } = await (supabase as any).rpc("reverse_journal_entry", {
+      p_hospital_id: hospitalId,
+      p_journal_id: entry.id,
+      p_reversed_by: currentUserId,
+    });
+    setReversingId(null);
+    if (error || data?.status === "error") {
+      toast({ title: "Reversal failed", description: error?.message || data?.message, variant: "destructive" });
+      return;
+    }
+    toast({ title: `Reversed as ${data.reversal_entry_number} ✓` });
+    loadEntries();
   };
 
   const toggleExpand = async (id: string) => {
@@ -138,13 +168,20 @@ const JournalTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
                   <TableHead className="text-xs text-right">Debit ₹</TableHead>
                   <TableHead className="text-xs text-right">Credit ₹</TableHead>
                   <TableHead className="text-xs">Source</TableHead>
+                  <TableHead className="text-xs w-24"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filtered.length === 0 ? (
-                  <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">No journal entries</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">No journal entries</TableCell></TableRow>
                 ) : (
-                  filtered.map((e) => (
+                  filtered.map((e) => {
+                    // The RPC is the authority on whether an auto-posted entry is safe to
+                    // reverse (bill-anchored only) — attempt is allowed here for any
+                    // non-reversed, non-reversal entry; a subledger-touching entry (fixed
+                    // assets, depreciation, inventory, ...) gets a clear rejection toast.
+                    const canReverse = (e.entry_type === "manual" || e.entry_type?.startsWith("auto_")) && !e.reversed_at && !e.reversal_of;
+                    return (
                     <React.Fragment key={e.id}>
                       <TableRow className="cursor-pointer hover:bg-muted/50" onClick={() => toggleExpand(e.id)}>
                         <TableCell className="w-8 px-2">
@@ -154,17 +191,36 @@ const JournalTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
                         <TableCell className="text-xs">{e.entry_date}</TableCell>
                         <TableCell className="text-xs max-w-[220px] truncate">{e.description}</TableCell>
                         <TableCell>
-                          <Badge variant="outline" className={cn("text-[9px] px-2 py-0",
-                            e.entry_type?.startsWith("auto")
-                              ? "bg-primary/10 text-primary border-primary/30"
-                              : "bg-muted text-muted-foreground border-border"
-                          )}>
-                            {e.entry_type?.startsWith("auto") ? "AUTO" : "MANUAL"}
-                          </Badge>
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <Badge variant="outline" className={cn("text-[9px] px-2 py-0",
+                              e.entry_type?.startsWith("auto")
+                                ? "bg-primary/10 text-primary border-primary/30"
+                                : e.entry_type === "reversal"
+                                ? "bg-amber-50 text-amber-700 border-amber-300"
+                                : "bg-muted text-muted-foreground border-border"
+                            )}>
+                              {e.entry_type?.startsWith("auto") ? "AUTO" : e.entry_type === "reversal" ? "REVERSAL" : "MANUAL"}
+                            </Badge>
+                            {e.reversed_at && (
+                              <Badge variant="outline" className="text-[9px] px-2 py-0 bg-destructive/10 text-destructive border-destructive/30">REVERSED</Badge>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell className="text-xs text-right font-medium">{fmt(e.total_debit)}</TableCell>
                         <TableCell className="text-xs text-right font-medium">{fmt(e.total_credit)}</TableCell>
                         <TableCell className="text-[10px] text-muted-foreground">{e.source_module || "—"}</TableCell>
+                        <TableCell onClick={(ev) => ev.stopPropagation()}>
+                          {canReverse && (
+                            <Button
+                              size="sm" variant="ghost"
+                              className="h-6 px-2 text-[10px] gap-1 text-muted-foreground hover:text-destructive"
+                              disabled={reversingId === e.id}
+                              onClick={() => reverseEntry(e)}
+                            >
+                              <Undo2 size={11} /> {reversingId === e.id ? "…" : "Reverse"}
+                            </Button>
+                          )}
+                        </TableCell>
                       </TableRow>
                       {expanded === e.id && (lineItems[e.id] || []).map((li) => (
                         <TableRow key={li.id} className="bg-muted/20">
@@ -175,10 +231,12 @@ const JournalTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
                           <TableCell className="text-[10px] text-right">{Number(li.debit_amount) > 0 ? fmt(li.debit_amount) : ""}</TableCell>
                           <TableCell className="text-[10px] text-right">{Number(li.credit_amount) > 0 ? fmt(li.credit_amount) : ""}</TableCell>
                           <TableCell></TableCell>
+                          <TableCell></TableCell>
                         </TableRow>
                       ))}
                     </React.Fragment>
-                  ))
+                    );
+                  })
                 )}
               </TableBody>
             </Table>

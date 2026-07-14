@@ -83,6 +83,7 @@ const DepartmentsTab: React.FC<{ range: DateRange }> = ({ range }) => {
         onOpenChange={(v) => !v && setDrillDeptId(null)}
         deptId={drillDeptId}
         deptName={depts?.find(d => d.id === drillDeptId)?.name || ""}
+        range={range}
       />
 
       {/* Right — Department Detail */}

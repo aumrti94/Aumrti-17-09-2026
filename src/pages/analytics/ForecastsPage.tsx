@@ -317,25 +317,25 @@ const ForecastsPage: React.FC = () => {
     // Admissions per day
     const { data: admissions } = await (supabase as any)
       .from("admissions")
-      .select("admission_date")
+      .select("admitted_at")
       .eq("hospital_id", hospitalId)
-      .gte("admission_date", from)
-      .lte("admission_date", today);
+      .gte("admitted_at", from)
+      .lte("admitted_at", today + "T23:59:59");
 
     // Discharges per day
     const { data: discharges } = await (supabase as any)
       .from("admissions")
-      .select("discharge_date")
+      .select("discharged_at")
       .eq("hospital_id", hospitalId)
-      .not("discharge_date", "is", null)
-      .gte("discharge_date", from)
-      .lte("discharge_date", today);
+      .not("discharged_at", "is", null)
+      .gte("discharged_at", from)
+      .lte("discharged_at", today + "T23:59:59");
 
     if (admissions !== null) {
       const admMap: Record<string, number> = {};
       const disMap: Record<string, number> = {};
-      (admissions as any[]).forEach(a => { admMap[a.admission_date] = (admMap[a.admission_date] || 0) + 1; });
-      (discharges || []).forEach((d: any) => { if (d.discharge_date) disMap[d.discharge_date] = (disMap[d.discharge_date] || 0) + 1; });
+      (admissions as any[]).forEach(a => { const d = format(new Date(a.admitted_at), "yyyy-MM-dd"); admMap[d] = (admMap[d] || 0) + 1; });
+      (discharges || []).forEach((d: any) => { if (d.discharged_at) { const day = format(new Date(d.discharged_at), "yyyy-MM-dd"); disMap[day] = (disMap[day] || 0) + 1; } });
 
       // Running occupancy (cumulative admissions - cumulative discharges)
       const hist: HistPoint[] = [];

@@ -2,7 +2,7 @@ import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
-import type { DateRange } from "@/hooks/useAnalyticsData";
+import { useReadmissionRate, usePatientSatisfaction, type DateRange } from "@/hooks/useAnalyticsData";
 import AnalyticsKPICard from "./AnalyticsKPICard";
 
 async function getHospitalId(): Promise<string | null> {
@@ -49,12 +49,6 @@ function useQualityData(range: DateRange) {
         .map(a => (new Date(a.discharged_at!).getTime() - new Date(a.admitted_at!).getTime()) / 3600000);
       if (tats.length > 0) avgDischargeTat = Math.round((tats.reduce((a, b) => a + b, 0) / tats.length) * 10) / 10;
 
-      // Readmission rate (simplified: patients admitted again within 30 days)
-      const patientIds = discharges.map(a => a.patient_id);
-      const uniquePatients = new Set(patientIds);
-      const readmitted = patientIds.length - uniquePatients.size;
-      const readmissionRate = discharges.length > 0 ? Math.round((readmitted / discharges.length) * 1000) / 10 : 0;
-
       return {
         avgNabh,
         nabhTotal: nabhData.length,
@@ -64,7 +58,6 @@ function useQualityData(range: DateRange) {
         haiRate: haiIndicator?.value ?? null,
         handHygiene: hhIndicator?.value ?? null,
         avgDischargeTat,
-        readmissionRate,
         indicators: qiData,
       };
     },
@@ -88,6 +81,8 @@ function getStatusPill(value: number | null, target: number | null) {
 
 const QualityTab: React.FC<{ range: DateRange }> = ({ range }) => {
   const { data, isLoading } = useQualityData(range);
+  const { data: readmission } = useReadmissionRate(range);
+  const { data: satisfaction } = usePatientSatisfaction(range);
 
   if (isLoading) return <div className="p-6 text-muted-foreground text-sm">Loading quality data…</div>;
   if (!data) return <div className="p-6 text-muted-foreground text-sm">No data available.</div>;
@@ -129,11 +124,17 @@ const QualityTab: React.FC<{ range: DateRange }> = ({ range }) => {
         />
         <AnalyticsKPICard icon="📋" iconBg="bg-blue-50" label="Clinical Quality"
           value={`${data.avgDischargeTat}h TAT`}
-          subtitle={`Readmission: ${data.readmissionRate}%`}
+          subtitle={
+            readmission == null
+              ? "Readmission: —"
+              : readmission.readmissionRate == null
+                ? "Readmission: no discharges in range"
+                : `30-day readmission: ${readmission.readmissionRate}%${readmission.aiHighRiskPct != null ? ` · AI high-risk: ${readmission.aiHighRiskPct}%` : ""}`
+          }
         />
         <AnalyticsKPICard icon="⭐" iconBg="bg-yellow-50" label="Patient Satisfaction"
-          value="N/A"
-          subtitle="No survey data yet"
+          value={satisfaction?.avgOverall5 != null ? `${satisfaction.avgOverall5}/5` : "N/A"}
+          subtitle={satisfaction && satisfaction.responseCount > 0 ? `${satisfaction.responseCount} PREM responses` : "No survey data yet"}
         />
       </div>
 

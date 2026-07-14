@@ -1,12 +1,15 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Plus, Edit2, Save, X, Loader2, Check, Users } from "lucide-react";
+import { Plus, Edit2, Save, X, Loader2, Check, Users, Sparkles, ArrowUp, ArrowDown, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ALL_MODULES } from "@/lib/modules";
 import { ROUTE_TO_MODULE_KEY, CANONICAL_MODULE_KEYS } from "@/hooks/useSubscriptionConfig";
 import { getErrorMessage } from "@/lib/errorMessage";
 import { FormError } from "@/components/ui/FormError";
+import { callAIOrThrow } from "@/lib/aiProvider";
+
+type Highlight = { text: string; included: boolean };
 
 interface EnterpriseLead {
   id: string;
@@ -36,10 +39,13 @@ interface Plan {
   id: string; name: string; slug: string;
   price_monthly: number; price_yearly: number;
   max_beds: number | null; max_staff: number | null;
+  storage_included_gb: number | null;
   trial_days: number; is_active: boolean;
   is_custom_price: boolean; sort_order: number;
   badge_text: string | null; description: string | null;
   razorpay_plan_id: string | null;
+  ai_included_budget_usd: number | null;
+  feature_highlights: Highlight[];
 }
 
 // Single source of truth — shared with the runtime module gate (useSubscriptionConfig).
@@ -63,9 +69,10 @@ async function fetchPlans() {
 
 const BLANK_PLAN: Partial<Plan> = {
   name: "", slug: "", price_monthly: 0, price_yearly: 0,
-  max_beds: 50, max_staff: 20, trial_days: 30,
+  max_beds: 50, max_staff: 20, storage_included_gb: null, trial_days: 30,
   is_active: true, is_custom_price: false, sort_order: 99,
   badge_text: null, description: null, razorpay_plan_id: null,
+  ai_included_budget_usd: null, feature_highlights: [],
 };
 
 export default function PlansManagerPage() {
@@ -120,7 +127,7 @@ export default function PlansManagerPage() {
   });
 
   const openEdit = (plan: Plan) => {
-    setForm({ ...plan });
+    setForm({ ...plan, feature_highlights: Array.isArray(plan.feature_highlights) ? plan.feature_highlights : [] });
     setIsNew(false);
     const planFeatures = data?.featureMap.get(plan.id) || new Map();
     // Mirror the app's gate exactly: with any feature rows, a module is enabled only when
@@ -142,14 +149,19 @@ export default function PlansManagerPage() {
   const savePlan = useMutation({
     mutationFn: async () => {
       let planId = editing === "new" ? null : editing!;
+      // Drop blank-text bullets before persisting.
+      const payload = {
+        ...form,
+        feature_highlights: (form.feature_highlights ?? []).filter((h) => h.text.trim() !== ""),
+      };
       if (isNew || editing === "new") {
         const { data: inserted, error } = await (supabase as any)
-          .from("subscription_plans").insert([form]).select("id").maybeSingle();
+          .from("subscription_plans").insert([payload]).select("id").maybeSingle();
         if (error) throw error;
         if (!inserted) throw new Error("No data returned from plan insertion");
         planId = inserted.id;
       } else {
-        const { error } = await (supabase as any).from("subscription_plans").update(form).eq("id", planId);
+        const { error } = await (supabase as any).from("subscription_plans").update(payload).eq("id", planId);
         if (error) throw error;
       }
       // Upsert all plan_features
@@ -175,6 +187,69 @@ export default function PlansManagerPage() {
   });
 
   const f = (key: keyof Plan, val: any) => setForm((p) => ({ ...p, [key]: val }));
+
+  // ── Feature-highlight editor helpers ──
+  const highlights: Highlight[] = form.feature_highlights ?? [];
+  const setHighlights = (next: Highlight[]) => f("feature_highlights", next);
+  const addHighlight = () => setHighlights([...highlights, { text: "", included: true }]);
+  const updateHighlight = (i: number, patch: Partial<Highlight>) =>
+    setHighlights(highlights.map((h, idx) => (idx === i ? { ...h, ...patch } : h)));
+  const removeHighlight = (i: number) => setHighlights(highlights.filter((_, idx) => idx !== i));
+  const moveHighlight = (i: number, dir: -1 | 1) => {
+    const j = i + dir;
+    if (j < 0 || j >= highlights.length) return;
+    const next = [...highlights];
+    [next[i], next[j]] = [next[j], next[i]];
+    setHighlights(next);
+  };
+
+  // ── AI copywriter: draft description + ✓/✗ bullets from the plan's context ──
+  const [aiLoading, setAiLoading] = useState(false);
+  const generateCopy = async () => {
+    setAiLoading(true);
+    try {
+      const enabledLabels = ALL_MODULES
+        .map((m) => ({ key: ROUTE_KEY[m.route] ?? ROUTE_KEY[m.route.split("?")[0]], name: m.name }))
+        .filter((m) => m.key && enabledKeys.has(m.key))
+        .map((m) => m.name);
+      const priceLine = form.is_custom_price ? "Custom / Contact Sales" : `₹${Number(form.price_monthly) || 0}/month`;
+      const prompt = [
+        `Plan name: ${form.name || "(unnamed)"}`,
+        `Price: ${priceLine}`,
+        `Max beds: ${form.max_beds ?? "unlimited"} · Max staff: ${form.max_staff ?? "unlimited"}`,
+        `Included modules (${enabledLabels.length}): ${enabledLabels.join(", ") || "none specified"}`,
+        "",
+        "Write marketing copy for this hospital-software subscription plan's pricing card.",
+      ].join("\n");
+      const systemPrompt =
+        "You are a SaaS pricing-page copywriter for a hospital management system sold in India. " +
+        "Return ONLY valid minified JSON, no markdown fences, matching exactly: " +
+        '{"description": string, "highlights": [{"text": string, "included": boolean}]}. ' +
+        "description: one crisp sentence naming the ideal customer. " +
+        "highlights: 6-9 short benefit bullets. Set included=true for capabilities this plan HAS " +
+        "(base them on the included modules list); set included=false for 2-3 notable higher-tier " +
+        "features this plan LACKS (upsell hints shown with a cross). Keep each text under 6 words.";
+      const res = await callAIOrThrow({ featureKey: "plan_copywriter", prompt, systemPrompt, hospitalId: "", maxTokens: 800 });
+      const raw = res.text.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+      const parsed = JSON.parse(raw);
+      const list: Highlight[] = Array.isArray(parsed?.highlights)
+        ? parsed.highlights
+            .filter((h: any) => h && typeof h.text === "string")
+            .map((h: any) => ({ text: String(h.text), included: h.included !== false }))
+        : [];
+      if (!list.length) throw new Error("AI returned no usable highlights");
+      setForm((p) => ({
+        ...p,
+        description: typeof parsed?.description === "string" && parsed.description ? parsed.description : p.description,
+        feature_highlights: list,
+      }));
+      toast.success("AI draft ready — review and Save");
+    } catch (e: any) {
+      toast.error(getErrorMessage(e) || "AI generation failed");
+    } finally {
+      setAiLoading(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -351,10 +426,12 @@ export default function PlansManagerPage() {
                 { label: "Yearly Price (₹)", key: "price_yearly" as const, type: "number" },
                 { label: "Max Beds (blank = unlimited)", key: "max_beds" as const, type: "number" },
                 { label: "Max Staff (blank = unlimited)", key: "max_staff" as const, type: "number" },
+                { label: "Storage Included (GB, blank = unlimited)", key: "storage_included_gb" as const, type: "number" },
                 { label: "Trial Days", key: "trial_days" as const, type: "number" },
                 { label: "Badge Text (e.g. Most Popular)", key: "badge_text" as const, type: "text" },
                 { label: "Description", key: "description" as const, type: "text" },
                 { label: "Razorpay Plan ID (from Razorpay Dashboard → Products → Plans)", key: "razorpay_plan_id" as const, type: "text" },
+                { label: "AI Budget Included (USD/month, blank = not metered)", key: "ai_included_budget_usd" as const, type: "number" },
               ].map(({ label, key, type }) => (
                 <div key={key}>
                   <label className="text-xs text-muted-foreground">{label}</label>
@@ -366,6 +443,47 @@ export default function PlansManagerPage() {
                   />
                 </div>
               ))}
+
+              {/* Feature highlights (marketing bullets with ✓/✗) */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider">Feature Highlights</p>
+                  <button
+                    onClick={generateCopy}
+                    disabled={aiLoading}
+                    className="flex items-center gap-1.5 text-[11px] px-2.5 py-1 bg-primary/10 text-primary rounded font-semibold hover:bg-primary/20 disabled:opacity-50"
+                  >
+                    {aiLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                    {aiLoading ? "Generating…" : "Generate with AI"}
+                  </button>
+                </div>
+                <p className="text-[11px] text-muted-foreground mb-2">Shown on the plan card. Toggle the tick/cross per bullet.</p>
+                <div className="space-y-1.5">
+                  {highlights.map((h, i) => (
+                    <div key={i} className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => updateHighlight(i, { included: !h.included })}
+                        title={h.included ? "Included (✓) — click to mark not included" : "Not included (✗) — click to mark included"}
+                        className={`w-6 h-7 shrink-0 rounded border flex items-center justify-center ${h.included ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-600" : "bg-muted border-border text-muted-foreground"}`}
+                      >
+                        {h.included ? <Check size={13} /> : <X size={13} />}
+                      </button>
+                      <input
+                        value={h.text}
+                        onChange={(e) => updateHighlight(i, { text: e.target.value })}
+                        placeholder="e.g. Insurance / TPA"
+                        className="flex-1 h-7 px-2 text-xs bg-background border border-border rounded text-foreground focus:outline-none focus:border-primary"
+                      />
+                      <button onClick={() => moveHighlight(i, -1)} disabled={i === 0} className="text-muted-foreground hover:text-foreground disabled:opacity-30 p-0.5"><ArrowUp size={13} /></button>
+                      <button onClick={() => moveHighlight(i, 1)} disabled={i === highlights.length - 1} className="text-muted-foreground hover:text-foreground disabled:opacity-30 p-0.5"><ArrowDown size={13} /></button>
+                      <button onClick={() => removeHighlight(i)} className="text-muted-foreground hover:text-red-600 p-0.5"><Trash2 size={13} /></button>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={addHighlight} className="mt-2 flex items-center gap-1 text-[11px] px-2 py-1 bg-muted text-foreground rounded hover:bg-muted/70">
+                  <Plus size={11} /> Add bullet
+                </button>
+              </div>
 
               <div className="flex items-center gap-4">
                 <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">

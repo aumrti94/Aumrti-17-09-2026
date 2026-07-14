@@ -293,7 +293,7 @@ const TokenQueue: React.FC<Props> = ({ tokens, selectedTokenId, onSelectToken, h
 
   return (
     <>
-      <div className="w-full bg-white border-r border-slate-200 flex flex-col h-full overflow-hidden">
+      <div data-tour="receptionist-token-queue" className="w-full bg-white border-r border-slate-200 flex flex-col h-full overflow-hidden">
         {/* Header */}
         <div className="flex-shrink-0 border-b border-slate-100">
           {/* Title + date nav */}

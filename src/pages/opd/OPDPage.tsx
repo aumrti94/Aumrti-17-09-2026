@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { ChevronLeft } from "lucide-react";
+import OnboardingTour from "@/components/onboarding/OnboardingTour";
 import TokenQueue from "@/components/opd/TokenQueue";
 import ConsultationWorkspace from "@/components/opd/ConsultationWorkspace";
 import PatientSummary from "@/components/opd/PatientSummary";
@@ -105,6 +106,7 @@ const OPDPage: React.FC = () => {
 
   return (
     <div className="flex h-full overflow-hidden">
+      {userRole === "receptionist" && <OnboardingTour tourKey="receptionist_intro" />}
       {showQueue && !isMobile && (
         <CollapsiblePanel panelKey="opd_queue" title="OPD Queue" side="left" expandedWidth="w-[280px]">
           <TokenQueue

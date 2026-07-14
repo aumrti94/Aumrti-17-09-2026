@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import VoiceDictationButton from "@/components/voice/VoiceDictationButton";
 import { useVoiceScribe } from "@/contexts/VoiceScribeContext";
 import { useNoteTemplates } from "@/hooks/useNoteTemplates";
+import OnboardingTour from "@/components/onboarding/OnboardingTour";
 
 interface Props {
   admissionId: string;
@@ -303,6 +304,7 @@ const IPDWardRoundTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pat
 
   return (
     <div className="h-full flex flex-col overflow-y-auto p-4">
+      <OnboardingTour tourKey="doctor_ward_round_intro" />
       {/* Voice scribe hint */}
       <div className="flex-shrink-0 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mb-3 flex items-center gap-2">
         <Mic className="h-3.5 w-3.5 text-primary" />
@@ -479,8 +481,8 @@ const IPDWardRoundTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pat
           </div>
         )}
 
-        <div className="flex items-center justify-between mt-2">
-          <VoiceDictationButton sessionType="ward_round" size="sm" />
+        <div data-tour="doctor-ward-round-notes" className="flex items-center justify-between mt-2">
+          <VoiceDictationButton sessionType="ward_round" patientId={patientId} size="sm" />
           <Button size="sm" onClick={handleSave} disabled={saving} className="bg-[#1A2F5A] hover:bg-[#152647] text-xs h-8">
             {saving ? "Saving..." : "Save Round Note"}
           </Button>

@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { markItemPaid } from "@/lib/chargePosting";
+import { syncBillItemPaymentStatus } from "@/lib/chargePosting";
 import { recordBillPayment } from "@/lib/billPayments";
 import { Loader2, RefreshCw, Search, CheckCircle2, AlertCircle, IndianRupee } from "lucide-react";
 
@@ -117,7 +117,7 @@ export default function PendingCollectionsPanel() {
       });
 
       if (result.ok) {
-        await markItemPaid({ billItemId: item.id, collectedBy: userId });
+        await syncBillItemPaymentStatus({ billItemId: item.id, collectedBy: userId });
         toast.success(`Payment collected for ${item.description}`);
         setItems(prev => prev
           .filter(i => i.id !== item.id)
@@ -159,7 +159,7 @@ export default function PendingCollectionsPanel() {
     if (result.ok) {
       for (const item of billItems) {
         setPaying(item.id);
-        await markItemPaid({ billItemId: item.id, collectedBy: userId });
+        await syncBillItemPaymentStatus({ billItemId: item.id, collectedBy: userId });
       }
       toast.success(`All payments collected for bill`);
       setItems(prev => prev.filter(i => i.bill_id !== billId));

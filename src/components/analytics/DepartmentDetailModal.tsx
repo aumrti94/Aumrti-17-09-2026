@@ -5,12 +5,16 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { TrendingUp, TrendingDown, Users, Stethoscope, Clock, BedDouble, IndianRupee, Activity } from "lucide-react";
 import { format, startOfMonth, endOfMonth, subMonths } from "date-fns";
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
+import { useDeptRevenueByCategory } from "@/hooks/useDoctorDeptData";
+import type { DateRange } from "@/hooks/useAnalyticsData";
 
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   deptId: string | null;
   deptName: string;
+  range: DateRange;
 }
 
 const fmtCurrency = (n: number) => {
@@ -157,8 +161,9 @@ const ChangeBadge: React.FC<{ current: number; previous: number }> = ({ current,
   );
 };
 
-const DepartmentDetailModal: React.FC<Props> = ({ open, onOpenChange, deptId, deptName }) => {
+const DepartmentDetailModal: React.FC<Props> = ({ open, onOpenChange, deptId, deptName, range }) => {
   const { data, isLoading } = useDeptDrillDown(deptId);
+  const { data: revenueByCategory, isLoading: categoryLoading } = useDeptRevenueByCategory(deptId, range);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -246,6 +251,42 @@ const DepartmentDetailModal: React.FC<Props> = ({ open, onOpenChange, deptId, de
                     </li>
                   ))}
                 </ul>
+              )}
+            </div>
+
+            {/* Revenue by Category (Billed) — line-item level, includes OT/Dialysis which
+                never get a standalone bill so can't be split by collected ₹. */}
+            <div className="border border-border rounded-lg p-3 bg-card">
+              <h4 className="text-[12px] font-semibold text-foreground mb-2 flex items-center gap-1.5">
+                <IndianRupee size={13} /> Revenue by Category (Billed)
+              </h4>
+              {categoryLoading ? (
+                <Skeleton className="h-28 w-full" />
+              ) : revenueByCategory && revenueByCategory.length > 0 ? (
+                <div className="flex items-center gap-4">
+                  <ResponsiveContainer width={120} height={120}>
+                    <PieChart>
+                      <Pie data={revenueByCategory} cx="50%" cy="50%" innerRadius={30} outerRadius={48} dataKey="value" paddingAngle={2}>
+                        {revenueByCategory.map((entry, i) => (
+                          <Cell key={i} fill={entry.fill} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(v: number) => fmtCurrency(v)} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="flex-1 space-y-1.5">
+                    {revenueByCategory.map(item => (
+                      <div key={item.name} className="flex items-center gap-2 text-[11px]">
+                        <span className="w-2 h-2 rounded-full shrink-0" style={{ background: item.fill }} />
+                        <span className="flex-1 text-muted-foreground">{item.name}</span>
+                        <span className="font-medium text-foreground">{fmtCurrency(item.value)}</span>
+                        <span className="text-muted-foreground">{item.pct}%</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-[11px] text-muted-foreground text-center py-6">No billed line items for this period</p>
               )}
             </div>
           </div>

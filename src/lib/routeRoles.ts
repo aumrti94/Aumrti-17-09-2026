@@ -126,7 +126,6 @@ export const ROUTE_TO_MODULE: Record<string, string> = {
   "/schedule": "opd",
   "/payments": "billing",
   "/accounts": "billing",
-  "/executive-dashboard": "analytics",
   "/telemedicine": "opd",
   "/teleconsult": "opd",
   "/blood-bank": "ipd",

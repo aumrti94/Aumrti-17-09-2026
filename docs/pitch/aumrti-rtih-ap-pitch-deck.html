@@ -1,0 +1,1409 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aumrti RTIH AP Pitch Deck</title>
+    <style>
+      :root {
+        --bg: #07111f;
+        --panel: #0e1f37;
+        --panel-2: #132946;
+        --ink: #f6f8fc;
+        --muted: #b6c5de;
+        --line: rgba(255, 255, 255, 0.1);
+        --navy: #1a2f5a;
+        --blue: #4facde;
+        --sky: #8dd5f4;
+        --mint: #7be0c3;
+        --gold: #ffcf70;
+        --rose: #ff8a8a;
+      }
+
+      * {
+        box-sizing: border-box;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+
+      @page {
+        size: 13.333in 7.5in;
+        margin: 0;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      }
+
+      .slide {
+        width: 1280px;
+        height: 720px;
+        padding: 44px 54px 42px;
+        position: relative;
+        overflow: hidden;
+        page-break-after: always;
+        background:
+          radial-gradient(circle at top right, rgba(79, 172, 222, 0.2), transparent 28%),
+          radial-gradient(circle at bottom left, rgba(123, 224, 195, 0.11), transparent 26%),
+          linear-gradient(145deg, #091627 0%, #0b1a2d 54%, #102444 100%);
+      }
+
+      .slide:last-child {
+        page-break-after: auto;
+      }
+
+      .grid-overlay {
+        position: absolute;
+        inset: 0;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+        background-size: 42px 42px;
+        pointer-events: none;
+      }
+
+      .topbar,
+      .footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        position: relative;
+        z-index: 2;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 14px;
+        border: 1px solid rgba(141, 213, 244, 0.35);
+        border-radius: 999px;
+        background: rgba(17, 35, 61, 0.66);
+        color: var(--sky);
+        font-size: 13px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .brandline {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .brandline span {
+        font-size: 13px;
+        color: var(--muted);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .logo {
+        width: 42px;
+        height: 42px;
+        border-radius: 14px;
+        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.25);
+        overflow: hidden;
+        flex: 0 0 auto;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: 1.16fr 0.84fr;
+        gap: 34px;
+        margin-top: 40px;
+        position: relative;
+        z-index: 2;
+      }
+
+      h1 {
+        margin: 18px 0 16px;
+        font-family: "Arial Rounded MT Bold", "Trebuchet MS", sans-serif;
+        font-size: 60px;
+        line-height: 1.02;
+        letter-spacing: -0.03em;
+      }
+
+      h2 {
+        margin: 18px 0 14px;
+        font-family: "Arial Rounded MT Bold", "Trebuchet MS", sans-serif;
+        font-size: 42px;
+        line-height: 1.05;
+        letter-spacing: -0.02em;
+      }
+
+      h3 {
+        margin: 0 0 10px;
+        font-size: 21px;
+        line-height: 1.2;
+      }
+
+      .subtitle {
+        max-width: 700px;
+        font-size: 24px;
+        line-height: 1.35;
+        color: #e6edf8;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .accent {
+        color: var(--sky);
+      }
+
+      .caption {
+        font-size: 15px;
+        line-height: 1.45;
+        color: var(--muted);
+      }
+
+      .pill-row,
+      .chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 20px;
+      }
+
+      .pill,
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--ink);
+      }
+
+      .pill {
+        padding: 11px 16px;
+        font-size: 15px;
+      }
+
+      .chip {
+        padding: 8px 12px;
+        font-size: 13px;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--sky);
+        box-shadow: 0 0 0 5px rgba(79, 172, 222, 0.15);
+      }
+
+      .dot.mint {
+        background: var(--mint);
+        box-shadow: 0 0 0 5px rgba(123, 224, 195, 0.15);
+      }
+
+      .dot.gold {
+        background: var(--gold);
+        box-shadow: 0 0 0 5px rgba(255, 207, 112, 0.15);
+      }
+
+      .dot.rose {
+        background: var(--rose);
+        box-shadow: 0 0 0 5px rgba(255, 138, 138, 0.15);
+      }
+
+      .panel {
+        background: linear-gradient(180deg, rgba(21, 44, 74, 0.92), rgba(12, 27, 49, 0.94));
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        box-shadow: 0 24px 44px rgba(0, 0, 0, 0.22);
+      }
+
+      .hero-card {
+        padding: 24px;
+        display: grid;
+        gap: 16px;
+      }
+
+      .mini-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 14px;
+      }
+
+      .stat {
+        padding: 16px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .stat .label {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+      }
+
+      .stat .value {
+        margin-top: 8px;
+        font-size: 23px;
+        line-height: 1.15;
+        font-weight: 700;
+      }
+
+      .mock-shell {
+        padding: 18px;
+        border-radius: 22px;
+        background: linear-gradient(180deg, rgba(10, 20, 37, 0.9), rgba(8, 17, 31, 0.94));
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .mock-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-bottom: 12px;
+        margin-bottom: 14px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .mock-title {
+        font-size: 15px;
+        font-weight: 700;
+      }
+
+      .mock-sub {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .mock-card {
+        padding: 14px 14px 12px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.045);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      .mock-card strong {
+        display: block;
+        font-size: 14px;
+        margin-bottom: 8px;
+      }
+
+      .bar {
+        height: 8px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        overflow: hidden;
+      }
+
+      .bar > span {
+        display: block;
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, var(--blue), var(--mint));
+      }
+
+      .two-col {
+        display: grid;
+        grid-template-columns: 0.92fr 1.08fr;
+        gap: 26px;
+        margin-top: 30px;
+        position: relative;
+        z-index: 2;
+      }
+
+      .problem-grid {
+        display: grid;
+        gap: 14px;
+      }
+
+      .problem-card,
+      .impact-card,
+      .segment-card,
+      .team-card,
+      .timeline-card,
+      .innovation-card {
+        padding: 18px;
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .problem-card h3,
+      .impact-card h3,
+      .segment-card h3,
+      .team-card h3,
+      .timeline-card h3,
+      .innovation-card h3 {
+        margin-bottom: 8px;
+        font-size: 18px;
+      }
+
+      .problem-card p,
+      .impact-card p,
+      .segment-card p,
+      .team-card p,
+      .timeline-card p,
+      .innovation-card p {
+        margin: 0;
+        font-size: 14px;
+        line-height: 1.45;
+        color: var(--muted);
+      }
+
+      .journey {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 10px;
+        margin-top: 20px;
+      }
+
+      .journey-step {
+        min-height: 138px;
+        padding: 14px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        position: relative;
+      }
+
+      .journey-step::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        right: -10px;
+        width: 16px;
+        height: 2px;
+        background: rgba(141, 213, 244, 0.6);
+      }
+
+      .journey-step:last-child::after {
+        display: none;
+      }
+
+      .journey-step .num {
+        font-size: 12px;
+        color: var(--sky);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .journey-step strong {
+        display: block;
+        margin: 9px 0 8px;
+        font-size: 16px;
+      }
+
+      .journey-step p {
+        margin: 0;
+        font-size: 13px;
+        line-height: 1.45;
+        color: var(--muted);
+      }
+
+      .quote-box {
+        margin-top: 18px;
+        padding: 18px 20px;
+        border-radius: 22px;
+        border: 1px solid rgba(255, 207, 112, 0.24);
+        background: linear-gradient(180deg, rgba(255, 207, 112, 0.08), rgba(255, 207, 112, 0.04));
+        color: #fff7df;
+        font-size: 22px;
+        line-height: 1.35;
+      }
+
+      .impact-stack {
+        display: grid;
+        gap: 14px;
+      }
+
+      .impact-card .kicker {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--sky);
+      }
+
+      .impact-card strong {
+        display: block;
+        margin: 7px 0 8px;
+        font-size: 26px;
+        line-height: 1.1;
+      }
+
+      .solution-layout {
+        display: grid;
+        grid-template-columns: 0.98fr 1.02fr;
+        gap: 28px;
+        margin-top: 30px;
+        position: relative;
+        z-index: 2;
+      }
+
+      .hub {
+        padding: 26px;
+      }
+
+      .hub-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+        margin-top: 20px;
+      }
+
+      .hub-center {
+        padding: 20px;
+        border-radius: 24px;
+        background: linear-gradient(180deg, rgba(79, 172, 222, 0.14), rgba(123, 224, 195, 0.1));
+        border: 1px solid rgba(141, 213, 244, 0.26);
+      }
+
+      .hub-center strong {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 26px;
+      }
+
+      .hub-item {
+        padding: 15px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.045);
+        border: 1px solid rgba(255, 255, 255, 0.07);
+      }
+
+      .hub-item strong {
+        display: block;
+        margin-bottom: 7px;
+        font-size: 16px;
+      }
+
+      .hub-item p {
+        margin: 0;
+        font-size: 13px;
+        line-height: 1.4;
+        color: var(--muted);
+      }
+
+      .pillar-stack {
+        display: grid;
+        gap: 14px;
+      }
+
+      .pillar {
+        padding: 20px;
+        border-radius: 22px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .pillar strong {
+        display: block;
+        margin-bottom: 9px;
+        font-size: 18px;
+      }
+
+      .pillar p {
+        margin: 0;
+        font-size: 14px;
+        line-height: 1.48;
+        color: var(--muted);
+      }
+
+      .outcome-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin-top: 16px;
+      }
+
+      .outcome {
+        padding: 14px 16px;
+        border-radius: 18px;
+        background: rgba(123, 224, 195, 0.08);
+        border: 1px solid rgba(123, 224, 195, 0.15);
+      }
+
+      .outcome strong {
+        display: block;
+        margin-bottom: 7px;
+        font-size: 15px;
+      }
+
+      .outcome p {
+        margin: 0;
+        font-size: 13px;
+        line-height: 1.4;
+        color: var(--muted);
+      }
+
+      .innovation-layout {
+        display: grid;
+        grid-template-columns: 0.94fr 1.06fr;
+        gap: 28px;
+        margin-top: 26px;
+        position: relative;
+        z-index: 2;
+      }
+
+      .innovation-stack {
+        display: grid;
+        gap: 14px;
+      }
+
+      .innovation-card strong {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 18px;
+      }
+
+      .architecture {
+        padding: 24px;
+      }
+
+      .layer {
+        padding: 18px;
+        border-radius: 22px;
+        margin-top: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .layer h3 {
+        font-size: 18px;
+        margin-bottom: 10px;
+      }
+
+      .layer-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+      }
+
+      .layer-item {
+        padding: 12px;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        font-size: 13px;
+        line-height: 1.35;
+        color: var(--muted);
+      }
+
+      .layer-item strong {
+        display: block;
+        margin-bottom: 5px;
+        color: var(--ink);
+        font-size: 14px;
+      }
+
+      .market-layout {
+        display: grid;
+        grid-template-columns: 0.78fr 1.22fr;
+        gap: 28px;
+        margin-top: 26px;
+        position: relative;
+        z-index: 2;
+      }
+
+      .segment-stack {
+        display: grid;
+        gap: 14px;
+      }
+
+      .segment-card strong {
+        display: block;
+        font-size: 17px;
+        margin-bottom: 8px;
+      }
+
+      .matrix {
+        padding: 20px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+
+      th,
+      td {
+        padding: 12px 10px;
+        text-align: center;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      th:first-child,
+      td:first-child {
+        text-align: left;
+      }
+
+      th {
+        color: var(--sky);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      td {
+        color: var(--muted);
+        line-height: 1.35;
+      }
+
+      .yes {
+        color: var(--mint);
+        font-weight: 700;
+      }
+
+      .partial {
+        color: var(--gold);
+        font-weight: 700;
+      }
+
+      .no {
+        color: var(--rose);
+        font-weight: 700;
+      }
+
+      .matrix-callout {
+        margin-top: 14px;
+        padding: 14px 16px;
+        border-radius: 18px;
+        background: rgba(79, 172, 222, 0.08);
+        border: 1px solid rgba(79, 172, 222, 0.15);
+        color: var(--ink);
+        font-size: 15px;
+        line-height: 1.45;
+      }
+
+      .plan-layout {
+        display: grid;
+        grid-template-columns: 0.9fr 1.1fr;
+        gap: 28px;
+        margin-top: 26px;
+        position: relative;
+        z-index: 2;
+      }
+
+      .timeline {
+        display: grid;
+        gap: 14px;
+      }
+
+      .timeline-card strong {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 17px;
+      }
+
+      .prototype-box {
+        padding: 22px;
+      }
+
+      .checklist {
+        display: grid;
+        gap: 12px;
+        margin-top: 18px;
+      }
+
+      .check-item {
+        padding: 14px 16px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .check-item strong {
+        display: block;
+        margin-bottom: 7px;
+        font-size: 16px;
+      }
+
+      .check-item p {
+        margin: 0;
+        font-size: 13px;
+        line-height: 1.42;
+        color: var(--muted);
+      }
+
+      .team-layout {
+        display: grid;
+        grid-template-columns: 1.02fr 0.98fr;
+        gap: 28px;
+        margin-top: 28px;
+        position: relative;
+        z-index: 2;
+      }
+
+      .team-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 14px;
+      }
+
+      .team-card strong {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 17px;
+      }
+
+      .team-tag {
+        display: inline-block;
+        margin-top: 12px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        color: var(--sky);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .closing-box {
+        padding: 24px;
+      }
+
+      .closing-box ul {
+        padding-left: 18px;
+        margin: 16px 0 0;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.55;
+      }
+
+      .closing-box li + li {
+        margin-top: 8px;
+      }
+
+      .footer {
+        position: absolute;
+        left: 54px;
+        right: 54px;
+        bottom: 24px;
+        font-size: 12px;
+        color: rgba(246, 248, 252, 0.68);
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+    </style>
+  </head>
+  <body>
+    <section class="slide">
+      <div class="grid-overlay"></div>
+      <div class="topbar">
+        <div class="brandline">
+          <div class="logo">
+            <svg xmlns="http://www.w3.org/2000/svg" width="42" height="42" viewBox="0 0 192 192">
+              <rect width="192" height="192" rx="32" fill="#1A2F5A"></rect>
+              <rect x="76" y="44" width="40" height="104" rx="8" fill="#ffffff"></rect>
+              <rect x="44" y="76" width="104" height="40" rx="8" fill="#ffffff"></rect>
+              <polyline points="30,148 52,148 62,132 72,164 82,120 92,148 110,148 120,136 130,148 162,148" fill="none" stroke="#4FACDE" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"></polyline>
+            </svg>
+          </div>
+          <span>Aumrti | RTIH AP pitch deck</span>
+        </div>
+        <div class="eyebrow">AI-first hospital operating system</div>
+      </div>
+
+      <div class="hero">
+        <div>
+          <h1>
+            Unifying the hospital journey from
+            <span class="accent">clinical note</span>
+            to
+            <span class="accent">claim settlement</span>
+          </h1>
+          <p class="subtitle">
+            Aumrti is building an India-ready hospital operating system that brings care delivery,
+            discharge, insurance, compliance and communication onto one AI-enabled platform.
+          </p>
+
+          <div class="pill-row">
+            <div class="pill"><span class="dot"></span>Multilingual AI Scribe</div>
+            <div class="pill"><span class="dot mint"></span>AI Discharge Summary</div>
+            <div class="pill"><span class="dot gold"></span>Insurance and TPA workflows</div>
+            <div class="pill"><span class="dot rose"></span>ABDM, HMIS and offline sync</div>
+          </div>
+
+          <p class="caption" style="margin-top: 22px;">
+            Current prototype scope already spans OPD, IPD, nursing, pharmacy, lab, radiology,
+            billing, MRD, insurance, ABDM/HMIS, WhatsApp workflows and low-connectivity operation.
+          </p>
+        </div>
+
+        <div class="hero-card panel">
+          <div class="mock-shell">
+            <div class="mock-top">
+              <div>
+                <div class="mock-title">Aumrti command center</div>
+                <div class="mock-sub">One patient story, one workflow spine</div>
+              </div>
+              <div class="chip">Prototype in progress</div>
+            </div>
+
+            <div class="mini-grid">
+              <div class="stat">
+                <div class="label">Clinical</div>
+                <div class="value">Voice -> note -> orders</div>
+              </div>
+              <div class="stat">
+                <div class="label">Discharge</div>
+                <div class="value">Episode-aware summary drafts</div>
+              </div>
+              <div class="stat">
+                <div class="label">Revenue</div>
+                <div class="value">Pre-auth, claim, TPA ageing</div>
+              </div>
+              <div class="stat">
+                <div class="label">Compliance</div>
+                <div class="value">ABDM, HMIS, MRD, audits</div>
+              </div>
+            </div>
+
+            <div class="mock-card" style="margin-top: 14px;">
+              <strong>Why this matters</strong>
+              <div class="caption" style="margin-bottom: 10px;">
+                Mid-sized Indian hospitals often juggle paper files, Excel trackers and ad-hoc
+                WhatsApp messages across the same patient episode.
+              </div>
+              <div class="bar"><span style="width: 84%;"></span></div>
+            </div>
+
+            <div class="mock-card" style="margin-top: 12px;">
+              <strong>Aumrti wedge</strong>
+              <div class="caption">
+                Replace fragmented coordination with workflow-native AI, structured communication,
+                claim readiness and India-specific interoperability.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer">
+        <div>Aumrti</div>
+        <div>1 / 7</div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="grid-overlay"></div>
+      <div class="topbar">
+        <div class="brandline">
+          <div class="logo">
+            <svg xmlns="http://www.w3.org/2000/svg" width="42" height="42" viewBox="0 0 192 192">
+              <rect width="192" height="192" rx="32" fill="#1A2F5A"></rect>
+              <rect x="76" y="44" width="40" height="104" rx="8" fill="#ffffff"></rect>
+              <rect x="44" y="76" width="104" height="40" rx="8" fill="#ffffff"></rect>
+              <polyline points="30,148 52,148 62,132 72,164 82,120 92,148 110,148 120,136 130,148 162,148" fill="none" stroke="#4FACDE" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"></polyline>
+            </svg>
+          </div>
+          <span>Problem</span>
+        </div>
+        <div class="eyebrow">Fragmented hospital operations</div>
+      </div>
+
+      <h2>The same patient story gets re-entered across disconnected tools</h2>
+
+      <div class="journey">
+        <div class="journey-step">
+          <div class="num">01 registration</div>
+          <strong>Front desk</strong>
+          <p>Patient details split across desk software, paper forms and manual verification.</p>
+        </div>
+        <div class="journey-step">
+          <div class="num">02 consultation</div>
+          <strong>Doctor note</strong>
+          <p>Notes typed late, dictated informally, or rewritten from memory after the visit.</p>
+        </div>
+        <div class="journey-step">
+          <div class="num">03 diagnostics</div>
+          <strong>Orders and reports</strong>
+          <p>Lab, radiology and pharmacy handoffs sit in separate systems with weak traceability.</p>
+        </div>
+        <div class="journey-step">
+          <div class="num">04 inpatient care</div>
+          <strong>Ward operations</strong>
+          <p>Nursing notes, discharge readiness and billing clearances are hard to coordinate.</p>
+        </div>
+        <div class="journey-step">
+          <div class="num">05 discharge</div>
+          <strong>MRD and summary</strong>
+          <p>Discharge summaries, coding and record closure are delayed and often incomplete.</p>
+        </div>
+        <div class="journey-step">
+          <div class="num">06 insurance</div>
+          <strong>Claims and TPA</strong>
+          <p>Pre-auth, claims, query responses and ageing trackers live in Excel and email chains.</p>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div>
+          <div class="quote-box">
+            Indian hospitals still run core operations across disconnected tools, paper files,
+            Excel sheets and ad-hoc WhatsApp communication.
+          </div>
+        </div>
+        <div class="impact-stack">
+          <div class="impact-card">
+            <div class="kicker">Clinical operations</div>
+            <strong>Documentation steals clinician time</strong>
+            <p>Doctors and nurses spend time typing, retyping and chasing missing information instead of patient care.</p>
+          </div>
+          <div class="impact-card">
+            <div class="kicker">Revenue cycle</div>
+            <strong>Discharge and claim delays create leakage</strong>
+            <p>Missing documents, incomplete coding and unclear payer workflows lead to denials, slower cash flow and write-offs.</p>
+          </div>
+          <div class="impact-card">
+            <div class="kicker">Compliance and trust</div>
+            <strong>Audit trails are weak and digital adoption stays partial</strong>
+            <p>Hospitals face ABDM, HMIS and quality-reporting pressure despite low digital maturity and unreliable connectivity.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer">
+        <div>Aumrti</div>
+        <div>2 / 7</div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="grid-overlay"></div>
+      <div class="topbar">
+        <div class="brandline">
+          <div class="logo">
+            <svg xmlns="http://www.w3.org/2000/svg" width="42" height="42" viewBox="0 0 192 192">
+              <rect width="192" height="192" rx="32" fill="#1A2F5A"></rect>
+              <rect x="76" y="44" width="40" height="104" rx="8" fill="#ffffff"></rect>
+              <rect x="44" y="76" width="104" height="40" rx="8" fill="#ffffff"></rect>
+              <polyline points="30,148 52,148 62,132 72,164 82,120 92,148 110,148 120,136 130,148 162,148" fill="none" stroke="#4FACDE" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"></polyline>
+            </svg>
+          </div>
+          <span>Solution</span>
+        </div>
+        <div class="eyebrow">One workflow spine</div>
+      </div>
+
+      <h2>Aumrti brings clinical, administrative and revenue workflows onto one platform</h2>
+
+      <div class="solution-layout">
+        <div class="hub panel">
+          <div class="hub-center">
+            <strong>Aumrti hospital OS</strong>
+            <p class="caption">
+              A single operating layer for the patient journey: registration, clinical note,
+              diagnostics, inpatient care, discharge, billing, claims and compliance.
+            </p>
+          </div>
+
+          <div class="hub-grid">
+            <div class="hub-item">
+              <strong>OPD and IPD</strong>
+              <p>Consultations, orders, nursing, ward rounds and care coordination.</p>
+            </div>
+            <div class="hub-item">
+              <strong>Diagnostics and pharmacy</strong>
+              <p>Lab, radiology, medication workflows and result-linked handoffs.</p>
+            </div>
+            <div class="hub-item">
+              <strong>Discharge and MRD</strong>
+              <p>Summary generation, coding, record closure and retrieval.</p>
+            </div>
+            <div class="hub-item">
+              <strong>Billing and claims</strong>
+              <p>Charge capture, pre-auth, claim submission, TPA ageing and reconciliation.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="pillar-stack">
+          <div class="pillar">
+            <strong>For clinicians</strong>
+            <p>
+              Multilingual AI Scribe converts voice into structured notes and orders. A patient story
+              follows the episode from consultation to inpatient care and discharge.
+            </p>
+          </div>
+          <div class="pillar">
+            <strong>For hospital operations</strong>
+            <p>
+              Structured workflows replace manual follow-ups across discharge, billing, MRD,
+              insurance and TPA coordination, while auditable WhatsApp keeps communication traceable.
+            </p>
+          </div>
+          <div class="pillar">
+            <strong>For Indian compliance needs</strong>
+            <p>
+              ABDM and HMIS readiness, medical records workflows, payer-specific flows and offline
+              operation make the product deployable in real hospital conditions.
+            </p>
+          </div>
+
+          <div class="outcome-row">
+            <div class="outcome">
+              <strong>Faster notes</strong>
+              <p>Reduce documentation burden at the point of care.</p>
+            </div>
+            <div class="outcome">
+              <strong>Cleaner discharge</strong>
+              <p>Link episode data to editable, claim-ready discharge packs.</p>
+            </div>
+            <div class="outcome">
+              <strong>Better cash flow</strong>
+              <p>Move from reactive claim tracking to structured insurance operations.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer">
+        <div>Aumrti</div>
+        <div>3 / 7</div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="grid-overlay"></div>
+      <div class="topbar">
+        <div class="brandline">
+          <div class="logo">
+            <svg xmlns="http://www.w3.org/2000/svg" width="42" height="42" viewBox="0 0 192 192">
+              <rect width="192" height="192" rx="32" fill="#1A2F5A"></rect>
+              <rect x="76" y="44" width="40" height="104" rx="8" fill="#ffffff"></rect>
+              <rect x="44" y="76" width="104" height="40" rx="8" fill="#ffffff"></rect>
+              <polyline points="30,148 52,148 62,132 72,164 82,120 92,148 110,148 120,136 130,148 162,148" fill="none" stroke="#4FACDE" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"></polyline>
+            </svg>
+          </div>
+          <span>Underlying innovation</span>
+        </div>
+        <div class="eyebrow">Workflow-native AI plus India-ready infrastructure</div>
+      </div>
+
+      <h2>Our innovation is not a single AI feature. It is the orchestration layer around it.</h2>
+
+      <div class="innovation-layout">
+        <div class="innovation-stack">
+          <div class="innovation-card">
+            <h3>Workflow-native AI</h3>
+            <p>
+              Multilingual voice capture becomes structured clinical data instead of free-text only.
+              AI outputs are designed to feed notes, orders, discharge summaries and claim narratives.
+            </p>
+          </div>
+          <div class="innovation-card">
+            <h3>India-specific hospital stack</h3>
+            <p>
+              Aumrti is being built around ABDM, HMIS, MRD, payer and TPA workflows, and
+              communication patterns already used in Indian hospitals, including structured WhatsApp.
+            </p>
+          </div>
+          <div class="innovation-card">
+            <h3>Trust, safety and deployability</h3>
+            <p>
+              Human review, audit logging, tenancy isolation, PHI-aware data handling and offline
+              synchronization help the product work in high-trust, low-connectivity environments.
+            </p>
+          </div>
+        </div>
+
+        <div class="architecture panel">
+          <h3>Architecture thesis</h3>
+          <p class="caption">
+            Aumrti connects user channels, AI services and hospital workflows through one shared data and audit layer.
+          </p>
+
+          <div class="layer" style="background: rgba(79, 172, 222, 0.08);">
+            <h3>Interaction layer</h3>
+            <div class="layer-grid">
+              <div class="layer-item"><strong>Web app</strong>Role-based clinical and back-office workflows</div>
+              <div class="layer-item"><strong>Mobile and offline</strong>Queue-based sync for unreliable internet</div>
+              <div class="layer-item"><strong>WhatsApp</strong>Structured patient and operations communication</div>
+            </div>
+          </div>
+
+          <div class="layer" style="background: rgba(123, 224, 195, 0.08);">
+            <h3>Intelligence layer</h3>
+            <div class="layer-grid">
+              <div class="layer-item"><strong>AI Scribe</strong>Voice to structured note and order capture</div>
+              <div class="layer-item"><strong>Discharge AI</strong>Episode-aware editable discharge drafts</div>
+              <div class="layer-item"><strong>Claims AI</strong>Pre-auth, query and denial workflow assistance</div>
+            </div>
+          </div>
+
+          <div class="layer" style="background: rgba(255, 207, 112, 0.08);">
+            <h3>Hospital system layer</h3>
+            <div class="layer-grid">
+              <div class="layer-item"><strong>Clinical data</strong>OPD, IPD, lab, radiology, pharmacy, nursing</div>
+              <div class="layer-item"><strong>Revenue data</strong>Billing, insurance, TPA, receivables</div>
+              <div class="layer-item"><strong>Compliance data</strong>ABDM, HMIS, MRD, audit and reporting</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer">
+        <div>Aumrti</div>
+        <div>4 / 7</div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="grid-overlay"></div>
+      <div class="topbar">
+        <div class="brandline">
+          <div class="logo">
+            <svg xmlns="http://www.w3.org/2000/svg" width="42" height="42" viewBox="0 0 192 192">
+              <rect width="192" height="192" rx="32" fill="#1A2F5A"></rect>
+              <rect x="76" y="44" width="40" height="104" rx="8" fill="#ffffff"></rect>
+              <rect x="44" y="76" width="104" height="40" rx="8" fill="#ffffff"></rect>
+              <polyline points="30,148 52,148 62,132 72,164 82,120 92,148 110,148 120,136 130,148 162,148" fill="none" stroke="#4FACDE" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"></polyline>
+            </svg>
+          </div>
+          <span>Competitor and market analysis</span>
+        </div>
+        <div class="eyebrow">Point-solution gap</div>
+      </div>
+
+      <h2>Aumrti competes where hospitals need fewer disconnected products, not more</h2>
+
+      <div class="market-layout">
+        <div class="segment-stack">
+          <div class="segment-card">
+            <h3>Initial wedge</h3>
+            <p>
+              Mid-sized hospitals and nursing homes that need one operating system instead of a patchwork
+              of legacy HMS screens, Excel trackers and manual claim desks.
+            </p>
+          </div>
+          <div class="segment-card">
+            <h3>Adjacent segments</h3>
+            <p>
+              Specialty and day-care centers such as dialysis, IVF, dental and home-care operations that
+              need workflow depth plus payer and compliance readiness.
+            </p>
+          </div>
+          <div class="segment-card">
+            <h3>Why now</h3>
+            <p>
+              Hospitals are under simultaneous pressure to improve clinician productivity, cashless claims,
+              ABDM/HMIS readiness and patient communication, while staffing remains stretched.
+            </p>
+          </div>
+        </div>
+
+        <div class="matrix panel">
+          <table>
+            <thead>
+              <tr>
+                <th>Capability</th>
+                <th>Legacy HMS</th>
+                <th>Scribe-only AI</th>
+                <th>Claim-only tools</th>
+                <th>Aumrti</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>End-to-end patient journey</td>
+                <td class="partial">Partial</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+                <td class="yes">Yes</td>
+              </tr>
+              <tr>
+                <td>Multilingual AI at point of care</td>
+                <td class="no">No</td>
+                <td class="yes">Yes</td>
+                <td class="no">No</td>
+                <td class="yes">Yes</td>
+              </tr>
+              <tr>
+                <td>Insurance and TPA workflow depth</td>
+                <td class="partial">Partial</td>
+                <td class="no">No</td>
+                <td class="yes">Yes</td>
+                <td class="yes">Yes</td>
+              </tr>
+              <tr>
+                <td>ABDM and HMIS readiness</td>
+                <td class="partial">Partial</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+                <td class="yes">Yes</td>
+              </tr>
+              <tr>
+                <td>Works with low-connectivity and WhatsApp-led ops</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+                <td class="partial">Partial</td>
+                <td class="yes">Yes</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="matrix-callout">
+            Aumrti is not just another note-taking AI or claim tool. Its wedge is connecting the clinical note,
+            discharge, billing and insurance workflows that most hospitals still operate separately.
+          </div>
+        </div>
+      </div>
+
+      <div class="footer">
+        <div>Aumrti</div>
+        <div>5 / 7</div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="grid-overlay"></div>
+      <div class="topbar">
+        <div class="brandline">
+          <div class="logo">
+            <svg xmlns="http://www.w3.org/2000/svg" width="42" height="42" viewBox="0 0 192 192">
+              <rect width="192" height="192" rx="32" fill="#1A2F5A"></rect>
+              <rect x="76" y="44" width="40" height="104" rx="8" fill="#ffffff"></rect>
+              <rect x="44" y="76" width="104" height="40" rx="8" fill="#ffffff"></rect>
+              <polyline points="30,148 52,148 62,132 72,164 82,120 92,148 110,148 120,136 130,148 162,148" fill="none" stroke="#4FACDE" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"></polyline>
+            </svg>
+          </div>
+          <span>Prototype development plan</span>
+        </div>
+        <div class="eyebrow">Prototype plus pilot roadmap</div>
+      </div>
+
+      <h2>Prototype breadth is already visible. Incubation will turn breadth into pilot-grade evidence.</h2>
+
+      <div class="plan-layout">
+        <div class="prototype-box panel">
+          <h3>Current prototype scope</h3>
+          <div class="chip-row">
+            <div class="chip">Registration and OPD</div>
+            <div class="chip">IPD and nursing</div>
+            <div class="chip">Lab and radiology</div>
+            <div class="chip">Pharmacy</div>
+            <div class="chip">Billing and payments</div>
+            <div class="chip">MRD and discharge</div>
+            <div class="chip">Insurance and TPA</div>
+            <div class="chip">ABDM and HMIS</div>
+            <div class="chip">WhatsApp workflows</div>
+            <div class="chip">Offline sync</div>
+          </div>
+
+          <div class="checklist">
+            <div class="check-item">
+              <strong>Built today</strong>
+              <p>AI voice scribe flows, discharge summary generation, insurance operations modules and India-specific compliance surfaces already exist in the prototype stack.</p>
+            </div>
+            <div class="check-item">
+              <strong>What needs validation next</strong>
+              <p>Time saved per clinician, discharge turnaround reduction, claim-readiness quality and pilot-site adoption with live hospital staff.</p>
+            </div>
+            <div class="check-item">
+              <strong>How incubation helps</strong>
+              <p>Design-partner access, workflow validation, clinical safety evaluation, deployment support and product hardening for early pilots.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="timeline">
+          <div class="timeline-card">
+            <h3>0-3 months: pilot hardening</h3>
+            <p>
+              Finalize clinician-facing AI Scribe and discharge workflows, define pilot KPIs, tune structured WhatsApp operations and validate low-connectivity behavior in hospital settings.
+            </p>
+          </div>
+          <div class="timeline-card">
+            <h3>3-6 months: revenue and compliance depth</h3>
+            <p>
+              Expand insurance and TPA automation, strengthen claim packet generation, improve MRD closure and connect ABDM/HMIS reporting into routine workflows.
+            </p>
+          </div>
+          <div class="timeline-card">
+            <h3>6-12 months: repeatable deployment model</h3>
+            <p>
+              Launch multi-site pilot playbooks, clinical and business outcome dashboards, implementation templates and a stronger commercialization engine for mid-sized hospitals.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer">
+        <div>Aumrti</div>
+        <div>6 / 7</div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="grid-overlay"></div>
+      <div class="topbar">
+        <div class="brandline">
+          <div class="logo">
+            <svg xmlns="http://www.w3.org/2000/svg" width="42" height="42" viewBox="0 0 192 192">
+              <rect width="192" height="192" rx="32" fill="#1A2F5A"></rect>
+              <rect x="76" y="44" width="40" height="104" rx="8" fill="#ffffff"></rect>
+              <rect x="44" y="76" width="104" height="40" rx="8" fill="#ffffff"></rect>
+              <polyline points="30,148 52,148 62,132 72,164 82,120 92,148 110,148 120,136 130,148 162,148" fill="none" stroke="#4FACDE" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"></polyline>
+            </svg>
+          </div>
+          <span>Team</span>
+        </div>
+        <div class="eyebrow">Execution capacity</div>
+      </div>
+
+      <h2>Aumrti is designed to sit at the intersection of clinical workflows, software and revenue operations</h2>
+
+      <div class="team-layout">
+        <div class="team-grid">
+          <div class="team-card">
+            <h3>Founder and product</h3>
+            <p>Own hospital problem discovery, product direction, design-partner relationships and implementation priorities.</p>
+            <div class="team-tag">Add founder name</div>
+          </div>
+          <div class="team-card">
+            <h3>Full-stack engineering</h3>
+            <p>Build the shared platform spine across clinical workflows, claims, interoperability, security and deployment.</p>
+            <div class="team-tag">Add engineering lead</div>
+          </div>
+          <div class="team-card">
+            <h3>AI and clinical systems</h3>
+            <p>Develop AI Scribe, discharge and claims intelligence with human review, auditability and safety guardrails.</p>
+            <div class="team-tag">Add AI or clinical lead</div>
+          </div>
+          <div class="team-card">
+            <h3>Hospital operations and GTM</h3>
+            <p>Drive onboarding, training, workflow mapping, TPA operations alignment and commercial readiness.</p>
+            <div class="team-tag">Add operations lead</div>
+          </div>
+        </div>
+
+        <div class="closing-box panel">
+          <h3>What this team is building</h3>
+          <p class="caption">
+            Aumrti aims to become the operating layer that helps Indian hospitals move from fragmented admin-heavy work to AI-assisted, claim-ready, compliance-aware care delivery.
+          </p>
+
+          <ul>
+            <li>Primary wedge: clinician documentation, discharge workflow and insurance readiness.</li>
+            <li>Prototype advantage: broad workflow coverage already present across clinical, revenue and compliance modules.</li>
+            <li>Incubation objective: convert prototype scope into pilot-grade evidence and a repeatable go-live model.</li>
+            <li>Submission note: replace placeholder role tags on this slide with actual names, titles and credentials before final upload.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="footer">
+        <div>Aumrti</div>
+        <div>7 / 7</div>
+      </div>
+    </section>
+  </body>
+</html>

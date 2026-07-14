@@ -99,7 +99,7 @@ const PurchaseOrdersPanel: React.FC = () => {
 
   const loadMaster = async () => {
     const [vendorRes, itemRes, stockRes] = await Promise.all([
-      (supabase as any).from("vendors").select("id, vendor_name").eq("is_active", true),
+      (supabase as any).from("vendors").select("id, vendor_name, default_tds_section").eq("is_active", true),
       (supabase as any).from("inventory_items").select("id, item_name, category, gst_percent, reorder_level, minimum_order_qty").eq("is_active", true),
       (supabase as any).from("inventory_stock").select("item_id, quantity_available"),
     ]);
@@ -180,7 +180,8 @@ const PurchaseOrdersPanel: React.FC = () => {
       return;
     }
     const outstanding = Number(selected.invoice_amount || selected.net_amount || 0) - Number(selected.paid_amount || 0);
-    setPayForm({ amount: String(Math.max(0, outstanding)), tds_section: "" });
+    const vendorDefault = vendors.find((v) => v.id === selected.vendor_id)?.default_tds_section || "";
+    setPayForm({ amount: String(Math.max(0, outstanding)), tds_section: vendorDefault });
     setShowPayment(true);
   };
 

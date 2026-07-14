@@ -44,9 +44,11 @@ const EVENT_STATUS: Record<string, string> = {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
 
+  let rawBody = "";
+
   try {
 
-  const rawBody  = await req.text();
+  rawBody = await req.text();
   const signature = req.headers.get("x-razorpay-signature");
   const secret   = Deno.env.get("RAZORPAY_SUBSCRIPTION_WEBHOOK_SECRET");
 
@@ -86,6 +88,29 @@ serve(async (req) => {
   const subEntity = payload?.payload?.subscription?.entity;
   const paymentEntity = payload?.payload?.payment?.entity;
 
+  const db = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
+
+  // ── Webhook-level idempotency (prevents double-processing on retries) ──
+  // Shares razorpay_webhook_log with razorpay-webhook — Razorpay event IDs
+  // are unique per account regardless of which endpoint receives them.
+  const webhookId = req.headers.get("x-razorpay-event-id");
+  if (webhookId) {
+    const { error: dedupError } = await db
+      .from("razorpay_webhook_log")
+      .insert({ webhook_id: webhookId, event: event ?? "unknown" });
+
+    if (dedupError?.code === "23505") {
+      return new Response(JSON.stringify({ ok: true, skipped: "duplicate" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
   // Ignore events we don't handle
   if (!EVENT_STATUS[event]) {
     console.log(`Ignored event: ${event}`);
@@ -110,11 +135,6 @@ serve(async (req) => {
     console.warn("No hospital_id in subscription notes — cannot route event");
     return new Response("ok", { status: 200 });
   }
-
-  const db = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-  );
 
   const newStatus = EVENT_STATUS[event];
 
@@ -253,10 +273,12 @@ serve(async (req) => {
         Deno.env.get("SUPABASE_URL")!,
         Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
       );
+      let parsedPayload: Record<string, unknown> = {};
+      try { parsedPayload = rawBody ? JSON.parse(rawBody) : {}; } catch { /* ignore */ }
       await dlqClient.from("webhook_dlq").insert({
         source: "razorpay_subscription",
-        event_type: "unknown",
-        payload: {},
+        event_type: (parsedPayload as any)?.event ?? "unknown",
+        payload: parsedPayload,
         error_message: err instanceof Error ? err.message : String(err),
       });
     } catch (dlqErr) {

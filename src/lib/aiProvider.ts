@@ -24,7 +24,7 @@ const safeParseJson = async (res: Response, provider: string): Promise<any> => {
 const callViaProxy = async (
   provider: string,
   model: string,
-  params: { prompt: string; systemPrompt?: string; maxTokens: number; temperature: number },
+  params: { prompt: string; systemPrompt?: string; maxTokens: number; temperature: number; attachments?: AIAttachment[] },
   hospitalId: string,
   patientId?: string,
   encounterId?: string,
@@ -47,6 +47,14 @@ const callViaProxy = async (
   return { text: data.text || "", provider, model, tokens_used: data.tokens_used };
 };
 
+// A document/image attachment the model reads natively (real vision/OCR),
+// rather than the caller stuffing truncated base64 into the text prompt.
+export interface AIAttachment {
+  kind: "image" | "pdf";
+  mediaType: string; // e.g. "image/png", "image/jpeg", "application/pdf"
+  data: string;      // base64, WITHOUT the "data:...;base64," prefix
+}
+
 export interface AIRequest {
   featureKey: string;
   prompt: string;
@@ -55,6 +63,7 @@ export interface AIRequest {
   systemPrompt?: string;
   patientId?: string;
   encounterId?: string;
+  attachments?: AIAttachment[];
 }
 
 export interface AIResponse {
@@ -122,6 +131,7 @@ export const FEATURE_LABELS: Record<string, string> = {
   ai_rca: "AI Root Cause Analysis",
   staff_burnout: "Staff Burnout Risk Monitor",
   esg_recommendations: "ESG Carbon Recommendations (AI)",
+  plan_copywriter: "Plan Card Copywriter",
 };
 
 export const PROVIDER_TO_SERVICE_KEY: Record<string, string> = {
@@ -383,10 +393,29 @@ const callAzureOpenAI = async (
     : useV1
     ? `${cfg.endpoint}/openai/v1/chat/completions`
     : `${cfg.endpoint}/openai/deployments/${cfg.deployment}/chat/completions?api-version=${cfg.apiVersion}`;
+  // Azure reads images via image_url (chat completions) / input_image (responses).
+  const azImages = (request.attachments || []).filter((a) => a.kind === "image");
+  const chatContent = azImages.length
+    ? [
+        { type: "text", text: request.prompt },
+        ...azImages.map((a) => ({ type: "image_url", image_url: { url: `data:${a.mediaType};base64,${a.data}` } })),
+      ]
+    : request.prompt;
+  const responsesInput = azImages.length
+    ? [
+        {
+          role: "user",
+          content: [
+            { type: "input_text", text: request.prompt },
+            ...azImages.map((a) => ({ type: "input_image", image_url: `data:${a.mediaType};base64,${a.data}` })),
+          ],
+        },
+      ]
+    : request.prompt;
   const body = useResponses
     ? {
         model: cfg.deployment,
-        input: request.prompt,
+        input: responsesInput,
         ...(request.systemPrompt ? { instructions: request.systemPrompt } : {}),
         max_output_tokens: request.maxTokens || 500,
         temperature,
@@ -395,7 +424,7 @@ const callAzureOpenAI = async (
         ...(useV1 ? { model: cfg.deployment } : {}),
         messages: [
           ...(request.systemPrompt ? [{ role: "system", content: request.systemPrompt }] : []),
-          { role: "user", content: request.prompt },
+          { role: "user", content: chatContent },
         ],
         max_tokens: request.maxTokens || 500,
         temperature,
@@ -488,6 +517,7 @@ export const callAI = async (request: AIRequest): Promise<AIResponse> => {
           systemPrompt: request.systemPrompt,
           maxTokens: request.maxTokens || 1000,
           temperature: 0.3,
+          attachments: request.attachments,
         },
         request.hospitalId,
         request.patientId,
@@ -503,6 +533,7 @@ export const callAI = async (request: AIRequest): Promise<AIResponse> => {
       systemPrompt: request.systemPrompt,
       maxTokens: request.maxTokens || max_tokens || 1000,
       temperature: Number(temperature) || 0.3,
+      attachments: request.attachments,
     };
 
     // Route through the ai-proxy Edge Function — API key stays server-side, never in the browser.

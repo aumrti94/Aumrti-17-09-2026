@@ -43,6 +43,12 @@ const Register: React.FC = () => {
     });
   }, [navigate]);
 
+  // Prefill the referral code from a shared invite link (/register?ref=CODE).
+  useEffect(() => {
+    const ref = new URLSearchParams(window.location.search).get("ref");
+    if (ref) setData((d) => ({ ...d, referralCode: ref.toUpperCase().trim().slice(0, 32) }));
+  }, []);
+
   useEffect(() => {
     (supabase as any).rpc("get_signup_otp_enabled").then(({ data: enabled }: { data: boolean | null }) => {
       setOtpRequired(enabled === true);

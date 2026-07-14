@@ -19,7 +19,7 @@ const VoiceScribePanel: React.FC = () => {
   const {
     isPanelOpen, setIsPanelOpen, panelState, setPanelState,
     rawTranscript, setRawTranscript, structuredOutput, setStructuredOutput,
-    currentSessionType, applyToCurrentScreen, resetSession,
+    currentSessionType, currentPatientId, applyToCurrentScreen, resetSession,
     selectedLanguage, fallbackReason, setFallbackReason,
   } = useVoiceScribe();
   const { toast } = useToast();
@@ -152,7 +152,7 @@ Handover: ${editableData.handover_note || ""}`;
     setPanelState("processing");
     try {
       const { data, error } = await supabase.functions.invoke("ai-clinical-voice", {
-        body: { transcript: rawTranscript, context_type: currentSessionType },
+        body: { transcript: rawTranscript, context_type: currentSessionType, patient_id: currentPatientId ?? undefined },
       });
       if (error || data?.error) throw new Error(data?.error || error?.message);
       setStructuredOutput(data.structured);

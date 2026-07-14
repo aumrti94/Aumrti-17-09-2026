@@ -62,19 +62,67 @@ serve(async (req) => {
     if (!adminRow) return json({ error: "Forbidden: aumrti_admin role required" }, 403);
 
     // ── 2. Parse and validate request body ─────────────────────────────
-    const { hospital_id } = await req.json();
+    const { hospital_id, action } = await req.json();
     if (!hospital_id) return json({ error: "hospital_id is required" }, 400);
 
     // Verify the hospital actually exists
     const { data: hospital } = await admin
       .from("hospitals")
-      .select("id, name")
+      .select("id, name, deleted_at")
       .eq("id", hospital_id)
       .maybeSingle();
 
     if (!hospital) return json({ error: "Hospital not found" }, 404);
 
     const hospitalName = hospital.name;
+    const GRACE_PERIOD_DAYS = 7;
+
+    // ── 2b. Restore: clear a pending soft-delete within the grace window ──
+    if (action === "restore") {
+      if (!hospital.deleted_at) {
+        return json({ error: "Hospital is not marked for deletion" }, 400);
+      }
+      const { error: restoreErr } = await admin
+        .from("hospitals")
+        .update({ deleted_at: null })
+        .eq("id", hospital_id);
+      if (restoreErr) return json({ error: `Restore failed: ${restoreErr.message}` }, 500);
+      return json({ success: true, restored: true, hospital_name: hospitalName });
+    }
+
+    // ── 2c. Two-phase soft-delete gate ───────────────────────────────────
+    // Phase 1 (deleted_at is null): mark for deletion, do NOT purge yet.
+    // Phase 2 (deleted_at set, grace period elapsed): proceed to the
+    // irreversible purge_hospital() cascade below.
+    if (!hospital.deleted_at) {
+      const { error: markErr } = await admin
+        .from("hospitals")
+        .update({ deleted_at: new Date().toISOString() })
+        .eq("id", hospital_id);
+      if (markErr) return json({ error: `Failed to mark hospital for deletion: ${markErr.message}` }, 500);
+
+      const permanentAfter = new Date(Date.now() + GRACE_PERIOD_DAYS * 86400000).toISOString();
+      return json({
+        success: true,
+        soft_deleted: true,
+        hospital_name: hospitalName,
+        permanent_after: permanentAfter,
+        message: `${hospitalName} has been marked for deletion. It will be permanently and irreversibly purged after ${GRACE_PERIOD_DAYS} days unless restored before then.`,
+      });
+    }
+
+    const deletedAt = new Date(hospital.deleted_at as string).getTime();
+    const graceElapsedMs = Date.now() - deletedAt;
+    if (graceElapsedMs < GRACE_PERIOD_DAYS * 86400000) {
+      const daysRemaining = Math.ceil((GRACE_PERIOD_DAYS * 86400000 - graceElapsedMs) / 86400000);
+      return json({
+        error: `${hospitalName} is within its ${GRACE_PERIOD_DAYS}-day deletion grace period (${daysRemaining} day(s) remaining). Restore it, or wait until the grace period elapses to permanently purge it.`,
+        soft_deleted: true,
+        days_remaining: daysRemaining,
+      }, 409);
+    }
+
+    // Grace period has elapsed — proceed with the irreversible purge below.
     const warnings: string[] = [];
     let deletedAuthUsers = 0;
 

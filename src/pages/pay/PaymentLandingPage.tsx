@@ -73,34 +73,22 @@ const PaymentLandingPage: React.FC = () => {
       window.location.href = link.razorpay_link_url;
       return;
     }
-    // Fallback: simulate payment for hospitals without Razorpay configured
-    const { data: userData } = await supabase.from("users").select("id").limit(1).maybeSingle();
+    // Fallback for hospitals without Razorpay configured — still a real
+    // payment, so it goes through the same atomic, GL-posting RPC the
+    // Razorpay webhook uses (never a hand-rolled insert that skips the ledger).
+    const { data: bill } = await supabase.from("bills").select("hospital_id").eq("id", link.bill_id).maybeSingle();
+    if (!bill?.hospital_id) return;
 
-    // Insert payment record
-    await supabase.from("bill_payments").insert({
-      hospital_id: (await supabase.from("bills").select("hospital_id").eq("id", link.bill_id).maybeSingle()).data?.hospital_id,
-      bill_id: link.bill_id,
-      amount: link.amount,
-      payment_mode: "online",
-      gateway_reference: `PAY-${link.id.slice(0, 8).toUpperCase()}`,
-      received_by: userData?.id || null,
+    const { data: result, error } = await (supabase as any).rpc("record_online_bill_payment", {
+      p_hospital_id: bill.hospital_id,
+      p_bill_id: link.bill_id,
+      p_amount: link.amount,
+      p_payment_mode: "upi",
+      p_transaction_id: `PAY-${link.id.slice(0, 8).toUpperCase()}`,
+      p_gateway_reference: `PAY-${link.id.slice(0, 8).toUpperCase()}`,
+      p_notes: "Demo payment link (Razorpay not configured)",
     });
-
-    // Update bill
-    const { data: bill } = await supabase.from("bills").select("paid_amount, balance_due, total_amount, admission_id").eq("id", link.bill_id).maybeSingle();
-    if (bill) {
-      const newPaid = (Number(bill.paid_amount) || 0) + link.amount;
-      const newBalance = Math.max(0, (Number(bill.total_amount) || 0) - newPaid);
-      await supabase.from("bills").update({
-        paid_amount: newPaid,
-        balance_due: newBalance,
-        payment_status: newBalance <= 0 ? "paid" : "partial",
-      }).eq("id", link.bill_id);
-
-      if (newBalance <= 0 && bill.admission_id) {
-        await supabase.from("admissions").update({ billing_cleared: true }).eq("id", bill.admission_id);
-      }
-    }
+    if (error || result?.status === "error") return;
 
     // Update link status
     await supabase.from("payment_links" as any).update({

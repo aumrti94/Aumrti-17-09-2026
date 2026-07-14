@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { IndianRupee, TrendingUp, RefreshCw, Repeat2, Wallet, ArrowUpRight } from "lucide-react";
 import { fmtINR, RECHARTS_TOOLTIP_STYLE } from "@/lib/platform-utils";
+import MetricInfoIcon from "@/components/platform/MetricInfoIcon";
 import { format, addDays, subMonths } from "date-fns";
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, Legend,
@@ -23,7 +24,7 @@ interface SubRow {
 interface RevData {
   mrr: number;
   arr: number;
-  nrr: number | null;
+  logoRetention12mo: number | null;
   ltv: number | null;
   conversionRate: number;
   activeCount: number;
@@ -52,17 +53,21 @@ async function fetchRevenue(): Promise<RevData> {
   const trial     = rows.filter((r) => r.status === "trial");
   const pastDueRows = rows.filter((r) => ["past_due", "suspended"].includes(r.status));
 
-  const mrr = [...active, ...trial].reduce((s, r) => s + price(r), 0);
+  // MRR = active, paying subscriptions only — trials are not revenue yet.
+  const mrr = active.reduce((s, r) => s + price(r), 0);
   const arr = mrr * 12;
   const activeCount = active.length;
   const trialCount  = trial.length;
   const atRiskMrr   = pastDueRows.reduce((s, r) => s + price(r), 0);
 
-  // ── 12-month Retention (NRR proxy) ────────────────────────────────────────
+  // ── 12-month Logo Retention ────────────────────────────────────────────────
+  // Headcount retention, not dollar-weighted — was previously mislabeled
+  // "NRR" on this dashboard. Real dollar-weighted NRR is computed by
+  // compute_dollar_nrr() from mrr_snapshots, fetched separately below.
   const twelveMonthsAgo = subMonths(new Date(), 12);
   const cohort12 = rows.filter((r) => new Date(r.created_at) < twelveMonthsAgo);
   const retained12 = cohort12.filter((r) => ["active", "trial"].includes(r.status));
-  const nrr = cohort12.length > 0
+  const logoRetention12mo = cohort12.length > 0
     ? Math.round((retained12.length / cohort12.length) * 100)
     : null;
 
@@ -140,7 +145,7 @@ async function fetchRevenue(): Promise<RevData> {
     }))
     .slice(0, 10);
 
-  return { mrr, arr, nrr, ltv, conversionRate, activeCount, trialCount, atRiskMrr, byPlan, monthlyChart, upcoming, pastDue };
+  return { mrr, arr, logoRetention12mo, ltv, conversionRate, activeCount, trialCount, atRiskMrr, byPlan, monthlyChart, upcoming, pastDue };
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -159,14 +164,14 @@ export default function RevenueDashboardPage() {
     staleTime: 60_000,
   });
 
-  const topCard = (label: string, value: string, sub: string, icon: React.ReactNode, accent = "text-emerald-600") => (
+  const topCard = (label: string, value: string, sub: string, icon: React.ReactNode, accent = "text-emerald-600", metricKey?: string) => (
     <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
       <div className="flex items-center justify-between mb-3">
         <span className="text-muted-foreground">{icon}</span>
         <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold">{sub}</span>
       </div>
       <p className={`text-2xl font-bold font-mono ${accent}`}>{isLoading ? "—" : value}</p>
-      <p className="text-[11px] text-muted-foreground mt-1">{label}</p>
+      <p className="text-[11px] text-muted-foreground mt-1">{label}{metricKey && <MetricInfoIcon metricKey={metricKey} />}</p>
     </div>
   );
 
@@ -184,20 +189,23 @@ export default function RevenueDashboardPage() {
 
         {/* ── Top metric cards ── */}
         <div className="grid grid-cols-5 gap-4">
-          {topCard("Monthly Recurring Revenue", data ? fmtINR(data.mrr) : "—", "Live MRR", <IndianRupee size={16} />)}
-          {topCard("Annual Run Rate", data ? fmtINR(data.arr) : "—", "ARR", <TrendingUp size={16} />)}
+          {topCard("Monthly Recurring Revenue", data ? fmtINR(data.mrr) : "—", "Live MRR", <IndianRupee size={16} />, "text-emerald-600", "mrr")}
+          {topCard("Annual Run Rate", data ? fmtINR(data.arr) : "—", "ARR", <TrendingUp size={16} />, "text-emerald-600", "arr")}
           {topCard(
-            "12-Month Retention",
-            data?.nrr != null ? `${data.nrr}%` : "N/A",
-            "NRR proxy",
+            "12-Month Logo Retention",
+            data?.logoRetention12mo != null ? `${data.logoRetention12mo}%` : "N/A",
+            "% of hospitals",
             <Repeat2 size={16} />,
-            data?.nrr != null && data.nrr >= 90 ? "text-emerald-600" : data?.nrr != null && data.nrr >= 70 ? "text-amber-600" : "text-red-500",
+            data?.logoRetention12mo != null && data.logoRetention12mo >= 90 ? "text-emerald-600" : data?.logoRetention12mo != null && data.logoRetention12mo >= 70 ? "text-amber-600" : "text-red-500",
+            "logo_retention_12mo",
           )}
           {topCard(
             "Avg Customer LTV",
             data?.ltv ? fmtINR(data.ltv) : "N/A",
             "Est. lifetime value",
             <Wallet size={16} />,
+            "text-emerald-600",
+            "ltv",
           )}
           {topCard(
             "Trial → Paid Rate",
@@ -205,8 +213,12 @@ export default function RevenueDashboardPage() {
             `${data?.activeCount ?? 0} paid / ${(data?.activeCount ?? 0) + (data?.trialCount ?? 0)} total`,
             <ArrowUpRight size={16} />,
             data?.conversionRate != null && data.conversionRate >= 50 ? "text-emerald-600" : "text-amber-600",
+            "trial_to_paid_conversion",
           )}
         </div>
+
+        {/* ── Real dollar-weighted NRR ── */}
+        <DollarNrrCard />
 
         {/* ── Sub-metrics row ── */}
         {data && (
@@ -222,7 +234,7 @@ export default function RevenueDashboardPage() {
               <>
                 <span className="text-[10px] text-border">·</span>
                 <span className="text-xs text-muted-foreground">
-                  <span className="text-red-500 font-mono font-bold">{fmtINR(data.atRiskMrr)}</span> at risk (past-due/suspended)
+                  <span className="text-red-500 font-mono font-bold">{fmtINR(data.atRiskMrr)}</span> at risk (past-due/suspended)<MetricInfoIcon metricKey="at_risk_mrr" />
                 </span>
               </>
             )}
@@ -382,7 +394,128 @@ export default function RevenueDashboardPage() {
           </div>
         )}
 
+        {/* ── Settlement Reconciliation ── */}
+        <SettlementReconciliationPanel />
+
       </div>
+    </div>
+  );
+}
+
+// ─── Real dollar-weighted NRR ───────────────────────────────────────────────────
+// mrr_snapshots only started accumulating when that migration shipped, so
+// compute_dollar_nrr() returns null ("insufficient data") for roughly the
+// first 12 months. Showing that honestly — not hiding the card, not faking
+// a number — is the whole point of building this the slow-but-real way.
+async function fetchDollarNrr(): Promise<{ nrr: number | null; since: string | null }> {
+  const [nrrRes, sinceRes] = await Promise.all([
+    (supabase as any).rpc("compute_dollar_nrr"),
+    (supabase as any).rpc("mrr_snapshots_since"),
+  ]);
+  return { nrr: nrrRes.data ?? null, since: sinceRes.data ?? null };
+}
+
+function DollarNrrCard() {
+  const { data } = useQuery({
+    queryKey: ["platform-dollar-nrr"],
+    queryFn: fetchDollarNrr,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const accurateFrom = data?.since
+    ? format(new Date(new Date(data.since).setMonth(new Date(data.since).getMonth() + 12)), "MMM yyyy")
+    : null;
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-4 shadow-sm flex items-center justify-between">
+      <div className="flex items-center gap-3">
+        <span className="text-[11px] font-semibold text-foreground">Dollar-Weighted NRR</span>
+        <span className="text-[10px] text-muted-foreground">(the real, revenue-weighted retention metric — distinct from Logo Retention above)</span>
+      </div>
+      {data?.nrr != null ? (
+        <span className="text-lg font-bold font-mono text-emerald-600">{data.nrr}%</span>
+      ) : (
+        <span className="text-[11px] text-amber-700">
+          {data?.since
+            ? `Accumulating since ${format(new Date(data.since), "MMM yyyy")} — accurate from ${accurateFrom}`
+            : "Not yet accumulating — mrr_snapshots has no data yet"}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ─── Settlement reconciliation panel ───────────────────────────────────────────
+interface ReconFlag {
+  id: string;
+  discrepancy_type: string;
+  expected_amount: number;
+  settled_amount: number | null;
+  razorpay_status: string | null;
+  flagged_at: string;
+  hospitals: { name: string } | null;
+  subscription_invoices: { invoice_number: string } | null;
+}
+
+const DISCREPANCY_LABEL: Record<string, string> = {
+  payment_not_found: "Payment not found",
+  not_captured: "Not captured",
+  amount_mismatch: "Amount mismatch",
+  refunded: "Refunded",
+};
+
+async function fetchReconFlags(): Promise<ReconFlag[]> {
+  const { data } = await (supabase as any)
+    .from("settlement_reconciliation_flags")
+    .select("id, discrepancy_type, expected_amount, settled_amount, razorpay_status, flagged_at, hospitals(name), subscription_invoices(invoice_number)")
+    .is("resolved_at", null)
+    .order("flagged_at", { ascending: false });
+  return data || [];
+}
+
+function SettlementReconciliationPanel() {
+  const { data: flags, isLoading } = useQuery({
+    queryKey: ["settlement-reconciliation-flags"],
+    queryFn: fetchReconFlags,
+    staleTime: 60_000,
+  });
+
+  return (
+    <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
+      <div className="px-5 py-3 border-b border-border flex items-center justify-between">
+        <p className="text-sm font-semibold text-foreground">Settlement Reconciliation</p>
+        <p className="text-[11px] text-muted-foreground">
+          Weekly check against real Razorpay payment records · unresolved discrepancies only
+        </p>
+      </div>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-[10px] uppercase font-bold text-muted-foreground border-b border-border">
+            {["Hospital", "Invoice", "Issue", "Expected", "Razorpay Amount", "Razorpay Status", "Flagged"].map((h) => (
+              <th key={h} className="px-5 py-2.5 text-left">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {isLoading ? (
+            <tr><td colSpan={7} className="px-5 py-6 text-center text-xs text-muted-foreground">Loading…</td></tr>
+          ) : (flags || []).length === 0 ? (
+            <tr><td colSpan={7} className="px-5 py-6 text-center text-xs text-muted-foreground">No unresolved discrepancies — everything reconciled on the last scan.</td></tr>
+          ) : (flags || []).map((f) => (
+            <tr key={f.id} className="border-t border-border">
+              <td className="px-5 py-3 text-xs text-foreground">{f.hospitals?.name || "—"}</td>
+              <td className="px-5 py-3 text-xs text-muted-foreground font-mono">{f.subscription_invoices?.invoice_number || "—"}</td>
+              <td className="px-5 py-3 text-xs">
+                <span className="text-red-600 font-medium">{DISCREPANCY_LABEL[f.discrepancy_type] || f.discrepancy_type}</span>
+              </td>
+              <td className="px-5 py-3 text-xs text-foreground font-mono">{fmtINR(f.expected_amount)}</td>
+              <td className="px-5 py-3 text-xs text-muted-foreground font-mono">{f.settled_amount != null ? fmtINR(f.settled_amount) : "—"}</td>
+              <td className="px-5 py-3 text-xs text-muted-foreground">{f.razorpay_status || "—"}</td>
+              <td className="px-5 py-3 text-xs text-muted-foreground">{format(new Date(f.flagged_at), "dd MMM yyyy")}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

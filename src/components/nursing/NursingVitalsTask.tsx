@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { AlertTriangle, Mic } from "lucide-react";
 import { useVoiceScribe } from "@/contexts/VoiceScribeContext";
 import VoiceDictationButton from "@/components/voice/VoiceDictationButton";
+import OnboardingTour from "@/components/onboarding/OnboardingTour";
 import { checkVitalsThresholds, calculateNEWS2, vitalSeverityClass } from "@/lib/vitalsAlerts";
 import type { NursingTask } from "@/pages/nursing/NursingPage";
 
@@ -169,6 +170,7 @@ const NursingVitalsTask: React.FC<Props> = ({ task, onComplete }) => {
 
   return (
     <div className="max-w-xl mx-auto space-y-5">
+      <OnboardingTour tourKey="nurse_intro" />
       {/* Context */}
       <div className="bg-card rounded-lg border border-border p-3 flex items-center gap-4 text-xs text-muted-foreground">
         <span className="font-medium text-foreground">{task.patientName}</span>
@@ -178,12 +180,12 @@ const NursingVitalsTask: React.FC<Props> = ({ task, onComplete }) => {
       </div>
 
       {/* Voice dictation hint */}
-      <div className="bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 flex items-center justify-between">
+      <div data-tour="nurse-vitals-dictation" className="bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Mic className="h-3.5 w-3.5 text-primary" />
           <span className="text-[11px] text-primary font-medium">Dictate vitals & nursing notes</span>
         </div>
-        <VoiceDictationButton sessionType="nursing_note" size="sm" />
+        <VoiceDictationButton sessionType="nursing_note" patientId={task.patientId} size="sm" />
       </div>
 
       {/* Nursing note (voice-fillable) */}

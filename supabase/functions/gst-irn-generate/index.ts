@@ -54,7 +54,7 @@ serve(async (req) => {
       .maybeSingle();
     const { data: hospital } = await sb
       .from("hospitals")
-      .select("gstin, name, address")
+      .select("gstin, name, address, state_code, city, pincode")
       .eq("id", hospital_id)
       .maybeSingle();
 
@@ -66,6 +66,37 @@ serve(async (req) => {
     }
 
     const patientName = (bill as any).patients?.full_name || "Patient";
+
+    // ── Exempt-supply gate ──────────────────────────────────────────────────
+    // Most hospital services are GST-exempt (Notif. 12/2017). e-Invoicing is only
+    // required for taxable supplies — never generate an IRN for a nil/exempt bill.
+    const gstAmount = Number(bill.gst_amount || 0);
+    if (gstAmount <= 0) {
+      return new Response(
+        JSON.stringify({
+          skipped: true,
+          reason: "exempt_supply",
+          message: "Bill has no GST (exempt / nil-rated healthcare supply). e-Invoice/IRN is not required.",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    // ── Seller state / PIN + intra-state CGST/SGST split ────────────────────
+    // Derive the 2-digit state code from the hospital's stored state_code (else
+    // the GSTIN prefix). Patient state of supply is not captured, so supplies
+    // default to INTRA-state (CGST + SGST) — the safe, near-universal case for a
+    // hospital's local patients. This replaces the previous bug that booked the
+    // entire tax as IGST and would fail NIC validation for an intra-state supply.
+    const gstinPrefix = String(hospital.gstin || "").slice(0, 2);
+    const sellerStcd = /^\d{2}$/.test(String(hospital.state_code || ""))
+      ? String(hospital.state_code)
+      : (/^\d{2}$/.test(gstinPrefix) ? gstinPrefix : "36");
+    const sellerPin = /^\d{6}$/.test(String(hospital.pincode || "")) ? Number(hospital.pincode) : 500001;
+    const taxable = Number(bill.subtotal ?? bill.taxable_amount ?? (Number(bill.total_amount || 0) - gstAmount));
+    const cgstVal = Math.round((gstAmount / 2) * 100) / 100;
+    const sgstVal = Math.round((gstAmount - cgstVal) * 100) / 100;
+    const gstRate = taxable > 0 ? Math.round((gstAmount / taxable) * 100) : 0;
 
     const irpUsername = Deno.env.get("GST_IRP_USERNAME");
     const irpPassword = Deno.env.get("GST_IRP_PASSWORD");
@@ -127,30 +158,30 @@ serve(async (req) => {
 
     const invoicePayload = {
       Version: "1.1",
-      TranDtls: { TaxSch: "GST", SupTyp: "B2B", RegRev: "N", IgstOnIntra: "N" },
+      TranDtls: { TaxSch: "GST", SupTyp: "B2C", RegRev: "N", IgstOnIntra: "N" },
       DocDtls: { Typ: "INV", No: bill.bill_number, Dt: docDate },
       SellerDtls: {
         Gstin: hospital.gstin,
         LglNm: hospital.name,
         Addr1: hospital.address || "",
-        Loc: "India",
-        Pin: 500001,
-        Stcd: "36",
+        Loc: hospital.city || "India",
+        Pin: sellerPin,
+        Stcd: sellerStcd,
       },
       BuyerDtls: {
         Gstin: "URP",
         LglNm: patientName,
-        Pos: "36",
+        Pos: sellerStcd,
         Addr1: "NA",
-        Loc: "India",
-        Pin: 500001,
-        Stcd: "36",
+        Loc: hospital.city || "India",
+        Pin: sellerPin,
+        Stcd: sellerStcd,
       },
       ValDtls: {
-        AssVal: bill.subtotal || 0,
-        CgstVal: 0,
-        SgstVal: 0,
-        IgstVal: bill.gst_amount || 0,
+        AssVal: taxable,
+        CgstVal: cgstVal,
+        SgstVal: sgstVal,
+        IgstVal: 0,
         TotInvVal: bill.total_amount || 0,
       },
       ItemList: [{
@@ -160,11 +191,13 @@ serve(async (req) => {
         HsnCd: "9993",
         Qty: 1,
         Unit: "OTH",
-        UnitPrice: bill.total_amount || 0,
-        TotAmt: bill.total_amount || 0,
-        AssAmt: bill.subtotal || 0,
-        GstRt: 0,
-        IgstAmt: bill.gst_amount || 0,
+        UnitPrice: taxable,
+        TotAmt: taxable,
+        AssAmt: taxable,
+        GstRt: gstRate,
+        CgstAmt: cgstVal,
+        SgstAmt: sgstVal,
+        IgstAmt: 0,
         TotItemVal: bill.total_amount || 0,
       }],
     };

@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { LayoutDashboard, Building2, CreditCard, Tag, BarChart3, Settings, LogOut, Shield, Radar, Newspaper, BrainCircuit, Heart, Smartphone, KeyRound } from "lucide-react";
+import { LayoutDashboard, Building2, CreditCard, Tag, BarChart3, Settings, LogOut, Shield, Radar, Newspaper, BrainCircuit, Heart, Smartphone, KeyRound, AlertTriangle, ScrollText, ShieldCheck, Workflow, FlaskConical, Headset, Gift } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAumrtiAdmin } from "@/hooks/useAumrtiAdmin";
 import PlatformGuard from "./PlatformGuard";
@@ -11,11 +11,18 @@ const NAV = [
   { to: "/platform/hospitals",   label: "Hospitals",  icon: Building2 },
   { to: "/platform/plans",       label: "Plans",      icon: CreditCard },
   { to: "/platform/discounts",   label: "Discounts",  icon: Tag },
+  { to: "/platform/referrals",   label: "Referrals",  icon: Gift },
   { to: "/platform/revenue",        label: "Revenue",    icon: BarChart3 },
   { to: "/platform/ai-performance",   label: "AI Costs",       icon: BrainCircuit },
   { to: "/platform/api-config",       label: "API Hub",        icon: KeyRound },
   { to: "/platform/customer-success", label: "Cust. Success",  icon: Heart },
   { to: "/platform/mobile",           label: "Mobile App",     icon: Smartphone },
+  { to: "/platform/incidents",        label: "Incidents",      icon: AlertTriangle },
+  { to: "/platform/audit",            label: "Audit Log",      icon: ScrollText },
+  { to: "/platform/compliance",       label: "Compliance",     icon: ShieldCheck },
+  { to: "/platform/automation-rules", label: "Automation",     icon: Workflow },
+  { to: "/platform/feature-flags",    label: "Feature Flags",  icon: FlaskConical },
+  { to: "/platform/support",          label: "Support",        icon: Headset },
   { to: "/platform/settings",         label: "Settings",       icon: Settings },
 ];
 

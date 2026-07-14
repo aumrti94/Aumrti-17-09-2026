@@ -662,7 +662,7 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
         <div>
           <div className="flex items-center justify-between">
             <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Chief Complaint</label>
-            <VoiceDictationButton sessionType="emergency" size="sm" />
+            <VoiceDictationButton sessionType="emergency" patientId={visit?.patient_id} size="sm" />
           </div>
           <Textarea value={complaint} onChange={e => setComplaint(e.target.value)}
             onBlur={() => saveField("chief_complaint", complaint)}

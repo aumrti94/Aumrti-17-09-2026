@@ -1220,6 +1220,9 @@ Write a 3-4 paragraph medical necessity justification suitable for Indian privat
                   admissionId={formState.admission_id || selected?.admission_id || ""}
                   hospitalId={hospitalId}
                   planTier={planTier}
+                  policyNumber={formState.policy_number || selected?.policy_number || ""}
+                  insurerName={formState.tpa_name || selected?.tpa_name || ""}
+                  patientName={formState.patient_name || selected?.patient_name || ""}
                   onReadinessChange={(ready, stats) => {
                     setDocsReady(ready);
                     setDocsStats(stats);

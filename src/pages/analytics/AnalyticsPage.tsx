@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { format, subDays, startOfMonth, endOfMonth, subMonths, startOfWeek, endOfWeek } from "date-fns";
 import { RefreshCw, Download, Bot, BarChart2, Calendar, CalendarDays, TrendingUp } from "lucide-react";
@@ -22,6 +22,7 @@ import ESGTab from "@/components/analytics/ESGTab";
 import AIPerformanceDashboard from "@/components/analytics/AIPerformanceDashboard";
 import NationalBenchmarkTab from "@/components/analytics/NationalBenchmarkTab";
 import type { DateRange } from "@/hooks/useAnalyticsData";
+import { trackEvent } from "@/lib/trackEvent";
 
 const QUICK_RANGES = [
   { label: "Today", key: "today" },
@@ -78,6 +79,12 @@ const AnalyticsPage: React.FC = () => {
   const [customTo, setCustomTo] = useState<Date | undefined>(undefined);
   const queryClient = useQueryClient();
   const { toast } = useToast();
+
+  // Fires on initial mount and every tab switch, regardless of which control
+  // (tab bar, header "AI Digest" button, footer "Custom Report" link) changed it.
+  useEffect(() => {
+    trackEvent("analytics_tab_view", { tab: activeTab });
+  }, [activeTab]);
 
   const range = useMemo(() => {
     if (quickRange === "custom" && customFrom && customTo) {

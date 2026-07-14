@@ -1,9 +1,10 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { RegistrationData, DESIGNATIONS } from "./constants";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, CheckCircle2, Info } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
 
 interface Props {
   data: RegistrationData;
@@ -29,6 +30,29 @@ const strengthColors = [
 const Step2AdminAccount: React.FC<Props> = ({ data, onChange }) => {
   const [showPass, setShowPass] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+
+  // Soft, non-blocking referral-code validation (never gates the Next button).
+  const [refCheck, setRefCheck] = useState<{ valid: boolean; message: string } | null>(null);
+  useEffect(() => {
+    const code = (data.referralCode || "").trim();
+    if (!code) { setRefCheck(null); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const { data: res } = await supabase.rpc("validate_referral_code", { p_code: code } as any);
+        if (cancelled || !res) return;
+        const r = res as any;
+        const extra = Number(r.referee_trial_extra_days) || 0;
+        const pct = Number(r.referee_discount_pct) || 0;
+        const perks = [extra ? `${extra} extra trial days` : "", pct ? `${pct}% off` : ""].filter(Boolean).join(" · ");
+        setRefCheck({
+          valid: !!r.valid,
+          message: r.valid ? (perks ? `Referral applied — ${perks}` : "Referral applied") : (r.message || "Code not recognised — you can still continue"),
+        });
+      } catch { /* ignore — validation is best-effort */ }
+    }, 500);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [data.referralCode]);
 
   const strength = useMemo(
     () => strengthChecks.filter((c) => c.test(data.password)).length,
@@ -169,9 +193,16 @@ const Step2AdminAccount: React.FC<Props> = ({ data, onChange }) => {
             className="mt-1.5"
             maxLength={32}
           />
-          <p className="text-xs text-muted-foreground mt-1">
-            Have a referral or partner code? Enter it to link your account.
-          </p>
+          {refCheck ? (
+            <p className={`text-xs mt-1 flex items-center gap-1 ${refCheck.valid ? "text-emerald-600" : "text-amber-600"}`}>
+              {refCheck.valid ? <CheckCircle2 size={13} /> : <Info size={13} />}
+              {refCheck.message}
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground mt-1">
+              Have a referral or partner code? Enter it to link your account.
+            </p>
+          )}
         </div>
       </div>
     </div>

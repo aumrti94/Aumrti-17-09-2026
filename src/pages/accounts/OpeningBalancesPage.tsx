@@ -13,6 +13,7 @@ const STEPS = [
   { title: "Cash & Bank", icon: Wallet, desc: "Enter cash and bank balances" },
   { title: "Receivables", icon: CreditCard, desc: "Outstanding amounts from patients & insurance" },
   { title: "Payables", icon: Building2, desc: "Outstanding amounts to vendors" },
+  { title: "Assets & Inventory", icon: Building2, desc: "Existing fixed assets and stock on hand" },
   { title: "Loans", icon: Landmark, desc: "Any outstanding loans" },
 ];
 
@@ -28,6 +29,9 @@ const OpeningBalancesPage: React.FC = () => {
     cash_in_hand: 0, main_bank: 0, savings: 0,
     patient_receivable: 0, insurance_receivable: 0, pmjay_receivable: 0,
     vendor_payable: 0, drug_payable: 0, patient_advance: 0,
+    medical_equipment: 0, furniture: 0, it_equipment: 0, vehicles: 0, building: 0,
+    accumulated_depreciation: 0,
+    pharmacy_stock: 0, consumables_stock: 0, surgical_stock: 0,
     bank_loan: 0, equipment_loan: 0,
   });
 
@@ -51,6 +55,23 @@ const OpeningBalancesPage: React.FC = () => {
     setSaving(true);
 
     try {
+      // Idempotency: opening balances should be entered exactly once. A second
+      // run would double-count every asset/liability/equity balance. If the
+      // figures were wrong, reverse the existing entry (Accounts → Journal)
+      // before re-running this wizard, rather than posting a second one.
+      const { data: existingOpening } = await (supabase as any)
+        .from("journal_entries")
+        .select("id, entry_number")
+        .eq("hospital_id", hospitalId)
+        .eq("entry_type", "opening_balance")
+        .limit(1)
+        .maybeSingle();
+      if (existingOpening) {
+        toast.error(`Opening balances already recorded (${existingOpening.entry_number}). Reverse it in Accounts → Journal first if the figures need correcting.`);
+        setSaving(false);
+        return;
+      }
+
       // Get account IDs by code
       const { data: accounts } = await (supabase as any)
         .from("chart_of_accounts")
@@ -71,12 +92,28 @@ const OpeningBalancesPage: React.FC = () => {
       if (balances.insurance_receivable > 0) lines.push({ code: "1011", debit: balances.insurance_receivable, credit: 0 });
       if (balances.pmjay_receivable > 0) lines.push({ code: "1012", debit: balances.pmjay_receivable, credit: 0 });
 
+      // Inventory (debit)
+      if (balances.pharmacy_stock > 0) lines.push({ code: "1030", debit: balances.pharmacy_stock, credit: 0 });
+      if (balances.consumables_stock > 0) lines.push({ code: "1031", debit: balances.consumables_stock, credit: 0 });
+      if (balances.surgical_stock > 0) lines.push({ code: "1032", debit: balances.surgical_stock, credit: 0 });
+
+      // Fixed assets — gross block (debit) by category, matching the Fixed
+      // Assets Register's own category → account mapping.
+      if (balances.medical_equipment > 0) lines.push({ code: "1101", debit: balances.medical_equipment, credit: 0 });
+      if (balances.furniture > 0) lines.push({ code: "1102", debit: balances.furniture, credit: 0 });
+      if (balances.it_equipment > 0) lines.push({ code: "1103", debit: balances.it_equipment, credit: 0 });
+      if (balances.vehicles > 0) lines.push({ code: "1104", debit: balances.vehicles, credit: 0 });
+      if (balances.building > 0) lines.push({ code: "1105", debit: balances.building, credit: 0 });
+      // Accumulated depreciation is a single contra-asset account across all
+      // categories (credit — reduces total assets).
+      if (balances.accumulated_depreciation > 0) lines.push({ code: "1110", debit: 0, credit: balances.accumulated_depreciation });
+
       // Liabilities (credit)
       if (balances.vendor_payable > 0) lines.push({ code: "2001", debit: 0, credit: balances.vendor_payable });
       if (balances.drug_payable > 0) lines.push({ code: "2002", debit: 0, credit: balances.drug_payable });
       if (balances.patient_advance > 0) lines.push({ code: "2030", debit: 0, credit: balances.patient_advance });
-      if (balances.bank_loan > 0) lines.push({ code: "2100", debit: 0, credit: balances.bank_loan });
-      if (balances.equipment_loan > 0) lines.push({ code: "2101", debit: 0, credit: balances.equipment_loan });
+      if (balances.bank_loan > 0) lines.push({ code: "2101", debit: 0, credit: balances.bank_loan });
+      if (balances.equipment_loan > 0) lines.push({ code: "2102", debit: 0, credit: balances.equipment_loan });
 
       // Balance to Capital Account (equity = assets - liabilities)
       const totalDebit = lines.reduce((s, l) => s + l.debit, 0);
@@ -88,9 +125,10 @@ const OpeningBalancesPage: React.FC = () => {
 
       if (lines.length === 0) { toast.error("No balances entered"); setSaving(false); return; }
 
-      // Create journal entry
-      const { count } = await supabase.from("journal_entries").select("*", { count: "exact", head: true }).eq("hospital_id", hospitalId);
-      const entryNumber = `JE-OB-${String((count || 0) + 1).padStart(4, "0")}`;
+      // Atomic, gap-free entry number via the shared per-hospital sequence —
+      // never a SELECT count()+1 (race condition under concurrent posts).
+      const { data: seq } = await supabase.rpc("next_seq", { p_hospital_id: hospitalId, p_type: "journal" });
+      const entryNumber = `JE-OB-${new Date().getFullYear()}-${String(seq ?? 1).padStart(4, "0")}`;
       const finalDebit = lines.reduce((s, l) => s + l.debit, 0);
       const finalCredit = lines.reduce((s, l) => s + l.credit, 0);
 
@@ -219,17 +257,33 @@ const OpeningBalancesPage: React.FC = () => {
 
             {step === 4 && (
               <div className="space-y-3">
+                <p className="text-[10px] text-muted-foreground -mt-1 mb-2">Leave a field at 0 if the hospital is starting fresh with no prior stock or assets.</p>
+                <InputRow label="Pharmacy Stock" field="pharmacy_stock" />
+                <InputRow label="Medical Consumables Stock" field="consumables_stock" />
+                <InputRow label="Surgical Items Stock" field="surgical_stock" />
+                <div className="border-t border-border my-2" />
+                <InputRow label="Medical Equipment (gross cost)" field="medical_equipment" />
+                <InputRow label="Furniture & Fixtures (gross cost)" field="furniture" />
+                <InputRow label="Computers & IT Equipment (gross cost)" field="it_equipment" />
+                <InputRow label="Vehicles (gross cost)" field="vehicles" />
+                <InputRow label="Building / Leasehold (gross cost)" field="building" />
+                <InputRow label="Less: Accumulated Depreciation" field="accumulated_depreciation" />
+              </div>
+            )}
+
+            {step === 5 && (
+              <div className="space-y-3">
                 <InputRow label="Bank Loan Outstanding" field="bank_loan" />
                 <InputRow label="Equipment Loan" field="equipment_loan" />
 
                 {/* Summary */}
                 <div className="mt-4 p-4 bg-muted/30 rounded-md space-y-1.5 text-xs">
                   <p className="font-semibold mb-2">Opening Balance Summary</p>
-                  <div className="flex justify-between"><span>Total Assets</span><span className="font-mono font-medium">{fmt(balances.cash_in_hand + balances.main_bank + balances.savings + balances.patient_receivable + balances.insurance_receivable + balances.pmjay_receivable)}</span></div>
+                  <div className="flex justify-between"><span>Total Assets</span><span className="font-mono font-medium">{fmt(balances.cash_in_hand + balances.main_bank + balances.savings + balances.patient_receivable + balances.insurance_receivable + balances.pmjay_receivable + balances.pharmacy_stock + balances.consumables_stock + balances.surgical_stock + balances.medical_equipment + balances.furniture + balances.it_equipment + balances.vehicles + balances.building - balances.accumulated_depreciation)}</span></div>
                   <div className="flex justify-between"><span>Total Liabilities</span><span className="font-mono font-medium">{fmt(balances.vendor_payable + balances.drug_payable + balances.patient_advance + balances.bank_loan + balances.equipment_loan)}</span></div>
                   <div className="border-t border-border pt-1.5 flex justify-between font-semibold">
                     <span>Capital (Equity)</span>
-                    <span className="font-mono">{fmt((balances.cash_in_hand + balances.main_bank + balances.savings + balances.patient_receivable + balances.insurance_receivable + balances.pmjay_receivable) - (balances.vendor_payable + balances.drug_payable + balances.patient_advance + balances.bank_loan + balances.equipment_loan))}</span>
+                    <span className="font-mono">{fmt((balances.cash_in_hand + balances.main_bank + balances.savings + balances.patient_receivable + balances.insurance_receivable + balances.pmjay_receivable + balances.pharmacy_stock + balances.consumables_stock + balances.surgical_stock + balances.medical_equipment + balances.furniture + balances.it_equipment + balances.vehicles + balances.building - balances.accumulated_depreciation) - (balances.vendor_payable + balances.drug_payable + balances.patient_advance + balances.bank_loan + balances.equipment_loan))}</span>
                   </div>
                 </div>
               </div>

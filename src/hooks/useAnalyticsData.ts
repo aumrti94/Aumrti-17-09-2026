@@ -6,6 +6,10 @@ export interface DateRange {
   to: string;
 }
 
+// bill_type values that get their own standalone bill row (clean Collected-₹ split).
+// OT is deliberately excluded — it never gets its own bill_type, see useServiceLineBilled.
+const COLLECTED_BILL_TYPES = ["lab", "radiology", "emergency", "daycare", "package", "dialysis", "physio"] as const;
+
 export function useRevenueKPIs(range: DateRange) {
   return useQuery({
     queryKey: ["analytics-revenue-kpis", range],
@@ -13,7 +17,7 @@ export function useRevenueKPIs(range: DateRange) {
       const hospitalId = await getHospitalId();
       if (!hospitalId) return null;
 
-      const [totalRes, outstandingRes, opdRes, ipdRes, pharmaRes] = await Promise.all([
+      const [totalRes, outstandingRes, opdRes, ipdRes, pharmaRes, ...categoryResults] = await Promise.all([
         // Exclude bill_type="pharmacy" from bills total — pharmacy revenue comes from pharmacy_dispensing
         supabase.from("bills").select("paid_amount").eq("hospital_id", hospitalId)
           .gte("bill_date", range.from).lte("bill_date", range.to)
@@ -32,12 +36,23 @@ export function useRevenueKPIs(range: DateRange) {
         (supabase as any).from("pharmacy_dispensing").select("net_amount").eq("hospital_id", hospitalId)
           .eq("dispensing_type", "retail").eq("status", "dispensed")
           .gte("created_at", range.from).lte("created_at", range.to + "T23:59:59"),
+        ...COLLECTED_BILL_TYPES.map(bt =>
+          supabase.from("bills").select("paid_amount").eq("hospital_id", hospitalId)
+            .eq("bill_type", bt).in("payment_status", ["paid", "partial"])
+            .gte("bill_date", range.from).lte("bill_date", range.to)
+        ),
       ]);
 
       const sum = (rows: any[] | null, field: string) =>
         (rows || []).reduce((s, r) => s + (Number(r[field]) || 0), 0);
 
       const pharmacyRevenue = sum(pharmaRes.data, "net_amount");
+
+      const categories: Record<string, { revenue: number; count: number }> = {};
+      COLLECTED_BILL_TYPES.forEach((bt, i) => {
+        const rows = categoryResults[i].data;
+        categories[bt] = { revenue: sum(rows, "paid_amount"), count: rows?.length || 0 };
+      });
 
       return {
         totalRevenue: sum(totalRes.data, "paid_amount") + pharmacyRevenue,
@@ -49,10 +64,50 @@ export function useRevenueKPIs(range: DateRange) {
         ipdCount: new Set(ipdRes.data?.map(r => r.admission_id).filter(Boolean)).size,
         pharmacyRevenue,
         pharmacyCount: pharmaRes.data?.length || 0,
+        labRevenue: categories.lab.revenue, labCount: categories.lab.count,
+        radiologyRevenue: categories.radiology.revenue, radiologyCount: categories.radiology.count,
+        emergencyRevenue: categories.emergency.revenue, emergencyCount: categories.emergency.count,
+        daycareRevenue: categories.daycare.revenue, daycareCount: categories.daycare.count,
+        packageRevenue: categories.package.revenue, packageCount: categories.package.count,
+        dialysisOpdRevenue: categories.dialysis.revenue, dialysisOpdCount: categories.dialysis.count,
+        physioRevenue: categories.physio.revenue, physioCount: categories.physio.count,
       };
     },
     refetchInterval: 5 * 60 * 1000,
   });
+}
+
+// Category → { label, color } for grouping bill_line_items across the Revenue donut,
+// and per-doctor/per-department breakdowns. Keyed by item_type, falling back to
+// source_module for categories (ot, dialysis, physio) that don't reliably set item_type.
+export const LINE_ITEM_CATEGORIES: Record<string, { label: string; color: string }> = {
+  service: { label: "Consultation", color: "hsl(217, 91%, 60%)" },
+  consultation: { label: "Consultation", color: "hsl(217, 91%, 60%)" },
+  room_charge: { label: "Room", color: "hsl(263, 70%, 50%)" },
+  room: { label: "Room", color: "hsl(263, 70%, 50%)" },
+  nursing: { label: "Nursing", color: "hsl(280, 60%, 55%)" },
+  pharmacy: { label: "Pharmacy", color: "hsl(0, 84%, 60%)" },
+  lab: { label: "Lab", color: "hsl(142, 71%, 45%)" },
+  radiology: { label: "Radiology", color: "hsl(25, 95%, 53%)" },
+  procedure: { label: "Procedure", color: "hsl(172, 66%, 50%)" },
+  dialysis: { label: "Dialysis", color: "hsl(199, 89%, 48%)" },
+  physio: { label: "Physio", color: "hsl(48, 96%, 53%)" },
+  ot_charge: { label: "OT", color: "hsl(340, 82%, 52%)" },
+  surgeon_fee: { label: "OT — Surgeon Fee", color: "hsl(340, 60%, 60%)" },
+  anaesthesia_fee: { label: "OT — Anaesthesia", color: "hsl(340, 40%, 68%)" },
+  implant: { label: "OT — Implant", color: "hsl(340, 20%, 76%)" },
+  blood: { label: "Blood Bank", color: "hsl(0, 70%, 45%)" },
+  other: { label: "Other", color: "hsl(215, 14%, 60%)" },
+};
+
+// Some categories (OT, dialysis, physio) are only reliably tagged via source_module,
+// not item_type — chargePosting.ts / serviceBilling.ts set source_module consistently
+// regardless of which bill (OPD/IPD/daycare) the line item ends up attached to.
+export function categorizeLineItem(itemType: string | null, sourceModule: string | null): string {
+  if (sourceModule === "ot") return "ot_charge";
+  if (sourceModule === "dialysis") return "dialysis";
+  if (sourceModule === "physio") return "physio";
+  return itemType || "other";
 }
 
 export function useRevenueTrend(range: DateRange) {
@@ -104,36 +159,67 @@ export function useRevenueBreakdown(range: DateRange) {
       if (!billIds.length) return [];
 
       const { data } = await supabase.from("bill_line_items")
-        .select("item_type, total_amount")
+        .select("item_type, source_module, total_amount")
         .eq("hospital_id", hospitalId)
         .in("bill_id", billIds)
         .limit(5000);
       const typeMap: Record<string, number> = {};
       (data || []).forEach(row => {
-        const t = row.item_type || "other";
+        const t = categorizeLineItem(row.item_type, row.source_module);
         typeMap[t] = (typeMap[t] || 0) + (Number(row.total_amount) || 0);
       });
 
       const total = Object.values(typeMap).reduce((s, v) => s + v, 0);
-      const colors: Record<string, string> = {
-        service: "hsl(217, 91%, 60%)",
-        consultation: "hsl(217, 91%, 60%)",
-        room: "hsl(263, 70%, 50%)",
-        pharmacy: "hsl(0, 84%, 60%)",
-        lab: "hsl(142, 71%, 45%)",
-        radiology: "hsl(25, 95%, 53%)",
-        procedure: "hsl(172, 66%, 50%)",
-        other: "hsl(215, 14%, 60%)",
-      };
 
       return Object.entries(typeMap)
-        .map(([name, value]) => ({
-          name: name.charAt(0).toUpperCase() + name.slice(1),
+        .map(([key, value]) => ({
+          name: LINE_ITEM_CATEGORIES[key]?.label || LINE_ITEM_CATEGORIES.other.label,
           value,
           pct: total > 0 ? Math.round((value / total) * 1000) / 10 : 0,
-          fill: colors[name] || colors.other,
+          fill: LINE_ITEM_CATEGORIES[key]?.color || LINE_ITEM_CATEGORIES.other.color,
         }))
         .sort((a, b) => b.value - a.value);
+    },
+    refetchInterval: 5 * 60 * 1000,
+  });
+}
+
+// OT and Dialysis(IPD) never get their own bill_type — their line items are folded
+// into the patient's IPD/daycare bill. bill_payments has no line-item FK, so only
+// billed ₹ (not collected ₹) is derivable for these two, via the reliable
+// source_module tag set in serviceBilling.ts / chargePosting.ts.
+export function useServiceLineBilled(range: DateRange) {
+  return useQuery({
+    queryKey: ["analytics-service-line-billed", range],
+    queryFn: async () => {
+      const hospitalId = await getHospitalId();
+      if (!hospitalId) return { otBilled: 0, dialysisBilled: 0 };
+
+      const { data: billsInRange } = await supabase.from("bills")
+        .select("id")
+        .eq("hospital_id", hospitalId)
+        .gte("bill_date", range.from).lte("bill_date", range.to)
+        .limit(2000);
+
+      const billIds = (billsInRange || []).map(b => b.id);
+      if (!billIds.length) return { otBilled: 0, dialysisBilled: 0 };
+
+      const { data } = await supabase.from("bill_line_items")
+        .select("source_module, total_amount")
+        .eq("hospital_id", hospitalId)
+        .in("bill_id", billIds)
+        .in("source_module", ["ot", "dialysis"])
+        .limit(5000);
+
+      let otBilled = 0;
+      let dialysisBilled = 0;
+      (data || []).forEach(row => {
+        const amt = Number(row.total_amount) || 0;
+        if (row.source_module === "ot") otBilled += amt;
+        else if (row.source_module === "dialysis") dialysisBilled += amt;
+      });
+
+      return { otBilled, dialysisBilled };
     },
     refetchInterval: 5 * 60 * 1000,
   });
@@ -462,6 +548,245 @@ export function useDischargeTAT(range: DateRange) {
       const distribution = buckets.map((bucket, i) => ({ bucket, count: counts[i] }));
 
       return { entries, avgHours, distribution, totalDischarges: entries.length };
+    },
+    refetchInterval: 5 * 60 * 1000,
+  });
+}
+
+export interface ReadmissionMetrics {
+  readmissionRate: number | null;
+  readmittedCount: number;
+  totalDischarges: number;
+  aiAvgRiskScore: number | null;
+  aiHighRiskPct: number | null;
+  aiAssessedCount: number;
+}
+
+// Real chronological 30-day readmission check: for each patient discharged in `range`,
+// look for their next admission and test whether it falls within 30 days of discharge.
+// Also surfaces the AI-predicted risk (readmission_risk_level/_score, written at discharge
+// by ReadmissionRiskPanel — migration 20260601000002_tier3_excellence.sql) as a distinct,
+// clearly-labeled complementary figure. Do not conflate the two.
+export async function computeReadmissionMetrics(hospitalId: string, range: DateRange): Promise<ReadmissionMetrics> {
+  const { data: dischargeRows } = await (supabase as any)
+    .from("admissions")
+    .select("id, patient_id, discharged_at, readmission_risk_level, readmission_risk_score")
+    .eq("hospital_id", hospitalId)
+    .eq("status", "discharged")
+    .not("discharged_at", "is", null)
+    .gte("discharged_at", range.from)
+    .lte("discharged_at", range.to + "T23:59:59")
+    .limit(2000);
+
+  const discharges = (dischargeRows || []) as any[];
+  const totalDischarges = discharges.length;
+  if (totalDischarges === 0) {
+    return { readmissionRate: null, readmittedCount: 0, totalDischarges: 0, aiAvgRiskScore: null, aiHighRiskPct: null, aiAssessedCount: 0 };
+  }
+
+  const patientIds = Array.from(new Set(discharges.map(d => d.patient_id)));
+  const { data: allAdms } = await (supabase as any)
+    .from("admissions")
+    .select("id, patient_id, admitted_at")
+    .eq("hospital_id", hospitalId)
+    .in("patient_id", patientIds)
+    .order("admitted_at", { ascending: true });
+
+  const byPatient: Record<string, { id: string; admitted_at: string }[]> = {};
+  (allAdms || []).forEach((a: any) => {
+    (byPatient[a.patient_id] ||= []).push({ id: a.id, admitted_at: a.admitted_at });
+  });
+
+  let readmittedCount = 0;
+  discharges.forEach(d => {
+    const dischargedAt = new Date(d.discharged_at).getTime();
+    const windowEnd = dischargedAt + 30 * 86400000;
+    const hasReadmission = (byPatient[d.patient_id] || []).some(a => {
+      if (a.id === d.id) return false;
+      const admittedAt = new Date(a.admitted_at).getTime();
+      return admittedAt > dischargedAt && admittedAt <= windowEnd;
+    });
+    if (hasReadmission) readmittedCount++;
+  });
+
+  const riskScores = discharges.map(d => d.readmission_risk_score).filter((s): s is number => s != null);
+  const highRiskCount = discharges.filter(d => d.readmission_risk_level === "high").length;
+
+  return {
+    readmissionRate: Math.round((readmittedCount / totalDischarges) * 1000) / 10,
+    readmittedCount,
+    totalDischarges,
+    aiAvgRiskScore: riskScores.length > 0 ? Math.round(riskScores.reduce((a, b) => a + b, 0) / riskScores.length) : null,
+    aiHighRiskPct: riskScores.length > 0 ? Math.round((highRiskCount / totalDischarges) * 100) : null,
+    aiAssessedCount: riskScores.length,
+  };
+}
+
+export function useReadmissionRate(range: DateRange) {
+  return useQuery({
+    queryKey: ["analytics-readmission-rate", range],
+    queryFn: async () => {
+      const hospitalId = await getHospitalId();
+      if (!hospitalId) return null;
+      return computeReadmissionMetrics(hospitalId, range);
+    },
+    refetchInterval: 5 * 60 * 1000,
+  });
+}
+
+export interface PatientSatisfactionMetrics {
+  avgOverall5: number | null;
+  responseCount: number;
+}
+
+// Single source of truth for PREM "patient satisfaction" — reads the real
+// prom_prem_surveys.prem_overall (1-5 scale), the only PROM/PREM table that
+// actually exists (prom_responses/overall_score never existed in the schema).
+export async function computePatientSatisfaction(hospitalId: string, range: DateRange): Promise<PatientSatisfactionMetrics> {
+  const { data } = await (supabase as any)
+    .from("prom_prem_surveys")
+    .select("prem_overall")
+    .eq("hospital_id", hospitalId)
+    .eq("status", "responded")
+    .gte("responded_at", range.from)
+    .lte("responded_at", range.to + "T23:59:59");
+
+  const scores = (data || []).map((r: any) => r.prem_overall).filter((s: any): s is number => s != null);
+  const avgOverall5 = scores.length > 0 ? Math.round((scores.reduce((a: number, b: number) => a + b, 0) / scores.length) * 10) / 10 : null;
+  return { avgOverall5, responseCount: scores.length };
+}
+
+export function usePatientSatisfaction(range: DateRange) {
+  return useQuery({
+    queryKey: ["analytics-patient-satisfaction", range],
+    queryFn: async () => {
+      const hospitalId = await getHospitalId();
+      if (!hospitalId) return null;
+      return computePatientSatisfaction(hospitalId, range);
+    },
+    refetchInterval: 5 * 60 * 1000,
+  });
+}
+
+export interface PMJAYClaimsSummary {
+  claimedAmount: number;
+  approvedAmount: number;
+  settledAmount: number;
+  totalClaims: number;
+  deniedClaims: number;
+  denialRatePct: number | null;
+}
+
+// PMJAY-specific claims were previously never rolled into any Analytics dashboard
+// (only the generic insurance_claims table was) — this surfaces pmjay_claims directly.
+export function usePMJAYClaimsSummary(range: DateRange) {
+  return useQuery({
+    queryKey: ["analytics-pmjay-claims-summary", range],
+    queryFn: async (): Promise<PMJAYClaimsSummary | null> => {
+      const hospitalId = await getHospitalId();
+      if (!hospitalId) return null;
+
+      const { data } = await (supabase as any)
+        .from("pmjay_claims")
+        .select("claimed_amount, approved_amount, settled_amount, denial_reason, denial_code")
+        .eq("hospital_id", hospitalId)
+        .not("submitted_at", "is", null)
+        .gte("submitted_at", range.from)
+        .lte("submitted_at", range.to + "T23:59:59");
+
+      const claims = (data || []) as any[];
+      const sum = (field: string) => claims.reduce((s, r) => s + (Number(r[field]) || 0), 0);
+      const deniedClaims = claims.filter(c => c.denial_reason != null || c.denial_code != null).length;
+
+      return {
+        claimedAmount: sum("claimed_amount"),
+        approvedAmount: sum("approved_amount"),
+        settledAmount: sum("settled_amount"),
+        totalClaims: claims.length,
+        deniedClaims,
+        denialRatePct: claims.length > 0 ? Math.round((deniedClaims / claims.length) * 1000) / 10 : null,
+      };
+    },
+    refetchInterval: 5 * 60 * 1000,
+  });
+}
+
+export interface PayrollCostRatio {
+  totalNet: number;
+  revenueForPeriod: number;
+  costToRevenuePct: number | null;
+  runsFound: number;
+}
+
+// payroll_runs was previously never rolled into Analytics — this expresses staff cost
+// as a % of the same revenue figure already computed by useRevenueKPIs, rather than
+// showing an absolute payroll number with no context.
+export function usePayrollCostRatio(range: DateRange) {
+  return useQuery({
+    queryKey: ["analytics-payroll-cost-ratio", range],
+    queryFn: async (): Promise<PayrollCostRatio | null> => {
+      const hospitalId = await getHospitalId();
+      if (!hospitalId) return null;
+
+      const fromDate = new Date(range.from);
+      const toDate = new Date(range.to);
+
+      const [payrollRes, revenueRes] = await Promise.all([
+        (supabase as any)
+          .from("payroll_runs")
+          .select("total_net, month, year")
+          .eq("hospital_id", hospitalId),
+        // Reuse the same source RevenueTab uses — never reimplement revenue.
+        supabase.from("bills").select("paid_amount").eq("hospital_id", hospitalId)
+          .gte("bill_date", range.from).lte("bill_date", range.to)
+          .in("payment_status", ["paid", "partial"])
+          .neq("bill_type", "pharmacy"),
+      ]);
+
+      // payroll_runs is monthly-granular (month/year), not date-range filterable directly —
+      // include a run if its month falls anywhere inside the selected range.
+      const runs = ((payrollRes.data || []) as any[]).filter(r => {
+        if (r.month == null || r.year == null) return false;
+        const runDate = new Date(r.year, r.month - 1, 15); // mid-month anchor
+        return runDate >= new Date(fromDate.getFullYear(), fromDate.getMonth(), 1)
+          && runDate <= toDate;
+      });
+
+      const totalNet = runs.reduce((s, r) => s + (Number(r.total_net) || 0), 0);
+      const revenueForPeriod = (revenueRes.data || []).reduce((s: number, r: any) => s + (Number(r.paid_amount) || 0), 0);
+
+      return {
+        totalNet,
+        revenueForPeriod,
+        costToRevenuePct: revenueForPeriod > 0 ? Math.round((totalNet / revenueForPeriod) * 1000) / 10 : null,
+        runsFound: runs.length,
+      };
+    },
+    refetchInterval: 5 * 60 * 1000,
+  });
+}
+
+export interface InventoryValueOnHand {
+  valueOnHand: number;
+}
+
+// No pre-aggregated inventory value table exists — reads the inventory_value_by_hospital
+// view (migration 20261008000123), which sums quantity_available * cost_price under
+// security_invoker so the querying user's RLS applies, not the view owner's.
+export function useInventoryValueOnHand() {
+  return useQuery({
+    queryKey: ["analytics-inventory-value-on-hand"],
+    queryFn: async (): Promise<InventoryValueOnHand | null> => {
+      const hospitalId = await getHospitalId();
+      if (!hospitalId) return null;
+
+      const { data } = await (supabase as any)
+        .from("inventory_value_by_hospital")
+        .select("value_on_hand")
+        .eq("hospital_id", hospitalId)
+        .maybeSingle();
+
+      return { valueOnHand: Number(data?.value_on_hand) || 0 };
     },
     refetchInterval: 5 * 60 * 1000,
   });

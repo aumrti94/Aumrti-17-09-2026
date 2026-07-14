@@ -9,8 +9,10 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
-import { ClipboardList, Send, Bot, FileText, CheckCircle2, RefreshCw, Plus, X, ShieldCheck, Loader2, AlertCircle, Search } from "lucide-react";
+import { ClipboardList, Send, Bot, FileText, CheckCircle2, RefreshCw, Plus, X, ShieldCheck, Loader2, AlertCircle, Search, Receipt, Printer } from "lucide-react";
 import { callAI } from "@/lib/aiProvider";
+import { useHospitalId } from "@/hooks/useHospitalId";
+import { fetchHospitalBrand, printHeader, printDocument, printAmount } from "@/lib/printUtils";
 
 interface PreAuth {
   id: string;
@@ -58,6 +60,7 @@ const REQUIRED_DOCS = [
 ];
 
 const PmjayPreAuthTab: React.FC<Props> = ({ showNewForm, onFormClosed }) => {
+  const { hospitalId } = useHospitalId();
   const [preAuths, setPreAuths] = useState<PreAuth[]>([]);
   const [patients, setPatients] = useState<Record<string, string>>({});
   const [schemes, setSchemes] = useState<Record<string, string>>({});
@@ -90,6 +93,8 @@ const PmjayPreAuthTab: React.FC<Props> = ({ showNewForm, onFormClosed }) => {
   const [admissions, setAdmissions] = useState<{ id: string; admission_number: string | null; admitting_diagnosis: string | null }[]>([]);
   const [selectedPkg, setSelectedPkg] = useState<{ package_code: string; package_name: string; package_rate: number } | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [convertingClaim, setConvertingClaim] = useState(false);
+  const [printingPA9, setPrintingPA9] = useState(false);
 
   // ICD-10 / diagnosis driven package matching
   const [diagnosisQuery, setDiagnosisQuery] = useState("");
@@ -232,13 +237,12 @@ const PmjayPreAuthTab: React.FC<Props> = ({ showNewForm, onFormClosed }) => {
       return;
     }
     if (!selectedPkg) return;
+    if (!hospitalId) { toast({ title: "Hospital not found", variant: "destructive" }); return; }
 
     setSubmitting(true);
-    const { data: userData } = await supabase.from("users").select("hospital_id").eq("auth_user_id", (await supabase.auth.getUser()).data.user?.id || "").maybeSingle();
-    if (!userData?.hospital_id) { toast({ title: "Hospital not found", variant: "destructive" }); setSubmitting(false); return; }
 
     const { error } = await supabase.from("pre_auth_requests").insert({
-      hospital_id: userData.hospital_id,
+      hospital_id: hospitalId,
       patient_id: newForm.patient_id,
       scheme_id: newForm.scheme_id,
       beneficiary_id: newForm.beneficiary_ref_id,
@@ -277,6 +281,90 @@ const PmjayPreAuthTab: React.FC<Props> = ({ showNewForm, onFormClosed }) => {
     toast({ title: `Status updated to ${status}` });
     loadData();
     setSelected(null);
+  };
+
+  // Converts an approved pre-auth into a cashless claim (pmjay_claims) — the missing
+  // link between pre-auth and PmjayClaimsTab, which has no other way to create a claim row.
+  const convertToClaim = async (pa: PreAuth) => {
+    if (!pa.admission_id) {
+      toast({
+        title: "Link an admission first",
+        description: "PMJAY claims require an admission on the pre-auth record before they can be created.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!hospitalId) return;
+    setConvertingClaim(true);
+    try {
+      const { data: existing } = await supabase
+        .from("pmjay_claims")
+        .select("id, claim_number")
+        .eq("pre_auth_id", pa.id)
+        .maybeSingle();
+      if (existing) {
+        toast({ title: `Already converted — claim ${existing.claim_number}`, description: "Continue in the Cashless Claims tab." });
+        return;
+      }
+
+      const { data: seq } = await supabase.rpc("next_seq", { p_hospital_id: hospitalId, p_type: "claim" });
+      const claimNumber = `PMJ-${new Date().getFullYear()}-${String(seq ?? Date.now()).padStart(5, "0")}`;
+
+      const { error } = await supabase.from("pmjay_claims").insert({
+        hospital_id: hospitalId,
+        patient_id: pa.patient_id,
+        admission_id: pa.admission_id,
+        pre_auth_id: pa.id,
+        scheme_id: pa.scheme_id,
+        claim_number: claimNumber,
+        package_code: pa.package_code,
+        package_name: pa.package_name,
+        claimed_amount: pa.approved_amount ?? pa.requested_amount,
+        status: "draft",
+      });
+      if (error) { toast({ title: "Failed to create claim", description: error.message, variant: "destructive" }); return; }
+      toast({ title: `Claim ${claimNumber} created`, description: "Continue in the Cashless Claims tab." });
+    } finally {
+      setConvertingClaim(false);
+    }
+  };
+
+  // Best-effort PA-9 pre-authorization summary — field set reuses what's already captured
+  // on the pre-auth record. Layout is NOT a verified replica of NHA's official PA-9 form;
+  // needs regulatory (Suresh) sign-off against the real spec before relying on it as-is.
+  const printPA9 = async (pa: PreAuth) => {
+    if (!hospitalId) return;
+    setPrintingPA9(true);
+    try {
+      const brand = await fetchHospitalBrand(supabase, hospitalId);
+      const patientName = patients[pa.patient_id] || "Unknown";
+      const schemeName = schemes[pa.scheme_id] || "—";
+      const docsHtml = REQUIRED_DOCS
+        .map((d, i) => `<div class="row"><span>${d}</span><span>${checkedDocs[i] ? "✓" : "☐"}</span></div>`)
+        .join("");
+
+      const body = `
+        ${printHeader(brand.name, "PMJAY Pre-Authorization Request (Form PA-9)")}
+        <div class="section-title">Beneficiary &amp; Package Details</div>
+        <div class="row"><span class="label">Patient</span><span>${patientName}</span></div>
+        <div class="row"><span class="label">Scheme</span><span>${schemeName}</span></div>
+        <div class="row"><span class="label">Package</span><span>${pa.package_code} — ${pa.package_name}</span></div>
+        <div class="row"><span class="label">Requested Amount</span><span class="amount">${printAmount(pa.requested_amount)}</span></div>
+        <div class="row"><span class="label">Status</span><span class="badge">${pa.status.replace(/_/g, " ")}</span></div>
+        <div class="row"><span class="label">Submitted</span><span>${pa.submitted_at ? new Date(pa.submitted_at).toLocaleDateString("en-IN") : "Not yet submitted"}</span></div>
+        <div class="section-title">Clinical Summary</div>
+        <pre>${pa.clinical_summary || pa.justification || "Not recorded"}</pre>
+        <div class="section-title">Supporting Documents Checklist</div>
+        ${docsHtml}
+        <div style="margin-top:24px;font-size:11px;color:#94a3b8;">
+          Hospital-generated pre-authorization summary. Field mapping against NHA's official
+          PA-9 layout is pending regulatory confirmation — verify before submission to the portal.
+        </div>
+      `;
+      printDocument(`PA-9 — ${patientName}`, body);
+    } finally {
+      setPrintingPA9(false);
+    }
   };
 
   // FEATURE 1: AI Clinical Summary
@@ -818,6 +906,14 @@ Return ONLY JSON:
                   </Button>
                 </>
               )}
+              {(selected.status === "approved" || selected.status === "partially_approved") && (
+                <Button variant="outline" className="gap-1.5" onClick={() => convertToClaim(selected)} disabled={convertingClaim}>
+                  <Receipt size={14} /> {convertingClaim ? "Converting..." : "Convert to Claim"}
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => printPA9(selected)} disabled={printingPA9}>
+                <Printer size={14} /> {printingPA9 ? "Preparing..." : "Print PA-9"}
+              </Button>
             </div>
           </div>
         )}

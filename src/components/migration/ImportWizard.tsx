@@ -41,10 +41,21 @@ const ENTITY_FIELDS: Record<EntityType, FieldDef[]> = {
     { key: "full_name", label: "Full Name", required: true },
     { key: "phone", label: "Phone", required: false },
     { key: "dob", label: "Date of Birth", required: false },
+    { key: "age", label: "Age", required: false },
     { key: "gender", label: "Gender", required: false },
+    { key: "blood_group", label: "Blood Group", required: false },
+    { key: "patient_category", label: "Patient Category", required: false },
     { key: "address", label: "Address", required: false },
     { key: "uhid", label: "UHID", required: false },
-    { key: "blood_group", label: "Blood Group", required: false },
+    { key: "allergies", label: "Allergies", required: false },
+    { key: "chronic_conditions", label: "Chronic Conditions", required: false },
+    { key: "insurance_id", label: "Insurance / TPA ID", required: false },
+    { key: "abha_id", label: "ABHA ID", required: false },
+    { key: "aadhaar_id", label: "Aadhaar ID", required: false },
+    { key: "patient_gstin", label: "Company GSTIN", required: false },
+    { key: "referral_source", label: "Referral Source", required: false },
+    { key: "emergency_contact_name", label: "Emergency Contact Name", required: false },
+    { key: "emergency_contact_phone", label: "Emergency Contact Phone", required: false },
   ],
   staff: [
     { key: "full_name", label: "Full Name", required: true },
@@ -52,8 +63,21 @@ const ENTITY_FIELDS: Record<EntityType, FieldDef[]> = {
     { key: "email", label: "Email", required: false },
     { key: "role", label: "Role", required: true },
     { key: "department", label: "Department", required: false },
-    { key: "joining_date", label: "Joining Date", required: false },
     { key: "employee_id", label: "Employee ID", required: false },
+    { key: "registration_number", label: "Registration / License No", required: false },
+    { key: "employment_type", label: "Employment Type", required: false },
+    { key: "payroll_type", label: "Payroll Type (staff/consultant)", required: false },
+    { key: "basic_salary", label: "Basic Salary (₹/month)", required: false },
+    { key: "hra_percent", label: "HRA %", required: false },
+    { key: "da_percent", label: "DA %", required: false },
+    { key: "conveyance", label: "Conveyance (₹)", required: false },
+    { key: "medical_allowance", label: "Medical Allowance (₹)", required: false },
+    { key: "pf_applicable", label: "PF Applicable (yes/no)", required: false },
+    { key: "esic_applicable", label: "ESIC Applicable (yes/no)", required: false },
+    { key: "uan_number", label: "UAN (EPF)", required: false },
+    { key: "pan_number", label: "PAN", required: false },
+    { key: "esi_ip_number", label: "ESI IP No", required: false },
+    { key: "license_expiry_date", label: "License Expiry Date", required: false },
   ],
   services: [
     { key: "service_name", label: "Service Name", required: true },
@@ -111,6 +135,17 @@ const AUTO_MATCH: Record<string, string[]> = {
   address: ["address", "addr", "full_address"],
   uhid: ["uhid", "mr_number", "mrn", "patient_id", "old_id"],
   blood_group: ["blood_group", "blood", "bloodgroup"],
+  age: ["age"],
+  patient_category: ["patient_category", "category", "payer_category", "payer_type"],
+  allergies: ["allergies", "allergy", "known_allergies"],
+  chronic_conditions: ["chronic_conditions", "chronic_condition", "comorbidities", "conditions"],
+  insurance_id: ["insurance_id", "insurance_tpa_id", "tpa_id", "insurance_no", "policy_number"],
+  abha_id: ["abha_id", "abha_number", "abha"],
+  aadhaar_id: ["aadhaar_id", "aadhaar", "aadhar", "aadhar_id"],
+  patient_gstin: ["patient_gstin", "gstin", "company_gstin"],
+  referral_source: ["referral_source", "referral", "referred_by", "source"],
+  emergency_contact_name: ["emergency_contact_name", "emergency_contact", "emergency_name", "next_of_kin"],
+  emergency_contact_phone: ["emergency_contact_phone", "emergency_phone", "emergency_number"],
   role: ["role", "designation", "position"],
   department: ["department", "dept"],
   employee_id: ["employee_id", "emp_id", "staff_id"],
@@ -136,10 +171,100 @@ const AUTO_MATCH: Record<string, string[]> = {
   normal_range_low: ["normal_range_low", "normal_low", "ref_low", "min"],
   normal_range_high: ["normal_range_high", "normal_high", "ref_high", "max"],
   tat_hours: ["tat_hours", "tat", "turnaround"],
-  joining_date: ["joining_date", "join_date", "doj"],
+  registration_number: ["registration_number", "reg_no", "reg_number", "registration", "license_no", "license_number", "medical_reg_no"],
+  employment_type: ["employment_type", "employment", "emp_type"],
+  payroll_type: ["payroll_type", "payroll", "tds_type"],
+  basic_salary: ["basic_salary", "basic", "salary", "basic_pay"],
+  hra_percent: ["hra_percent", "hra", "hra%", "hra_pct"],
+  da_percent: ["da_percent", "da", "da%", "da_pct"],
+  conveyance: ["conveyance", "conveyance_allowance", "transport_allowance"],
+  medical_allowance: ["medical_allowance", "medical", "medical_allow"],
+  pf_applicable: ["pf_applicable", "pf", "epf", "provident_fund"],
+  esic_applicable: ["esic_applicable", "esic", "esi_applicable"],
+  uan_number: ["uan_number", "uan", "uan_epf"],
+  pan_number: ["pan_number", "pan"],
+  esi_ip_number: ["esi_ip_number", "esi_ip", "esi_ip_no", "ip_number"],
+  license_expiry_date: ["license_expiry_date", "license_expiry", "license_expiry_dt", "registration_expiry", "reg_expiry"],
 };
 
 const STEPS = ["Upload", "Map", "Validate", "Preview", "Import"];
+
+const MONTH_NAMES = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+// Accepts Excel serial numbers, ISO, DD/MM/YYYY, MM/DD/YYYY, DD.MM.YYYY, "28 Nov 1966",
+// "November 28, 1966", 2-digit years, etc. Returns YYYY-MM-DD or null if unparseable.
+function parseFlexibleDate(raw: any): string | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+
+  if (raw instanceof Date) {
+    if (isNaN(raw.getTime())) return null;
+    return `${raw.getFullYear()}-${String(raw.getMonth() + 1).padStart(2, "0")}-${String(raw.getDate()).padStart(2, "0")}`;
+  }
+
+  const str = String(raw).trim();
+  if (!str) return null;
+
+  // Excel serial date (e.g. 24256)
+  if (/^\d{4,6}(\.\d+)?$/.test(str)) {
+    const num = Number(str);
+    if (num > 15000 && num < 60000) {
+      const excelEpoch = Date.UTC(1899, 11, 30);
+      const d = new Date(excelEpoch + num * 86400000);
+      if (!isNaN(d.getTime())) return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+    }
+  }
+
+  const toIso = (y: number, m: number, d: number): string | null => {
+    if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+    const dt = new Date(y, m - 1, d);
+    if (isNaN(dt.getTime()) || dt.getMonth() !== m - 1) return null;
+    return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  };
+
+  // Numeric with separators: /, -, . e.g. 28/11/1966, 1966-11-28, 28.11.66
+  const sep = str.match(/^(\d{1,4})[\/\-.](\d{1,2})[\/\-.](\d{1,4})$/);
+  if (sep) {
+    let [, a, b, c] = sep;
+    if (a.length === 4) {
+      const iso = toIso(Number(a), Number(b), Number(c));
+      if (iso) return iso;
+    } else {
+      let year = c.length === 4 ? Number(c) : (Number(c) > 30 ? 1900 + Number(c) : 2000 + Number(c));
+      let day = Number(a), month = Number(b);
+      // Disambiguate DD/MM vs MM/DD when one part can't be a month
+      if (day > 12 && month <= 12) { /* day/month order confirmed */ }
+      else if (month > 12 && day <= 12) { [day, month] = [month, day]; }
+      const iso = toIso(year, month, day);
+      if (iso) return iso;
+    }
+  }
+
+  // Textual month: "28 Nov 1966", "Nov 28, 1966", "28-Nov-1966"
+  const textMatch = str.toLowerCase().match(/([a-z]{3,})/);
+  if (textMatch) {
+    const monthIdx = MONTH_NAMES.findIndex((m) => textMatch[1].startsWith(m));
+    if (monthIdx >= 0) {
+      const nums = str.match(/\d+/g);
+      if (nums && nums.length >= 2) {
+        const yearPart = nums.find((n) => n.length === 4);
+        const dayPart = nums.find((n) => n !== yearPart && Number(n) <= 31);
+        if (yearPart && dayPart) {
+          const iso = toIso(Number(yearPart), monthIdx + 1, Number(dayPart));
+          if (iso) return iso;
+        }
+      }
+    }
+  }
+
+  // Fallback to native parsing (handles ISO timestamps, RFC formats, Date.toString() output)
+  const parsed = Date.parse(str);
+  if (!isNaN(parsed)) {
+    const d = new Date(parsed);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+
+  return null;
+}
 
 const ImportWizard: React.FC<ImportWizardProps> = ({ entityType, onClose, onComplete }) => {
   const { toast } = useToast();
@@ -177,7 +302,7 @@ const ImportWizard: React.FC<ImportWizardProps> = ({ entityType, onClose, onComp
     setFile(f);
     try {
       const buffer = await f.arrayBuffer();
-      const wb = XLSX.read(buffer, { type: "array" });
+      const wb = XLSX.read(buffer, { type: "array", cellDates: true });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const json = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: "" });
       if (json.length === 0) {
@@ -251,18 +376,11 @@ const ImportWizard: React.FC<ImportWizardProps> = ({ entityType, onClose, onComp
           if (!/^\d{10}$/.test(mapped.phone)) err = `Phone must be 10 digits (got "${mapped.phone}")`;
         }
         if (mapped.dob) {
-          // Accept DD/MM/YYYY, DD-MM-YYYY, MM/DD/YYYY, YYYY-MM-DD
           const dobStr = String(mapped.dob).trim();
-          const slashParts = dobStr.split(/[\/\-]/);
-          if (slashParts.length === 3) {
-            const [a, b, c] = slashParts;
-            // If first part is 4-digit year: YYYY-MM-DD
-            if (a.length === 4) mapped.dob = `${a}-${b.padStart(2,"0")}-${c.padStart(2,"0")}`;
-            // If last part is 4-digit year and first <= 31: DD/MM/YYYY
-            else if (c.length === 4 && Number(a) <= 31) mapped.dob = `${c}-${b.padStart(2,"0")}-${a.padStart(2,"0")}`;
-          }
-          if (isNaN(Date.parse(mapped.dob))) { err = `Invalid DOB format (got "${dobStr}"). Use YYYY-MM-DD`; }
-          else if (new Date(mapped.dob) > new Date()) err = "DOB cannot be in the future";
+          const iso = parseFlexibleDate(dobStr);
+          if (!iso) { err = `Invalid DOB format (got "${dobStr}"). Try YYYY-MM-DD, DD/MM/YYYY, or "28 Nov 1966"`; }
+          else if (new Date(iso) > new Date()) err = "DOB cannot be in the future";
+          else mapped.dob = iso;
         }
         if (mapped.full_name.length < 2) err = "Name too short (minimum 2 characters)";
         if (mapped.gender) {
@@ -272,15 +390,90 @@ const ImportWizard: React.FC<ImportWizardProps> = ({ entityType, onClose, onComp
           else if (["o", "other"].includes(g)) mapped.gender = "other";
           else err = "Gender must be Male/Female/Other";
         }
+        if (mapped.age && (isNaN(Number(mapped.age)) || Number(mapped.age) < 0 || Number(mapped.age) > 120)) {
+          err = "Age must be a number between 0 and 120";
+        }
+        if (mapped.patient_category) {
+          const validCategories = ["general", "bpl", "cghs", "echs", "pmjay", "esi", "insurance", "medicalaid"];
+          const c = mapped.patient_category.toLowerCase().replace(/[\s\-]/g, "");
+          if (!validCategories.includes(c)) err = `Patient Category must be: ${validCategories.join(", ")}`;
+          else mapped.patient_category = c;
+        }
+        if (mapped.aadhaar_id) mapped.aadhaar_id = String(mapped.aadhaar_id).replace(/\D/g, "").slice(0, 12);
+        if (mapped.patient_gstin) mapped.patient_gstin = String(mapped.patient_gstin).trim().toUpperCase();
+        if (mapped.chronic_conditions) {
+          mapped.chronic_conditions = String(mapped.chronic_conditions).split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+        }
+        if (mapped.emergency_contact_phone) {
+          const ecp = String(mapped.emergency_contact_phone).replace(/[\s\-+]/g, "").replace(/^91(\d{10})$/, "$1");
+          if (!/^\d{10}$/.test(ecp)) err = `Emergency Contact Phone must be 10 digits (got "${ecp}")`;
+          else mapped.emergency_contact_phone = ecp;
+        }
       } else if (entityType === "staff") {
         if (mapped.phone) {
           mapped.phone = String(mapped.phone).replace(/[\s\-+]/g, "").replace(/^91(\d{10})$/, "$1");
           if (!/^\d{10}$/.test(mapped.phone)) err = "Phone must be 10 digits";
         }
         if (mapped.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mapped.email)) err = "Invalid email";
-        const validRoles = ["doctor", "nurse", "admin", "pharmacist", "lab_tech", "receptionist", "super_admin"];
-        if (!validRoles.includes(mapped.role.toLowerCase())) err = `Role must be: ${validRoles.join(", ")}`;
-        else mapped.role = mapped.role.toLowerCase();
+        // Role → real app_role enum (mirrors SettingsStaffPage VALID_APP_ROLES)
+        const validRoles = [
+          "super_admin", "hospital_admin", "doctor", "nurse", "receptionist",
+          "pharmacist", "lab_tech", "accountant", "billing_executive", "hr_manager",
+          "lab_technician", "radiologist", "cfo", "billing_staff",
+        ];
+        const roleSynonyms: Record<string, string> = {
+          admin: "hospital_admin", administrator: "hospital_admin",
+          billing: "accountant", accounts: "accountant", accountant_staff: "accountant",
+          reception: "receptionist", "front desk": "receptionist",
+          "lab technician": "lab_tech", labtech: "lab_tech", "lab tech": "lab_tech",
+          pharmacy: "pharmacist", hr: "hr_manager",
+        };
+        const roleRaw = String(mapped.role).toLowerCase().trim();
+        const roleNorm = roleSynonyms[roleRaw] || roleRaw.replace(/[\s\-]+/g, "_");
+        if (!validRoles.includes(roleNorm)) err = `Role must be one of: ${validRoles.join(", ")}`;
+        else mapped.role = roleNorm;
+        // License expiry — any date format
+        if (!err && mapped.license_expiry_date) {
+          const licStr = String(mapped.license_expiry_date).trim();
+          const iso = parseFlexibleDate(licStr);
+          if (!iso) err = `Invalid License Expiry date (got "${licStr}"). Try YYYY-MM-DD, DD/MM/YYYY, or "31 Dec 2027"`;
+          else mapped.license_expiry_date = iso;
+        }
+        // Numeric fields
+        if (!err) {
+          for (const nf of ["basic_salary", "hra_percent", "da_percent", "conveyance", "medical_allowance"]) {
+            if (mapped[nf] !== "" && isNaN(Number(String(mapped[nf]).replace(/[,₹\s]/g, "")))) {
+              err = `${nf.replace(/_/g, " ")} must be a number (got "${mapped[nf]}")`;
+              break;
+            }
+            if (mapped[nf] !== "") mapped[nf] = String(mapped[nf]).replace(/[,₹\s]/g, "");
+          }
+        }
+        // Booleans
+        if (!err) {
+          const toBool = (v: any): boolean | "" => {
+            const s = String(v).toLowerCase().trim();
+            if (s === "") return "";
+            if (["yes", "y", "true", "1", "applicable"].includes(s)) return true;
+            return false;
+          };
+          if (mapped.pf_applicable !== "") mapped.pf_applicable = toBool(mapped.pf_applicable);
+          if (mapped.esic_applicable !== "") mapped.esic_applicable = toBool(mapped.esic_applicable);
+        }
+        // PAN — normalize, lenient validation
+        if (!err && mapped.pan_number) {
+          mapped.pan_number = String(mapped.pan_number).trim().toUpperCase();
+          if (!/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(mapped.pan_number)) err = `Invalid PAN (got "${mapped.pan_number}") — expected e.g. ABCDE1234F`;
+        }
+        // Payroll type → employee_type enum
+        if (!err && mapped.payroll_type) {
+          const p = String(mapped.payroll_type).toLowerCase().trim();
+          mapped.payroll_type = ["consultant", "194j", "form16a"].some((k) => p.includes(k)) ? "consultant" : "staff";
+        }
+        // Employment type — normalize
+        if (!err && mapped.employment_type) {
+          mapped.employment_type = String(mapped.employment_type).toLowerCase().trim().replace(/[\s\-]+/g, "_");
+        }
       } else if (entityType === "services") {
         const rate = parseFloat(mapped.rate);
         if (isNaN(rate) || rate <= 0) err = "Rate must be a positive number";
@@ -335,6 +528,14 @@ const ImportWizard: React.FC<ImportWizardProps> = ({ entityType, onClose, onComp
       return;
     }
 
+    // Staff: resolve department name → id (never auto-creates departments)
+    const deptByName = new Map<string, string>();
+    if (entityType === "staff") {
+      const { data: deptRows } = await supabase.from("departments")
+        .select("id, name").eq("hospital_id", hospitalId).eq("is_active", true);
+      (deptRows || []).forEach((d: any) => deptByName.set(String(d.name).trim().toLowerCase(), d.id));
+    }
+
     // Create migration job
     const { data: job, error: jobErr } = await supabase.from("migration_jobs" as any).insert({
       hospital_id: hospitalId,
@@ -371,8 +572,29 @@ const ImportWizard: React.FC<ImportWizardProps> = ({ entityType, onClose, onComp
           let entityId: string | null = null;
 
           if (entityType === "patients") {
-            record = { ...record, full_name: row.full_name, phone: row.phone || null, address: row.address || null, blood_group: row.blood_group || null };
+            record = {
+              ...record,
+              full_name: row.full_name,
+              phone: row.phone || null,
+              address: row.address || null,
+              blood_group: row.blood_group || null,
+              patient_category: row.patient_category || "general",
+              allergies: row.allergies || null,
+              chronic_conditions: Array.isArray(row.chronic_conditions) && row.chronic_conditions.length ? row.chronic_conditions : null,
+              insurance_id: row.insurance_id || null,
+              abha_id: row.abha_id || null,
+              aadhaar_id: row.aadhaar_id || null,
+              patient_gstin: row.patient_gstin || null,
+              referral_source: row.referral_source || null,
+              emergency_contact_name: row.emergency_contact_name || null,
+              emergency_contact_phone: row.emergency_contact_phone || null,
+            };
             if (row.dob) record.dob = new Date(row.dob).toISOString().split("T")[0];
+            else if (row.age) {
+              const d = new Date();
+              d.setFullYear(d.getFullYear() - parseInt(row.age));
+              record.dob = d.toISOString().split("T")[0];
+            }
             if (row.gender) record.gender = row.gender;
             if (row.uhid) record.uhid = row.uhid;
             // Duplicate check: match by UHID if provided, else by phone + name
@@ -387,11 +609,56 @@ const ImportWizard: React.FC<ImportWizardProps> = ({ entityType, onClose, onComp
             if (error) throw error;
             entityId = ins?.id || null;
           } else if (entityType === "staff") {
-            record = { ...record, full_name: row.full_name, phone: row.phone, email: row.email || null, role: row.role };
-            if (row.employee_id) record.employee_id = row.employee_id;
-            const { data: ins, error } = await supabase.from("users").insert(record).select("id").maybeSingle();
-            if (error) throw error;
-            entityId = ins?.id || null;
+            // Parity with the manual Add Staff form: write users + staff_profiles
+            const deptId = row.department ? (deptByName.get(String(row.department).trim().toLowerCase()) || null) : null;
+            const newId = crypto.randomUUID();
+            const userRow: any = {
+              id: newId,
+              hospital_id: hospitalId,
+              full_name: row.full_name,
+              phone: row.phone || null,
+              email: row.email || `${row.phone || Date.now()}@placeholder.local`,
+              role: row.role,
+              department_id: deptId,
+              registration_number: row.registration_number || null,
+              is_active: true,
+              can_login: false, // mirror manual add — login enabled later once auth is set up
+              auth_user_id: null,
+            };
+            const { error: uErr } = await supabase.from("users").insert(userRow);
+            if (uErr) throw uErr;
+            // Salary/statutory numbers arrive as strings; "" → default
+            const num = (v: any, d: number | null) =>
+              (v !== undefined && v !== "" && !isNaN(Number(v))) ? Number(v) : d;
+            const profile: any = {
+              user_id: newId,
+              hospital_id: hospitalId,
+              designation: row.role,
+              employment_type: row.employment_type || "permanent",
+              employee_type: row.payroll_type || "staff",
+              department_id: deptId,
+              registration_number: row.registration_number || null,
+              employee_id: row.employee_id || null,
+              basic_salary: num(row.basic_salary, null),
+              hra_percent: num(row.hra_percent, 20),
+              da_percent: num(row.da_percent, 10),
+              conveyance: num(row.conveyance, 1600),
+              medical_allowance: num(row.medical_allowance, 1250),
+              pf_applicable: (row.pf_applicable === "" || row.pf_applicable === undefined) ? true : row.pf_applicable === true,
+              esic_applicable: row.esic_applicable === true,
+              uan_number: row.uan_number || null,
+              pan_number: row.pan_number || null,
+              esi_ip_number: row.esi_ip_number || null,
+              license_expiry_date: row.license_expiry_date || null,
+              is_active: true,
+            };
+            const { error: pErr } = await (supabase as any).from("staff_profiles").insert(profile);
+            if (pErr) {
+              // Roll back the just-inserted user so we don't leave an orphan account
+              await supabase.from("users").delete().eq("id", newId);
+              throw pErr;
+            }
+            entityId = newId;
           } else if (entityType === "services") {
             record = { ...record, name: row.service_name, category: row.category, fee: parseFloat(row.rate), item_type: row.category };
             if (row.gst_percent) record.gst_percent = Number(row.gst_percent);

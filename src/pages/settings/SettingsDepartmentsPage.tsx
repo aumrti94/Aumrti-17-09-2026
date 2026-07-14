@@ -4,10 +4,13 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useHospitalId } from "@/hooks/useHospitalId";
-import { ArrowLeft, Plus, X, Building2, Trash2 } from "lucide-react";
+import { ArrowLeft, Plus, X, Building2, Trash2, Blocks, CheckCircle2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { useConfigValues } from "@/hooks/useConfigValues";
 import { cn } from "@/lib/utils";
+import { useSubscriptionConfig, isModuleKeyAllowed } from "@/hooks/useSubscriptionConfig";
+import { useProductMode } from "@/contexts/ProductModeContext";
+import { moduleDepartmentLinks } from "@/lib/moduleDepartments";
 
 const COMMON_DEPTS = [
   "General Medicine", "General Surgery", "Paediatrics", "Gynaecology & Obstetrics",
@@ -27,6 +30,10 @@ const SettingsDepartmentsPage: React.FC = () => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", type: "clinical" as string, head_doctor_id: "", dept_code: "" });
   const [checkedDepts, setCheckedDepts] = useState<Set<string>>(new Set());
+  const [checkedModuleDepts, setCheckedModuleDepts] = useState<Set<string>>(new Set());
+
+  const { enabledModules } = useSubscriptionConfig();
+  const { isModuleEnabled } = useProductMode();
 
   const { data: departments, isLoading } = useQuery({
     queryKey: ["settings-departments"],
@@ -96,9 +103,8 @@ const SettingsDepartmentsPage: React.FC = () => {
   });
 
   const bulkAdd = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (names: string[]) => {
       const hid = await getHospitalId();
-      const names = Array.from(checkedDepts);
       if (!names.length) return 0;
       const rows = names.map((n) => ({ hospital_id: hid, name: n, type: "clinical" as const, is_active: true }));
       const { error } = await supabase.from("departments").insert(rows);
@@ -109,6 +115,7 @@ const SettingsDepartmentsPage: React.FC = () => {
       toast({ title: `${count} departments added` });
       qc.invalidateQueries({ queryKey: ["settings-departments"] });
       setCheckedDepts(new Set());
+      setCheckedModuleDepts(new Set());
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -138,8 +145,39 @@ const SettingsDepartmentsPage: React.FC = () => {
   const availableCommon = COMMON_DEPTS.filter((n) => !existingNames.has(n));
   const showBanner = !isLoading && (departments?.length ?? 0) < 3 && availableCommon.length > 0;
 
+  // Departments implied by the specialized/clinical modules this hospital runs.
+  // Only modules the hospital can actually access (plan-entitled AND toggled on)
+  // are considered. We keep BOTH the ones already set up and the ones still
+  // missing, so the full module→department mapping is visible (a hidden row
+  // reads as "module missing" even when the department already exists).
+  const moduleDeptRows = useMemo(() => {
+    const map = new Map<string, { department: string; modules: string[]; exists: boolean }>();
+    for (const link of moduleDepartmentLinks()) {
+      const accessible = isModuleKeyAllowed(link.moduleKey, enabledModules) && isModuleEnabled(link.moduleKey);
+      if (!accessible) continue;
+      const row = map.get(link.department);
+      if (row) {
+        if (!row.modules.includes(link.moduleName)) row.modules.push(link.moduleName);
+      } else {
+        map.set(link.department, {
+          department: link.department,
+          modules: [link.moduleName],
+          exists: existingNames.has(link.department),
+        });
+      }
+    }
+    return [...map.values()].sort((a, b) => a.department.localeCompare(b.department));
+  }, [enabledModules, isModuleEnabled, existingNames]);
+
+  const moduleDeptMissing = moduleDeptRows.filter((r) => !r.exists);
+  const moduleDeptPresent = moduleDeptRows.filter((r) => r.exists);
+
   const toggleCheck = (name: string) => {
     setCheckedDepts((prev) => { const s = new Set(prev); s.has(name) ? s.delete(name) : s.add(name); return s; });
+  };
+
+  const toggleModuleCheck = (name: string) => {
+    setCheckedModuleDepts((prev) => { const s = new Set(prev); s.has(name) ? s.delete(name) : s.add(name); return s; });
   };
 
   const typeColor = (t: string) => {
@@ -177,10 +215,63 @@ const SettingsDepartmentsPage: React.FC = () => {
               </label>
             ))}
           </div>
-          <button onClick={() => bulkAdd.mutate()} disabled={checkedDepts.size === 0 || bulkAdd.isPending}
+          <button onClick={() => bulkAdd.mutate(Array.from(checkedDepts))} disabled={checkedDepts.size === 0 || bulkAdd.isPending}
             className="bg-amber-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-amber-700 active:scale-[0.97] disabled:opacity-40">
             {bulkAdd.isPending ? "Adding..." : `Add Selected Departments (${checkedDepts.size})`}
           </button>
+        </div>
+      )}
+
+      {/* MODULE-DERIVED DEPARTMENTS */}
+      {!isLoading && moduleDeptRows.length > 0 && (
+        <div className="flex-shrink-0 mx-6 mt-3 bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <Blocks size={15} className="text-blue-700" />
+            <p className="text-[13px] text-blue-900 font-medium">Departments for the modules you run</p>
+            <span className="text-[11px] text-blue-700/70">
+              {moduleDeptPresent.length}/{moduleDeptRows.length} set up
+            </span>
+          </div>
+
+          {moduleDeptMissing.length > 0 ? (
+            <>
+              <p className="text-[12px] text-blue-800/80 mb-3">
+                These specialized modules don&rsquo;t have a matching department yet. Add the ones you actually operate.
+              </p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mb-3">
+                {moduleDeptMissing.map(({ department, modules }) => (
+                  <label key={department} className="flex items-center gap-2 cursor-pointer text-[13px] text-foreground hover:bg-blue-100/50 rounded px-1 py-0.5">
+                    <input type="checkbox" checked={checkedModuleDepts.has(department)} onChange={() => toggleModuleCheck(department)}
+                      className="h-4 w-4 rounded border-blue-300 text-blue-700 focus:ring-0" />
+                    <span>{department}</span>
+                    <span className="text-[11px] text-blue-700/70 truncate">· {modules.join(", ")}</span>
+                  </label>
+                ))}
+              </div>
+              <button onClick={() => bulkAdd.mutate(Array.from(checkedModuleDepts))} disabled={checkedModuleDepts.size === 0 || bulkAdd.isPending}
+                className="bg-blue-700 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-800 active:scale-[0.97] disabled:opacity-40">
+                {bulkAdd.isPending ? "Adding..." : `Add Selected Departments (${checkedModuleDepts.size})`}
+              </button>
+            </>
+          ) : (
+            <p className="text-[12px] text-emerald-700 mb-3 flex items-center gap-1.5">
+              <CheckCircle2 size={14} /> Every module you run already has a matching department.
+            </p>
+          )}
+
+          {moduleDeptPresent.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-blue-200/70">
+              <p className="text-[11px] font-medium text-blue-800/70 uppercase tracking-wide mb-1.5">Already set up</p>
+              <div className="flex flex-wrap gap-1.5">
+                {moduleDeptPresent.map(({ department, modules }) => (
+                  <span key={department} title={modules.join(", ")}
+                    className="inline-flex items-center gap-1 text-[11px] text-blue-800/80 bg-blue-100/60 rounded-full px-2 py-0.5">
+                    <CheckCircle2 size={11} className="text-emerald-600" /> {department}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

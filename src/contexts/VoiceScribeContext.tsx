@@ -44,6 +44,7 @@ interface VoiceScribeContextType {
   rawTranscript: string;
   structuredOutput: Record<string, unknown> | null;
   currentSessionType: SessionType;
+  currentPatientId: string | null;
   selectedLanguage: string;
   fallbackReason: string;
   setSelectedLanguage: (v: string) => void;
@@ -53,6 +54,7 @@ interface VoiceScribeContextType {
   setRawTranscript: (v: string) => void;
   setStructuredOutput: (v: Record<string, unknown> | null) => void;
   setCurrentSessionType: (v: SessionType) => void;
+  setCurrentPatientId: (v: string | null) => void;
   setFallbackReason: (v: string) => void;
   registerScreen: (screenId: string, fillFn: (data: Record<string, unknown>) => void) => void;
   unregisterScreen: (screenId: string) => void;
@@ -85,6 +87,10 @@ export const VoiceScribeProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [rawTranscript, setRawTranscript] = useState("");
   const [structuredOutput, setStructuredOutput] = useState<Record<string, unknown> | null>(null);
   const [currentSessionType, setCurrentSessionType] = useState<SessionType>("opd_consultation");
+  // Which patient the panel is currently scribing for — set by whichever
+  // screen's VoiceDictationButton starts a recording, so ai-clinical-voice
+  // can pull that patient's known allergies/medications for safety checks.
+  const [currentPatientId, setCurrentPatientId] = useState<string | null>(null);
   const [fallbackReason, setFallbackReason] = useState("");
   const [selectedLanguage, setSelectedLanguageState] = useState<string>(
     () => localStorage.getItem("vscribe_preferred_language") || "auto"
@@ -128,9 +134,9 @@ export const VoiceScribeProvider: React.FC<{ children: React.ReactNode }> = ({ c
   return (
     <VoiceScribeContext.Provider value={{
       isRecording, isPanelOpen, panelState, rawTranscript, structuredOutput,
-      currentSessionType, selectedLanguage, fallbackReason, setSelectedLanguage,
+      currentSessionType, currentPatientId, selectedLanguage, fallbackReason, setSelectedLanguage,
       setIsRecording, setIsPanelOpen, setPanelState,
-      setRawTranscript, setStructuredOutput, setCurrentSessionType, setFallbackReason,
+      setRawTranscript, setStructuredOutput, setCurrentSessionType, setCurrentPatientId, setFallbackReason,
       registerScreen, unregisterScreen, applyToCurrentScreen, resetSession,
       detectedSessionType,
     }}>

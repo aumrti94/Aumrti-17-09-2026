@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import SettingsPageWrapper from "@/components/settings/SettingsPageWrapper";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Download, FileSpreadsheet, Users, Receipt, Info, Loader2 } from "lucide-react";
+import { Download, FileSpreadsheet, Users, Receipt, Info, Loader2, ShieldAlert } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
@@ -51,6 +51,47 @@ const SettingsBackupPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [dateFilter, setDateFilter] = useState("today");
   const [exporting, setExporting] = useState<string | null>(null);
+
+  // ── Data erasure request (DPDP right-to-erasure intake) ──
+  const [erasureReason, setErasureReason] = useState("");
+  const [erasureConfirmed, setErasureConfirmed] = useState(false);
+  const [submittingErasure, setSubmittingErasure] = useState(false);
+  const [pendingErasureRequest, setPendingErasureRequest] = useState<{ status: string; requested_at: string } | null>(null);
+
+  useEffect(() => {
+    if (!hospitalId) return;
+    (supabase as any)
+      .from("data_erasure_requests")
+      .select("status, requested_at")
+      .eq("hospital_id", hospitalId)
+      .in("status", ["pending", "in_review", "approved"])
+      .order("requested_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }: any) => setPendingErasureRequest(data || null));
+  }, [hospitalId]);
+
+  const submitErasureRequest = async () => {
+    if (!hospitalId || !erasureConfirmed) return;
+    setSubmittingErasure(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const { error } = await (supabase as any).from("data_erasure_requests").insert({
+        hospital_id: hospitalId,
+        requested_by: user?.id,
+        reason: erasureReason.trim() || null,
+      });
+      if (error) throw error;
+      setPendingErasureRequest({ status: "pending", requested_at: new Date().toISOString() });
+      setErasureReason("");
+      setErasureConfirmed(false);
+      toast({ title: "Erasure request submitted", description: "Aumrti's team will review this request and contact you before any data is removed." });
+    } catch (e) {
+      toast({ title: "Failed to submit request", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally {
+      setSubmittingErasure(false);
+    }
+  };
 
   useEffect(() => {
     if (!hospitalId) return;
@@ -189,6 +230,47 @@ const SettingsBackupPage: React.FC = () => {
             <p className="text-xs text-muted-foreground mt-1">Your data is automatically backed up daily. Point-in-time recovery available. Contact support for restore requests.</p>
           </div>
         </div>
+
+        {/* ── Data erasure request ── */}
+        <section className="border border-red-300 rounded-xl p-5 space-y-3 bg-red-50">
+          <p className="text-xs font-bold uppercase tracking-wider text-red-600 flex items-center gap-1.5">
+            <ShieldAlert size={13} /> Request Account &amp; Data Erasure
+          </p>
+          {pendingErasureRequest ? (
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              A request is already <strong className="text-foreground capitalize">{pendingErasureRequest.status.replace("_", " ")}</strong> since{" "}
+              {formatDateTimeIST(pendingErasureRequest.requested_at)}. Aumrti's team will contact your registered admin before any action is taken —
+              no data has been removed yet.
+            </p>
+          ) : (
+            <>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Under DPDP Act 2023, you may request permanent erasure of your hospital's account and all associated data. This does{" "}
+                <strong className="text-foreground">not</strong> delete anything immediately — it opens a reviewed request. Aumrti's team will verify
+                and contact your registered admin before any data is removed.
+              </p>
+              <textarea
+                value={erasureReason}
+                onChange={(e) => setErasureReason(e.target.value)}
+                placeholder="Reason (optional)"
+                className="w-full h-16 px-3 py-2 text-xs bg-background border border-border rounded-lg text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-red-400 resize-none"
+              />
+              <label className="flex items-start gap-2 text-xs text-muted-foreground cursor-pointer">
+                <input type="checkbox" checked={erasureConfirmed} onChange={(e) => setErasureConfirmed(e.target.checked)} className="mt-0.5" />
+                I understand this will open a request to permanently erase this hospital's account and all its data, and cannot be reversed once completed.
+              </label>
+              <Button
+                variant="outline"
+                onClick={submitErasureRequest}
+                disabled={!erasureConfirmed || submittingErasure}
+                className="border-red-300 text-red-600 hover:bg-red-100"
+              >
+                {submittingErasure ? <Loader2 size={13} className="animate-spin mr-2" /> : <ShieldAlert size={13} className="mr-2" />}
+                Submit Erasure Request
+              </Button>
+            </>
+          )}
+        </section>
       </div>
     </SettingsPageWrapper>
   );

@@ -7,7 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { autoPostJournalEntry } from "@/lib/accounting";
+import {
+  postManualExpenseJournal,
+  postMultiLineJournal,
+  EXPENSE_CATEGORY_ACCOUNT,
+  PAYMENT_MODE_ACCOUNT,
+} from "@/lib/accounting";
 import { Loader2 } from "lucide-react";
 
 const CATEGORIES = [
@@ -68,16 +73,41 @@ const RecordExpenseModal: React.FC<Props> = ({ hospitalId, userId, onClose }) =>
 
     if (error) { toast({ title: "Failed to save", variant: "destructive" }); setSaving(false); return; }
 
-    // Auto-post journal entry for expense
-    await autoPostJournalEntry({
-      triggerEvent: "expense_recorded",
-      sourceModule: "accounts",
-      sourceId: expense.id,
-      amount: totalAmount,
-      description: `Expense: ${form.description}`,
-      hospitalId,
-      postedBy: userId,
-    });
+    // Post to GL against the per-category expense account (not a single generic
+    // "Expenses" line) and the payment-mode cash/bank account, so the ledger P&L
+    // shows real expense detail. When GST is charged, split it out to GST Input
+    // Tax Credit so the expense is booked net of recoverable tax.
+    const base = Number(form.amount) || 0;
+    const gst = Number(form.gst_amount) || 0;
+    if (gst > 0) {
+      const debitCode = EXPENSE_CATEGORY_ACCOUNT[form.expense_category] || "5060";
+      const creditCode = PAYMENT_MODE_ACCOUNT[form.payment_mode] || "1001";
+      await postMultiLineJournal({
+        hospitalId,
+        postedBy: userId,
+        sourceModule: "accounts",
+        sourceId: expense.id,
+        description: `Expense: ${form.description}`,
+        triggerEvent: "expense_recorded",
+        entryDate: form.expense_date,
+        lines: [
+          { accountCode: debitCode, debit: base, description: `Expense: ${form.description}` },
+          { accountCode: "1050", debit: gst, description: "GST Input Tax Credit" },
+          { accountCode: creditCode, credit: base + gst },
+        ],
+      });
+    } else {
+      await postManualExpenseJournal({
+        hospitalId,
+        postedBy: userId,
+        amount: base,
+        description: `Expense: ${form.description}`,
+        expenseCategory: form.expense_category,
+        paymentMode: form.payment_mode,
+        sourceId: expense.id,
+        entryDate: form.expense_date,
+      });
+    }
 
     toast({ title: "Expense recorded ✓" });
     setSaving(false);

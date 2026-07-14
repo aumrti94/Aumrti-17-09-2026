@@ -95,6 +95,7 @@ serve(async (req) => {
     const paymentId = payment.id;
     const notes = payment.notes || {};
     const billId = notes.bill_id;
+    const hospitalId = notes.hospital_id;
 
     if (!billId) {
       console.log("No bill_id in payment notes, skipping auto-reconciliation");
@@ -104,14 +105,13 @@ serve(async (req) => {
       });
     }
 
-    // Get the bill
-    const { data: bill, error: billError } = await supabase
-      .from("bills")
-      .select("id, hospital_id, paid_amount, balance_due, total_amount")
-      .eq("id", billId)
-      .maybeSingle();
-
-    if (billError || !bill) {
+    // Resolve hospital_id (notes carries it for payment links; fall back to the bill).
+    let resolvedHospitalId = hospitalId;
+    if (!resolvedHospitalId) {
+      const { data: bill } = await supabase.from("bills").select("hospital_id").eq("id", billId).maybeSingle();
+      resolvedHospitalId = bill?.hospital_id;
+    }
+    if (!resolvedHospitalId) {
       console.error("Bill not found:", billId);
       return new Response(JSON.stringify({ error: "Bill not found" }), {
         status: 404,
@@ -119,46 +119,38 @@ serve(async (req) => {
       });
     }
 
-    // Check for duplicate payment
-    const { data: existing } = await supabase
-      .from("bill_payments")
-      .select("id")
-      .eq("transaction_id", paymentId)
-      .limit(1);
+    // Razorpay payment method -> this app's payment_mode enum. Unrecognised
+    // methods (wallet, emi, ...) fall back to "upi", which has a seeded
+    // auto_posting_rules row, so the GL posting below never silently no-ops.
+    const methodMap: Record<string, string> = { upi: "upi", card: "card", netbanking: "net_banking" };
+    const paymentMode = methodMap[payment.method as string] || "upi";
 
-    if (existing && existing.length > 0) {
-      return new Response(JSON.stringify({ status: "duplicate" }), {
-        status: 200,
+    // Single atomic, GL-correct write path — inserts bill_payments, updates the
+    // bill (+ admission billing_cleared), and posts the journal entry. Mirrors
+    // recordBillPayment() on the browser side; this is the DB-side equivalent
+    // for contexts (like this webhook) that can't import that TS module.
+    const { data: result, error: rpcError } = await supabase.rpc("record_online_bill_payment", {
+      p_hospital_id: resolvedHospitalId,
+      p_bill_id: billId,
+      p_amount: amountInr,
+      p_payment_mode: paymentMode,
+      p_transaction_id: paymentId,
+      p_gateway_reference: paymentId,
+      p_notes: "Razorpay auto-payment",
+    });
+
+    if (rpcError) {
+      console.error("record_online_bill_payment failed:", rpcError);
+      return new Response(JSON.stringify({ error: rpcError.message }), {
+        status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Insert payment
-    await supabase.from("bill_payments").insert({
-      hospital_id: bill.hospital_id,
-      bill_id: bill.id,
-      payment_mode: "upi",
-      amount: amountInr,
-      transaction_id: paymentId,
-      gateway_reference: paymentId,
-      notes: "Razorpay auto-payment",
-    });
-
-    // Update bill
-    const newPaid = (bill.paid_amount || 0) + amountInr;
-    const newBalance = Math.max(0, (bill.balance_due || 0) - amountInr);
-    const newStatus = newBalance <= 0 ? "paid" : "partial";
-
-    await supabase.from("bills").update({
-      paid_amount: newPaid,
-      balance_due: newBalance,
-      payment_status: newStatus,
-    }).eq("id", bill.id);
-
-    console.log(`Auto-reconciled ₹${amountInr} for bill ${billId}`);
+    console.log(`Auto-reconciled ₹${amountInr} for bill ${billId}:`, result);
 
     return new Response(
-      JSON.stringify({ status: "reconciled", amount: amountInr, bill_id: billId }),
+      JSON.stringify({ ...(result as object), amount: amountInr, bill_id: billId }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {

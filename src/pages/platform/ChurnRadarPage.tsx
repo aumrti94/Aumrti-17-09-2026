@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { RefreshCw, Phone, Mail, AlertTriangle, CheckCircle2, Eye } from "lucide-react";
 import { fmtINR, computeHealthScore } from "@/lib/platform-utils";
+import MetricInfoIcon from "@/components/platform/MetricInfoIcon";
 import { format, formatDistanceToNow } from "date-fns";
 
 // ─── types ────────────────────────────────────────────────────────────────────
@@ -22,6 +23,7 @@ interface HospitalRisk {
   risk: "high" | "medium" | "low";
   signals: string[];
   action: string;
+  lastRemediatedAt: string | null;
 }
 
 // ─── Health Score ─────────────────────────────────────────────────────────────
@@ -60,13 +62,18 @@ function buildSignals(h: HospitalRisk, hasRecentOpd: boolean, hasRecentBilling: 
 async function fetchChurnData(): Promise<HospitalRisk[]> {
   const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
 
-  const [hRes, sRes, activeRes] = await Promise.all([
+  const [hRes, sRes, activeRes, remRes] = await Promise.all([
     (supabase as any).from("hospitals")
       .select("id, name, state, beds_count, created_at")
-      .eq("is_active", true),
+      .eq("is_active", true)
+      .is("deleted_at", null),
     (supabase as any).from("hospital_subscriptions")
       .select("hospital_id, status, trial_ends_at, subscription_plans(name, price_monthly)"),
     (supabase as any).rpc("platform_active_hospitals", { since: thirtyDaysAgo }),
+    (supabase as any).from("churn_remediation_actions")
+      .select("hospital_id, triggered_at")
+      .eq("status", "sent")
+      .order("triggered_at", { ascending: false }),
   ]);
 
   const hospitals: any[] = hRes.data || [];
@@ -75,6 +82,11 @@ async function fetchChurnData(): Promise<HospitalRisk[]> {
   const activeList       = activeRes.data || [];
   const opdSet           = new Set(activeList.filter((r: any) => r.has_opd).map((r: any) => r.hospital_id));
   const billSet          = new Set(activeList.filter((r: any) => r.has_billing).map((r: any) => r.hospital_id));
+  // First (most recent, since remRes is ordered desc) match per hospital wins.
+  const lastRemediatedByHospital = new Map<string, string>();
+  for (const r of (remRes.data || [])) {
+    if (!lastRemediatedByHospital.has(r.hospital_id)) lastRemediatedByHospital.set(r.hospital_id, r.triggered_at);
+  }
 
   return hospitals
     .map((h: any): HospitalRisk => {
@@ -99,6 +111,7 @@ async function fetchChurnData(): Promise<HospitalRisk[]> {
         risk:    score < 40 ? "high" : score < 70 ? "medium" : "low",
         signals: [],
         action:  "",
+        lastRemediatedAt: lastRemediatedByHospital.get(h.id) || null,
       };
 
       row.signals = buildSignals(row, hasOpd, hasBill);
@@ -196,6 +209,11 @@ export default function ChurnRadarPage() {
                   }`}>
                     {h.action}
                   </p>
+                  {h.lastRemediatedAt && (
+                    <span className="text-[10px] text-violet-600 bg-violet-500/10 px-1.5 py-0.5 rounded-full">
+                      Auto check-in sent {formatDistanceToNow(new Date(h.lastRemediatedAt), { addSuffix: true })}
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -236,7 +254,10 @@ export default function ChurnRadarPage() {
     <div className="flex flex-col h-full">
       <div className="h-14 border-b border-border flex items-center justify-between px-6 shrink-0">
         <div>
-          <h1 className="text-[15px] font-semibold text-foreground">Churn Risk Radar</h1>
+          <h1 className="text-[15px] font-semibold text-foreground flex items-center">
+            Churn Risk Radar
+            <MetricInfoIcon metricKey="churn_health_score" />
+          </h1>
           <p className="text-[11px] text-muted-foreground mt-0.5">Hospitals ranked by churn risk · act before they cancel</p>
         </div>
         <button onClick={() => refetch()} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">

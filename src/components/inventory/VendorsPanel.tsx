@@ -25,6 +25,18 @@ const VendorsPanel: React.FC = () => {
   const [metrics, setMetrics] = useState<VendorMetrics | null>(null);
   const [contracts, setContracts] = useState<any[]>([]);
   const [apInfo, setApInfo] = useState<{ outstanding: number; aging: number[] } | null>(null);
+  const [tdsSections, setTdsSections] = useState<any[]>([]);
+
+  useEffect(() => {
+    (supabase as any).from("tds_sections").select("*").eq("is_active", true).order("section").then(({ data }: any) => setTdsSections(data || []));
+  }, []);
+
+  const setVendorTds = async (section: string) => {
+    if (!selected) return;
+    await (supabase as any).from("vendors").update({ default_tds_section: section || null }).eq("id", selected.id);
+    setSelected((s: any) => ({ ...s, default_tds_section: section }));
+    setVendors((prev) => prev.map((v) => v.id === selected.id ? { ...v, default_tds_section: section } : v));
+  };
   const [contractItemResults, setContractItemResults] = useState<any[]>([]);
   const [contractForm, setContractForm] = useState({ item_id: "", item_name: "", rate: "", gst: "12", valid_to: "", itemSearch: "" });
   const [form, setForm] = useState({ vendor_name: "", vendor_code: "", gstin: "", contact_name: "", contact_phone: "", contact_email: "", address: "", credit_days: "30" });
@@ -419,6 +431,14 @@ const VendorsPanel: React.FC = () => {
                       <p className="text-[9px] text-muted-foreground">{label}</p>
                     </div>
                   ))}
+                </div>
+                <div className="flex items-center gap-2 mt-3 pt-2 border-t border-border/50">
+                  <span className="text-[11px] text-muted-foreground">Default TDS section</span>
+                  <select value={selected.default_tds_section || ""} onChange={(e) => setVendorTds(e.target.value)} className="h-7 text-xs border border-border rounded px-2 bg-background">
+                    <option value="">None</option>
+                    {tdsSections.map((s) => <option key={s.id} value={s.section}>{s.section} — {s.rate}%</option>)}
+                  </select>
+                  <span className="text-[10px] text-muted-foreground">(auto-applied on vendor payment)</span>
                 </div>
               </div>
             )}

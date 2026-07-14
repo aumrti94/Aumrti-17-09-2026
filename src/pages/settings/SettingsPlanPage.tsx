@@ -4,7 +4,8 @@ import SettingsPageWrapper from "@/components/settings/SettingsPageWrapper";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Download, Mail, AlertTriangle, Clock, CheckCircle2, XCircle, Loader2, FileText, ExternalLink } from "lucide-react";
+import { Download, Mail, AlertTriangle, Clock, CheckCircle2, XCircle, Loader2, FileText, ExternalLink, Gift, Copy, Check } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { useSubscriptionConfig } from "@/hooks/useSubscriptionConfig";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { supabase } from "@/integrations/supabase/client";
@@ -45,6 +46,23 @@ const fmtDate = (iso: string | null | undefined) => {
   return new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 };
 
+// Human-readable storage size (decimal GB/MB/KB, matching quota units).
+const formatBytes = (bytes: number): string => {
+  const n = Number(bytes) || 0;
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(0)} KB`;
+  return `${n} B`;
+};
+
+// Usage percentage that treats a limit of 0 as a real hard cap (not "unlimited").
+// null limit  → unlimited → 0%; limit 0 with any usage → over limit → 100%.
+const limitPct = (used: number, limit: number | null): number => {
+  if (limit == null) return 0;
+  if (limit <= 0) return used > 0 ? 100 : 0;
+  return Math.min(100, Math.round((used / limit) * 100));
+};
+
 const SettingsPlanPage: React.FC = () => {
   const { hospitalId } = useHospitalId();
 
@@ -72,6 +90,77 @@ const SettingsPlanPage: React.FC = () => {
     enabled: !!hospitalId,
     staleTime: 5 * 60_000,
   });
+
+  // AI usage this billing cycle (calendar month) — observability only, not
+  // billed yet. Only counts toward ai_included_budget_usd if the plan has
+  // one set (NULL for every plan today — see the migration comment).
+  const { data: aiUsage } = useQuery({
+    queryKey: ["plan-ai-usage", hospitalId],
+    queryFn: async () => {
+      const monthStart = new Date();
+      monthStart.setDate(1);
+      monthStart.setHours(0, 0, 0, 0);
+      const { data } = await (supabase as any)
+        .from("ai_cost_daily")
+        .select("total_cost_usd, total_calls")
+        .eq("hospital_id", hospitalId!)
+        .gte("date", monthStart.toISOString().slice(0, 10));
+      const rows = data || [];
+      return {
+        totalCostUsd: rows.reduce((s: number, r: any) => s + Number(r.total_cost_usd || 0), 0),
+        totalCalls: rows.reduce((s: number, r: any) => s + Number(r.total_calls || 0), 0),
+      };
+    },
+    enabled: !!hospitalId,
+    staleTime: 5 * 60_000,
+  });
+
+  const { data: aiBudget } = useQuery({
+    queryKey: ["plan-ai-budget", plan?.id],
+    queryFn: async () => {
+      const { data } = await (supabase as any)
+        .from("subscription_plans")
+        .select("ai_included_budget_usd")
+        .eq("id", plan!.id)
+        .maybeSingle();
+      return data?.ai_included_budget_usd as number | null;
+    },
+    enabled: !!plan?.id,
+    staleTime: 5 * 60_000,
+  });
+
+  // Storage usage: exact file bytes + estimated DB-row share (per-tenant RPC)
+  const { data: storageUsage } = useQuery({
+    queryKey: ["plan-storage", hospitalId],
+    queryFn: async () => {
+      const { data } = await (supabase as any).rpc("get_storage_usage", { p_hospital_id: hospitalId });
+      return (data || { file_bytes: 0, db_bytes_est: 0, total_bytes: 0 }) as {
+        file_bytes: number; db_bytes_est: number; total_bytes: number;
+      };
+    },
+    enabled: !!hospitalId,
+    staleTime: 5 * 60_000,
+  });
+
+  // Refer & Earn: the hospital's own referral code (lazily created) + funnel stats
+  const { data: referral } = useQuery({
+    queryKey: ["hospital-referral", hospitalId],
+    queryFn: async () => {
+      const [codeRes, statsRes] = await Promise.all([
+        (supabase as any).rpc("get_or_create_hospital_referral_code", { p_hospital_id: hospitalId }),
+        (supabase as any).rpc("get_referral_stats", { p_hospital_id: hospitalId }),
+      ]);
+      return {
+        code: (codeRes.data as any)?.code || "",
+        signed_up: (statsRes.data as any)?.signed_up || 0,
+        converted: (statsRes.data as any)?.converted || 0,
+        reward_earned: (statsRes.data as any)?.reward_earned || 0,
+      };
+    },
+    enabled: !!hospitalId,
+    staleTime: 5 * 60_000,
+  });
+  const [refCopied, setRefCopied] = React.useState(false);
 
   // Other available plans for upgrade section
   const { data: allPlans = [] } = useQuery({
@@ -126,24 +215,39 @@ const SettingsPlanPage: React.FC = () => {
   const maxStaff = plan?.max_staff ?? null;
   const maxBeds  = plan?.max_beds  ?? null;
 
-  const usageRows = [
+  // Storage: total_bytes vs plan quota (storage_included_gb; NULL = unlimited)
+  const storageBytes = storageUsage?.total_bytes ?? 0;
+  const storageGb = plan?.storage_included_gb ?? null;
+  const storageLimitBytes = storageGb ? storageGb * 1e9 : null;
+
+  const usageRows: {
+    label: string; used: number | string; limit: number | string | null; pct: number; sub?: string;
+  }[] = [
     {
       label: "Staff Accounts",
       used: staffCount,
       limit: maxStaff,
-      pct: maxStaff ? Math.round((staffCount / maxStaff) * 100) : 0,
+      // limitPct: null limit = unlimited (0%); a 0 limit with any usage = over limit (100%).
+      pct: limitPct(staffCount, maxStaff),
     },
     {
       label: "Registered Beds",
       used: bedsCount,
       limit: maxBeds,
-      pct: maxBeds ? Math.round((bedsCount / maxBeds) * 100) : 0,
+      pct: limitPct(bedsCount, maxBeds),
     },
     {
       label: "Active Modules",
       used: enabledModules.length,
       limit: 56,
       pct: Math.round((enabledModules.length / 56) * 100),
+    },
+    {
+      label: "Database Storage",
+      used: formatBytes(storageBytes),
+      limit: storageLimitBytes ? formatBytes(storageLimitBytes) : null,
+      pct: storageLimitBytes ? Math.round((storageBytes / storageLimitBytes) * 100) : 0,
+      sub: `Files ${formatBytes(storageUsage?.file_bytes ?? 0)} · DB ≈ ${formatBytes(storageUsage?.db_bytes_est ?? 0)} (est.)`,
     },
   ];
 
@@ -251,7 +355,7 @@ const SettingsPlanPage: React.FC = () => {
                 <p className="font-medium text-foreground mt-0.5">{fmtDate(subscription.current_period_end)}</p>
               </div>
             )}
-            {plan?.max_beds && (
+            {plan?.max_beds != null && (
               <div>
                 <p className="text-xs text-muted-foreground">Bed Limit</p>
                 <p className="font-medium text-foreground mt-0.5">{plan.max_beds} beds</p>
@@ -263,26 +367,107 @@ const SettingsPlanPage: React.FC = () => {
         {/* ── Usage statistics ── */}
         <section>
           <h2 className="text-sm font-semibold text-foreground mb-4">Usage Statistics</h2>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {usageRows.map((u) => (
               <div key={u.label} className="bg-card border border-border rounded-lg p-4">
                 <p className="text-xs text-muted-foreground">{u.label}</p>
                 <p className="text-lg font-bold text-foreground mt-1">
                   {u.used}
-                  {u.limit && (
+                  {u.limit != null && (
                     <span className="text-sm font-normal text-muted-foreground"> / {u.limit}</span>
                   )}
                 </p>
-                {u.limit && (
+                {u.limit != null && (
                   <Progress
                     value={u.pct}
                     className={`mt-2 h-1.5 ${u.pct >= 90 ? "[&>div]:bg-red-500" : u.pct >= 70 ? "[&>div]:bg-amber-500" : ""}`}
                   />
                 )}
+                {u.sub && (
+                  <p className="text-[11px] text-muted-foreground mt-2 leading-tight">{u.sub}</p>
+                )}
               </div>
             ))}
           </div>
         </section>
+
+        {/* ── AI usage this cycle ── */}
+        <section>
+          <h2 className="text-sm font-semibold text-foreground mb-1">AI Usage This Cycle</h2>
+          <p className="text-xs text-muted-foreground mb-4">
+            Not billed separately today — shown here for visibility as usage-based AI billing is being scoped.
+          </p>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="bg-card border border-border rounded-lg p-4">
+              <p className="text-xs text-muted-foreground">AI Calls</p>
+              <p className="text-lg font-bold text-foreground mt-1">{aiUsage?.totalCalls ?? 0}</p>
+            </div>
+            <div className="bg-card border border-border rounded-lg p-4">
+              <p className="text-xs text-muted-foreground">Estimated Cost</p>
+              <p className="text-lg font-bold text-foreground mt-1">${(aiUsage?.totalCostUsd ?? 0).toFixed(2)}</p>
+            </div>
+            <div className="bg-card border border-border rounded-lg p-4">
+              <p className="text-xs text-muted-foreground">Included in Plan</p>
+              <p className="text-lg font-bold text-foreground mt-1">
+                {aiBudget != null ? `$${aiBudget.toFixed(2)}` : "Not metered"}
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* ── Refer & Earn ── */}
+        {referral?.code && (
+          <section>
+            <h2 className="text-sm font-semibold text-foreground mb-1 flex items-center gap-2">
+              <Gift size={15} className="text-primary" /> Refer &amp; Earn
+            </h2>
+            <p className="text-xs text-muted-foreground mb-4">
+              Share your invite link. When a hospital signs up with it and subscribes, you earn a reward.
+            </p>
+            <div className="bg-card border border-border rounded-lg p-4 flex flex-col md:flex-row gap-5">
+              <div className="bg-white p-2 rounded-lg self-start shrink-0">
+                <QRCodeSVG value={`${window.location.origin}/register?ref=${referral.code}`} size={104} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-wrap gap-4 mb-3">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Signed up</p>
+                    <p className="text-lg font-bold text-foreground">{referral.signed_up}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Converted</p>
+                    <p className="text-lg font-bold text-emerald-600">{referral.converted}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Reward earned</p>
+                    <p className="text-lg font-bold text-foreground">{referral.reward_earned} free month(s)</p>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground mb-1">Your referral code: <span className="font-mono font-bold text-foreground">{referral.code}</span></p>
+                <div className="flex items-center gap-2">
+                  <input
+                    readOnly
+                    value={`${window.location.origin}/register?ref=${referral.code}`}
+                    className="flex-1 min-w-0 h-8 px-3 text-xs bg-background border border-border rounded-lg text-foreground/80 focus:outline-none"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 shrink-0"
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.origin}/register?ref=${referral.code}`);
+                      setRefCopied(true);
+                      setTimeout(() => setRefCopied(false), 1500);
+                    }}
+                  >
+                    {refCopied ? <Check size={13} className="mr-1" /> : <Copy size={13} className="mr-1" />}
+                    {refCopied ? "Copied" : "Copy link"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
 
         {/* ── Active modules ── */}
         <section>

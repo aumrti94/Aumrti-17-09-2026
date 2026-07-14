@@ -29,7 +29,8 @@ const HAS_NUMBER_RE = /\d/;
 const HAS_LETTER_RE = /[A-Za-z]/;
 const PINCODE_RE = /^\d{6}$/;
 const GSTIN_RE = /^[0-9A-Z]{15}$/;
-const KNOWN_PLAN_SLUGS = ["starter", "professional", "enterprise"];
+// "basic" is a legacy alias the wizard used to send for the Starter plan.
+const PLAN_SLUG_ALIASES: Record<string, string> = { basic: "starter" };
 
 // Bump TERMS_VERSION whenever Terms of Service / Privacy Policy materially change,
 // so each consent row records which version the admin agreed to.
@@ -185,7 +186,20 @@ serve(async (req) => {
     }
     if (hospital.gstin) hospital.gstin = String(hospital.gstin).toUpperCase();
 
-    if (hospital.plan && !KNOWN_PLAN_SLUGS.includes(hospital.plan)) {
+    // Resolve + validate the chosen plan against the ACTIVE plans in the DB, so any plan an admin
+    // creates in Plans Manager (e.g. "clinics") works without editing this function. Missing plan
+    // defaults to "starter" (matches the wizard's trial default).
+    const requestedSlug = (() => {
+      const raw = hospital.plan || "starter";
+      return PLAN_SLUG_ALIASES[raw] ?? raw;
+    })();
+    const { data: planRow } = await supabaseAdmin
+      .from("subscription_plans")
+      .select("id, trial_days")
+      .eq("slug", requestedSlug)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (!planRow) {
       return new Response(
         JSON.stringify({ error: "Unknown subscription plan" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -240,8 +254,9 @@ serve(async (req) => {
     //   1. hospitals.subscription_tier — a legacy ENUM (basic | professional | enterprise).
     //   2. subscription_plans.slug      — the real plan key (starter | professional | enterprise).
     // The UI sends the plan slug (data.plan). planMap converts slug -> tier enum for the
-    // hospitals row; planSlugMap (below) resolves slug -> subscription_plans row for the
-    // trial subscription. Keep both maps in sync if a new plan slug is ever added.
+    // hospitals row; the actual plan row was already resolved from subscription_plans above
+    // (planRow), so new plan slugs like "clinics" need no change here — they fall back to the
+    // "basic" tier for this coarse legacy column.
     const planMap: Record<string, string> = {
       starter: "basic",
       professional: "professional",
@@ -325,23 +340,33 @@ serve(async (req) => {
       });
     } catch (e) { console.error("register-hospital: consent record insert failed:", e); }
 
-    // 4. Look up the chosen plan and create a trial subscription row
-    const planSlugMap: Record<string, string> = {
-      basic: "starter", starter: "starter",
-      professional: "professional",
-      enterprise: "enterprise",
-    };
-    const planSlug = planSlugMap[hospital.plan] ?? "starter";
+    // 3c. Resolve referral code — non-fatal attribution + referee perk. An invalid/expired code
+    //     never blocks signup (the free-text hospitals.referral_code is still saved for tracking).
+    let refCode: any = null;
+    if (hospital.referralCode) {
+      try {
+        const codeStr = String(hospital.referralCode).toUpperCase().trim();
+        const { data: rc } = await supabaseAdmin
+          .from("referral_codes")
+          .select("id, code, owner_type, hospital_id, referee_discount_pct, referee_trial_extra_days, is_active, valid_until, max_uses, used_count")
+          .ilike("code", codeStr)
+          .eq("is_active", true)
+          .maybeSingle();
+        if (
+          rc &&
+          (!rc.valid_until || new Date(rc.valid_until) >= new Date()) &&
+          (rc.max_uses == null || rc.used_count < rc.max_uses) &&
+          !(rc.owner_type === "hospital" && rc.hospital_id === hospitalData.id) // no self-referral
+        ) {
+          refCode = rc;
+        }
+      } catch (e) { console.error("register-hospital: referral lookup failed:", e); }
+    }
 
-    const { data: planRow } = await supabaseAdmin
-      .from("subscription_plans")
-      .select("id, trial_days")
-      .eq("slug", planSlug)
-      .eq("is_active", true)
-      .maybeSingle();
-
+    // 4. Create a trial subscription row for the resolved plan (validated above).
     if (planRow) {
-      const trialDays = planRow.trial_days ?? 30;
+      // Referee perk: extra trial days from the referral code (immediate, concrete).
+      const trialDays = (planRow.trial_days ?? 30) + (refCode?.referee_trial_extra_days ?? 0);
       const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString();
 
       const { error: subErr } = await supabaseAdmin.from("hospital_subscriptions").upsert({
@@ -349,6 +374,11 @@ serve(async (req) => {
         plan_id:     planRow.id,
         status:      "trial",
         trial_ends_at: trialEndsAt,
+        // Referee discount perk: stored so the first paid invoice/checkout can honour it.
+        ...(refCode && Number(refCode.referee_discount_pct) > 0 ? {
+          discount_code_applied: refCode.code,
+          discount_pct:          refCode.referee_discount_pct,
+        } : {}),
       }, { onConflict: "hospital_id" });
       if (subErr) console.error("register-hospital: failed to create trial subscription:", subErr);
 
@@ -362,6 +392,26 @@ serve(async (req) => {
           metadata:    { trial_days: trialDays, trial_ends_at: trialEndsAt },
         });
       } catch (_) { /* non-fatal */ }
+    }
+
+    // 4b. Record referral attribution + redemption (non-fatal). The trial->active conversion later
+    //     grants the referrer reward via the apply_referral_conversion DB trigger.
+    if (refCode) {
+      try {
+        await supabaseAdmin.from("hospitals")
+          .update({ referred_by_code_id: refCode.id })
+          .eq("id", hospitalData.id);
+        await supabaseAdmin.from("referral_redemptions").insert({
+          code_id:              refCode.id,
+          code_text:            refCode.code,
+          referred_hospital_id: hospitalData.id,
+          status:               "signed_up",
+          referee_discount_pct: refCode.referee_discount_pct ?? 0,
+        });
+        await supabaseAdmin.from("referral_codes")
+          .update({ used_count: (refCode.used_count ?? 0) + 1 })
+          .eq("id", refCode.id);
+      } catch (e) { console.error("register-hospital: referral redemption failed:", e); }
     }
 
     // 5a. Seed chart of accounts, posting rules, and lab catalog (defence in depth —
@@ -389,7 +439,7 @@ serve(async (req) => {
         email:       admin.email,
         full_name:   admin.full_name,
         hospital_name: hospital.name,
-        plan_name:   planSlug.charAt(0).toUpperCase() + planSlug.slice(1),
+        plan_name:   requestedSlug.charAt(0).toUpperCase() + requestedSlug.slice(1),
       },
     }).catch(() => {});
 

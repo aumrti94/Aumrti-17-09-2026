@@ -6,18 +6,19 @@ import { Input } from "@/components/ui/input";
 import { Plus } from "lucide-react";
 
 const defaultDepts = [
+  // Minimal universal core — pre-checked for every hospital. Everything else is opt-in.
   { name: "General Medicine", icon: "🏥", pre: true },
   { name: "General Surgery", icon: "🔪", pre: true },
-  { name: "Paediatrics", icon: "👶", pre: true },
-  { name: "Gynaecology & Obstetrics", icon: "🤰", pre: true },
-  { name: "Orthopaedics", icon: "🦴", pre: true },
-  { name: "Cardiology", icon: "❤️", pre: true },
-  { name: "Neurology", icon: "🧠", pre: true },
-  { name: "Ophthalmology", icon: "👁️", pre: true },
-  { name: "ENT", icon: "👂", pre: true },
-  { name: "Pulmonology", icon: "🫁", pre: true },
   { name: "Emergency / Casualty", icon: "🚨", pre: true },
-  { name: "ICU / Critical Care", icon: "🏥", pre: true },
+  { name: "Paediatrics", icon: "👶", pre: false },
+  { name: "Gynaecology & Obstetrics", icon: "🤰", pre: false },
+  { name: "Orthopaedics", icon: "🦴", pre: false },
+  { name: "Cardiology", icon: "❤️", pre: false },
+  { name: "Neurology", icon: "🧠", pre: false },
+  { name: "Ophthalmology", icon: "👁️", pre: false },
+  { name: "ENT", icon: "👂", pre: false },
+  { name: "Pulmonology", icon: "🫁", pre: false },
+  { name: "ICU / Critical Care", icon: "🏥", pre: false },
   { name: "Psychiatry", icon: "🧠", pre: false },
   { name: "Dermatology", icon: "🩺", pre: false },
   { name: "Urology", icon: "🩺", pre: false },
@@ -116,7 +117,7 @@ const Step2Departments: React.FC<Props> = ({ hospitalId, onComplete }) => {
       <p className="text-sm text-muted-foreground mt-1 mb-4">Check all that apply. You can add more later.</p>
 
       <div className="bg-[#EFF6FF] border-l-[3px] border-[#3B82F6] px-3.5 py-2.5 rounded text-[13px] text-foreground mb-6">
-        Pre-selected are the most common departments. Uncheck any you don't have.
+        We've pre-selected only the core departments every hospital has. Check any others you run — you can always add more later.
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">

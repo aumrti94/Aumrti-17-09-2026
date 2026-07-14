@@ -1,28 +1,33 @@
 import React from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
-import { ShieldCheck, Loader2 } from "lucide-react";
-import PreAuthTab from "@/components/pmjay/PreAuthTab";
+import { Button } from "@/components/ui/button";
+import { ShieldCheck, Loader2, Plus } from "lucide-react";
+import PmjayPreAuthTab from "@/components/pmjay/PmjayPreAuthTab";
+import PmjayBeneficiariesTab from "@/components/pmjay/PmjayBeneficiariesTab";
 import PmjayClaimsTab from "@/components/pmjay/PmjayClaimsTab";
 import PmjayPackagesTab from "@/components/pmjay/PmjayPackagesTab";
+import PmjayAnalyticsTab from "@/components/pmjay/PmjayAnalyticsTab";
 import { useHospitalId } from "@/hooks/useHospitalId";
-import { supabase } from "@/integrations/supabase/client";
+
+// Tabs that support an external "+ New" trigger (showNewForm/onFormClosed).
+const NEW_FORM_LABEL: Record<string, string> = {
+  preauth: "New Pre-Auth",
+  beneficiaries: "Register Beneficiary",
+};
 
 const PMJAYPage = () => {
   const { hospitalId, loading } = useHospitalId();
-  const [userId, setUserId] = React.useState<string | null>(null);
-
-  React.useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (user) setUserId(user.id);
-    });
-  }, []);
+  const [activeTab, setActiveTab] = React.useState("preauth");
+  const [showNewForm, setShowNewForm] = React.useState(false);
 
   if (loading || !hospitalId) return (
     <div className="flex items-center justify-center h-64">
       <Loader2 className="h-8 w-8 animate-spin text-primary" />
     </div>
   );
+
+  const newFormLabel = NEW_FORM_LABEL[activeTab];
 
   return (
     <div className="container py-6 h-screen max-h-screen overflow-hidden flex flex-col bg-background">
@@ -33,21 +38,36 @@ const PMJAYPage = () => {
             PMJAY & Govt Schemes
           </h1>
           <span className="text-[14px] text-muted-foreground mt-1 block">
-            Pre-authorization, cashless claims, and HBP package catalog
+            Pre-authorization, cashless claims, beneficiaries, and HBP package catalog
           </span>
         </div>
+        {newFormLabel && (
+          <Button size="sm" className="gap-1.5" onClick={() => setShowNewForm(true)}>
+            <Plus size={14} /> {newFormLabel}
+          </Button>
+        )}
       </div>
 
       <Card className="flex-1 p-4 overflow-hidden flex flex-col shadow-sm border-border">
-        <Tabs defaultValue="preauth" className="w-full flex-1 flex flex-col">
-          <TabsList className="w-fit mb-4 grid grid-cols-3 h-auto p-1">
-            <TabsTrigger value="preauth" className="text-[14px] py-2">Auto Pre-Authorization</TabsTrigger>
+        <Tabs
+          value={activeTab}
+          onValueChange={(v) => { setActiveTab(v); setShowNewForm(false); }}
+          className="w-full flex-1 flex flex-col"
+        >
+          <TabsList className="w-fit mb-4 grid grid-cols-5 h-auto p-1">
+            <TabsTrigger value="preauth" className="text-[14px] py-2">Pre-Authorization</TabsTrigger>
+            <TabsTrigger value="beneficiaries" className="text-[14px] py-2">Beneficiaries</TabsTrigger>
             <TabsTrigger value="claims" className="text-[14px] py-2">Cashless Claims</TabsTrigger>
             <TabsTrigger value="catalog" className="text-[14px] py-2">HBP Catalog</TabsTrigger>
+            <TabsTrigger value="analytics" className="text-[14px] py-2">Analytics</TabsTrigger>
           </TabsList>
 
           <TabsContent value="preauth" className="flex-1 overflow-hidden m-0">
-            <PreAuthTab patientId="" hospitalId={hospitalId} userId={userId} />
+            <PmjayPreAuthTab showNewForm={showNewForm} onFormClosed={() => setShowNewForm(false)} />
+          </TabsContent>
+
+          <TabsContent value="beneficiaries" className="flex-1 overflow-hidden m-0">
+            <PmjayBeneficiariesTab showNewForm={showNewForm} onFormClosed={() => setShowNewForm(false)} />
           </TabsContent>
 
           <TabsContent value="claims" className="flex-1 overflow-auto m-0">
@@ -56,6 +76,10 @@ const PMJAYPage = () => {
 
           <TabsContent value="catalog" className="flex-1 overflow-auto m-0">
             <PmjayPackagesTab />
+          </TabsContent>
+
+          <TabsContent value="analytics" className="flex-1 overflow-auto m-0">
+            <PmjayAnalyticsTab />
           </TabsContent>
         </Tabs>
       </Card>

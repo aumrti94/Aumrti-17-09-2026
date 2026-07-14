@@ -25,6 +25,7 @@ import {
   ListChecks,
   Settings2,
   MessageSquare,
+  PlayCircle,
   CalendarClock,
   Smartphone,
   FileSpreadsheet,
@@ -62,6 +63,8 @@ const settingsGroups: SettingsGroup[] = [
       { icon: Palette, title: "Branding", desc: "Logo, colours, fonts, print templates", route: "/settings/branding" },
       { icon: Globe, title: "Language & Region", desc: "Interface language, date format, currency", route: "/settings/language" },
       { icon: CreditCard, title: "Plan & Billing", desc: "Your current plan, usage, invoices", route: "/settings/plan" },
+      { icon: MessageSquare, title: "Support", desc: "Raise a ticket, message Aumrti's team", route: "/settings/support" },
+      { icon: PlayCircle, title: "Training Videos", desc: "Short how-to videos for every role", route: "/settings/training" },
     ],
   },
   {

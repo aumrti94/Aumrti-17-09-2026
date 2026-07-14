@@ -102,7 +102,7 @@ const GRNPanel: React.FC = () => {
     const [poRes, vendorRes, itemRes] = await Promise.all([
       (supabase as any).from("purchase_orders").select("id, po_number, vendor_id, vendors(vendor_name)").in("status", ["approved", "sent", "partial_grn"]),
       (supabase as any).from("vendors").select("id, vendor_name").eq("is_active", true),
-      (supabase as any).from("inventory_items").select("id, item_name, category, gst_percent").eq("is_active", true),
+      (supabase as any).from("inventory_items").select("id, item_name, category, gst_percent, itc_eligibility").eq("is_active", true),
     ]);
     setPOs(poRes.data || []);
     setVendors(vendorRes.data || []);
@@ -294,22 +294,27 @@ const GRNPanel: React.FC = () => {
 
     // Auto-post journal entry for GRN
     const vendorName = vendors.find(v => v.id === vendorId)?.vendor_name || "Vendor";
-    // GST input credit split: Dr goods (5011) + Dr ITC (1050) / Cr AP (2001). GST computed
-    // from each item's rate. Falls back gracefully to the legacy grn_received rule if the
-    // ITC/goods accounts aren't in the chart of accounts.
-    const gstValue = validItems.reduce((s: number, gi: any) => {
-      const pct = items.find((i) => i.id === gi.item_id)?.gst_percent || 0;
-      return s + (gi.quantity_received * gi.unit_rate) * (pct / 100);
-    }, 0);
-    if (gstValue > 0) {
+    // GST input credit split (Sec 17(5) aware): eligible GST -> ITC (1050); blocked GST is
+    // folded into goods cost (5011); proportionate -> half each. Dr goods + Dr ITC / Cr AP.
+    let itcValue = 0, blockedGst = 0;
+    validItems.forEach((gi: any) => {
+      const item = items.find((i) => i.id === gi.item_id);
+      const gst = (gi.quantity_received * gi.unit_rate) * ((item?.gst_percent || 0) / 100);
+      const elig = item?.itc_eligibility || "eligible";
+      if (elig === "eligible") itcValue += gst;
+      else if (elig === "proportionate") { itcValue += gst / 2; blockedGst += gst / 2; }
+      else blockedGst += gst;
+    });
+    const totalGst = itcValue + blockedGst;
+    if (totalGst > 0) {
+      const lines = [
+        { accountCode: "5011", debit: totalAmount + blockedGst, description: "Goods" + (blockedGst > 0 ? " (incl. blocked GST)" : "") },
+        ...(itcValue > 0 ? [{ accountCode: "1050", debit: itcValue, description: "GST input credit" }] : []),
+        { accountCode: "2001", credit: totalAmount + totalGst, description: "Vendor payable" },
+      ];
       const posted = await postMultiLineJournal({
         hospitalId: userData.hospital_id, postedBy: userData.id, sourceModule: "inventory", sourceId: grn.id,
-        triggerEvent: "grn_received", description: `GRN ${grnNumber} - ${vendorName}`,
-        lines: [
-          { accountCode: "5011", debit: totalAmount, description: "Goods" },
-          { accountCode: "1050", debit: gstValue, description: "GST input credit" },
-          { accountCode: "2001", credit: totalAmount + gstValue, description: "Vendor payable" },
-        ],
+        triggerEvent: "grn_received", description: `GRN ${grnNumber} - ${vendorName}`, lines,
       });
       if (!posted) {
         await autoPostJournalEntry({ triggerEvent: "grn_received", sourceModule: "inventory", sourceId: grn.id, amount: totalAmount, description: `GRN ${grnNumber} - ${vendorName}`, hospitalId: userData.hospital_id, postedBy: userData.id });

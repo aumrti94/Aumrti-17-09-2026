@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { ALL_MODULES } from "@/lib/modules";
@@ -15,6 +16,7 @@ export interface SubscriptionPlan {
   price_yearly: number;
   max_beds: number | null;
   max_staff: number | null;
+  storage_included_gb: number | null;
   trial_days: number;
   is_custom_price: boolean;
   badge_text: string | null;
@@ -217,7 +219,7 @@ async function fetchSubscriptionConfig(hospitalId: string): Promise<Omit<Subscri
   // ── Fetch plan details ──
   const { data: planData } = await (supabase as any)
     .from("subscription_plans")
-    .select("id, name, slug, price_monthly, price_yearly, max_beds, max_staff, trial_days, is_custom_price, badge_text, description")
+    .select("id, name, slug, price_monthly, price_yearly, max_beds, max_staff, storage_included_gb, trial_days, is_custom_price, badge_text, description")
     .eq("id", subscription.plan_id)
     .maybeSingle();
 
@@ -288,6 +290,46 @@ async function fetchSubscriptionConfig(hospitalId: string): Promise<Omit<Subscri
 }
 
 // ─────────────────────────────────────────────────────────────
+// Realtime entitlement channel — ONE shared, ref-counted channel per hospital.
+// useSubscriptionConfig is called by dozens of components at once; creating a
+// channel per instance made them all fight over the same topic and threw
+// "cannot add postgres_changes callbacks after subscribe()". A module-level
+// registry guarantees a single channel, added-then-subscribed exactly once, and
+// torn down only when the last consumer unmounts.
+// ─────────────────────────────────────────────────────────────
+
+type EntitlementChannel = ReturnType<typeof supabase.channel>;
+const entitlementChannels = new Map<string, { channel: EntitlementChannel; count: number }>();
+
+function subscribeEntitlements(
+  hospitalId: string,
+  invalidate: () => void,
+): () => void {
+  let entry = entitlementChannels.get(hospitalId);
+  if (!entry) {
+    const channel = supabase
+      .channel(`subscription-config-${hospitalId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "hospital_subscriptions", filter: `hospital_id=eq.${hospitalId}` }, invalidate)
+      .on("postgres_changes", { event: "*", schema: "public", table: "hospital_feature_overrides", filter: `hospital_id=eq.${hospitalId}` }, invalidate)
+      .on("postgres_changes", { event: "*", schema: "public", table: "hospital_pricing_overrides", filter: `hospital_id=eq.${hospitalId}` }, invalidate)
+      .subscribe();
+    entry = { channel, count: 0 };
+    entitlementChannels.set(hospitalId, entry);
+  }
+  entry.count += 1;
+
+  return () => {
+    const e = entitlementChannels.get(hospitalId);
+    if (!e) return;
+    e.count -= 1;
+    if (e.count <= 0) {
+      supabase.removeChannel(e.channel);
+      entitlementChannels.delete(hospitalId);
+    }
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
 // useSubscriptionConfig — main hook
 // Uses TanStack Query so multiple components calling this hook
 // share a single cached fetch per hospitalId (no duplicate RPCs).
@@ -297,17 +339,49 @@ async function fetchSubscriptionConfig(hospitalId: string): Promise<Omit<Subscri
 
 export function useSubscriptionConfig(): SubscriptionConfig {
   const { hospitalId } = useHospitalId();
+  const queryClient = useQueryClient();
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["subscription-config", hospitalId],
     queryFn: () => fetchSubscriptionConfig(hospitalId!),
     enabled: !!hospitalId,
-    staleTime: 5 * 60 * 1000,       // 5 minutes
+    // Short stale window so a plan change propagates to entitlements/limits promptly
+    // even if realtime isn't enabled on these tables. The realtime listener below
+    // handles the instant, cross-session case.
+    staleTime: 60 * 1000,           // 1 minute
     gcTime: 10 * 60 * 1000,         // 10 minutes
+    refetchOnWindowFocus: true,     // re-check when returning to the tab
     retry: 2,
     // Fail-open: on error return all modules so hospital is never locked out
     // due to a transient DB issue
   });
+
+  // Instantly refresh entitlements when the platform admin changes this hospital's
+  // plan, feature overrides, or pricing — no waiting for the stale window. Without
+  // this, a Starter→Clinics switch kept serving the old plan's module access.
+  // Delegates to a single shared, ref-counted channel (see subscribeEntitlements).
+  useEffect(() => {
+    if (!hospitalId) return;
+    return subscribeEntitlements(hospitalId, () =>
+      queryClient.invalidateQueries({ queryKey: ["subscription-config", hospitalId] }),
+    );
+  }, [hospitalId, queryClient]);
+
+  // The fail-open path above is otherwise silent — log it so it's at least
+  // visible somewhere, since a hospital getting free module access during
+  // an outage is a real (if rare) billing-integrity event.
+  useEffect(() => {
+    if (error && hospitalId) {
+      (supabase as any)
+        .from("entitlement_fail_open_events")
+        .insert({
+          hospital_id: hospitalId,
+          error_message: error instanceof Error ? error.message : String(error),
+        })
+        .then(() => {})
+        .catch(() => {});
+    }
+  }, [error, hospitalId]);
 
   if (!hospitalId || isLoading) {
     return {

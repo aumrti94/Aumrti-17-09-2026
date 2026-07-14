@@ -16,7 +16,7 @@ import {
   calculatePayslip, generatePayslipHtml,
   type PayslipCalculation, type SalaryStructure, type AttendanceInput,
 } from "@/lib/payrollEngine";
-import { autoPostJournalEntry } from "@/lib/accounting";
+import { postMultiLineJournal } from "@/lib/accounting";
 import { generateEPFECRFromPayslips, generateForm16FromPayslip, generateForm16AFromPayslips } from "@/lib/payrollExports";
 import { printDocument, printHeader } from "@/lib/printUtils";
 import SalaryStructureSetup from "./SalaryStructureSetup";
@@ -314,40 +314,32 @@ const PayrollRunTab: React.FC = () => {
 
     await (supabase as any).from("payroll_runs").update({ status: "approved", approved_by: cu.id, approved_at: new Date().toISOString() }).eq("id", run.id);
 
-    // Summary posting via shared engine (respects posting rules)
-    await autoPostJournalEntry({
-      triggerEvent: "payroll_processed",
-      sourceModule: "hr",
-      sourceId: run.id,
-      amount: Number(run.total_net || 0),
-      description: `Payroll ${MONTHS[run.month - 1]} ${run.year} — net`,
-      hospitalId: cu.hospital_id,
-      postedBy: cu.id,
-    });
-
-    // Detailed double-entry journal (Salaries Dr; Net Payable + Statutory Cr)
+    // Detailed double-entry journal (Salaries Dr; Net Payable + Statutory Cr) — one
+    // posting call. A second "summary" posting used to run alongside this one, plus
+    // this detailed entry wrote to columns/tables (journal_number/status/reference_type/
+    // reference_id on journal_entries, journal_entry_lines) that don't exist on the real
+    // schema (entry_number/entry_type/source_module/source_id on journal_entries,
+    // journal_line_items) — it silently failed every time. Fixed onto the real
+    // postMultiLineJournal helper; the redundant summary call is gone so payroll posts
+    // exactly once, with the real breakdown instead of just a net total.
     const totalGross = Number(run.total_gross || 0);
     const totalNet = Number(run.total_net || 0);
     const totalDed = Number(run.total_deductions || 0);
     if (totalGross > 0) {
-      const { data: nextNum } = await supabase.rpc("get_next_journal_number", { p_hospital_id: cu.hospital_id });
-      const { data: journal } = await (supabase as any).from("journal_entries").insert({
-        hospital_id: cu.hospital_id,
-        journal_number: nextNum || `JV-${Date.now()}`,
-        entry_date: new Date().toISOString().split("T")[0],
-        description: `Payroll: ${MONTHS[run.month - 1]} ${run.year}`,
-        total_debit: totalGross, total_credit: totalGross,
-        status: "posted", reference_type: "payroll", reference_id: run.id, created_by: cu.id,
-      }).select("id").maybeSingle();
-
-      if (journal) {
-        const lines: any[] = [
-          { journal_id: journal.id, hospital_id: cu.hospital_id, account_code: "5001", account_name: "Salaries & Wages", debit_amount: totalGross, credit_amount: 0, description: `Gross salary ${MONTHS[run.month - 1]} ${run.year}` },
-          { journal_id: journal.id, hospital_id: cu.hospital_id, account_code: "2101", account_name: "Salaries Payable", debit_amount: 0, credit_amount: totalNet, description: "Net salary payable" },
-        ];
-        if (totalDed > 0) lines.push({ journal_id: journal.id, hospital_id: cu.hospital_id, account_code: "2102", account_name: "TDS / PF / ESI Payable", debit_amount: 0, credit_amount: totalDed, description: "Statutory deductions payable" });
-        await (supabase as any).from("journal_entry_lines").insert(lines);
-      }
+      const lines = [
+        { accountCode: "5001", debit: totalGross, description: `Gross salary ${MONTHS[run.month - 1]} ${run.year}` },
+        { accountCode: "2101", credit: totalNet, description: "Net salary payable" },
+        ...(totalDed > 0 ? [{ accountCode: "2102", credit: totalDed, description: "Statutory deductions payable" }] : []),
+      ];
+      await postMultiLineJournal({
+        hospitalId: cu.hospital_id,
+        postedBy: cu.id,
+        sourceModule: "hr",
+        sourceId: run.id,
+        triggerEvent: "payroll_processed",
+        description: `Payroll ${MONTHS[run.month - 1]} ${run.year}`,
+        lines,
+      });
     }
     toast({ title: "Payroll approved & posted to accounts" });
     fetchRuns();

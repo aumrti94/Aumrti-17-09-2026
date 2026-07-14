@@ -1,0 +1,221 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+  <defs>
+    <linearGradient id="headerGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#16345f"/>
+      <stop offset="1" stop-color="#0e7c86"/>
+    </linearGradient>
+    <linearGradient id="coreGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#153b6b"/>
+      <stop offset="1" stop-color="#116b74"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#0f243d" flood-opacity="0.16"/>
+    </filter>
+    <marker id="arrowBlue" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#2f78b7"/>
+    </marker>
+    <marker id="arrowTeal" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#0f8d83"/>
+    </marker>
+    <style>
+      .bg { fill: #f6f8fb; }
+      .title { font: 700 40px Arial, sans-serif; fill: #ffffff; }
+      .subtitle { font: 400 19px Arial, sans-serif; fill: #d9eef5; }
+      .section-title { font: 700 22px Arial, sans-serif; fill: #123047; }
+      .label { font: 700 18px Arial, sans-serif; fill: #123047; }
+      .small { font: 400 15px Arial, sans-serif; fill: #466173; }
+      .small-dark { font: 400 15px Arial, sans-serif; fill: #18394e; }
+      .white-label { font: 700 24px Arial, sans-serif; fill: #ffffff; }
+      .white-small { font: 400 16px Arial, sans-serif; fill: #eaf7fb; }
+      .chip { font: 700 14px Arial, sans-serif; fill: #ffffff; letter-spacing: 1px; }
+      .box { fill: #ffffff; stroke: #d9e4ed; stroke-width: 2; filter: url(#shadow); }
+      .input { fill: #fff8e7; stroke: #f2c25a; }
+      .flow { fill: #ffffff; stroke: #c8d8e6; }
+      .module { fill: #eef9f6; stroke: #70cfc2; }
+      .ai { fill: #edf5ff; stroke: #7ab1e5; }
+      .external { fill: #fff0f0; stroke: #ef9b9b; }
+      .outcome { fill: #f0f8ec; stroke: #94c973; }
+      .line { fill: none; stroke: #2f78b7; stroke-width: 4; marker-end: url(#arrowBlue); }
+      .line-teal { fill: none; stroke: #0f8d83; stroke-width: 4; marker-end: url(#arrowTeal); }
+      .thin { fill: none; stroke: #9eb4c5; stroke-width: 2.5; marker-end: url(#arrowBlue); }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1600" height="1000"/>
+
+  <rect x="48" y="38" width="1504" height="122" rx="26" fill="url(#headerGrad)" filter="url(#shadow)"/>
+  <g transform="translate(78 62)">
+    <rect x="0" y="0" width="74" height="74" rx="16" fill="#1a2f5a"/>
+    <rect x="31" y="14" width="12" height="46" rx="4" fill="#ffffff"/>
+    <rect x="14" y="31" width="46" height="12" rx="4" fill="#ffffff"/>
+    <polyline points="12,62 22,62 28,52 35,70 42,45 49,62 58,62 64,54 70,62" fill="none" stroke="#4facde" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="172" y="86" class="title">Aumrti Hospital Operating System</text>
+  <text x="172" y="121" class="subtitle">Block diagram and flow chart for AI-first hospital workflows in India</text>
+
+  <text x="62" y="205" class="section-title">1. Users and data sources</text>
+  <g>
+    <rect x="62" y="226" width="190" height="82" rx="16" class="box input"/>
+    <text x="86" y="258" class="label">Patients</text>
+    <text x="86" y="283" class="small">Registration, consent,</text>
+    <text x="86" y="303" class="small">portal and WhatsApp</text>
+
+    <rect x="277" y="226" width="190" height="82" rx="16" class="box input"/>
+    <text x="301" y="258" class="label">Doctors and nurses</text>
+    <text x="301" y="283" class="small">Voice notes, orders,</text>
+    <text x="301" y="303" class="small">rounds and vitals</text>
+
+    <rect x="492" y="226" width="190" height="82" rx="16" class="box input"/>
+    <text x="516" y="258" class="label">Front office</text>
+    <text x="516" y="283" class="small">Appointments, OPD,</text>
+    <text x="516" y="303" class="small">admissions and beds</text>
+
+    <rect x="707" y="226" width="190" height="82" rx="16" class="box input"/>
+    <text x="731" y="258" class="label">Billing and TPA</text>
+    <text x="731" y="283" class="small">Bills, pre-auth,</text>
+    <text x="731" y="303" class="small">claims and payments</text>
+
+    <rect x="922" y="226" width="190" height="82" rx="16" class="box input"/>
+    <text x="946" y="258" class="label">Admin and quality</text>
+    <text x="946" y="283" class="small">ABDM, HMIS, NABH,</text>
+    <text x="946" y="303" class="small">MRD and analytics</text>
+  </g>
+
+  <path d="M157 315 C157 348 210 355 260 366" class="thin"/>
+  <path d="M372 315 C372 344 380 354 430 366" class="thin"/>
+  <path d="M587 315 C587 348 560 355 555 366" class="thin"/>
+  <path d="M802 315 C802 348 760 356 684 366" class="thin"/>
+  <path d="M1017 315 C1017 348 884 358 812 366" class="thin"/>
+
+  <rect x="410" y="355" width="780" height="210" rx="28" fill="url(#coreGrad)" filter="url(#shadow)"/>
+  <text x="462" y="403" class="white-label">2. Aumrti Core Platform</text>
+  <text x="462" y="432" class="white-small">Shared patient record and workflow spine across clinical care, discharge,</text>
+  <text x="462" y="454" class="white-small">billing, insurance, compliance and communication</text>
+
+  <g>
+    <rect x="462" y="462" width="165" height="62" rx="14" fill="rgba(255,255,255,0.13)" stroke="rgba(255,255,255,0.22)"/>
+    <text x="482" y="488" class="white-small">Role-based access</text>
+    <text x="482" y="511" class="white-small">and tenant isolation</text>
+
+    <rect x="650" y="462" width="165" height="62" rx="14" fill="rgba(255,255,255,0.13)" stroke="rgba(255,255,255,0.22)"/>
+    <text x="670" y="488" class="white-small">Workflow engine</text>
+    <text x="670" y="511" class="white-small">and audit logs</text>
+
+    <rect x="838" y="462" width="165" height="62" rx="14" fill="rgba(255,255,255,0.13)" stroke="rgba(255,255,255,0.22)"/>
+    <text x="858" y="488" class="white-small">Offline sync</text>
+    <text x="858" y="511" class="white-small">and low connectivity</text>
+
+    <rect x="1026" y="462" width="112" height="62" rx="14" fill="rgba(255,255,255,0.13)" stroke="rgba(255,255,255,0.22)"/>
+    <text x="1044" y="488" class="white-small">PHI and</text>
+    <text x="1044" y="511" class="white-small">security</text>
+  </g>
+
+  <text x="62" y="620" class="section-title">3. Patient journey flow</text>
+  <g>
+    <rect x="62" y="642" width="162" height="94" rx="16" class="box flow"/>
+    <text x="86" y="675" class="label">Entry</text>
+    <text x="86" y="700" class="small">Registration, ABHA,</text>
+    <text x="86" y="720" class="small">booking, kiosk</text>
+
+    <rect x="260" y="642" width="162" height="94" rx="16" class="box flow"/>
+    <text x="284" y="675" class="label">OPD / ED</text>
+    <text x="284" y="700" class="small">Consultation, triage,</text>
+    <text x="284" y="720" class="small">vitals and orders</text>
+
+    <rect x="458" y="642" width="162" height="94" rx="16" class="box flow"/>
+    <text x="482" y="675" class="label">Diagnostics</text>
+    <text x="482" y="700" class="small">Lab, radiology and</text>
+    <text x="482" y="720" class="small">pharmacy handoff</text>
+
+    <rect x="656" y="642" width="162" height="94" rx="16" class="box flow"/>
+    <text x="680" y="675" class="label">IPD / OT</text>
+    <text x="680" y="700" class="small">Ward, nursing, ICU,</text>
+    <text x="680" y="720" class="small">medication and surgery</text>
+
+    <rect x="854" y="642" width="162" height="94" rx="16" class="box flow"/>
+    <text x="878" y="675" class="label">Discharge</text>
+    <text x="878" y="700" class="small">Summary, MRD, ICD,</text>
+    <text x="878" y="720" class="small">records and follow-up</text>
+
+    <rect x="1052" y="642" width="162" height="94" rx="16" class="box flow"/>
+    <text x="1076" y="675" class="label">Revenue</text>
+    <text x="1076" y="700" class="small">Billing, packages,</text>
+    <text x="1076" y="720" class="small">insurance and TPA</text>
+
+    <rect x="1250" y="642" width="162" height="94" rx="16" class="box flow"/>
+    <text x="1274" y="675" class="label">Continuity</text>
+    <text x="1274" y="700" class="small">WhatsApp, patient</text>
+    <text x="1274" y="720" class="small">portal and analytics</text>
+  </g>
+
+  <path d="M224 689 L260 689" class="line"/>
+  <path d="M422 689 L458 689" class="line"/>
+  <path d="M620 689 L656 689" class="line"/>
+  <path d="M818 689 L854 689" class="line"/>
+  <path d="M1016 689 L1052 689" class="line"/>
+  <path d="M1214 689 L1250 689" class="line"/>
+
+  <path d="M143 642 C170 585 390 560 478 545" class="line-teal"/>
+  <path d="M340 642 C376 580 515 560 650 545" class="line-teal"/>
+  <path d="M736 642 C740 594 756 576 760 565" class="line-teal"/>
+  <path d="M935 642 C920 591 900 573 887 565" class="line-teal"/>
+  <path d="M1133 642 C1088 590 1048 575 1015 565" class="line-teal"/>
+
+  <text x="62" y="810" class="section-title">4. AI and automation layer</text>
+  <g>
+    <rect x="62" y="832" width="236" height="84" rx="16" class="box ai"/>
+    <text x="86" y="864" class="label">Multilingual AI Scribe</text>
+    <text x="86" y="889" class="small">Doctor and nurse voice to</text>
+    <text x="86" y="909" class="small">structured notes and orders</text>
+
+    <rect x="326" y="832" width="236" height="84" rx="16" class="box ai"/>
+    <text x="350" y="864" class="label">AI Discharge Summary</text>
+    <text x="350" y="889" class="small">Episode data to editable</text>
+    <text x="350" y="909" class="small">NABH-ready summaries</text>
+
+    <rect x="590" y="832" width="236" height="84" rx="16" class="box ai"/>
+    <text x="614" y="864" class="label">Claims Intelligence</text>
+    <text x="614" y="889" class="small">Pre-auth, denial risk, query</text>
+    <text x="614" y="909" class="small">responses and claim packets</text>
+
+    <rect x="854" y="832" width="236" height="84" rx="16" class="box ai"/>
+    <text x="878" y="864" class="label">Safety and compliance</text>
+    <text x="878" y="889" class="small">Audit, alerts, coding, HMIS</text>
+    <text x="878" y="909" class="small">and ABDM readiness</text>
+  </g>
+
+  <text x="1218" y="205" class="section-title">5. External systems</text>
+  <g>
+    <rect x="1218" y="226" width="290" height="68" rx="16" class="box external"/>
+    <text x="1242" y="257" class="label">ABDM / ABHA / HPR / HFR</text>
+    <text x="1242" y="281" class="small">Digital health identity and records</text>
+
+    <rect x="1218" y="314" width="290" height="68" rx="16" class="box external"/>
+    <text x="1242" y="345" class="label">HMIS / IDSP / NABH</text>
+    <text x="1242" y="369" class="small">Government and quality reporting</text>
+
+    <rect x="1218" y="402" width="290" height="68" rx="16" class="box external"/>
+    <text x="1242" y="433" class="label">WhatsApp / SMS / Email</text>
+    <text x="1242" y="457" class="small">Structured communication and alerts</text>
+
+    <rect x="1218" y="490" width="290" height="68" rx="16" class="box external"/>
+    <text x="1242" y="521" class="label">HCX / TPA / PMJAY / CGHS</text>
+    <text x="1242" y="545" class="small">Claims, pre-auth and reconciliation</text>
+  </g>
+
+  <path d="M1218 260 C1168 278 1160 326 1122 355" class="thin"/>
+  <path d="M1218 348 C1168 357 1160 368 1190 390" class="thin"/>
+  <path d="M1218 436 C1185 437 1169 438 1190 442" class="thin"/>
+  <path d="M1218 524 C1180 524 1165 524 1190 518" class="thin"/>
+
+  <text x="1218" y="810" class="section-title">6. Expected impact</text>
+  <g>
+    <rect x="1218" y="832" width="290" height="84" rx="16" class="box outcome"/>
+    <text x="1242" y="862" class="label">Operational outcomes</text>
+    <text x="1242" y="887" class="small">Less duplicate entry, faster discharge,</text>
+    <text x="1242" y="907" class="small">claim readiness and lower leakage</text>
+  </g>
+
+  <rect x="410" y="944" width="780" height="28" rx="14" fill="#dcebf3"/>
+  <text x="454" y="963" class="small-dark">Positioning: AI-first HMS for mid-sized Indian hospitals, specialty centers and hospital chains</text>
+</svg>

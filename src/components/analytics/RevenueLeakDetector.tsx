@@ -12,6 +12,8 @@ interface LeakPattern {
   severity: "critical" | "high" | "medium";
   recommended_action: string;
   department: string;
+  id: string | null;
+  status: "open" | "assigned" | "resolved";
 }
 
 interface AnalysisResult {
@@ -34,8 +36,7 @@ export const RevenueLeakDetector: React.FC<{ hospitalId: string }> = ({ hospital
   const { toast } = useToast();
   const [loading, setLoading]       = useState(false);
   const [result, setResult]         = useState<AnalysisResult | null>(null);
-  const [resolved, setResolved]     = useState<Set<number>>(new Set());
-  const [assigning, setAssigning]   = useState<number | null>(null);
+  const [actingOn, setActingOn]     = useState<string | null>(null);
 
   const analyse = async () => {
     setLoading(true);
@@ -44,7 +45,6 @@ export const RevenueLeakDetector: React.FC<{ hospitalId: string }> = ({ hospital
       if (error) throw error;
       if (data.error) throw new Error(data.error);
       setResult(data as AnalysisResult);
-      setResolved(new Set());
     } catch (e: any) {
       toast({
         title: "Analysis failed",
@@ -56,24 +56,50 @@ export const RevenueLeakDetector: React.FC<{ hospitalId: string }> = ({ hospital
     }
   };
 
-  const handleResolve = (idx: number) => {
-    setResolved(prev => new Set([...prev, idx]));
+  const updatePatternStatus = (id: string, status: LeakPattern["status"]) => {
+    setResult(prev => prev && ({
+      ...prev,
+      patterns: prev.patterns.map(p => (p.id === id ? { ...p, status } : p)),
+    }));
+  };
+
+  const handleResolve = async (pattern: LeakPattern) => {
+    if (!pattern.id) return;
+    setActingOn(pattern.id);
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await supabase.from("revenue_leak_actions")
+      .update({ status: "resolved", resolved_at: new Date().toISOString(), resolved_by: user?.id ?? null })
+      .eq("id", pattern.id);
+    setActingOn(null);
+    if (error) {
+      toast({ title: "Could not mark resolved", description: error.message, variant: "destructive" });
+      return;
+    }
+    updatePatternStatus(pattern.id, "resolved");
     toast({ title: "Marked as resolved", description: "This leakage item has been marked for follow-up." });
   };
 
-  const handleAssign = (idx: number, pattern: LeakPattern) => {
-    setAssigning(idx);
-    setTimeout(() => {
-      setAssigning(null);
-      toast({
-        title: "Assigned to department head",
-        description: `${pattern.department} team has been notified about: "${pattern.issue}"`,
-      });
-    }, 600);
+  const handleAssign = async (pattern: LeakPattern) => {
+    if (!pattern.id) return;
+    setActingOn(pattern.id);
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await supabase.from("revenue_leak_actions")
+      .update({ status: "assigned", assigned_at: new Date().toISOString(), assigned_by: user?.id ?? null })
+      .eq("id", pattern.id);
+    setActingOn(null);
+    if (error) {
+      toast({ title: "Could not assign", description: error.message, variant: "destructive" });
+      return;
+    }
+    updatePatternStatus(pattern.id, "assigned");
+    toast({
+      title: "Assigned to department head",
+      description: `${pattern.department} team has been notified about: "${pattern.issue}"`,
+    });
   };
 
-  const activePatterns = result?.patterns.filter((_, i) => !resolved.has(i)) || [];
-  const resolvedCount  = resolved.size;
+  const activePatterns = result?.patterns.filter(p => p.status !== "resolved") || [];
+  const resolvedCount  = result?.patterns.filter(p => p.status === "resolved").length || 0;
 
   return (
     <div>
@@ -120,20 +146,21 @@ export const RevenueLeakDetector: React.FC<{ hospitalId: string }> = ({ hospital
           )}
 
           {/* Pattern cards */}
-          {activePatterns.map((p, idx) => {
-            const realIdx  = result.patterns.indexOf(p);
+          {activePatterns.map(p => {
             const cfg      = SEVERITY_CONFIG[p.severity] || SEVERITY_CONFIG.medium;
-            const isAssigning = assigning === realIdx;
+            const isActing = p.id != null && actingOn === p.id;
+            const isAssigned = p.status === "assigned";
             return (
-              <div key={realIdx} className={cn("border rounded-lg p-4 space-y-2", cfg.bg)}>
+              <div key={p.id ?? p.issue} className={cn("border rounded-lg p-4 space-y-2", cfg.bg)}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <AlertTriangle size={14} className={cn("shrink-0", cfg.icon)} />
                     <p className="text-sm font-semibold text-foreground truncate">{p.issue}</p>
                   </div>
                   <button
-                    onClick={() => handleResolve(realIdx)}
-                    className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                    onClick={() => handleResolve(p)}
+                    disabled={!p.id}
+                    className="shrink-0 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
                     title="Mark as resolved"
                   >
                     <X size={14} />
@@ -147,6 +174,11 @@ export const RevenueLeakDetector: React.FC<{ hospitalId: string }> = ({ hospital
                   <span className="text-[10px] bg-muted text-muted-foreground px-2 py-0.5 rounded-full">
                     {p.department}
                   </span>
+                  {isAssigned && (
+                    <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">
+                      Assigned
+                    </span>
+                  )}
                   <span className="flex items-center gap-0.5 text-xs font-semibold text-foreground">
                     <IndianRupee size={11} />
                     {fmt(p.amount_at_risk)}
@@ -161,20 +193,21 @@ export const RevenueLeakDetector: React.FC<{ hospitalId: string }> = ({ hospital
                     variant="outline"
                     size="sm"
                     className="h-7 text-xs gap-1.5"
-                    disabled={isAssigning}
-                    onClick={() => handleAssign(realIdx, p)}
+                    disabled={isActing || !p.id || isAssigned}
+                    onClick={() => handleAssign(p)}
                   >
-                    {isAssigning
+                    {isActing
                       ? <Loader2 size={11} className="animate-spin" />
                       : <UserCheck size={11} />
                     }
-                    Assign to Dept Head
+                    {isAssigned ? "Assigned to Dept Head" : "Assign to Dept Head"}
                   </Button>
                   <Button
                     variant="outline"
                     size="sm"
                     className="h-7 text-xs gap-1.5 border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-                    onClick={() => handleResolve(realIdx)}
+                    disabled={isActing || !p.id}
+                    onClick={() => handleResolve(p)}
                   >
                     <CheckCircle size={11} /> Resolve
                   </Button>

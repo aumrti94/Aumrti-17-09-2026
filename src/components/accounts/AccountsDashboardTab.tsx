@@ -6,6 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, Legend } from "recharts";
 import FinancialAnomalyCard from "./FinancialAnomalyCard";
 import PostingFailuresCard from "./PostingFailuresCard";
+import { fetchLedgerBalances, type LedgerAccountBalance } from "@/lib/financialStatements";
+import { startOfMonth, endOfMonth, format } from "date-fns";
 
 interface Props {
   hospitalId: string | null;
@@ -21,82 +23,99 @@ const REVENUE_LABELS: Record<string, string> = {
 };
 const PIE_COLORS = ["#10B981","#3B82F6","#8B5CF6","#F59E0B","#EC4899","#06B6D4","#F97316","#6366F1","#EF4444","#14B8A6","#A855F7","#64748B"];
 
+const EXPENSE_GROUPS: Record<string, { label: string; codes: string[] }> = {
+  salary: { label: "Salaries", codes: ["5001","5002","5003","5004","5005","5006"] },
+  drugs: { label: "Drug Purchases", codes: ["5010","5011","5012"] },
+  rent: { label: "Rent", codes: ["5020"] },
+  utilities: { label: "Utilities", codes: ["5021","5022","5023"] },
+  maintenance: { label: "Maintenance", codes: ["5030","5031","5032"] },
+  other: { label: "Other", codes: ["5040","5041","5042","5043","5050","5051","5060"] },
+};
+
 const AccountsDashboardTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
-  const [lineItems, setLineItems] = useState<any[]>([]);
+  // Period-scoped (entry_date within dateRange), via the shared ledger lib —
+  // never created_at, so a backdated entry lands in the period it was dated for.
+  const [ledgerBalances, setLedgerBalances] = useState<LedgerAccountBalance[]>([]);
   const [recentEntries, setRecentEntries] = useState<any[]>([]);
   const [arBalances, setArBalances] = useState(0);
   const [cashBalances, setCashBalances] = useState(0);
   const [hasRules, setHasRules] = useState<boolean | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
+  // Trailing 6 real calendar months — independent of the page's own date
+  // filter, which previously left 5 of 6 trend months empty whenever a
+  // narrower period (e.g. "This Month") was selected.
+  const [monthlyTrend, setMonthlyTrend] = useState<{ month: string; revenue: number; expenses: number }[]>([]);
 
   useEffect(() => {
     if (!hospitalId) return;
     loadAll();
   }, [hospitalId, dateRange]);
 
+  useEffect(() => {
+    if (!hospitalId) return;
+    loadMonthlyTrend();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hospitalId]);
+
   const loadAll = async () => {
-    const [{ data: items }, { data: recent }, { data: arItems }, { data: cashItems }, { count: rulesCount }] = await Promise.all([
-      supabase.from("journal_line_items").select("account_code, debit_amount, credit_amount, created_at")
-        .eq("hospital_id", hospitalId!).gte("created_at", dateRange.start).lte("created_at", dateRange.end + "T23:59:59"),
+    const [balances, { data: recent }, { data: arItems }, { data: cashItems }, { count: rulesCount }] = await Promise.all([
+      fetchLedgerBalances(hospitalId!, dateRange.start, dateRange.end),
       supabase.from("journal_entries").select("*").eq("hospital_id", hospitalId!).order("created_at", { ascending: false }).limit(10),
       supabase.from("journal_line_items").select("account_code, debit_amount, credit_amount").eq("hospital_id", hospitalId!).in("account_code", ["1010","1011","1012"]),
       supabase.from("journal_line_items").select("account_code, debit_amount, credit_amount").eq("hospital_id", hospitalId!).in("account_code", ["1001","1002","1003"]),
       (supabase as any).from("auto_posting_rules").select("id", { count: "exact", head: true }).eq("hospital_id", hospitalId!).eq("is_active", true),
     ]);
-    setLineItems(items || []);
+    setLedgerBalances(balances);
     setRecentEntries(recent || []);
     setArBalances((arItems || []).reduce((s, i) => s + Number(i.debit_amount || 0) - Number(i.credit_amount || 0), 0));
     setCashBalances((cashItems || []).reduce((s, i) => s + Number(i.debit_amount || 0) - Number(i.credit_amount || 0), 0));
     setHasRules((rulesCount ?? 0) > 0);
   };
 
-  const totalRevenue = useMemo(() => lineItems.filter(i => i.account_code?.startsWith("4")).reduce((s, i) => s + Number(i.credit_amount || 0), 0), [lineItems]);
-  const totalExpenses = useMemo(() => lineItems.filter(i => i.account_code?.startsWith("5")).reduce((s, i) => s + Number(i.debit_amount || 0), 0), [lineItems]);
+  const loadMonthlyTrend = async () => {
+    const months: { label: string; start: string; end: string }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i, 1);
+      months.push({
+        label: d.toLocaleString("en-IN", { month: "short", year: "2-digit" }),
+        start: format(startOfMonth(d), "yyyy-MM-dd"),
+        end: format(endOfMonth(d), "yyyy-MM-dd"),
+      });
+    }
+    const results = await Promise.all(months.map((m) => fetchLedgerBalances(hospitalId!, m.start, m.end)));
+    setMonthlyTrend(months.map((m, idx) => {
+      const rows = results[idx];
+      const revenue = rows.filter((r) => r.account_type === "revenue").reduce((s, r) => s + (r.total_credit - r.total_debit), 0);
+      const expenses = rows.filter((r) => r.account_type === "expense").reduce((s, r) => s + (r.total_debit - r.total_credit), 0);
+      return { month: m.label, revenue, expenses };
+    }));
+  };
+
+  const totalRevenue = useMemo(() => ledgerBalances.filter((r) => r.account_type === "revenue").reduce((s, r) => s + (r.total_credit - r.total_debit), 0), [ledgerBalances]);
+  const totalExpenses = useMemo(() => ledgerBalances.filter((r) => r.account_type === "expense").reduce((s, r) => s + (r.total_debit - r.total_credit), 0), [ledgerBalances]);
   const netProfit = totalRevenue - totalExpenses;
   const profitMargin = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(1) : "0.0";
 
   // Revenue breakdown for donut
   const revenueBreakdown = useMemo(() => {
-    const map: Record<string, number> = {};
-    lineItems.filter(i => i.account_code?.startsWith("4")).forEach(i => {
-      const code = i.account_code;
-      map[code] = (map[code] || 0) + Number(i.credit_amount || 0);
-    });
-    return Object.entries(map).filter(([, v]) => v > 0).map(([code, value]) => ({
-      name: REVENUE_LABELS[code] || code, value,
-    }));
-  }, [lineItems]);
+    return ledgerBalances
+      .filter((r) => r.account_type === "revenue")
+      .map((r) => ({ name: REVENUE_LABELS[r.account_code] || r.account_name, value: r.total_credit - r.total_debit }))
+      .filter((r) => r.value > 0);
+  }, [ledgerBalances]);
 
   // Expense breakdown by groups
   const expenseBreakdown = useMemo(() => {
-    const groups: Record<string, { label: string; codes: string[] }> = {
-      salary: { label: "Salaries", codes: ["5001","5002","5003","5004","5005","5006"] },
-      drugs: { label: "Drug Purchases", codes: ["5010","5011","5012"] },
-      rent: { label: "Rent", codes: ["5020"] },
-      utilities: { label: "Utilities", codes: ["5021","5022","5023"] },
-      maintenance: { label: "Maintenance", codes: ["5030","5031","5032"] },
-      other: { label: "Other", codes: ["5040","5041","5042","5043","5050","5051","5060"] },
-    };
-    return Object.values(groups).map(g => ({
+    const byCode: Record<string, number> = {};
+    ledgerBalances.filter((r) => r.account_type === "expense").forEach((r) => {
+      byCode[r.account_code] = r.total_debit - r.total_credit;
+    });
+    return Object.values(EXPENSE_GROUPS).map((g) => ({
       name: g.label,
-      value: lineItems.filter(i => g.codes.includes(i.account_code)).reduce((s, i) => s + Number(i.debit_amount || 0), 0),
-    })).filter(g => g.value > 0);
-  }, [lineItems]);
-
-  // Monthly trend (last 6 months)
-  const monthlyTrend = useMemo(() => {
-    const months: { month: string; revenue: number; expenses: number }[] = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date();
-      d.setMonth(d.getMonth() - i);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      const label = d.toLocaleString("en-IN", { month: "short", year: "2-digit" });
-      const rev = lineItems.filter(li => li.account_code?.startsWith("4") && li.created_at?.startsWith(key)).reduce((s, li) => s + Number(li.credit_amount || 0), 0);
-      const exp = lineItems.filter(li => li.account_code?.startsWith("5") && li.created_at?.startsWith(key)).reduce((s, li) => s + Number(li.debit_amount || 0), 0);
-      months.push({ month: label, revenue: rev, expenses: exp });
-    }
-    return months;
-  }, [lineItems]);
+      value: g.codes.reduce((s, code) => s + (byCode[code] || 0), 0),
+    })).filter((g) => g.value > 0);
+  }, [ledgerBalances]);
 
   const fmt = (n: number) => `₹${Math.abs(n).toLocaleString("en-IN", { minimumFractionDigits: 0 })}`;
   const fmtShort = (n: number) => {

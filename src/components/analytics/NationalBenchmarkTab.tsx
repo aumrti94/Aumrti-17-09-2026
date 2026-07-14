@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
+import { computeReadmissionMetrics, computePatientSatisfaction } from "@/hooks/useAnalyticsData";
 import { Badge } from "@/components/ui/badge";
 import { TrendingUp, TrendingDown, Minus, Trophy, AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -63,7 +64,9 @@ async function fetchHospitalMetrics(hospitalId: string) {
   const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().split("T")[0];
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
 
-  const [admRes, bedRes, qiRes, hhRes, ipcRes, incRes, capaRes, promRes] = await Promise.all([
+  const todayStr = now.toISOString().split("T")[0];
+
+  const [admRes, bedRes, qiRes, hhRes, ipcRes, incRes, capaRes, readmissionMetrics, satisfaction] = await Promise.all([
     (supabase as any).from("admissions").select("admitted_at, discharged_at, status, patient_id")
       .eq("hospital_id", hospitalId).eq("status", "discharged").gte("discharged_at", thirtyDaysAgo),
     supabase.from("beds").select("id, status").eq("hospital_id", hospitalId).eq("is_active", true),
@@ -76,8 +79,12 @@ async function fetchHospitalMetrics(hospitalId: string) {
       .eq("hospital_id", hospitalId).gte("created_at", thirtyDaysAgo),
     (supabase as any).from("capa_records").select("id, status, due_date, closed_at")
       .eq("hospital_id", hospitalId),
-    (supabase as any).from("prom_responses").select("overall_score")
-      .eq("hospital_id", hospitalId).gte("created_at", monthStart),
+    // Real chronological 30-day readmission check — shared with QualityTab, replaces the
+    // old duplicate-patient-id-in-list heuristic that was here before.
+    computeReadmissionMetrics(hospitalId, { from: thirtyDaysAgo, to: todayStr }),
+    // Real PREM source (prom_prem_surveys.prem_overall) — the old `prom_responses.overall_score`
+    // query referenced a table that never existed in the schema and always returned empty.
+    computePatientSatisfaction(hospitalId, { from: monthStart, to: todayStr }),
   ]);
 
   const discharges = admRes.data || [];
@@ -93,9 +100,7 @@ async function fetchHospitalMetrics(hospitalId: string) {
 
   const bor = beds.length > 0 ? Math.round((occupied / beds.length) * 100) : null;
 
-  const patientIds = discharges.map((a: any) => a.patient_id);
-  const readmits = patientIds.length - new Set(patientIds).size;
-  const readmitRate = discharges.length > 0 ? (readmits / discharges.length) * 100 : null;
+  const readmitRate = readmissionMetrics.readmissionRate;
 
   const hhTotal = (hhRes.data || []).reduce((s: number, r: any) => s + (r.total_opportunities || 0), 0);
   const hhDone  = (hhRes.data || []).reduce((s: number, r: any) => s + (r.total_compliant    || 0), 0);
@@ -113,8 +118,8 @@ async function fetchHospitalMetrics(hospitalId: string) {
   const incidentCount = (incRes.data || []).length;
   const incidentRate = beds.length > 0 ? Math.round((incidentCount / beds.length) * 100 * 10) / 10 : null;
 
-  const promScores = (promRes.data || []).map((r: any) => r.overall_score).filter((s: number) => s != null);
-  const promPct = promScores.length > 0 ? Math.round(promScores.reduce((a: number, b: number) => a + b, 0) / promScores.length) : null;
+  // PREM benchmark is expressed as a %, prem_overall is on a 1-5 scale — convert.
+  const promPct = satisfaction.avgOverall5 != null ? Math.round((satisfaction.avgOverall5 / 5) * 100) : null;
 
   const qiMap: Record<string, number | null> = {};
   for (const ind of qi) {

@@ -3,12 +3,13 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { useToast } from "@/hooks/use-toast";
-import { AlertTriangle, CheckCircle, XCircle, TrendingUp, Package, ArrowLeft, MessageCircle, RefreshCw, ShoppingCart, Loader2, ScanLine } from "lucide-react";
+import { AlertTriangle, CheckCircle, XCircle, TrendingUp, Package, ArrowLeft, MessageCircle, RefreshCw, ShoppingCart, Loader2, ScanLine, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { splitGst, resolveStateCode } from "@/lib/gst";
 
 function openWhatsAppAlert(rec: any) {
   const itemName = rec.item?.item_name ?? "Unknown Item";
@@ -38,6 +39,7 @@ export default function ProcurementRecommendationsPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [forecasting, setForecasting] = useState(false);
+  const [drafting, setDrafting] = useState(false);
   const [showCreatePO, setShowCreatePO] = useState(false);
   const [poVendorId, setPoVendorId] = useState("");
   const [creatingPO, setCreatingPO] = useState(false);
@@ -210,6 +212,80 @@ export default function ProcurementRecommendationsPage() {
     }
   };
 
+  // Agentic auto-draft: group accepted recs by the best vendor (rate contract, else best-scoring
+  // by category), pre-fill contract rates + GST split, and create draft POs for human approval.
+  const autoDraftPOs = async () => {
+    if (!hospitalId) return;
+    const accepted = (recs || []).filter((r: any) => r.status === "accepted");
+    if (accepted.length === 0) { toast({ title: "No accepted recommendations", variant: "destructive" }); return; }
+    setDrafting(true);
+    try {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      const { data: userData } = await supabase.from("users").select("id, hospital_id").eq("auth_user_id", authUser?.id).maybeSingle();
+      if (!userData) throw new Error("User not found");
+      const itemIds = accepted.map((r: any) => r.item_id);
+      const today = new Date().toISOString().slice(0, 10);
+      const [{ data: contracts }, { data: vendorsFull }, { data: hosp }, { data: itemRows }] = await Promise.all([
+        (supabase as any).from("vendor_rate_contracts").select("item_id, vendor_id, rate, gst_percent, valid_to").eq("is_active", true),
+        (supabase as any).from("vendors").select("id, category, performance_score, gstin, state_code").eq("hospital_id", hospitalId).eq("is_active", true),
+        (supabase as any).from("hospitals").select("state_code, gstin").eq("id", hospitalId).maybeSingle(),
+        (supabase as any).from("inventory_items").select("id, category, gst_percent").in("id", itemIds),
+      ]);
+      const contractByItem: Record<string, any> = {};
+      (contracts || []).forEach((c: any) => { if (!c.valid_to || c.valid_to >= today) contractByItem[c.item_id] = c; });
+      const itemById: Record<string, any> = {}; (itemRows || []).forEach((i: any) => { itemById[i.id] = i; });
+      const vendorById: Record<string, any> = {}; (vendorsFull || []).forEach((v: any) => { vendorById[v.id] = v; });
+      const sellerState = resolveStateCode(hosp?.state_code, hosp?.gstin);
+
+      const pickVendor = (itemId: string): string | null => {
+        if (contractByItem[itemId]) return contractByItem[itemId].vendor_id;
+        const cat = itemById[itemId]?.category;
+        const pool = (vendorsFull || []).filter((v: any) => Array.isArray(v.category) ? v.category.includes(cat) : true);
+        const best = [...(pool.length ? pool : (vendorsFull || []))].sort((a: any, b: any) => (b.performance_score || 0) - (a.performance_score || 0))[0];
+        return best?.id || null;
+      };
+
+      const groups: Record<string, any[]> = {};
+      for (const rec of accepted) { const vid = pickVendor(rec.item_id); if (vid) (groups[vid] = groups[vid] || []).push(rec); }
+      const vendorIds = Object.keys(groups);
+      if (vendorIds.length === 0) { toast({ title: "No eligible vendor — add a vendor or rate contract", variant: "destructive" }); setDrafting(false); return; }
+
+      let poCount = 0;
+      for (const vid of vendorIds) {
+        const group = groups[vid];
+        const vend = vendorById[vid];
+        const buyerState = resolveStateCode(vend?.state_code, vend?.gstin);
+        const poNumber = `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${Math.floor(Math.random() * 900 + 100)}`;
+        let subtotal = 0, gstTotal = 0, cgstT = 0, sgstT = 0, igstT = 0;
+        const lines = group.map((rec: any) => {
+          const c = contractByItem[rec.item_id];
+          const rate = c ? Number(c.rate) : 0;
+          const gstPct = c ? Number(c.gst_percent) : (itemById[rec.item_id]?.gst_percent || 12);
+          const amt = rec.recommended_quantity * rate;
+          const s = splitGst({ amount: amt, gstPercent: gstPct, sellerStateCode: sellerState, buyerStateCode: buyerState });
+          subtotal += amt; gstTotal += s.gst; cgstT += s.cgst; sgstT += s.sgst; igstT += s.igst;
+          return { item_id: rec.item_id, quantity_ordered: rec.recommended_quantity, unit_rate: rate, gst_percent: gstPct, total_amount: amt + s.gst, cgst: s.cgst, sgst: s.sgst, igst: s.igst };
+        });
+        const { data: po } = await (supabase as any).from("purchase_orders").insert({
+          hospital_id: hospitalId, po_number: poNumber, vendor_id: vid, notes: `Auto-drafted from forecast (${group.length} items)`,
+          total_amount: subtotal, gst_amount: gstTotal, net_amount: subtotal + gstTotal, cgst_amount: cgstT, sgst_amount: sgstT, igst_amount: igstT,
+          created_by: userData.id, status: "draft",
+        }).select("id").maybeSingle();
+        if (po) {
+          await (supabase as any).from("po_items").insert(lines.map((l: any) => ({ hospital_id: hospitalId, po_id: po.id, item_id: l.item_id, quantity_ordered: l.quantity_ordered, unit_rate: l.unit_rate, gst_percent: l.gst_percent, total_amount: l.total_amount, cgst_amount: l.cgst, sgst_amount: l.sgst, igst_amount: l.igst })));
+          await (supabase as any).from("procurement_recommendations").update({ status: "converted" }).in("id", group.map((r: any) => r.id));
+          poCount++;
+        }
+      }
+      toast({ title: `${poCount} draft PO${poCount !== 1 ? "s" : ""} created — review & approve in Inventory → PO` });
+      qc.invalidateQueries({ queryKey: ["procurement-recommendations"] });
+    } catch (err: any) {
+      toast({ title: "Auto-draft failed", description: err.message, variant: "destructive" });
+    } finally {
+      setDrafting(false);
+    }
+  };
+
   const { data: recs, isLoading } = useQuery({
     queryKey: ["procurement-recommendations", hospitalId],
     queryFn: async () => {
@@ -276,9 +352,14 @@ export default function ProcurementRecommendationsPage() {
             {refreshing ? "Refreshing…" : "Refresh Estimates"}
           </Button>
           {(recs || []).some((r: any) => r.status === "accepted") && (
-            <Button size="sm" onClick={() => setShowCreatePO(true)} className="text-xs h-8 gap-1.5">
-              <ShoppingCart className="h-3.5 w-3.5" /> Create PO from Accepted
-            </Button>
+            <>
+              <Button size="sm" onClick={autoDraftPOs} disabled={drafting} className="text-xs h-8 gap-1.5">
+                {drafting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} Auto-Draft POs
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setShowCreatePO(true)} className="text-xs h-8 gap-1.5">
+                <ShoppingCart className="h-3.5 w-3.5" /> Create PO (single vendor)
+              </Button>
+            </>
           )}
         </div>
       </div>

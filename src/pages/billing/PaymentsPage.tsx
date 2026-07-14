@@ -1,12 +1,20 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { IndianRupee, CreditCard, Link2, Wallet, Download, Printer } from "lucide-react";
+import { IndianRupee, CreditCard, Link2, Wallet, Download, Printer, Search, Send, CheckCircle2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { recordBillPayment } from "@/lib/billPayments";
+import PaymentLinkModal from "@/components/billing/PaymentLinkModal";
+import type { BillRecord } from "@/pages/billing/BillingPage";
+
+// Razorpay payment method -> this app's payment_mode enum. Unrecognised
+// methods (wallet, emi, ...) fall back to "upi" (always has a seeded
+// auto_posting_rules row, so GL posting never silently no-ops).
+const RAZORPAY_METHOD_MAP: Record<string, string> = { upi: "upi", card: "card", netbanking: "net_banking" };
 
 const modeColors: Record<string, string> = {
   cash: "#10B981",
@@ -51,6 +59,7 @@ interface PaymentRow {
 const PaymentsPage: React.FC = () => {
   const { toast } = useToast();
   const [hospitalId, setHospitalId] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [hospital80G, setHospital80G] = useState<{ name: string; registration_80g?: string; trust_pan?: string } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -62,6 +71,19 @@ const PaymentsPage: React.FC = () => {
   const [outstandingTotal, setOutstandingTotal] = useState<number | null>(null);
   const [lookingUp, setLookingUp] = useState(false);
   const [lookupResult, setLookupResult] = useState<Record<string, any> | null>(null);
+
+  // "Links Sent" / "Advances" KPIs
+  const [linksSentCount, setLinksSentCount] = useState<number | null>(null);
+  const [advancesOnHold, setAdvancesOnHold] = useState<number | null>(null);
+  const [razorpayConfigured, setRazorpayConfigured] = useState(false);
+
+  // Find-a-bill (attach reconciled payment / send payment link)
+  const [billSearchTerm, setBillSearchTerm] = useState("");
+  const [searchingBill, setSearchingBill] = useState(false);
+  const [billSearchError, setBillSearchError] = useState("");
+  const [foundBill, setFoundBill] = useState<BillRecord | null>(null);
+  const [attaching, setAttaching] = useState(false);
+  const [showPaymentLinkModal, setShowPaymentLinkModal] = useState(false);
 
   // Fetch outstanding balance
   useEffect(() => {
@@ -79,19 +101,109 @@ const PaymentsPage: React.FC = () => {
     })();
   }, [hospitalId, payments]);
 
+  // Links Sent (this period) + Advances on hold (all-time, mirrors Outstanding)
+  useEffect(() => {
+    if (!hospitalId) return;
+    (async () => {
+      const now = new Date();
+      let dateStart: string;
+      switch (dateFilter) {
+        case "yesterday": { const y = new Date(now); y.setDate(y.getDate() - 1); dateStart = y.toISOString().slice(0, 10); break; }
+        case "week": { const w = new Date(now); w.setDate(w.getDate() - 7); dateStart = w.toISOString().slice(0, 10); break; }
+        case "month": { const m = new Date(now); m.setMonth(m.getMonth() - 1); dateStart = m.toISOString().slice(0, 10); break; }
+        default: dateStart = now.toISOString().slice(0, 10);
+      }
+      const [{ count: linkCount }, { data: advRows }] = await Promise.all([
+        (supabase as any).from("payment_links").select("id", { count: "exact", head: true })
+          .eq("hospital_id", hospitalId).gte("created_at", dateStart),
+        (supabase as any).from("advance_receipts").select("amount")
+          .eq("hospital_id", hospitalId).eq("is_adjusted", false),
+      ]);
+      setLinksSentCount(linkCount ?? 0);
+      setAdvancesOnHold((advRows || []).reduce((s: number, r: any) => s + Number(r.amount || 0), 0));
+    })();
+  }, [hospitalId, dateFilter]);
+
   useEffect(() => {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const { data } = await supabase.from("users").select("hospital_id").eq("auth_user_id", user.id).maybeSingle();
+      const { data } = await supabase.from("users").select("id, hospital_id").eq("auth_user_id", user.id).maybeSingle();
       if (data?.hospital_id) {
+        setUserId(data.id);
         setHospitalId(data.hospital_id);
         const { data: hosp } = await (supabase as any).from("hospitals")
           .select("name, registration_80g, trust_pan").eq("id", data.hospital_id).maybeSingle();
         if (hosp) setHospital80G(hosp);
+        const { data: rzp } = await (supabase as any).from("api_configurations")
+          .select("id").eq("hospital_id", data.hospital_id).eq("service_key", "razorpay").eq("is_active", true).maybeSingle();
+        setRazorpayConfigured(!!rzp);
       }
     })();
   }, []);
+
+  const searchBill = async () => {
+    if (!hospitalId || !billSearchTerm.trim()) return;
+    setSearchingBill(true);
+    setBillSearchError("");
+    setFoundBill(null);
+    const term = billSearchTerm.trim();
+    // Try by bill number first, then by patient UHID.
+    let { data: bill } = await (supabase as any)
+      .from("bills").select("*, patients!inner(full_name, uhid)")
+      .eq("hospital_id", hospitalId).ilike("bill_number", `%${term}%`)
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (!bill) {
+      const res = await (supabase as any)
+        .from("bills").select("*, patients!inner(full_name, uhid)")
+        .eq("hospital_id", hospitalId).ilike("patients.uhid", `%${term}%`)
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      bill = res.data;
+    }
+    setSearchingBill(false);
+    if (!bill) { setBillSearchError("No bill found for that number or UHID"); return; }
+    setFoundBill({
+      ...bill,
+      patient_name: bill.patients?.full_name || "Patient",
+      uhid: bill.patients?.uhid || "",
+    });
+  };
+
+  const attachLookupToFoundBill = async () => {
+    if (!foundBill || !lookupResult || !hospitalId) return;
+    setAttaching(true);
+    try {
+      const amount = Number(lookupResult.amount || 0);
+      const mode = RAZORPAY_METHOD_MAP[lookupResult.method as string] || "upi";
+      const newPaidAmount = Number(foundBill.paid_amount || 0) + amount;
+      const newBalanceDue = Math.max(0, Number(foundBill.total_amount || 0) - newPaidAmount);
+      const newPaymentStatus = newBalanceDue <= 0 ? "paid" : newPaidAmount > 0 ? "partial" : "unpaid";
+      const result = await recordBillPayment({
+        hospitalId,
+        billId: foundBill.id,
+        billNumber: foundBill.bill_number,
+        patientId: foundBill.patient_id,
+        admissionId: foundBill.admission_id,
+        rows: [{ mode, amount, reference: manualTxnId.trim() }],
+        collectedBy: userId,
+        newPaidAmount,
+        newBalanceDue,
+        newPaymentStatus,
+        sendReceipt: true,
+      });
+      if (!result.ok) throw new Error(result.error || "Failed to record payment");
+      toast({ title: `₹${amount.toLocaleString("en-IN")} attached to Bill #${foundBill.bill_number} ✓` });
+      setLookupResult(null);
+      setManualTxnId("");
+      setFoundBill(null);
+      setBillSearchTerm("");
+      fetchPayments();
+    } catch (err: any) {
+      toast({ title: "Failed to attach payment", description: err?.message, variant: "destructive" });
+    } finally {
+      setAttaching(false);
+    }
+  };
 
   const print80GReceipt = (p: PaymentRow) => {
     const h = hospital80G;
@@ -248,8 +360,8 @@ const PaymentsPage: React.FC = () => {
             <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center"><Link2 size={16} className="text-blue-600" /></div>
             <span className="text-[11px] font-medium text-muted-foreground uppercase">Links Sent</span>
           </div>
-          <p className="text-xl font-bold text-blue-600 tabular-nums">—</p>
-          <p className="text-[10px] text-muted-foreground mt-1">Awaiting payment</p>
+          <p className="text-xl font-bold text-blue-600 tabular-nums">{linksSentCount !== null ? linksSentCount : "—"}</p>
+          <p className="text-[10px] text-muted-foreground mt-1">{dateFilters.find(f => f.value === dateFilter)?.label} · awaiting payment</p>
         </div>
 
         <div className="bg-card rounded-xl border border-border p-4 shadow-sm">
@@ -257,8 +369,8 @@ const PaymentsPage: React.FC = () => {
             <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center"><CreditCard size={16} className="text-violet-600" /></div>
             <span className="text-[11px] font-medium text-muted-foreground uppercase">Advances</span>
           </div>
-          <p className="text-xl font-bold text-violet-600 tabular-nums">—</p>
-          <p className="text-[10px] text-muted-foreground mt-1">On hold</p>
+          <p className="text-xl font-bold text-violet-600 tabular-nums">{advancesOnHold !== null ? fmt(advancesOnHold) : "—"}</p>
+          <p className="text-[10px] text-muted-foreground mt-1">On hold, not yet adjusted</p>
         </div>
       </div>
 
@@ -384,11 +496,45 @@ const PaymentsPage: React.FC = () => {
             )}
           </div>
 
+          {/* Find a Bill — for sending a payment link or attaching a reconciled payment */}
+          <div className="bg-card rounded-xl border border-border p-4">
+            <p className="text-[11px] font-bold uppercase text-muted-foreground mb-2">Find a Bill</p>
+            <div className="flex gap-1.5 mb-2">
+              <Input
+                placeholder="Bill # or UHID"
+                value={billSearchTerm}
+                onChange={(e) => { setBillSearchTerm(e.target.value); setFoundBill(null); setBillSearchError(""); }}
+                onKeyDown={(e) => { if (e.key === "Enter") searchBill(); }}
+                className="text-xs h-8"
+              />
+              <Button size="sm" variant="outline" className="h-8 px-2.5 shrink-0" disabled={!billSearchTerm.trim() || searchingBill} onClick={searchBill}>
+                <Search size={13} />
+              </Button>
+            </div>
+            {billSearchError && <p className="text-[10px] text-destructive mb-1">{billSearchError}</p>}
+            {foundBill && (
+              <div className="rounded-lg border border-border bg-muted/30 p-2.5 space-y-2 text-[11px]">
+                <div>
+                  <p className="font-bold text-foreground">{foundBill.patient_name}</p>
+                  <p className="text-muted-foreground">#{foundBill.bill_number} · {foundBill.uhid} · Balance {fmt(foundBill.balance_due)}</p>
+                </div>
+                <Button size="sm" variant="outline" className="w-full h-7 text-[11px] gap-1" onClick={() => setShowPaymentLinkModal(true)}>
+                  <Send size={11} /> Send Payment Link
+                </Button>
+                {lookupResult?.status === "captured" && (
+                  <Button size="sm" className="w-full h-7 text-[11px] gap-1 bg-emerald-600 hover:bg-emerald-700" disabled={attaching} onClick={attachLookupToFoundBill}>
+                    <CheckCircle2 size={11} /> {attaching ? "Attaching…" : `Attach ₹${Number(lookupResult.amount).toLocaleString("en-IN")} Payment`}
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Manual Reconciliation */}
           <div className="bg-card rounded-xl border border-border p-4">
             <p className="text-[11px] font-bold uppercase text-muted-foreground mb-2">Manual Reconciliation</p>
             <p className="text-[10px] text-muted-foreground mb-3">
-              Enter Razorpay payment ID to look up transaction details.
+              Enter Razorpay payment ID to look up transaction details, then find the bill above to attach it.
             </p>
             <Input
               placeholder="pay_xxxxxxxxxxxxx"
@@ -431,11 +577,24 @@ const PaymentsPage: React.FC = () => {
                     <span>{new Date(lookupResult.captured_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}</span>
                   </div>
                 )}
+                {lookupResult.status === "captured" && !foundBill && (
+                  <p className="text-[10px] text-muted-foreground pt-1">Find the bill above, then attach this payment.</p>
+                )}
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {showPaymentLinkModal && foundBill && hospitalId && (
+        <PaymentLinkModal
+          bill={foundBill}
+          hospitalId={hospitalId}
+          hospitalName={hospital80G?.name || "Hospital"}
+          razorpayConfigured={razorpayConfigured}
+          onClose={() => setShowPaymentLinkModal(false)}
+        />
+      )}
     </div>
   );
 };

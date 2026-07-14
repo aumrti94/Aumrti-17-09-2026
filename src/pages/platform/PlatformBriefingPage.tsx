@@ -41,7 +41,8 @@ async function fetchBriefing(): Promise<BriefingData> {
   const [hRes, sRes, activeRes] = await Promise.all([
     (supabase as any).from("hospitals")
       .select("id, name, state, beds_count, created_at")
-      .eq("is_active", true),
+      .eq("is_active", true)
+      .is("deleted_at", null),
     (supabase as any).from("hospital_subscriptions")
       .select("hospital_id, status, trial_ends_at, current_period_end, subscription_plans(name, price_monthly)"),
     (supabase as any).rpc("platform_active_hospitals", { since: thirtyDaysAgo }),

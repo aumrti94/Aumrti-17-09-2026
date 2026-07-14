@@ -108,7 +108,7 @@ serve(async (req: Request) => {
 
     const {
       provider, model, prompt, systemPrompt: incomingSystemPrompt, maxTokens, temperature,
-      hospitalId, featureKey, patientId, encounterId,
+      hospitalId, featureKey, patientId, encounterId, attachments: rawAttachments,
     } = await req.json() as {
       provider: string;
       model: string;
@@ -120,7 +120,18 @@ serve(async (req: Request) => {
       featureKey?: string;
       patientId?: string;
       encounterId?: string;
+      attachments?: { kind: "image" | "pdf"; mediaType: string; data: string }[];
     };
+
+    // Sanitise attachments: only image/pdf base64 blobs, cap count + size so a
+    // malformed payload can't blow past provider limits. Purely additive —
+    // when absent, every provider call behaves exactly as before.
+    const attachments = Array.isArray(rawAttachments)
+      ? rawAttachments
+          .filter((a) => a && (a.kind === "image" || a.kind === "pdf") && typeof a.data === "string" && a.data.length > 0)
+          .slice(0, 5)
+      : [];
+    const hasAttachments = attachments.length > 0;
 
     const adminClient = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -204,20 +215,34 @@ serve(async (req: Request) => {
         ? [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }]
         : undefined;
 
+      // Multimodal: build content blocks when attachments are present, else a plain string.
+      // Claude reads images (jpeg/png/gif/webp) and PDFs (document blocks) natively.
+      const claudeContent = hasAttachments
+        ? [
+            ...attachments.map((a) =>
+              a.kind === "pdf"
+                ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: a.data } }
+                : { type: "image", source: { type: "base64", media_type: a.mediaType, data: a.data } }
+            ),
+            { type: "text", text: prompt },
+          ]
+        : prompt;
+
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "x-api-key": apiKey,
           "anthropic-version": "2023-06-01",
-          "anthropic-beta": "prompt-caching-2024-07-31",
+          // pdfs beta enables document blocks; harmless when no PDF is attached.
+          "anthropic-beta": hasAttachments ? "prompt-caching-2024-07-31,pdfs-2024-09-25" : "prompt-caching-2024-07-31",
         },
         body: JSON.stringify({
           model: resolvedModel,
           max_tokens: maxTok,
           temperature: temp,
           ...(systemBlock ? { system: systemBlock } : {}),
-          messages: [{ role: "user", content: prompt }],
+          messages: [{ role: "user", content: claudeContent }],
         }),
       });
       const data = await safeParseJson(res, "Claude");
@@ -230,6 +255,19 @@ serve(async (req: Request) => {
       cacheHit = cacheReadTokens > 0;
 
     } else if (resolvedProvider === "openai") {
+      // OpenAI chat completions accept images via image_url data-URIs; PDFs are not
+      // supported on this surface, so pdf attachments are dropped (engine handles the
+      // fallback). No attachments → plain string content, unchanged behaviour.
+      const openaiImages = attachments.filter((a) => a.kind === "image");
+      const openaiContent = openaiImages.length
+        ? [
+            { type: "text", text: prompt },
+            ...openaiImages.map((a) => ({
+              type: "image_url",
+              image_url: { url: `data:${a.mediaType};base64,${a.data}` },
+            })),
+          ]
+        : prompt;
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -239,7 +277,7 @@ serve(async (req: Request) => {
           temperature: temp,
           messages: [
             ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
-            { role: "user", content: prompt },
+            { role: "user", content: openaiContent },
           ],
         }),
       });
@@ -256,12 +294,21 @@ serve(async (req: Request) => {
       // v1beta supports thinkingConfig; thinkingBudget:0 disables Gemini "thinking"
       // (otherwise the model is slow and truncates output at MAX_TOKENS).
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${resolvedModel}:generateContent?key=${apiKey}`;
+      // Gemini reads both images and PDFs via inline_data parts.
+      const geminiParts = hasAttachments
+        ? [
+            ...attachments.map((a) => ({
+              inline_data: { mime_type: a.kind === "pdf" ? "application/pdf" : a.mediaType, data: a.data },
+            })),
+            { text: prompt },
+          ]
+        : [{ text: prompt }];
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...(systemPrompt ? { system_instruction: { parts: [{ text: systemPrompt }] } } : {}),
-          contents: [{ parts: [{ text: prompt }] }],
+          contents: [{ parts: geminiParts }],
           generationConfig: { maxOutputTokens: maxTok, temperature: temp, thinkingConfig: { thinkingBudget: 0 } },
         }),
       });
@@ -289,6 +336,15 @@ serve(async (req: Request) => {
     } else if (resolvedProvider === "openrouter") {
       // OpenRouter: one key, OpenAI-compatible API, vendor-namespaced models
       // (e.g. google/gemini-2.5-flash, anthropic/claude-3.7-sonnet).
+      // OpenRouter is OpenAI-compatible; images ride as image_url data-URIs and are
+      // forwarded to whichever underlying model supports them.
+      const orImages = attachments.filter((a) => a.kind === "image");
+      const orContent = orImages.length
+        ? [
+            { type: "text", text: prompt },
+            ...orImages.map((a) => ({ type: "image_url", image_url: { url: `data:${a.mediaType};base64,${a.data}` } })),
+          ]
+        : prompt;
       const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}`, "X-Title": "Aumrti HMS" },
@@ -298,7 +354,7 @@ serve(async (req: Request) => {
           temperature: temp,
           messages: [
             ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
-            { role: "user", content: prompt },
+            { role: "user", content: orContent },
           ],
         }),
       });
@@ -330,10 +386,30 @@ serve(async (req: Request) => {
         : useV1
         ? `${endpoint}/openai/v1/chat/completions`
         : `${endpoint}/openai/deployments/${deployment}/chat/completions?api-version=${ac.api_version}`;
+      // Azure OpenAI reads images via image_url content blocks (chat completions) or
+      // input_image parts (responses API). PDFs aren't supported on either surface.
+      const azImages = attachments.filter((a) => a.kind === "image");
+      const azChatContent = azImages.length
+        ? [
+            { type: "text", text: prompt },
+            ...azImages.map((a) => ({ type: "image_url", image_url: { url: `data:${a.mediaType};base64,${a.data}` } })),
+          ]
+        : prompt;
+      const azResponsesInput = azImages.length
+        ? [
+            {
+              role: "user",
+              content: [
+                { type: "input_text", text: prompt },
+                ...azImages.map((a) => ({ type: "input_image", image_url: `data:${a.mediaType};base64,${a.data}` })),
+              ],
+            },
+          ]
+        : prompt;
       const body = useResponses
         ? {
             model: deployment,
-            input: prompt,
+            input: azResponsesInput,
             ...(systemPrompt ? { instructions: systemPrompt } : {}),
             max_output_tokens: maxTok,
             temperature: temp,
@@ -342,7 +418,7 @@ serve(async (req: Request) => {
             ...(useV1 ? { model: deployment } : {}),
             messages: [
               ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
-              { role: "user", content: prompt },
+              { role: "user", content: azChatContent },
             ],
             max_tokens: maxTok,
             temperature: temp,

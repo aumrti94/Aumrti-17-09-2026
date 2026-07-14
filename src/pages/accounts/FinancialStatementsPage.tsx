@@ -5,9 +5,16 @@ import { formatCurrency } from "@/lib/currency";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Download, FileText, Loader2, TrendingUp, TrendingDown } from "lucide-react";
+import { Download, FileText, Loader2, TrendingUp, TrendingDown, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, startOfMonth, endOfMonth, subMonths } from "date-fns";
+import {
+  fetchLedgerBalances,
+  buildProfitAndLoss,
+  buildBalanceSheet,
+  type ProfitAndLoss,
+  type BalanceSheet,
+} from "@/lib/financialStatements";
 
 const PERIODS = [
   { value: "this_month",   label: "This Month" },
@@ -16,7 +23,14 @@ const PERIODS = [
   { value: "this_year",    label: "This Financial Year" },
 ];
 
-function PNLRow({ label, amount, indent = 0, bold = false, subtotal = false }: any) {
+const EMPTY_PL: ProfitAndLoss = { revenue: [], expenses: [], totalRevenue: 0, totalExpenses: 0, netProfit: 0 };
+const EMPTY_BS: BalanceSheet = {
+  assets: [], liabilities: [], equity: [],
+  totalAssets: 0, totalLiabilities: 0, totalEquityBase: 0,
+  retainedEarnings: 0, totalEquity: 0, isBalanced: true, difference: 0,
+};
+
+function StmtRow({ label, amount, indent = 0, bold = false, subtotal = false }: any) {
   return (
     <tr className={cn(subtotal ? "border-t-2 border-foreground bg-muted/20" : "border-b border-border/50 hover:bg-muted/10")}>
       <td className={cn("px-4 py-2 text-[12px]", bold ? "font-bold text-foreground" : "text-foreground")}
@@ -38,10 +52,18 @@ export default function FinancialStatementsPage() {
   const [activeTab, setActiveTab] = useState("pnl");
   const [loading, setLoading] = useState(true);
 
-  const [revenue, setRevenue] = useState({ opd: 0, ipd: 0, pharmacy: 0, lab: 0, radiology: 0, other: 0 });
-  const [expenses, setExpenses] = useState({ salaries: 0, drugs: 0, consumables: 0, maintenance: 0, utilities: 0, admin: 0, depreciation: 0, other: 0 });
-  const [assets, setAssets] = useState({ cash: 0, ar: 0, inventory: 0, fixed: 0 });
-  const [liabilities, setLiabilities] = useState({ payables: 0, advances: 0, loans: 0 });
+  const [pl, setPL] = useState<ProfitAndLoss>(EMPTY_PL);
+  const [bs, setBS] = useState<BalanceSheet>(EMPTY_BS);
+  const [costCentres, setCostCentres] = useState<{ id: string; name: string }[]>([]);
+  const [costCentreId, setCostCentreId] = useState("all");
+
+  useEffect(() => {
+    if (!hospitalId) return;
+    // Cost centres are modelled as departments (journal_line_items.cost_centre_id
+    // references a department), consistent with CostCentresPage.
+    (supabase as any).from("departments").select("id, name").eq("hospital_id", hospitalId).eq("is_active", true).order("name")
+      .then(({ data }: any) => setCostCentres(data || []));
+  }, [hospitalId]);
 
   const getDateRange = useCallback(() => {
     const now = new Date();
@@ -61,71 +83,61 @@ export default function FinancialStatementsPage() {
   const fetchData = useCallback(async () => {
     if (!hospitalId) return;
     setLoading(true);
-    const { from, to } = getDateRange();
-
-    const [billsRes, expRes, assetsRes, advRes] = await Promise.all([
-      (supabase as any).from("bills").select("bill_type, net_amount").eq("hospital_id", hospitalId)
-        .eq("payment_status", "paid").gte("created_at", from).lte("created_at", to),
-      (supabase as any).from("expenses").select("category, amount").eq("hospital_id", hospitalId)
-        .gte("expense_date", from).lte("expense_date", to),
-      (supabase as any).from("fixed_assets").select("current_book_value, accumulated_dep").eq("hospital_id", hospitalId),
-      (supabase as any).from("advance_receipts").select("amount").eq("hospital_id", hospitalId),
-    ]);
-
-    const bills = billsRes.data || [];
-    const rev = { opd: 0, ipd: 0, pharmacy: 0, lab: 0, radiology: 0, other: 0 };
-    bills.forEach((b: any) => {
-      const amt = Number(b.net_amount || 0);
-      if (b.bill_type === "opd") rev.opd += amt;
-      else if (b.bill_type === "ipd") rev.ipd += amt;
-      else if (b.bill_type === "pharmacy") rev.pharmacy += amt;
-      else if (b.bill_type === "lab") rev.lab += amt;
-      else if (b.bill_type === "radiology") rev.radiology += amt;
-      else rev.other += amt;
-    });
-    setRevenue(rev);
-
-    const exp = expRes.data || [];
-    const expAgg = { salaries: 0, drugs: 0, consumables: 0, maintenance: 0, utilities: 0, admin: 0, depreciation: 0, other: 0 };
-    exp.forEach((e: any) => {
-      const amt = Number(e.amount || 0);
-      const cat = (e.category || "").toLowerCase();
-      if (cat.includes("salary") || cat.includes("payroll")) expAgg.salaries += amt;
-      else if (cat.includes("drug") || cat.includes("pharma")) expAgg.drugs += amt;
-      else if (cat.includes("consumable") || cat.includes("supply")) expAgg.consumables += amt;
-      else if (cat.includes("maintenance") || cat.includes("repair")) expAgg.maintenance += amt;
-      else if (cat.includes("utility") || cat.includes("electricity") || cat.includes("water")) expAgg.utilities += amt;
-      else if (cat.includes("admin") || cat.includes("office")) expAgg.admin += amt;
-      else expAgg.other += amt;
-    });
-    setExpenses(expAgg);
-
-    const fa = assetsRes.data || [];
-    const fixedBookValue = fa.reduce((s: number, a: any) => s + Number(a.current_book_value || 0), 0);
-    const totalDepreciation = fa.reduce((s: number, a: any) => s + Number(a.accumulated_dep || 0), 0);
-    expAgg.depreciation = totalDepreciation;
-
-    const advTotal = (advRes.data || []).reduce((s: number, a: any) => s + Number(a.amount || 0), 0);
-    setAssets({ cash: advTotal * 0.6, ar: advTotal * 0.4, inventory: 0, fixed: fixedBookValue });
-    setLiabilities({ payables: 0, advances: advTotal * 0.1, loans: 0 });
-    setLoading(false);
-  }, [hospitalId, getDateRange]);
+    try {
+      const { from, to } = getDateRange();
+      const cc = costCentreId === "all" ? null : costCentreId;
+      // P&L is period-scoped (and cost-centre-filterable); Balance Sheet is
+      // cumulative from inception → period end, always at entity level.
+      const [periodRows, cumulativeRows] = await Promise.all([
+        fetchLedgerBalances(hospitalId, from, to, cc),
+        fetchLedgerBalances(hospitalId, null, to),
+      ]);
+      setPL(buildProfitAndLoss(periodRows));
+      setBS(buildBalanceSheet(cumulativeRows));
+    } catch (err) {
+      console.error("Financial statements load failed:", err);
+      setPL(EMPTY_PL);
+      setBS(EMPTY_BS);
+    } finally {
+      setLoading(false);
+    }
+  }, [hospitalId, getDateRange, costCentreId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const totalRevenue = Object.values(revenue).reduce((s, v) => s + v, 0);
-  const totalExpenses = Object.values(expenses).reduce((s, v) => s + v, 0);
-  const netProfit = totalRevenue - totalExpenses;
-  const totalAssets = Object.values(assets).reduce((s, v) => s + v, 0);
-  const totalLiabilities = Object.values(liabilities).reduce((s, v) => s + v, 0);
-  const equity = totalAssets - totalLiabilities;
-
-  const exportCSV = (title: string, rows: string[][]) => {
-    const csv = rows.map(r => r.join(",")).join("\n");
+  const exportCSV = () => {
+    const { from, to } = getDateRange();
+    const rows: string[][] = [];
+    if (activeTab === "pnl") {
+      rows.push(["Profit & Loss", `${from} to ${to}`]);
+      rows.push(["Particulars", "Amount (INR)"]);
+      rows.push(["REVENUE", ""]);
+      pl.revenue.forEach((r) => rows.push([r.account_name, r.amount.toFixed(2)]));
+      rows.push(["Total Revenue", pl.totalRevenue.toFixed(2)]);
+      rows.push(["EXPENSES", ""]);
+      pl.expenses.forEach((r) => rows.push([r.account_name, r.amount.toFixed(2)]));
+      rows.push(["Total Expenses", pl.totalExpenses.toFixed(2)]);
+      rows.push([pl.netProfit >= 0 ? "Net Profit" : "Net Loss", pl.netProfit.toFixed(2)]);
+    } else {
+      rows.push(["Balance Sheet", `as at ${to}`]);
+      rows.push(["ASSETS", ""]);
+      bs.assets.forEach((r) => rows.push([r.account_name, r.amount.toFixed(2)]));
+      rows.push(["Total Assets", bs.totalAssets.toFixed(2)]);
+      rows.push(["LIABILITIES", ""]);
+      bs.liabilities.forEach((r) => rows.push([r.account_name, r.amount.toFixed(2)]));
+      rows.push(["Total Liabilities", bs.totalLiabilities.toFixed(2)]);
+      rows.push(["EQUITY", ""]);
+      bs.equity.forEach((r) => rows.push([r.account_name, r.amount.toFixed(2)]));
+      rows.push(["Retained Earnings / Current Earnings", bs.retainedEarnings.toFixed(2)]);
+      rows.push(["Total Equity", bs.totalEquity.toFixed(2)]);
+      rows.push(["Total Liabilities + Equity", (bs.totalLiabilities + bs.totalEquity).toFixed(2)]);
+    }
+    const csv = rows.map((r) => r.map((c) => `"${(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url;
-    a.download = `${title}_${format(new Date(), "yyyyMMdd")}.csv`; a.click();
+    a.download = `${activeTab === "pnl" ? "PNL" : "BalanceSheet"}_${format(new Date(), "yyyyMMdd")}.csv`; a.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -134,13 +146,23 @@ export default function FinancialStatementsPage() {
         <div className="flex items-center gap-2">
           <FileText size={18} className="text-primary" />
           <h1 className="text-[16px] font-bold text-foreground">Financial Statements</h1>
+          <span className="text-[10px] text-muted-foreground ml-2 hidden sm:inline">Computed from the general ledger — ties to Trial Balance</span>
         </div>
         <div className="flex items-center gap-2">
+          {costCentres.length > 0 && (
+            <Select value={costCentreId} onValueChange={setCostCentreId}>
+              <SelectTrigger className="h-8 w-44 text-[12px]" title="Segment the P&L by cost centre"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Cost Centres</SelectItem>
+                {costCentres.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          )}
           <Select value={period} onValueChange={setPeriod}>
             <SelectTrigger className="h-8 w-44 text-[12px]"><SelectValue /></SelectTrigger>
             <SelectContent>{PERIODS.map(p => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}</SelectContent>
           </Select>
-          <Button size="sm" variant="outline" className="gap-1.5 h-8" onClick={() => exportCSV("PNL", [["Category","Amount"]])}>
+          <Button size="sm" variant="outline" className="gap-1.5 h-8" onClick={exportCSV}>
             <Download size={12} /> Export
           </Button>
         </div>
@@ -160,17 +182,16 @@ export default function FinancialStatementsPage() {
           {/* ── P&L ── */}
           <TabsContent value="pnl" className="flex-1 overflow-auto p-5 m-0">
             <div className="max-w-2xl">
-              {/* KPI cards */}
               <div className="grid grid-cols-3 gap-3 mb-5">
                 {[
-                  { l: "Total Revenue", v: totalRevenue, icon: <TrendingUp size={16} className="text-green-600" />, c: "text-green-600" },
-                  { l: "Total Expenses", v: totalExpenses, icon: <TrendingDown size={16} className="text-red-600" />, c: "text-red-600" },
-                  { l: netProfit >= 0 ? "Net Profit" : "Net Loss", v: netProfit, icon: <FileText size={16} className={netProfit >= 0 ? "text-blue-600" : "text-red-600"} />, c: netProfit >= 0 ? "text-blue-600" : "text-red-600" },
+                  { l: "Total Revenue", v: pl.totalRevenue, icon: <TrendingUp size={16} className="text-green-600" />, c: "text-green-600" },
+                  { l: "Total Expenses", v: pl.totalExpenses, icon: <TrendingDown size={16} className="text-red-600" />, c: "text-red-600" },
+                  { l: pl.netProfit >= 0 ? "Net Profit" : "Net Loss", v: pl.netProfit, icon: <FileText size={16} className={pl.netProfit >= 0 ? "text-blue-600" : "text-red-600"} />, c: pl.netProfit >= 0 ? "text-blue-600" : "text-red-600" },
                 ].map(k => (
                   <div key={k.l} className="bg-card border border-border rounded-xl p-4">
                     <div className="flex items-center gap-2 mb-1">{k.icon}<p className="text-[11px] text-muted-foreground">{k.l}</p></div>
                     <p className={cn("text-[22px] font-bold", k.c)}>{formatCurrency(Math.abs(k.v))}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">{totalRevenue ? `${Math.round(Math.abs(k.v) / totalRevenue * 100)}% of revenue` : ""}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{pl.totalRevenue ? `${Math.round(Math.abs(k.v) / pl.totalRevenue * 100)}% of revenue` : ""}</p>
                   </div>
                 ))}
               </div>
@@ -181,27 +202,17 @@ export default function FinancialStatementsPage() {
                     <tr><th className="text-left px-4 py-2.5 font-semibold text-[13px] text-foreground">Particulars</th><th className="text-right px-4 py-2.5 font-semibold text-[13px] text-foreground">Amount (₹)</th></tr>
                   </thead>
                   <tbody>
-                    <PNLRow label="REVENUE" bold />
-                    <PNLRow label="OPD Collections" amount={revenue.opd} indent={1} />
-                    <PNLRow label="IPD Collections" amount={revenue.ipd} indent={1} />
-                    <PNLRow label="Pharmacy" amount={revenue.pharmacy} indent={1} />
-                    <PNLRow label="Laboratory" amount={revenue.lab} indent={1} />
-                    <PNLRow label="Radiology" amount={revenue.radiology} indent={1} />
-                    <PNLRow label="Other Income" amount={revenue.other} indent={1} />
-                    <PNLRow label="Total Revenue" amount={totalRevenue} bold subtotal />
+                    <StmtRow label="REVENUE" bold />
+                    {pl.revenue.length === 0 && <StmtRow label="No revenue posted in this period" indent={1} />}
+                    {pl.revenue.map((r) => <StmtRow key={r.account_code} label={`${r.account_code} · ${r.account_name}`} amount={r.amount} indent={1} />)}
+                    <StmtRow label="Total Revenue" amount={pl.totalRevenue} bold subtotal />
 
-                    <PNLRow label="EXPENSES" bold />
-                    <PNLRow label="Salaries & Wages" amount={expenses.salaries} indent={1} />
-                    <PNLRow label="Drugs & Pharmacy" amount={expenses.drugs} indent={1} />
-                    <PNLRow label="Consumables & Supplies" amount={expenses.consumables} indent={1} />
-                    <PNLRow label="Maintenance & Repairs" amount={expenses.maintenance} indent={1} />
-                    <PNLRow label="Utilities" amount={expenses.utilities} indent={1} />
-                    <PNLRow label="Administrative Expenses" amount={expenses.admin} indent={1} />
-                    <PNLRow label="Depreciation" amount={expenses.depreciation} indent={1} />
-                    <PNLRow label="Other Expenses" amount={expenses.other} indent={1} />
-                    <PNLRow label="Total Expenses" amount={totalExpenses} bold subtotal />
+                    <StmtRow label="EXPENSES" bold />
+                    {pl.expenses.length === 0 && <StmtRow label="No expenses posted in this period" indent={1} />}
+                    {pl.expenses.map((r) => <StmtRow key={r.account_code} label={`${r.account_code} · ${r.account_name}`} amount={r.amount} indent={1} />)}
+                    <StmtRow label="Total Expenses" amount={pl.totalExpenses} bold subtotal />
 
-                    <PNLRow label={netProfit >= 0 ? "Net Profit" : "Net Loss"} amount={netProfit} bold subtotal />
+                    <StmtRow label={pl.netProfit >= 0 ? "Net Profit" : "Net Loss"} amount={pl.netProfit} bold subtotal />
                   </tbody>
                 </table>
               </div>
@@ -210,19 +221,31 @@ export default function FinancialStatementsPage() {
 
           {/* ── Balance Sheet ── */}
           <TabsContent value="balance" className="flex-1 overflow-auto p-5 m-0">
-            <div className="max-w-2xl">
+            <div className="max-w-3xl">
+              {costCentreId !== "all" && (
+                <p className="mb-3 text-[11px] text-muted-foreground">
+                  The Balance Sheet is shown at entity level. Cost-centre filtering applies to the P&amp;L only.
+                </p>
+              )}
+              {!bs.isBalanced && (
+                <div className="mb-4 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-destructive">
+                  <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <div className="text-xs">
+                    <p className="font-semibold">Balance Sheet does not tie — check for unbalanced journal entries</p>
+                    <p className="mt-0.5 opacity-90">
+                      Assets {formatCurrency(bs.totalAssets)} ≠ Liabilities + Equity {formatCurrency(bs.totalLiabilities + bs.totalEquity)} (difference {formatCurrency(Math.abs(bs.difference))})
+                    </p>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-5">
                 <div className="border border-border rounded-xl overflow-hidden">
                   <div className="bg-muted/50 px-4 py-2.5"><p className="font-semibold text-[13px] text-foreground">Assets</p></div>
                   <table className="w-full">
                     <tbody>
-                      <PNLRow label="Current Assets" bold />
-                      <PNLRow label="Cash & Bank" amount={assets.cash} indent={1} />
-                      <PNLRow label="Accounts Receivable" amount={assets.ar} indent={1} />
-                      <PNLRow label="Inventory" amount={assets.inventory} indent={1} />
-                      <PNLRow label="Non-Current Assets" bold />
-                      <PNLRow label="Fixed Assets (Net)" amount={assets.fixed} indent={1} />
-                      <PNLRow label="Total Assets" amount={totalAssets} bold subtotal />
+                      {bs.assets.length === 0 && <StmtRow label="No asset balances" indent={1} />}
+                      {bs.assets.map((r) => <StmtRow key={r.account_code} label={`${r.account_code} · ${r.account_name}`} amount={r.amount} indent={1} />)}
+                      <StmtRow label="Total Assets" amount={bs.totalAssets} bold subtotal />
                     </tbody>
                   </table>
                 </div>
@@ -230,14 +253,15 @@ export default function FinancialStatementsPage() {
                   <div className="bg-muted/50 px-4 py-2.5"><p className="font-semibold text-[13px] text-foreground">Liabilities & Equity</p></div>
                   <table className="w-full">
                     <tbody>
-                      <PNLRow label="Current Liabilities" bold />
-                      <PNLRow label="Accounts Payable" amount={liabilities.payables} indent={1} />
-                      <PNLRow label="Patient Advances" amount={liabilities.advances} indent={1} />
-                      <PNLRow label="Long-Term Liabilities" bold />
-                      <PNLRow label="Loans & Borrowings" amount={liabilities.loans} indent={1} />
-                      <PNLRow label="Equity" bold />
-                      <PNLRow label="Retained Earnings" amount={equity} indent={1} />
-                      <PNLRow label="Total Liabilities + Equity" amount={totalAssets} bold subtotal />
+                      <StmtRow label="Liabilities" bold />
+                      {bs.liabilities.length === 0 && <StmtRow label="No liability balances" indent={1} />}
+                      {bs.liabilities.map((r) => <StmtRow key={r.account_code} label={`${r.account_code} · ${r.account_name}`} amount={r.amount} indent={1} />)}
+                      <StmtRow label="Total Liabilities" amount={bs.totalLiabilities} bold subtotal />
+                      <StmtRow label="Equity" bold />
+                      {bs.equity.map((r) => <StmtRow key={r.account_code} label={`${r.account_code} · ${r.account_name}`} amount={r.amount} indent={1} />)}
+                      <StmtRow label="Retained / Current Earnings" amount={bs.retainedEarnings} indent={1} />
+                      <StmtRow label="Total Equity" amount={bs.totalEquity} bold subtotal />
+                      <StmtRow label="Total Liabilities + Equity" amount={bs.totalLiabilities + bs.totalEquity} bold subtotal />
                     </tbody>
                   </table>
                 </div>

@@ -125,6 +125,26 @@ const RfqPanel: React.FC<Props> = ({ hospitalId }) => {
   };
   const quotedVendorIds = new Set(quotes.map((q) => q.vendor_id));
 
+  // TCO recommendation: 50% price + 20% delivery + 30% vendor performance
+  const recommendedQuoteId = (() => {
+    if (quotes.length === 0) return null;
+    const totals = quotes.map((q) => Number(q.total_amount) || 0);
+    const dels = quotes.map((q) => q.delivery_days ?? 999);
+    const minT = Math.min(...totals), maxT = Math.max(...totals);
+    const minD = Math.min(...dels), maxD = Math.max(...dels);
+    let bestId: string | null = null, bestScore = -1;
+    quotes.forEach((q) => {
+      const t = Number(q.total_amount) || 0;
+      const d = q.delivery_days ?? 999;
+      const perf = invited.find((v) => v.id === q.vendor_id)?.performance_score ?? 50;
+      const rateScore = maxT > minT ? 1 - (t - minT) / (maxT - minT) : 1;
+      const delScore = maxD > minD ? 1 - (d - minD) / (maxD - minD) : 1;
+      const tco = 0.5 * rateScore + 0.2 * delScore + 0.3 * (perf / 100);
+      if (tco > bestScore) { bestScore = tco; bestId = q.id; }
+    });
+    return bestId;
+  })();
+
   return (
     <div className="flex flex-1 overflow-hidden">
       {/* LEFT — RFQ list */}
@@ -166,7 +186,7 @@ const RfqPanel: React.FC<Props> = ({ hospitalId }) => {
                   <tr className="bg-muted/40 border-b border-border">
                     <th className="text-left px-3 py-2 font-semibold text-muted-foreground">Item</th>
                     <th className="text-right px-2 py-2 font-semibold text-muted-foreground">Qty</th>
-                    {quotes.map((q) => <th key={q.id} className="text-right px-3 py-2 font-semibold text-muted-foreground">{q.vendor_name}<br /><span className="text-[9px] font-normal">score {invited.find(v => v.id === q.vendor_id)?.performance_score ?? "—"}</span></th>)}
+                    {quotes.map((q) => <th key={q.id} className={cn("text-right px-3 py-2 font-semibold text-muted-foreground", q.id === recommendedQuoteId && "bg-emerald-50")}>{q.vendor_name}{q.id === recommendedQuoteId && <span className="ml-1 text-[8px] px-1 py-0.5 rounded bg-emerald-600 text-white font-bold">★ REC</span>}<br /><span className="text-[9px] font-normal">score {invited.find(v => v.id === q.vendor_id)?.performance_score ?? "—"}</span></th>)}
                   </tr>
                 </thead>
                 <tbody>
@@ -196,10 +216,10 @@ const RfqPanel: React.FC<Props> = ({ hospitalId }) => {
                   <tr>
                     <td colSpan={2} />
                     {quotes.map((q) => (
-                      <td key={q.id} className="px-3 py-2 text-right">
+                      <td key={q.id} className={cn("px-3 py-2 text-right", q.id === recommendedQuoteId && "bg-emerald-50")}>
                         {selected.status !== "awarded" && q.status !== "awarded" ? (
-                          <button onClick={() => awardToPO(q)} disabled={awarding} className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-emerald-600 text-white font-semibold hover:bg-emerald-700 disabled:opacity-50">
-                            <Award className="h-3 w-3" /> Award
+                          <button onClick={() => awardToPO(q)} disabled={awarding} className={cn("inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded text-white font-semibold disabled:opacity-50", q.id === recommendedQuoteId ? "bg-emerald-600 hover:bg-emerald-700 ring-1 ring-emerald-700" : "bg-muted-foreground/70 hover:bg-muted-foreground")}>
+                            <Award className="h-3 w-3" /> {q.id === recommendedQuoteId ? "Award (best TCO)" : "Award"}
                           </button>
                         ) : q.status === "awarded" ? (
                           <span className="inline-flex items-center gap-1 text-[10px] text-emerald-700 font-semibold"><ShoppingCart className="h-3 w-3" /> Awarded</span>

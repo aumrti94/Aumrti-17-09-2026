@@ -20,6 +20,7 @@ const TYPE_LABEL: Record<string, string> = {
   consumption_spike: "Consumption spike",
   abnormal_adjustment: "Abnormal adjustment",
   dead_stock: "Dead stock",
+  expiry_risk: "Expiry risk",
 };
 const SEV_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
 const SEV_CLS: Record<string, string> = {
@@ -108,7 +109,7 @@ const AnomaliesPanel: React.FC<Props> = ({ hospitalId }) => {
 
       <div className="flex-1 overflow-auto p-4 space-y-4">
         {/* Type counts */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
           {Object.keys(TYPE_LABEL).map((t) => (
             <div key={t} className="bg-card border border-border rounded-lg px-3 py-2">
               <p className="text-lg font-bold text-foreground">{counts[t] || 0}</p>

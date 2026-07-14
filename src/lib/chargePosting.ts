@@ -2,7 +2,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { calcGST } from "@/lib/currency";
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
-import { autoPostJournalEntry } from "@/lib/accounting";
 import { getModuleDefaultRate } from "@/lib/serviceRates";
 import { recordServiceCharge } from "@/lib/serviceBilling";
 
@@ -218,20 +217,13 @@ export async function postCharge(opts: PostChargeOpts): Promise<PostChargeResult
       });
     }
 
-    // 7. Journal entry (non-blocking)
-    if (orderedBy) {
-      try {
-        await autoPostJournalEntry({
-          triggerEvent: `charge_posted_${sourceModule}`,
-          sourceModule,
-          sourceId: billId,
-          amount: totalAmount,
-          description: `Charge: ${description}`,
-          hospitalId,
-          postedBy: orderedBy,
-        });
-      } catch { /* non-blocking */ }
-    }
+    // No explicit journal posting here: the bill this charge attaches to (bill_status
+    // 'final' for OPD, or 'final' at IPD discharge) is posted by the DB trigger
+    // trg_auto_post_bill_journal via bill_finalized_opd/bill_finalized_ipd — both have
+    // real auto_posting_rules. A prior explicit call here (triggerEvent
+    // `charge_posted_${sourceModule}`) had no matching rule for ANY sourceModule this
+    // function supports and had never once succeeded — removed as dead weight that
+    // only permanently cluttered accounting_posting_failures.
 
     return { success: true, billItemId: li.id, billId, amount: totalAmount, paymentStatus };
   } catch (err: any) {
@@ -241,10 +233,12 @@ export async function postCharge(opts: PostChargeOpts): Promise<PostChargeResult
 }
 
 /**
- * Mark a pending_payment line item (or all items on a bill) as paid.
- * Call this from the cash counter when payment is confirmed.
+ * Syncs bill_line_items.payment_status to "paid" after a real payment has
+ * already been recorded elsewhere (recordBillPayment: bill_payments row + GL
+ * + audit log). Does NOT itself record a payment, post to the GL, or write an
+ * audit log — call recordBillPayment first, this only updates line-item status.
  */
-export async function markItemPaid(opts: {
+export async function syncBillItemPaymentStatus(opts: {
   billItemId?: string;
   billId?: string;
   collectedBy: string;

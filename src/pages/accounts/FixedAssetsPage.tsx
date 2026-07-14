@@ -5,7 +5,9 @@ import { formatCurrency } from "@/lib/currency";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Wrench, Plus, Download, Loader2, TrendingDown, ShieldCheck, Trash2 } from "lucide-react";
+import { Wrench, Plus, Download, Loader2, TrendingDown, ShieldCheck, Trash2, PlayCircle } from "lucide-react";
+import { postMultiLineJournal } from "@/lib/accounting";
+import { assetAccountFor, buildAcquisitionLines, buildOpeningLines } from "@/lib/assetPosting";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { format, differenceInYears } from "date-fns";
@@ -20,6 +22,13 @@ const CATEGORIES = [
   { value: "building",          label: "Building" },
   { value: "land",              label: "Land" },
   { value: "other",             label: "Other" },
+];
+
+// How the asset was funded → credit account for the acquisition entry.
+const FUNDING_SOURCES = [
+  { value: "1002", label: "Bank" },
+  { value: "2001", label: "Accounts Payable (Vendor)" },
+  { value: "3001", label: "Capital / Owner Funds" },
 ];
 
 const STATUS_STYLES: Record<string, string> = {
@@ -41,7 +50,7 @@ type TabKey = typeof TABS[number]["key"];
 const DEFAULT_FORM = {
   asset_code: "", asset_name: "", category: "medical_equipment", location: "",
   purchase_date: format(new Date(), "yyyy-MM-dd"), purchase_cost: "", useful_life_years: "5",
-  depreciation_method: "straight_line", salvage_value: "0",
+  depreciation_method: "straight_line", salvage_value: "0", funding_source: "1002",
   vendor: "", serial_number: "", warranty_expiry: "", amc_expiry: "", invoice_number: "", notes: "",
   insurance_policy_no: "", insurance_provider: "", insurance_expiry: "", insurance_premium: "",
 };
@@ -65,9 +74,16 @@ export default function FixedAssetsPage() {
   const [form, setForm] = useState(DEFAULT_FORM);
   const [refreshKey, setRefreshKey] = useState(0);
   const [userId, setUserId] = useState<string | null>(null);
+  const [depRunning, setDepRunning] = useState(false);
+  const [isOpening, setIsOpening] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => { if (user) setUserId(user.id); });
+    // Resolve the app users.id (journal posted_by is a FK to users) — not the auth user id.
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (!user) return;
+      const { data } = await supabase.from("users").select("id").eq("auth_user_id", user.id).maybeSingle();
+      setUserId((data as any)?.id ?? null);
+    });
   }, []);
 
   const fetchAssets = useCallback(async () => {
@@ -84,15 +100,35 @@ export default function FixedAssetsPage() {
 
   const refresh = () => { fetchAssets(); setRefreshKey(k => k + 1); };
 
+  // Post this month's depreciation to the GL (Dr Depreciation / Cr Accumulated
+  // Depreciation) and age the register. Idempotent — safe to click more than once.
+  const runDepreciation = async () => {
+    if (!hospitalId) return;
+    setDepRunning(true);
+    const { data, error } = await (supabase as any).rpc("run_monthly_depreciation", { p_hospital_id: hospitalId });
+    setDepRunning(false);
+    if (error) {
+      toast({ title: "Depreciation run failed", description: error.message, variant: "destructive" });
+      return;
+    }
+    const n = Number(data ?? 0);
+    toast({ title: n > 0 ? `Depreciation posted for ${n} asset${n === 1 ? "" : "s"}` : "Already up to date for this month" });
+    refresh();
+  };
+
   const addAsset = async () => {
     if (!hospitalId || !form.asset_code || !form.asset_name || !form.purchase_cost) return;
     setSaving(true);
     const cost = parseFloat(form.purchase_cost);
     const salvage = parseFloat(form.salvage_value) || 0;
     const life = parseInt(form.useful_life_years) || 5;
-    const { bookValue, accDep } = calcBookValue(cost, salvage, life, form.purchase_date);
+    // A fresh purchase starts fully un-depreciated; the monthly job accrues from here.
+    // An opening (pre-existing) asset carries its already-accumulated depreciation.
+    const { bookValue, accDep } = isOpening
+      ? calcBookValue(cost, salvage, life, form.purchase_date)
+      : { bookValue: cost, accDep: 0 };
 
-    await (supabase as any).from("fixed_assets").insert({
+    const { data: inserted } = await (supabase as any).from("fixed_assets").insert({
       hospital_id: hospitalId,
       asset_code: form.asset_code,
       asset_name: form.asset_name,
@@ -115,10 +151,26 @@ export default function FixedAssetsPage() {
       insurance_provider: form.insurance_provider || null,
       insurance_expiry: form.insurance_expiry || null,
       insurance_premium: form.insurance_premium ? parseFloat(form.insurance_premium) : null,
-    });
+    }).select("id").maybeSingle();
+
+    // Book the asset into the GL so it shows on the balance sheet.
+    const assetAccount = assetAccountFor(form.category);
+    if (inserted?.id) {
+      const lines = isOpening
+        ? buildOpeningLines(assetAccount, cost, accDep, form.asset_name)
+        : buildAcquisitionLines(assetAccount, cost, form.funding_source, form.asset_name);
+      await postMultiLineJournal({
+        hospitalId, postedBy: userId || "", sourceModule: "fixed_assets", sourceId: inserted.id,
+        description: `${isOpening ? "Opening asset" : "Asset acquisition"} — ${form.asset_name}`,
+        triggerEvent: isOpening ? "asset_opening" : "asset_acquisition",
+        entryDate: form.purchase_date, lines,
+      });
+    }
+
     setSaving(false);
     setShowForm(false);
     setForm(DEFAULT_FORM);
+    setIsOpening(false);
     refresh();
     toast({ title: "Asset added to register" });
   };
@@ -157,6 +209,9 @@ export default function FixedAssetsPage() {
               </SelectContent>
             </Select>
           )}
+          <Button size="sm" variant="outline" onClick={runDepreciation} disabled={depRunning} className="gap-1.5 h-8" title="Post this month's depreciation to the ledger">
+            {depRunning ? <Loader2 size={12} className="animate-spin" /> : <PlayCircle size={12} />} Run Depreciation
+          </Button>
           <Button size="sm" variant="outline" onClick={exportCSV} className="gap-1.5 h-8"><Download size={12} /> Export</Button>
           <Button size="sm" onClick={() => setShowForm(true)} className="gap-1.5 h-8"><Plus size={12} /> Add Asset</Button>
         </div>
@@ -249,7 +304,20 @@ export default function FixedAssetsPage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div>
+                <label className="text-[11px] text-muted-foreground">Funding Source (GL credit)</label>
+                <Select value={form.funding_source} onValueChange={v => setForm(p => ({ ...p, funding_source: v }))} disabled={isOpening}>
+                  <SelectTrigger className="h-9 mt-1 text-[12px]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {FUNDING_SOURCES.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
+            <label className="flex items-center gap-2 mt-3 text-[12px] text-foreground cursor-pointer">
+              <input type="checkbox" checked={isOpening} onChange={e => setIsOpening(e.target.checked)} className="h-3.5 w-3.5" />
+              Pre-existing asset (opening balance) — books cost + accumulated depreciation against Capital, no cash/P&L impact
+            </label>
             <div className="flex justify-end gap-2 mt-4">
               <Button variant="outline" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>
               <Button size="sm" onClick={addAsset} disabled={saving || !form.asset_code || !form.asset_name || !form.purchase_cost} className="gap-1.5">

@@ -126,6 +126,40 @@ export const ALL_MODULES: ModuleDefinition[] = [
   { name: "Settings Hub", desc: "Configure your hospital", icon: "⚙️", route: "/settings", category: "Settings", roles: ["super_admin", "hospital_admin"] },
 ];
 
+// ─────────────────────────────────────────────────────────────
+// Module → Department links
+// Single source of truth tying a module (by route) to the clinical
+// department it represents. Used by Settings ▸ Departments to suggest the
+// departments a hospital should have based on the modules it actually runs,
+// instead of a generic one-size-fits-all list. Only modules that map to a
+// real, distinct department are listed here (OPD/IPD/Billing/HR etc. are
+// cross-cutting and intentionally omitted). Department names MUST match the
+// canonical names used in the setup wizard so they de-duplicate correctly.
+export const MODULE_DEPARTMENT: Record<string, string> = {
+  // Specialized clinical
+  "/dialysis": "Dialysis",
+  "/oncology": "Oncology",
+  "/physio": "Physiotherapy",
+  "/mortuary": "Mortuary",
+  "/dental": "Dental",
+  "/ayush": "AYUSH / Ayurveda",
+  "/ivf": "IVF & ART",
+  "/specialty/anc": "Gynaecology & Obstetrics",
+  "/specialty/neonatal": "Neonatology",
+  "/specialty/anaesthesia": "Anaesthesia",
+  "/specialty/ophthalmology": "Ophthalmology",
+  "/specialty/partograph": "Gynaecology & Obstetrics",
+  "/mental-health": "Psychiatry",
+  // Clinical service departments
+  "/emergency": "Emergency / Casualty",
+  "/lab": "Pathology / Lab",
+  "/radiology": "Radiology",
+  "/pharmacy": "Pharmacy",
+  "/blood-bank": "Blood Bank",
+  "/cssd": "CSSD",
+  "/dietetics": "Dietetics",
+};
+
 const RECENT_KEY = "hms_recent_modules";
 const MAX_RECENT = 6;
 

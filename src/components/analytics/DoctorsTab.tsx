@@ -108,7 +108,7 @@ const DoctorsTab: React.FC<{ range: DateRange }> = ({ range }) => {
           <DoctorTable doctors={filtered} onRowClick={setSelectedDoc} />
         )}
       </div>
-      <DoctorDetailModal doc={selectedDoc} open={!!selectedDoc} onOpenChange={o => { if (!o) setSelectedDoc(null); }} />
+      <DoctorDetailModal doc={selectedDoc} open={!!selectedDoc} onOpenChange={o => { if (!o) setSelectedDoc(null); }} range={range} />
     </div>
   );
 };
@@ -131,13 +131,12 @@ const DoctorCard: React.FC<{ doc: DoctorScore; maxRevenue: number; onClick: () =
       </div>
 
       {/* KPI Grid */}
-      <div className="grid grid-cols-3 gap-y-2.5 gap-x-3 text-center mb-3">
+      <div className="grid grid-cols-2 gap-y-2.5 gap-x-3 text-center mb-3">
         <KPIMini label="OPD Visits" value={String(doc.opdCount)} />
         <KPIMini label="Revenue" value={fmt(doc.revenue)} color="text-emerald-600" />
         <KPIMini label="IPD Admits" value={String(doc.ipdCount)} />
         <KPIMini label="OT Cases" value={String(doc.otCases)} />
         <KPIMini label="Avg LOS" value={doc.avgLOS ? `${doc.avgLOS}d` : "—"} />
-        <KPIMini label="Score" value="—" />
       </div>
 
       {/* Revenue Bar */}

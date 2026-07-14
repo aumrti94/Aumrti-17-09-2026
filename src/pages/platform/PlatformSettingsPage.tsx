@@ -7,6 +7,7 @@ import { format } from "date-fns";
 import type { AumrtiAdmin } from "@/hooks/useAumrtiAdmin";
 import { getErrorMessage } from "@/lib/errorMessage";
 import { FormError } from "@/components/ui/FormError";
+import { logAdminAction } from "@/lib/adminAudit";
 
 async function fetchAdmins(): Promise<AumrtiAdmin[]> {
   const { data } = await (supabase as any).from("aumrti_admins").select("*").order("created_at");
@@ -74,6 +75,7 @@ export default function PlatformSettingsPage() {
       }]);
     },
     onSuccess: () => {
+      logAdminAction("admin_added", { details: { email, full_name: fullName } });
       toast.success("Admin added successfully");
       setShowForm(false);
       setEmail(""); setFullName(""); setUuidInput("");
@@ -85,10 +87,47 @@ export default function PlatformSettingsPage() {
   const deactivate = useMutation({
     mutationFn: async (id: string) => {
       await (supabase as any).from("aumrti_admins").update({ is_active: false }).eq("id", id);
+      return id;
     },
-    onSuccess: () => {
+    onSuccess: (deactivatedId: string) => {
+      logAdminAction("admin_deactivated", { details: { admin_id: deactivatedId } });
       toast.success("Admin deactivated");
       qc.invalidateQueries({ queryKey: ["platform-admins"] });
+    },
+    onError: (e: any) => toast.error(getErrorMessage(e)),
+  });
+
+  // ── Data erasure requests (DPDP review queue) ─────────────────────────────
+  const { data: erasureRequests = [], isLoading: erasureLoading } = useQuery({
+    queryKey: ["platform-erasure-requests"],
+    queryFn: async () => {
+      const { data } = await (supabase as any)
+        .from("data_erasure_requests")
+        .select("id, hospital_id, reason, status, requested_at, admin_notes, hospitals(name)")
+        .in("status", ["pending", "in_review"])
+        .order("requested_at", { ascending: true });
+      return data || [];
+    },
+    staleTime: 30_000,
+  });
+
+  const actionErasureRequest = useMutation({
+    mutationFn: async ({ id, hospitalId, status }: { id: string; hospitalId: string; status: "approved" | "rejected" }) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      await (supabase as any).from("data_erasure_requests").update({
+        status, reviewed_by: user?.id, reviewed_at: new Date().toISOString(),
+      }).eq("id", id);
+      if (status === "approved") {
+        // Kicks off the existing two-phase soft-delete flow — this does NOT
+        // purge immediately, it starts the 7-day grace window, same as a
+        // manual delete from HospitalDetailPage.
+        await (supabase as any).functions.invoke("delete-hospital", { body: { hospital_id: hospitalId } });
+      }
+    },
+    onSuccess: (_r, vars) => {
+      logAdminAction(vars.status === "approved" ? "erasure_request_approved" : "erasure_request_rejected", { hospitalId: vars.hospitalId });
+      toast.success(vars.status === "approved" ? "Approved — hospital marked for deletion (7-day grace period started)" : "Request rejected");
+      qc.invalidateQueries({ queryKey: ["platform-erasure-requests"] });
     },
     onError: (e: any) => toast.error(getErrorMessage(e)),
   });
@@ -473,6 +512,52 @@ export default function PlatformSettingsPage() {
                   Save &amp; Apply
                 </button>
               </div>
+            </div>
+          )}
+        </div>
+
+        {/* Data Erasure Requests */}
+        <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
+          <div className="px-5 py-3 border-b border-border flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={14} className="text-red-600" />
+              <p className="text-sm font-semibold text-foreground">Data Erasure Requests</p>
+            </div>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${erasureRequests.length > 0 ? "bg-red-500/20 text-red-600" : "bg-muted text-muted-foreground"}`}>
+              {erasureRequests.length} pending
+            </span>
+          </div>
+          {erasureLoading ? (
+            <div className="flex items-center justify-center h-16"><Loader2 size={16} className="animate-spin text-muted-foreground" /></div>
+          ) : erasureRequests.length === 0 ? (
+            <p className="text-xs text-muted-foreground p-5">No pending DPDP erasure requests.</p>
+          ) : (
+            <div className="divide-y divide-border">
+              {erasureRequests.map((r: any) => (
+                <div key={r.id} className="p-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold text-foreground">{r.hospitals?.name || r.hospital_id}</p>
+                    <span className="text-[10px] text-muted-foreground">{format(new Date(r.requested_at), "dd MMM yyyy, HH:mm")}</span>
+                  </div>
+                  {r.reason && <p className="text-xs text-muted-foreground">"{r.reason}"</p>}
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      onClick={() => actionErasureRequest.mutate({ id: r.id, hospitalId: r.hospital_id, status: "approved" })}
+                      disabled={actionErasureRequest.isPending}
+                      className="px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 border border-red-600/30 text-red-600 text-[11px] font-semibold rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      Approve → Start 7-day deletion
+                    </button>
+                    <button
+                      onClick={() => actionErasureRequest.mutate({ id: r.id, hospitalId: r.hospital_id, status: "rejected" })}
+                      disabled={actionErasureRequest.isPending}
+                      className="px-3 py-1.5 border border-border text-muted-foreground hover:text-foreground text-[11px] font-medium rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>

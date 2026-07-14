@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveAiConfig, resolveAiConfigFromEnv, callAiChat } from "../_shared/ai-config.ts";
 
 const corsHeaders = {
@@ -71,7 +72,33 @@ Generate top 4 differential diagnoses ranked by likelihood. Return JSON:
 
     const parsed = JSON.parse(content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim());
 
-    return new Response(JSON.stringify(parsed), {
+    // Run the top-ranked differential through ai-safety-guard (currently:
+    // age-diagnosis plausibility — this endpoint doesn't prescribe drugs, so
+    // allergy/dose-limit checks are no-ops here by design). Best-effort — a
+    // safety-guard failure must never block the differential from returning.
+    let safetyCheck: { safe: boolean; flags: unknown[] } | null = null;
+    try {
+      const topDiagnosis = parsed?.differentials?.[0]?.diagnosis || "";
+      if (topDiagnosis) {
+        const sb = createClient(
+          Deno.env.get("SUPABASE_URL")!,
+          Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+        );
+        const { data: safetyData, error: safetyErr } = await sb.functions.invoke("ai-safety-guard", {
+          body: {
+            feature_key: "ai-differential-diagnosis",
+            ai_output: { diagnosis: topDiagnosis },
+            patient_context: { age },
+            hospital_id: hospital_id || null,
+          },
+        });
+        if (!safetyErr && safetyData) safetyCheck = safetyData as { safe: boolean; flags: unknown[] };
+      }
+    } catch (safetyGuardErr) {
+      console.error("ai-safety-guard call failed:", safetyGuardErr instanceof Error ? safetyGuardErr.message : String(safetyGuardErr));
+    }
+
+    return new Response(JSON.stringify({ ...parsed, safety_check: safetyCheck }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 

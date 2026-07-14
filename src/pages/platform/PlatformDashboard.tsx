@@ -35,6 +35,7 @@ async function fetchDash(): Promise<DashStat> {
     (supabase as any).from("hospitals")
       .select("id, name, state, beds_count, created_at")
       .eq("is_active", true)
+      .is("deleted_at", null)
       .order("created_at", { ascending: false }),
     (supabase as any).from("hospital_subscriptions")
       .select("hospital_id, status, subscription_plans(name, price_monthly)"),

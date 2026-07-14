@@ -9,6 +9,8 @@ import { cn } from "@/lib/utils";
 import EmptyState from "@/components/EmptyState";
 import StockAdjustmentModal from "./StockAdjustmentModal";
 import DrugForecastPanel from "./DrugForecastPanel";
+import { callAI } from "@/lib/aiProvider";
+import { Sparkles } from "lucide-react";
 
 interface StockItem {
   id: string;
@@ -57,6 +59,34 @@ const StockOverview: React.FC = () => {
   const [adjustItem, setAdjustItem] = useState<StockItem | null>(null);
   const [forecastItem, setForecastItem] = useState<StockItem | null>(null);
   const [hospitalId, setHospitalId] = useState<string>("");
+  const [classifying, setClassifying] = useState(false);
+
+  const classifyItc = async () => {
+    if (!hospitalId) return;
+    setClassifying(true);
+    try {
+      const batch = items.slice(0, 60).map((i) => ({ name: i.item_name, category: i.category, hsn: (i as any).hsn_code || "" }));
+      const prompt = `You are an Indian GST expert for a hospital. Healthcare services are GST-EXEMPT, so input tax credit (ITC) on inputs used only for exempt clinical supply is BLOCKED under Sec 17. Inputs used for taxable outputs (pharmacy retail sale, canteen, non-clinical services) are ELIGIBLE; mixed-use items are PROPORTIONATE. Classify each item strictly as one of: eligible, blocked, proportionate. Return ONLY a JSON array like [{"name":"...","eligibility":"blocked","reason":"short reason"}] with one entry per item.\n\nItems:\n${JSON.stringify(batch)}`;
+      const res = await callAI({ featureKey: "inventory_itc_classify", hospitalId, prompt, maxTokens: 2000 });
+      if (res.error || !res.text) throw new Error(res.error || "No response");
+      const json = res.text.replace(/```json|```/g, "").trim();
+      const parsed: { name: string; eligibility: string; reason?: string }[] = JSON.parse(json);
+      let updated = 0;
+      for (const p of parsed) {
+        const elig = ["eligible", "blocked", "proportionate"].includes(p.eligibility) ? p.eligibility : "eligible";
+        const match = items.find((i) => i.item_name === p.name);
+        if (!match) continue;
+        await (supabase as any).from("inventory_items").update({ itc_eligibility: elig, itc_reason: p.reason || null }).eq("id", match.id);
+        updated++;
+      }
+      toast({ title: `ITC classified for ${updated} items`, description: "Review the ITC badges; adjust any manually." });
+      loadData();
+    } catch (err: any) {
+      toast({ title: "ITC classification failed", description: err.message, variant: "destructive" });
+    } finally {
+      setClassifying(false);
+    }
+  };
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -151,7 +181,12 @@ const StockOverview: React.FC = () => {
             </button>
           ))}
         </div>
-        <Button variant="ghost" size="sm" className="ml-auto text-xs gap-1.5"><Download className="h-3 w-3" /> Export</Button>
+        {hospitalId && (
+          <Button variant="outline" size="sm" className="ml-auto text-xs gap-1.5" onClick={classifyItc} disabled={classifying}>
+            {classifying ? <span className="h-3 w-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin" /> : <Sparkles className="h-3 w-3" />} AI: Classify ITC
+          </Button>
+        )}
+        <Button variant="ghost" size="sm" className={cn("text-xs gap-1.5", !hospitalId && "ml-auto")}><Download className="h-3 w-3" /> Export</Button>
       </div>
 
       {/* KPI Cards */}
@@ -205,6 +240,8 @@ const StockOverview: React.FC = () => {
                       <span className={cn("text-[10px] px-2 py-0.5 rounded-full capitalize", categoryColors[item.category] || "bg-muted text-muted-foreground")}>
                         {item.category.replace("_", " ")}
                       </span>
+                      {(item as any).itc_eligibility === "blocked" && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-red-100 text-red-700 font-semibold" title={(item as any).itc_reason || "ITC blocked"}>ITC✗</span>}
+                      {(item as any).itc_eligibility === "proportionate" && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-700 font-semibold" title={(item as any).itc_reason || "ITC proportionate"}>ITC½</span>}
                     </td>
                     <td className="px-3 py-2 text-center">
                       {item.abc_class && (

@@ -76,7 +76,6 @@ const APIConfigHubPage = lazy(() => import("./pages/settings/APIConfigHubPage"))
 const SettingsICDCodesPage = lazy(() => import("./pages/settings/SettingsICDCodesPage"));
 const SpecialtyTemplateBuilderPage = lazy(() => import("./pages/settings/SpecialtyTemplateBuilderPage"));
 const AnalyticsPage = lazy(() => import("./pages/analytics/AnalyticsPage"));
-const ExecutiveDashboardPage = lazy(() => import("./pages/analytics/ExecutiveDashboardPage"));
 const InboxPage = lazy(() => import("./pages/inbox/InboxPage"));
 const TelemedicinePage = lazy(() => import("./pages/telemedicine/TelemedicinePage"));
 const HODDashboardPage = lazy(() => import("./pages/hod/HODDashboardPage"));
@@ -134,6 +133,8 @@ const PartographPage = lazy(() => import("./pages/specialty/PartographPage"));
 const ProcurementRecommendationsPage = lazy(() => import("./pages/inventory/ProcurementRecommendationsPage"));
 const PublicBookingPage = lazy(() => import("./pages/packages/PublicBookingPage"));
 const PublicAppointmentPage = lazy(() => import("./pages/booking/PublicAppointmentPage"));
+const PublicNPSPage = lazy(() => import("./pages/public/PublicNPSPage"));
+const PublicStatusPage = lazy(() => import("./pages/public/PublicStatusPage"));
 const SettingsHMISPage = lazy(() => import("./pages/settings/SettingsHMISPage"));
 const SettingsAIFeaturesPage = lazy(() => import("./pages/settings/SettingsAIFeaturesPage"));
 const SettingsAILanguagePage = lazy(() => import("./pages/settings/SettingsAILanguagePage"));
@@ -178,6 +179,7 @@ const HospitalsListPage     = lazy(() => import("./pages/platform/HospitalsListP
 const HospitalDetailPage    = lazy(() => import("./pages/platform/HospitalDetailPage"));
 const PlansManagerPage      = lazy(() => import("./pages/platform/PlansManagerPage"));
 const DiscountsPage         = lazy(() => import("./pages/platform/DiscountsPage"));
+const ReferralsPage         = lazy(() => import("./pages/platform/ReferralsPage"));
 const RevenueDashboardPage  = lazy(() => import("./pages/platform/RevenueDashboardPage"));
 const PlatformSettingsPage  = lazy(() => import("./pages/platform/PlatformSettingsPage"));
 const ChurnRadarPage        = lazy(() => import("./pages/platform/ChurnRadarPage"));
@@ -185,6 +187,14 @@ const PlatformBriefingPage  = lazy(() => import("./pages/platform/PlatformBriefi
 const AIPerformancePage     = lazy(() => import("./pages/platform/AIPerformancePage"));
 const PlatformAIConfigPage  = lazy(() => import("./pages/platform/PlatformAIConfigPage"));
 const CustomerSuccessPage   = lazy(() => import("./pages/platform/CustomerSuccessPage"));
+const IncidentsPage         = lazy(() => import("./pages/platform/IncidentsPage"));
+const AuditLogPage          = lazy(() => import("./pages/platform/AuditLogPage"));
+const ComplianceCenterPage  = lazy(() => import("./pages/platform/ComplianceCenterPage"));
+const AutomationRulesPage   = lazy(() => import("./pages/platform/AutomationRulesPage"));
+const FeatureFlagsPage      = lazy(() => import("./pages/platform/FeatureFlagsPage"));
+const SupportConsolePage    = lazy(() => import("./pages/platform/SupportConsolePage"));
+const SettingsSupportPage   = lazy(() => import("./pages/settings/SettingsSupportPage"));
+const SettingsTrainingPage  = lazy(() => import("./pages/settings/SettingsTrainingPage"));
 const MobileAppPage         = lazy(() => import("./pages/platform/MobileAppPage"));
 
 const queryClient = new QueryClient({
@@ -252,6 +262,8 @@ const App = () => (
           <Route path="/packages/book" element={<SuspenseWrap><PublicBookingPage /></SuspenseWrap>} />
           <Route path="/book/:slug" element={<SuspenseWrap><PublicAppointmentPage /></SuspenseWrap>} />
           <Route path="/join/:sessionId" element={<SuspenseWrap><PatientJoinPage /></SuspenseWrap>} />
+          <Route path="/survey/:surveyId" element={<SuspenseWrap><PublicNPSPage /></SuspenseWrap>} />
+          <Route path="/status" element={<SuspenseWrap><PublicStatusPage /></SuspenseWrap>} />
           <Route path="/portal/*" element={<SuspenseWrap><PatientPortal /></SuspenseWrap>} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/auth/callback" element={<SuspenseWrap><AuthCallbackPage /></SuspenseWrap>} />
@@ -312,7 +324,6 @@ const App = () => (
             <Route path="/analytics/revenue-intelligence" element={<RG path="/analytics"><MG moduleKey="analytics"><SM name="Revenue Intelligence"><RevenueIntelligencePage /></SM></MG></RG>} />
             <Route path="/ai/clinical-intelligence" element={<RG path="/ai/clinical-intelligence"><SM name="AI Clinical Intelligence"><AIClinicalIntelligencePage /></SM></RG>} />
             <Route path="/research" element={<RG path="/research"><SM name="Research Platform"><ResearchPlatformPage /></SM></RG>} />
-            <Route path="/executive-dashboard" element={<RG path="/analytics"><SM name="Executive Dashboard"><ExecutiveDashboardPage /></SM></RG>} />
             <Route path="/telemedicine" element={<RG path="/telemedicine"><MG moduleKey="telemedicine"><SM name="Telemedicine"><TelemedicinePage /></SM></MG></RG>} />
             <Route path="/teleconsult/doctor" element={<RG path="/telemedicine"><MG moduleKey="telemedicine"><SM name="Teleconsult"><DoctorTeleconsultPage /></SM></MG></RG>} />
             <Route path="/inbox" element={<RG path="/inbox"><SM name="Inbox"><InboxPage /></SM></RG>} />
@@ -331,6 +342,8 @@ const App = () => (
             <Route path="/settings/whatsapp" element={<RG path="/settings"><SM name="WhatsApp"><SettingsWhatsAppPage /></SM></RG>} />
             <Route path="/settings/language" element={<RG path="/settings"><SM name="Language"><SettingsLanguagePage /></SM></RG>} />
             <Route path="/settings/plan" element={<RG path="/settings"><SM name="Plan"><SettingsPlanPage /></SM></RG>} />
+            <Route path="/settings/support" element={<RG path="/settings"><SM name="Support"><SettingsSupportPage /></SM></RG>} />
+            <Route path="/settings/training" element={<RG path="/settings"><SM name="Training Videos"><SettingsTrainingPage /></SM></RG>} />
             <Route path="/settings/shifts" element={<RG path="/settings"><SM name="Shifts"><SettingsShiftsPage /></SM></RG>} />
             <Route path="/settings/modules" element={<RG path="/settings"><SM name="Modules Config"><SettingsModulesPage /></SM></RG>} />
             <Route path="/settings/doctor-schedules" element={<RG path="/settings"><SM name="Doctor Schedules"><SettingsDoctorSchedulesPage /></SM></RG>} />
@@ -420,11 +433,18 @@ const App = () => (
             <Route path="hospitals/:id" element={<SuspenseWrap><PM name="Platform Hospital Details"><HospitalDetailPage /></PM></SuspenseWrap>} />
             <Route path="plans" element={<SuspenseWrap><PM name="Platform Plans Manager"><PlansManagerPage /></PM></SuspenseWrap>} />
             <Route path="discounts" element={<SuspenseWrap><PM name="Platform Discounts Manager"><DiscountsPage /></PM></SuspenseWrap>} />
+            <Route path="referrals" element={<SuspenseWrap><PM name="Platform Referrals"><ReferralsPage /></PM></SuspenseWrap>} />
             <Route path="revenue" element={<SuspenseWrap><PM name="Platform Revenue Dashboard"><RevenueDashboardPage /></PM></SuspenseWrap>} />
             <Route path="ai-performance" element={<SuspenseWrap><PM name="Platform AI Performance"><AIPerformancePage /></PM></SuspenseWrap>} />
             <Route path="api-config" element={<SuspenseWrap><PM name="Platform API Configuration"><PlatformAIConfigPage /></PM></SuspenseWrap>} />
             <Route path="customer-success" element={<SuspenseWrap><PM name="Platform Customer Success"><CustomerSuccessPage /></PM></SuspenseWrap>} />
             <Route path="mobile" element={<SuspenseWrap><PM name="Platform Mobile App Manager"><MobileAppPage /></PM></SuspenseWrap>} />
+            <Route path="incidents" element={<SuspenseWrap><PM name="Platform Incidents"><IncidentsPage /></PM></SuspenseWrap>} />
+            <Route path="audit" element={<SuspenseWrap><PM name="Platform Audit Log"><AuditLogPage /></PM></SuspenseWrap>} />
+            <Route path="compliance" element={<SuspenseWrap><PM name="Platform Compliance Center"><ComplianceCenterPage /></PM></SuspenseWrap>} />
+            <Route path="automation-rules" element={<SuspenseWrap><PM name="Platform Automation Rules"><AutomationRulesPage /></PM></SuspenseWrap>} />
+            <Route path="feature-flags" element={<SuspenseWrap><PM name="Platform Feature Flags"><FeatureFlagsPage /></PM></SuspenseWrap>} />
+            <Route path="support" element={<SuspenseWrap><PM name="Platform Support Console"><SupportConsolePage /></PM></SuspenseWrap>} />
             <Route path="settings" element={<SuspenseWrap><PM name="Platform Settings"><PlatformSettingsPage /></PM></SuspenseWrap>} />
           </Route>
 

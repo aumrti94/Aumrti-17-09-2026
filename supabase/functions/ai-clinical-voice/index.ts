@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { resolveAiConfig, resolveAiConfigFromEnv, callAiChat } from "../_shared/ai-config.ts";
+import { resolveAiConfig, resolveAiConfigFromEnv, callAiChatWithUsage, estimateAiCostUsd } from "../_shared/ai-config.ts";
 import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
@@ -165,7 +165,23 @@ serve(async (req) => {
     const { data: userData } = await sb.from("users").select("hospital_id").eq("auth_user_id", user.id).maybeSingle();
     const hospitalId = userData?.hospital_id as string | null;
 
-    const { transcript, context_type, existing_data, language_code } = await req.json();
+    const { transcript, context_type, existing_data, language_code, patient_id } = await req.json();
+
+    // Fetch the patient's known allergies/current medications (if any) up
+    // front, server-side — so the safety-guard call below has real patient
+    // context rather than trusting a client-supplied list. Best-effort: a
+    // missing/failed lookup must not block transcription from proceeding.
+    let patientAllergies: string[] = [];
+    let patientCurrentMeds: string[] = [];
+    if (patient_id) {
+      const { data: aiContext } = await sb
+        .from("patient_ai_context")
+        .select("known_allergies, current_medications")
+        .eq("patient_id", patient_id)
+        .maybeSingle();
+      patientAllergies = aiContext?.known_allergies || [];
+      patientCurrentMeds = aiContext?.current_medications || [];
+    }
 
     if (!transcript?.trim()) {
       return new Response(JSON.stringify({ error: "Transcript is required" }), {
@@ -229,11 +245,63 @@ Dictation transcript:
       { role: "user" as const, content: prompt },
     ];
 
-    const rawContent = await callAiChat(config, messages, 1200, 0.2);
-    console.log("AI raw response (first 500):", rawContent.substring(0, 500));
+    const aiCallStartedAt = Date.now();
+    let rawContent: string;
+    try {
+      const result = await callAiChatWithUsage(config, messages, 1200, 0.2);
+      rawContent = result.content;
+      // Real token counts and cost now — this was previously invisible to
+      // ai_usage_logs entirely because this function calls the provider
+      // directly instead of via ai-proxy; callAiChatWithUsage() closes that gap.
+      const costUsd = estimateAiCostUsd(config.model, result.usage);
+      await sb.from("ai_usage_logs").insert({
+        hospital_id: hospitalId,
+        feature_key: "ai-clinical-voice",
+        provider: config.provider,
+        model_name: config.model,
+        tokens_input: result.usage.tokensInput,
+        tokens_output: result.usage.tokensOutput,
+        cache_creation_tokens: result.usage.cacheCreationTokens,
+        cache_read_tokens: result.usage.cacheReadTokens,
+        cache_hit: result.usage.cacheReadTokens > 0,
+        estimated_cost_usd: costUsd,
+        latency_ms: Date.now() - aiCallStartedAt,
+        success: true,
+      }).catch(() => {});
+      // Roll up into the same daily-aggregate table ai-proxy feeds, so this
+      // function's usage shows up on AIPerformancePage and the tenant's own
+      // usage card — not just in the raw log.
+      if (hospitalId) {
+        await sb.rpc("upsert_ai_cost_daily", {
+          p_hospital_id: hospitalId,
+          p_date: new Date().toISOString().split("T")[0],
+          p_feature_key: "ai-clinical-voice",
+          p_provider: config.provider,
+          p_tokens_input: result.usage.tokensInput,
+          p_tokens_output: result.usage.tokensOutput,
+          p_cache_read_tokens: result.usage.cacheReadTokens,
+          p_cache_hit: result.usage.cacheReadTokens > 0,
+          p_cost_usd: costUsd,
+        }).catch(() => {});
+      }
+    } catch (callErr) {
+      // Best-effort — tokens/cost are unknown on a failed call, but
+      // call-volume, latency and failure rate are still worth logging.
+      await sb.from("ai_usage_logs").insert({
+        hospital_id: hospitalId,
+        feature_key: "ai-clinical-voice",
+        provider: config.provider,
+        model_name: config.model,
+        latency_ms: Date.now() - aiCallStartedAt,
+        success: false,
+        error_message: callErr instanceof Error ? callErr.message : String(callErr),
+      }).catch(() => {});
+      throw callErr;
+    }
+    console.log("AI raw response (first 500):", sanitizeForLog(rawContent.substring(0, 500)));
 
     const cleaned = rawContent.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-    console.log("Cleaned content:", cleaned.substring(0, 300));
+    console.log("Cleaned content:", sanitizeForLog(cleaned.substring(0, 300)));
 
     let structured: Record<string, unknown>;
     try {
@@ -243,7 +311,40 @@ Dictation transcript:
       throw new Error("Failed to parse AI response as JSON");
     }
 
-    return new Response(JSON.stringify({ structured, context_type }), {
+    // Run extracted prescriptions/diagnosis through ai-safety-guard (allergy
+    // cross-reactivity, dose limits, controlled-substance flags) before this
+    // reaches a clinician. Best-effort — a safety-guard failure must never
+    // block the transcription itself from returning.
+    // patient_context is populated from patient_ai_context above when the
+    // caller supplies patient_id — allergy-cross-reactivity checks now fire
+    // whenever the host screen knows which patient this recording is for.
+    let safetyCheck: { safe: boolean; flags: unknown[] } | null = null;
+    try {
+      const prescriptionList = Array.isArray((structured as any).prescription) ? (structured as any).prescription : [];
+      const { data: safetyData, error: safetyErr } = await sb.functions.invoke("ai-safety-guard", {
+        body: {
+          feature_key: "ai-clinical-voice",
+          ai_output: {
+            prescriptions: prescriptionList.map((rx: any) => ({ drug: rx.drug_name, dose: rx.dose })),
+            diagnosis: (structured as any).diagnosis || "",
+          },
+          patient_context: {
+            known_allergies: patientAllergies,
+            current_medications: patientCurrentMeds,
+          },
+          hospital_id: hospitalId,
+          patient_id: patient_id || null,
+        },
+      });
+      if (!safetyErr && safetyData) safetyCheck = safetyData as { safe: boolean; flags: unknown[] };
+    } catch (safetyGuardErr) {
+      console.error(
+        "ai-safety-guard call failed:",
+        sanitizeForLog(safetyGuardErr instanceof Error ? safetyGuardErr.message : String(safetyGuardErr))
+      );
+    }
+
+    return new Response(JSON.stringify({ structured, context_type, safety_check: safetyCheck }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {

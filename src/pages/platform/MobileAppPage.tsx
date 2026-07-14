@@ -151,10 +151,20 @@ export default function MobileAppPage() {
                   </div>
                   <p className="text-[12px] text-muted-foreground">{app.desc}</p>
                   <div className="flex gap-2">
-                    <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1 flex-1" onClick={() => toast({ title: `${app.label} APK/IPA download link copied` })}>
-                      <Download size={10} /> Download
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-[10px] gap-1 flex-1 opacity-60"
+                      onClick={() => toast({ title: "No build published yet", description: `${app.label} APK/IPA isn't built — this is a planning placeholder.` })}
+                    >
+                      <Download size={10} /> Download (coming soon)
                     </Button>
-                    <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1" onClick={() => toast({ title: "QR code generated" })}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-[10px] gap-1 opacity-60"
+                      onClick={() => toast({ title: "No build published yet", description: "QR code will link to a real download once a build exists." })}
+                    >
                       <QrCode size={10} />
                     </Button>
                   </div>

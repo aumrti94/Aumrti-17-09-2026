@@ -6,6 +6,7 @@ import { useHospitalContext } from "@/contexts/HospitalContext";
 import { hasTabAccess, hasActionAccess } from "@/lib/tabPermissions";
 import { Stethoscope, Mic, Save, CheckCircle, FlaskConical, Building2, Smartphone, ArrowUpRight, User, X, ScanLine, SendHorizonal, Printer } from "lucide-react";
 import AdmitPatientModal from "@/components/ipd/AdmitPatientModal";
+import OnboardingTour from "@/components/onboarding/OnboardingTour";
 import type { OpdToken } from "@/pages/opd/OPDPage";
 import VoiceDictationButton from "@/components/voice/VoiceDictationButton";
 import ClinicalCalculatorPanel from "@/components/clinical/ClinicalCalculatorPanel";
@@ -882,6 +883,7 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-slate-50">
+      {role === "doctor" && <OnboardingTour tourKey="doctor_opd_intro" />}
       {/* Patient header bar */}
       <div className="flex-shrink-0 h-[60px] bg-white border-b border-slate-200 px-4 flex items-center gap-3">
         <div className="w-9 h-9 rounded-full bg-[#1A2F5A] text-white flex items-center justify-center text-sm font-bold flex-shrink-0">
@@ -1035,7 +1037,7 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
       </div>
 
       {/* Bottom action bar */}
-      <div className="flex-shrink-0 h-14 bg-white border-t border-slate-200 px-4 flex items-center gap-2">
+      <div data-tour="doctor-consult-actions" className="flex-shrink-0 h-14 bg-white border-t border-slate-200 px-4 flex items-center gap-2">
         <button onClick={() => autoSaveEncounter(encounter)} className="text-xs text-slate-600 border border-slate-200 px-3 py-1.5 rounded-md hover:bg-slate-50 flex items-center gap-1.5 active:scale-[0.97] transition-all">
           <Save className="h-3.5 w-3.5" /> Save Draft
         </button>
@@ -1044,7 +1046,7 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
             <CheckCircle className="h-3.5 w-3.5" /> Complete & Bill
           </button>
         )}
-        <VoiceDictationButton sessionType="opd_consultation" size="sm" />
+        <VoiceDictationButton sessionType="opd_consultation" patientId={token.patient_id} size="sm" />
         <ClinicalCalculatorPanel onInsertToNote={(text) => {
           window.dispatchEvent(new CustomEvent("insert-clinical-note", { detail: text }));
         }} />

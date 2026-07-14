@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Target, Plus, CheckCircle2, XCircle, Loader2, Download } from "lucide-react";
+import { Target, Plus, CheckCircle2, XCircle, Loader2, Download, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -26,6 +26,7 @@ export default function BudgetManagementPage() {
   const [lines, setLines] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [fy, setFy] = useState("2026-27");
   const [month, setMonth] = useState("all");
   const [showForm, setShowForm] = useState(false);
@@ -81,6 +82,21 @@ export default function BudgetManagementPage() {
     toast({ title: approved ? "Budget line approved" : "Budget line rejected" });
   };
 
+  // Pull actual spend from the general ledger into each budget line (variance is
+  // a generated column, so it recomputes automatically once actual_amount lands).
+  const refreshActuals = async () => {
+    if (!hospitalId) return;
+    setRefreshing(true);
+    const { error } = await (supabase as any).rpc("refresh_budget_actuals", { p_hospital_id: hospitalId, p_fiscal_year: fy });
+    setRefreshing(false);
+    if (error) {
+      toast({ title: "Refresh failed", description: error.message, variant: "destructive" });
+      return;
+    }
+    toast({ title: "Actuals refreshed from ledger" });
+    fetch();
+  };
+
   const totalBudgeted = lines.reduce((s, l) => s + Number(l.budgeted_amount || 0), 0);
   const totalActual   = lines.reduce((s, l) => s + Number(l.actual_amount || 0), 0);
   const totalVariance = totalBudgeted - totalActual;
@@ -115,6 +131,9 @@ export default function BudgetManagementPage() {
               {MONTHS.map((m, i) => <SelectItem key={i} value={String(i + 4 <= 12 ? i + 4 : i - 8)}>{m}</SelectItem>)}
             </SelectContent>
           </Select>
+          <Button size="sm" variant="outline" onClick={refreshActuals} disabled={refreshing} className="gap-1.5 h-8" title="Pull actual spend from the general ledger">
+            {refreshing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Refresh Actuals
+          </Button>
           <Button size="sm" variant="outline" onClick={exportCSV} className="gap-1.5 h-8"><Download size={12} /> Export</Button>
           <Button size="sm" onClick={() => setShowForm(true)} className="gap-1.5 h-8"><Plus size={12} /> Add Line</Button>
         </div>

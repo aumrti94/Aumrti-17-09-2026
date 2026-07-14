@@ -94,7 +94,10 @@ export default function JournalWorkbenchPage() {
     if (!isBalanced || !hospitalId) return;
     const validLines = lines.filter(l => l.account_id && (parseFloat(l.debit) > 0 || parseFloat(l.credit) > 0));
     setSaving(true);
-    const entryNumber = `MJE-${form.date.replace(/-/g, "")}-${Date.now().toString().slice(-4)}`;
+    // Atomic, gap-free numbering via the shared per-hospital sequence — never
+    // Date.now() (collision-prone across concurrent posts).
+    const { data: seq } = await supabase.rpc("next_seq", { p_hospital_id: hospitalId, p_type: "journal" });
+    const entryNumber = `JE-${new Date().getFullYear()}-${String(seq ?? Date.now()).padStart(4, "0")}`;
     const { data: je, error } = await supabase.from("journal_entries").insert({
       hospital_id: hospitalId,
       entry_date: form.date,

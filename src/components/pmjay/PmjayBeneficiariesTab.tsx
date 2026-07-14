@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { cn } from "@/lib/utils";
 import { Users, Plus, CheckCircle2, Search } from "lucide-react";
 import { format } from "date-fns";
+import { useHospitalId } from "@/hooks/useHospitalId";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CalendarIcon } from "lucide-react";
@@ -34,6 +35,7 @@ interface Props {
 }
 
 const PmjayBeneficiariesTab: React.FC<Props> = ({ showNewForm, onFormClosed }) => {
+  const { hospitalId } = useHospitalId();
   const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>([]);
   const [patients, setPatients] = useState<Record<string, string>>({});
   const [schemes, setSchemes] = useState<Scheme[]>([]);
@@ -97,11 +99,10 @@ const PmjayBeneficiariesTab: React.FC<Props> = ({ showNewForm, onFormClosed }) =
       toast({ title: "Fill required fields", variant: "destructive" });
       return;
     }
-    const { data: userData } = await supabase.from("users").select("hospital_id").eq("auth_user_id", (await supabase.auth.getUser()).data.user?.id || "").maybeSingle();
-    if (!userData?.hospital_id) { toast({ title: "Hospital not found", variant: "destructive" }); return; }
+    if (!hospitalId) { toast({ title: "Hospital not found", variant: "destructive" }); return; }
 
     const { error } = await supabase.from("scheme_beneficiaries").insert({
-      hospital_id: userData.hospital_id,
+      hospital_id: hospitalId,
       patient_id: form.patient_id,
       scheme_id: form.scheme_id,
       beneficiary_id: form.beneficiary_id,

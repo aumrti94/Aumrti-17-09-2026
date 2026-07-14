@@ -77,7 +77,8 @@ const DailyCashClosurePage: React.FC = () => {
   const [userId, setUserId] = useState<string | null>(null);
   const [hospitalName, setHospitalName] = useState<string>("Hospital");
 
-  const [closureDate] = useState<string>(new Date().toISOString().split("T")[0]);
+  const todayStr = new Date().toISOString().split("T")[0];
+  const [closureDate, setClosureDate] = useState<string>(todayStr);
   const [systemTotals, setSystemTotals] = useState<SystemTotals>(EMPTY_TOTALS);
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -464,7 +465,14 @@ const DailyCashClosurePage: React.FC = () => {
       {/* ── Header ── */}
       <div className="h-12 flex-shrink-0 bg-card border-b border-border px-5 flex items-center gap-3">
         <Lock size={16} className={isLocked ? "text-green-600" : "text-amber-600"} />
-        <span className="text-[15px] font-bold text-foreground">End of Day Closure — {dateLabel}</span>
+        <span className="text-[15px] font-bold text-foreground">End of Day Closure</span>
+        <Input
+          type="date"
+          value={closureDate}
+          max={todayStr}
+          onChange={(e) => e.target.value && setClosureDate(e.target.value)}
+          className="h-7 w-[150px] text-[12px]"
+        />
         {isLocked && (
           <Badge className="bg-green-100 text-green-700 text-[11px]">
             <CheckCircle2 size={11} className="mr-1" /> Locked
@@ -498,7 +506,13 @@ const DailyCashClosurePage: React.FC = () => {
           <div className="flex gap-3 overflow-x-auto">
             {history.length === 0 && <p className="text-[11px] text-muted-foreground">No previous closures.</p>}
             {history.map(h => (
-              <div key={h.closure_date} className="flex-shrink-0 border border-border rounded-lg px-3 py-2 text-[11px] min-w-[130px]">
+              <button
+                key={h.closure_date}
+                onClick={() => { setClosureDate(h.closure_date); setShowHistory(false); }}
+                className={`flex-shrink-0 text-left border rounded-lg px-3 py-2 text-[11px] min-w-[130px] hover:bg-muted/50 transition-colors ${
+                  h.closure_date === closureDate ? "border-primary bg-primary/5" : "border-border"
+                }`}
+              >
                 <p className="font-semibold">
                   {new Date(h.closure_date + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}
                 </p>
@@ -509,7 +523,7 @@ const DailyCashClosurePage: React.FC = () => {
                 {h.variance !== 0 && (
                   <p className="text-destructive">Var: {fmt(h.variance)}</p>
                 )}
-              </div>
+              </button>
             ))}
           </div>
         </div>

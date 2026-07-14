@@ -20,20 +20,28 @@ interface SpeechRecognitionLike {
 
 interface Props {
   sessionType: SessionType;
+  patientId?: string | null;
   className?: string;
   size?: "sm" | "md";
 }
 
 const SARVAM_CHUNK_SECONDS = 25;
 
-const VoiceDictationButton: React.FC<Props> = ({ sessionType, className, size = "md" }) => {
+const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, className, size = "md" }) => {
   const {
     isRecording, setIsRecording,
     setIsPanelOpen, setPanelState,
     setRawTranscript, setStructuredOutput,
-    setCurrentSessionType, selectedLanguage, setSelectedLanguage,
+    setCurrentSessionType, setCurrentPatientId, selectedLanguage, setSelectedLanguage,
     setFallbackReason,
   } = useVoiceScribe();
+
+  // Keep the panel's notion of "current patient" in sync with whichever
+  // screen this button is mounted on, so ai-clinical-voice can fetch that
+  // patient's known allergies/medications for the safety-guard check.
+  useEffect(() => {
+    setCurrentPatientId(patientId ?? null);
+  }, [patientId, setCurrentPatientId]);
   const { toast } = useToast();
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -122,7 +130,7 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, className, size = 
 
     try {
       const { data, error } = await supabase.functions.invoke("ai-clinical-voice", {
-        body: { transcript: rawText, context_type: sessionType, language_code: selectedLanguage },
+        body: { transcript: rawText, context_type: sessionType, language_code: selectedLanguage, patient_id: patientId ?? undefined },
       });
       if (error || data?.error) throw new Error(data?.error || error?.message);
       setStructuredOutput(data.structured);
@@ -133,7 +141,7 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, className, size = 
       setFallbackReason(reason);
       setPanelState("fallback");
     }
-  }, [sessionType, setPanelState, setIsPanelOpen, setStructuredOutput, setFallbackReason]);
+  }, [sessionType, patientId, setPanelState, setIsPanelOpen, setStructuredOutput, setFallbackReason]);
 
   const sendChunkToSarvam = useCallback(async (audioBlob: Blob): Promise<string> => {
     const base64 = await new Promise<string>((resolve, reject) => {

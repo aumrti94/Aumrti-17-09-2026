@@ -17,6 +17,7 @@ import {
   resolveOrderBarcode,
 } from "@/lib/labSamples";
 import PatientIdentityConfirmDialog from "./PatientIdentityConfirmDialog";
+import OnboardingTour from "@/components/onboarding/OnboardingTour";
 
 // Phlebotomy / collection workstation (lab plan Phase 5).
 // Worklist over lab_samples with collect / receive / process / reject-recollect
@@ -193,7 +194,8 @@ const CollectionWorkstation: React.FC<Props> = ({ hospitalId, admittedOnly = fal
   };
 
   return (
-    <div className="p-4 space-y-4">
+    <div data-tour="lab-worklist" className="p-4 space-y-4">
+      <OnboardingTour tourKey="lab_intro" />
       {/* Status tabs */}
       <div className="flex items-center gap-2">
         {STATUS_TABS.map(t => (

@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { callAI } from "@/lib/aiProvider";
+import { analyzeDocument } from "@/lib/documentAI";
 import { cn } from "@/lib/utils";
 import {
   Upload, Eye, Loader2, CheckCircle2, AlertTriangle,
@@ -25,6 +25,7 @@ interface ChecklistItem {
   uploadedAt: string | null;
   aiVerified: boolean | null;   // null=not attempted, true=passed, false=mismatch
   aiIssue: string | null;
+  aiSummary?: string | null;    // AI-extracted key findings from the document content
   autoFetched: boolean;
 }
 
@@ -35,6 +36,11 @@ interface Props {
   hospitalId: string;
   planTier: PlanTier;
   onReadinessChange?: (ready: boolean, stats: { ready: number; required: number }) => void;
+  // Policy details on the pre-auth — cross-checked when an insurance card / photo ID
+  // is uploaded so a mismatched policy/patient is flagged before submission.
+  policyNumber?: string;
+  insurerName?: string;
+  patientName?: string;
 }
 
 // ── Default document list ──────────────────────────────────────────────────
@@ -214,6 +220,9 @@ const DocumentChecklist: React.FC<Props> = ({
   hospitalId,
   planTier,
   onReadinessChange,
+  policyNumber,
+  insurerName,
+  patientName,
 }) => {
   const { toast } = useToast();
 
@@ -327,9 +336,49 @@ const DocumentChecklist: React.FC<Props> = ({
 
   // ── Upload handler ─────────────────────────────────────────────────────
 
+  // Does this checklist slot warrant a policy / identity cross-check?
+  const isPolicyDoc = (item: ChecklistItem) =>
+    /insurance|policy|photo\s*id|aadhaar|pan|\bid\b/i.test(item.label) ||
+    item.id === "insurance_card" || item.id === "photo_id";
+
+  // Reads the ACTUAL document content (image / PDF / DOCX / text), verifies it
+  // matches the slot it was uploaded against, and for insurance/ID docs
+  // cross-checks the policy details on record. Flag management is the caller's.
+  const runAnalysis = async (item: ChecklistItem, file: File) => {
+    const analysis = await analyzeDocument({
+      file,
+      hospitalId,
+      expectedLabel: item.label,
+      policyContext: isPolicyDoc(item)
+        ? { policyNumber, insurerName: insurerName || tpaName, patientName }
+        : undefined,
+    });
+
+    if (!analysis.analyzable) {
+      // Could not read the file (unsupported format / empty) — leave the upload
+      // in place, just tell the user why AI verification didn't run.
+      if (analysis.error) toast({ title: `${item.label} saved — analysis skipped`, description: analysis.error });
+      return;
+    }
+
+    // Combine document-type mismatch and policy mismatch into one issue string.
+    let issue: string | null = analysis.matches === false ? (analysis.issue || "Document type mismatch") : null;
+    if (analysis.policy?.matches === false && analysis.policy.issue) {
+      const p = `Policy mismatch — ${analysis.policy.issue}`;
+      issue = issue ? `${issue}; ${p}` : p;
+    }
+    const passed = analysis.matches !== false && analysis.policy?.matches !== false;
+
+    mutateItem(item.id, {
+      aiVerified: passed,
+      aiIssue: issue,
+      aiSummary: analysis.summary || null,
+    });
+  };
+
   const handleUpload = async (item: ChecklistItem, file: File) => {
-    if (file.size > 5 * 1024 * 1024) {
-      toast({ title: "File too large", description: "Maximum 5 MB allowed", variant: "destructive" });
+    if (file.size > 15 * 1024 * 1024) {
+      toast({ title: "File too large", description: "Maximum 15 MB allowed", variant: "destructive" });
       return;
     }
 
@@ -354,10 +403,21 @@ const DocumentChecklist: React.FC<Props> = ({
         checked: true,
         aiVerified: null,
         aiIssue: null,
+        aiSummary: null,
         autoFetched: false,
       });
 
       toast({ title: `${item.label} uploaded ✓` });
+
+      // Analyse the in-memory file straight away (no re-download needed).
+      setAiVerifying((p) => ({ ...p, [item.id]: true }));
+      try {
+        await runAnalysis(item, file);
+      } catch (aiErr) {
+        console.warn("Document analysis failed:", aiErr);
+      } finally {
+        setAiVerifying((p) => ({ ...p, [item.id]: false }));
+      }
     } catch (err: any) {
       toast({ title: "Upload failed", description: err.message, variant: "destructive" });
     } finally {
@@ -365,7 +425,7 @@ const DocumentChecklist: React.FC<Props> = ({
     }
   };
 
-  // ── AI verify ─────────────────────────────────────────────────────────
+  // ── AI verify (manual re-run) ─────────────────────────────────────────
 
   const handleAIVerify = async (item: ChecklistItem) => {
     if (!item.fileUrl) return;
@@ -385,52 +445,9 @@ const DocumentChecklist: React.FC<Props> = ({
 
       const res  = await fetch(fetchUrl);
       const blob = await res.blob();
-      let docContent = "";
+      const file = new File([blob], item.fileName || "document", { type: blob.type });
 
-      if (blob.type.startsWith("image/")) {
-        const b64 = await new Promise<string>((ok, fail) => {
-          const reader = new FileReader();
-          reader.onload  = () => ok((reader.result as string).split(",")[1] ?? "");
-          reader.onerror = fail;
-          reader.readAsDataURL(blob);
-        });
-        docContent = `[IMAGE — base64 prefix: ${b64.substring(0, 120)}]`;
-      } else {
-        const rawText = await blob.text();
-        docContent = rawText.startsWith("%PDF")
-          ? rawText.replace(/[^\x20-\x7E\n\r\t]/g, " ").replace(/\s{3,}/g, " ").substring(0, 3500)
-          : rawText.substring(0, 3500);
-      }
-
-      const prompt = `You are an insurance document verifier for an Indian hospital.
-The billing team claims this uploaded file is a "${item.label}".
-Examine the document content below and determine whether it actually is a "${item.label}".
-
-For context, a "${item.label}" typically contains:
-${docTypeHints(item.label)}
-
-Document content (partial):
-${docContent}
-
-Reply ONLY with a JSON object — no markdown, no explanation:
-{"matches": boolean, "confidence": 0-100, "issue": "<empty string if matches is true, otherwise one-line description of what is wrong>"}`;
-
-      const result = await callAI({
-        featureKey: "document_ocr",
-        hospitalId,
-        prompt,
-        maxTokens: 300,
-      });
-
-      if (result.error) throw new Error(result.error);
-      const parsed = JSON.parse(
-        result.text.replace(/```json\n?|\n?```/g, "").trim()
-      );
-
-      mutateItem(item.id, {
-        aiVerified: !!parsed.matches,
-        aiIssue: parsed.matches ? null : (parsed.issue || "Document type mismatch"),
-      });
+      await runAnalysis(item, file);
     } catch (err: any) {
       toast({
         title: "AI verification failed",
@@ -607,6 +624,13 @@ Reply ONLY with a JSON object — no markdown, no explanation:
                     </span>
                   )}
                 </div>
+
+                {/* AI-extracted key findings from the document content */}
+                {item.aiSummary && (
+                  <p className="text-[11px] text-muted-foreground mt-1 line-clamp-2">
+                    <span className="font-medium text-foreground/70">AI read:</span> {item.aiSummary}
+                  </p>
+                )}
               </div>
 
               {/* Actions */}
@@ -664,7 +688,7 @@ Reply ONLY with a JSON object — no markdown, no explanation:
                   <input
                     ref={(el) => { fileInputRefs.current[item.id] = el; }}
                     type="file"
-                    accept="application/pdf,image/jpeg,image/png"
+                    accept="application/pdf,image/jpeg,image/png,image/webp,image/gif,.docx,.doc,text/plain,.csv"
                     className="hidden"
                     onChange={(e) => {
                       const f = e.target.files?.[0];
@@ -788,31 +812,6 @@ function isFunctionMissingError(err: unknown): boolean {
 
 function isItemReady(item: ChecklistItem): boolean {
   return (item.autoFetched || (item.checked && item.fileUrl !== null));
-}
-
-function docTypeHints(label: string): string {
-  const lower = label.toLowerCase();
-  if (lower.includes("discharge"))
-    return "- Patient name and UHID\n- Principal diagnosis\n- Date of admission and discharge\n- Treating doctor's signature\n- Summary of treatment provided";
-  if (lower.includes("admission"))
-    return "- Patient demographics\n- Chief complaint\n- Initial assessment\n- Provisional diagnosis";
-  if (lower.includes("investigation") || lower.includes("report"))
-    return "- Lab values (CBC, LFT, RFT, etc.) or imaging report\n- Date of test\n- Reference ranges\n- Lab stamp / radiologist signature";
-  if (lower.includes("ot") || lower.includes("operation"))
-    return "- Procedure name\n- Surgeon name\n- Anaesthesia type\n- Date and duration of surgery";
-  if (lower.includes("implant"))
-    return "- Implant brand and model\n- Batch / lot number\n- Price sticker or invoice";
-  if (lower.includes("drug") || lower.includes("pharmacy"))
-    return "- Medication names and doses\n- Dates of administration\n- Nurse / pharmacist signature";
-  if (lower.includes("nurse"))
-    return "- Vital signs charts\n- Nursing observations\n- Date-wise entries";
-  if (lower.includes("pre-auth") || lower.includes("approval"))
-    return "- TPA/insurer letterhead\n- Approval reference number\n- Approved amount\n- Valid period";
-  if (lower.includes("id") || lower.includes("aadhaar") || lower.includes("pan"))
-    return "- Aadhaar card or PAN card\n- Photograph of patient\n- Name matching admission record";
-  if (lower.includes("insurance") || lower.includes("policy"))
-    return "- Policy number\n- Insured name\n- TPA/insurer name\n- Policy validity period";
-  return "- Relevant patient information\n- Date\n- Authorised signatures";
 }
 
 export default DocumentChecklist;

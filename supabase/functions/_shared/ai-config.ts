@@ -169,15 +169,86 @@ export function resolveAiConfigFromEnv(defaultMaxTokens = 1000): AiConfig | null
   return null;
 }
 
+export interface ChatUsage {
+  tokensInput: number;
+  tokensOutput: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+}
+
+// USD cost per 1000 tokens (approximate) — mirrors ai-proxy/index.ts's
+// COST_PER_1K table so a given model's estimated cost matches whichever
+// path logged it. Falls back to a Claude-Sonnet-ish rate for unlisted models.
+const COST_PER_1K: Record<string, { input: number; output: number; cacheWrite: number; cacheRead: number }> = {
+  "claude-sonnet-4-6":          { input: 0.003,   output: 0.015,  cacheWrite: 0.00375, cacheRead: 0.0003 },
+  "claude-sonnet-4-20250514":   { input: 0.003,   output: 0.015,  cacheWrite: 0.00375, cacheRead: 0.0003 },
+  "claude-3-5-sonnet-20241022": { input: 0.003,   output: 0.015,  cacheWrite: 0.00375, cacheRead: 0.0003 },
+  "claude-3-5-haiku-20241022":  { input: 0.0008,  output: 0.004,  cacheWrite: 0.001,   cacheRead: 0.00008 },
+  "claude-3-opus-20240229":     { input: 0.015,   output: 0.075,  cacheWrite: 0.01875, cacheRead: 0.0015 },
+  "gpt-4o":                     { input: 0.005,   output: 0.015,  cacheWrite: 0,       cacheRead: 0.0025 },
+  "gpt-4o-mini":                { input: 0.00015, output: 0.0006, cacheWrite: 0,       cacheRead: 0.000075 },
+  "gemini-2.0-flash":           { input: 0.0001,  output: 0.0004, cacheWrite: 0,       cacheRead: 0 },
+};
+
+export function estimateAiCostUsd(model: string, usage: ChatUsage): number {
+  const pricing = COST_PER_1K[model] ?? { input: 0.003, output: 0.015, cacheWrite: 0.00375, cacheRead: 0.0003 };
+  return (
+    (usage.tokensInput / 1000) * pricing.input +
+    (usage.tokensOutput / 1000) * pricing.output +
+    (usage.cacheCreationTokens / 1000) * pricing.cacheWrite +
+    (usage.cacheReadTokens / 1000) * pricing.cacheRead
+  );
+}
+
+export interface ChatResult {
+  content: string;
+  usage: ChatUsage;
+}
+
+// Every provider reports usage under a slightly different shape/field name —
+// this normalizes all of them to the one ChatUsage shape ai_usage_logs uses.
+function extractUsage(data: Record<string, unknown>, provider: string): ChatUsage {
+  const usage = (data.usage ?? data.usageMetadata ?? {}) as Record<string, unknown>;
+  const num = (v: unknown): number => (typeof v === "number" ? v : 0);
+
+  if (provider === "gemini") {
+    return {
+      tokensInput: num(usage.promptTokenCount),
+      tokensOutput: num(usage.candidatesTokenCount),
+      cacheCreationTokens: 0,
+      cacheReadTokens: num((usage as any).cachedContentTokenCount),
+    };
+  }
+  if (provider === "claude") {
+    return {
+      tokensInput: num((usage as any).input_tokens),
+      tokensOutput: num((usage as any).output_tokens),
+      cacheCreationTokens: num((usage as any).cache_creation_input_tokens),
+      cacheReadTokens: num((usage as any).cache_read_input_tokens),
+    };
+  }
+  // OpenAI, Azure (chat_completions + responses), Perplexity, OpenRouter are
+  // all OpenAI-compatible: prompt_tokens/completion_tokens, or the newer
+  // Responses API's input_tokens/output_tokens.
+  return {
+    tokensInput: num((usage as any).prompt_tokens ?? (usage as any).input_tokens),
+    tokensOutput: num((usage as any).completion_tokens ?? (usage as any).output_tokens),
+    cacheCreationTokens: 0,
+    cacheReadTokens: num((usage as any).prompt_tokens_details?.cached_tokens ?? (usage as any).input_tokens_details?.cached_tokens),
+  };
+}
+
 /**
- * Call the configured AI provider with chat messages. Returns the response text.
+ * Call the configured AI provider with chat messages. Returns the response
+ * text AND token/cache usage, normalized across providers — use this over
+ * callAiChat() when the caller logs cost/usage (e.g. to ai_usage_logs).
  */
-export async function callAiChat(
+export async function callAiChatWithUsage(
   config: AiConfig,
   messages: ChatMessage[],
   maxTokens?: number,
   temperature?: number,
-): Promise<string> {
+): Promise<ChatResult> {
   const maxTok = maxTokens ?? config.maxTokens;
   const temp = temperature ?? config.temperature;
 
@@ -217,7 +288,8 @@ export async function callAiChat(
     if (!res.ok) throw new Error(`Azure OpenAI error ${res.status}: ${await res.text()}`);
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
-    return useResponses ? extractResponsesOutputText(data) : (data.choices?.[0]?.message?.content || "");
+    const content = useResponses ? extractResponsesOutputText(data) : (data.choices?.[0]?.message?.content || "");
+    return { content, usage: extractUsage(data, "azure") };
   }
 
   if (config.provider === "claude") {
@@ -241,7 +313,7 @@ export async function callAiChat(
     if (!res.ok) throw new Error(`Claude error ${res.status}: ${await res.text()}`);
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
-    return data.content?.[0]?.text || "";
+    return { content: data.content?.[0]?.text || "", usage: extractUsage(data, "claude") };
   }
 
   if (config.provider === "openai") {
@@ -258,7 +330,7 @@ export async function callAiChat(
     if (!res.ok) throw new Error(`OpenAI error ${res.status}: ${await res.text()}`);
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
-    return data.choices?.[0]?.message?.content || "";
+    return { content: data.choices?.[0]?.message?.content || "", usage: extractUsage(data, "openai") };
   }
 
   if (config.provider === "gemini") {
@@ -283,7 +355,7 @@ export async function callAiChat(
     if (!res.ok) throw new Error(`Gemini error ${res.status}: ${await res.text()}`);
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    return { content: data.candidates?.[0]?.content?.parts?.[0]?.text || "", usage: extractUsage(data, "gemini") };
   }
 
   if (config.provider === "perplexity") {
@@ -299,7 +371,7 @@ export async function callAiChat(
     if (!res.ok) throw new Error(`Perplexity error ${res.status}: ${await res.text()}`);
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
-    return data.choices?.[0]?.message?.content || "";
+    return { content: data.choices?.[0]?.message?.content || "", usage: extractUsage(data, "perplexity") };
   }
 
   if (config.provider === "openrouter") {
@@ -319,10 +391,26 @@ export async function callAiChat(
     if (!res.ok) throw new Error(`OpenRouter error ${res.status}: ${await res.text()}`);
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
-    return data.choices?.[0]?.message?.content || "";
+    return { content: data.choices?.[0]?.message?.content || "", usage: extractUsage(data, "openrouter") };
   }
 
   throw new Error(`Unsupported AI provider: ${config.provider}`);
+}
+
+/**
+ * Call the configured AI provider with chat messages. Returns the response
+ * text only (backward-compatible wrapper — existing callers are unaffected
+ * by the usage-tracking addition above). Prefer callAiChatWithUsage() for
+ * any new caller that logs cost/usage.
+ */
+export async function callAiChat(
+  config: AiConfig,
+  messages: ChatMessage[],
+  maxTokens?: number,
+  temperature?: number,
+): Promise<string> {
+  const { content } = await callAiChatWithUsage(config, messages, maxTokens, temperature);
+  return content;
 }
 
 /**

@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Printer, FileSpreadsheet, FileText, Bot, CheckCircle2, XCircle, ChevronDown, ChevronRight, Loader2, Download, Mail, RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { callAI } from "@/lib/aiProvider";
+import { fetchLedgerLines, type RawLedgerLine } from "@/lib/financialStatements";
+import { splitGst } from "@/lib/gst";
 import * as XLSX from "xlsx";
 import TrialBalanceTab from "./TrialBalanceTab";
 import {
@@ -41,13 +43,6 @@ interface Account {
   opening_balance: number | null;
 }
 
-interface LineItem {
-  account_id: string;
-  account_code: string;
-  debit_amount: number;
-  credit_amount: number;
-}
-
 interface JournalLineDetail {
   id: string;
   account_code: string;
@@ -76,6 +71,7 @@ const PNL_REVENUE = [
   { code: "4006", label: "Pharmacy Revenue - IP" },
   { code: "4007", label: "Pharmacy Revenue - Retail" },
   { code: "4008", label: "Procedure Revenue" },
+  { code: "4009", label: "Emergency Revenue" },
   { code: "4010", label: "Insurance / TPA Revenue" },
   { code: "4011", label: "PMJAY / CGHS Revenue" },
 ];
@@ -115,13 +111,15 @@ const PNL_ADMIN = [
   { code: "5041", label: "Marketing & Advertising" },
   { code: "5042", label: "Printing & Stationery" },
   { code: "5043", label: "Bank Charges" },
-  { code: "5044", label: "Insurance Premium" },
+  { code: "5051", label: "Insurance Premium" },
   { code: "5060", label: "Miscellaneous" },
 ];
 
 const PNL_NONCASH = [{ code: "5050", label: "Depreciation" }];
 
 // ─── Balance Sheet structure ───
+// Codes must match seed_hospital_defaults() chart_of_accounts exactly — a
+// mismatch here silently drops or mislabels real ledger balances.
 const BS_CURRENT_ASSETS = [
   { code: "1001", label: "Cash in Hand" },
   { code: "1002", label: "Cash in Bank" },
@@ -129,18 +127,20 @@ const BS_CURRENT_ASSETS = [
   { code: "1010", label: "Accounts Receivable" },
   { code: "1011", label: "Insurance Receivable" },
   { code: "1012", label: "PMJAY Receivable" },
-  { code: "1020", label: "Pharmacy Stock" },
-  { code: "1021", label: "Medical Consumables Stock" },
-  { code: "1030", label: "Prepaid Expenses" },
-  { code: "1031", label: "GST Input Tax Credit" },
+  { code: "1020", label: "Advance Payments (Unbilled)" },
+  { code: "1030", label: "Pharmacy Stock" },
+  { code: "1031", label: "Medical Consumables Stock" },
+  { code: "1032", label: "Surgical Items Stock" },
+  { code: "1040", label: "Prepaid Expenses" },
+  { code: "1050", label: "GST Input Tax Credit" },
 ];
 
 const BS_FIXED_ASSETS = [
-  { code: "1100", label: "Medical Equipment" },
-  { code: "1101", label: "Furniture & Fixtures" },
-  { code: "1102", label: "Computers & IT" },
-  { code: "1103", label: "Vehicles" },
-  { code: "1104", label: "Building Improvements" },
+  { code: "1101", label: "Medical Equipment" },
+  { code: "1102", label: "Furniture & Fixtures" },
+  { code: "1103", label: "Computers & IT Equipment" },
+  { code: "1104", label: "Vehicles" },
+  { code: "1105", label: "Building / Leasehold Improvements" },
   { code: "1110", label: "Less: Accumulated Depreciation", negate: true },
 ];
 
@@ -151,13 +151,15 @@ const BS_CURRENT_LIABILITIES = [
   { code: "2011", label: "PF Payable" },
   { code: "2012", label: "ESIC Payable" },
   { code: "2013", label: "TDS Payable" },
-  { code: "2020", label: "GST Payable" },
+  { code: "2020", label: "GST Payable (CGST)" },
+  { code: "2021", label: "GST Payable (SGST)" },
   { code: "2030", label: "Advance from Patients" },
+  { code: "2031", label: "Security Deposits Received" },
 ];
 
 const BS_LT_LIABILITIES = [
-  { code: "2100", label: "Bank Loan" },
-  { code: "2101", label: "Equipment Finance" },
+  { code: "2101", label: "Bank Loan" },
+  { code: "2102", label: "Equipment Finance Loan" },
 ];
 
 const BS_EQUITY = [
@@ -170,7 +172,12 @@ const pct = (num: number, den: number) => den === 0 ? "0.0" : ((num / den) * 100
 
 const ReportsTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [lineItems, setLineItems] = useState<LineItem[]>([]);
+  // Period-scoped (entry_date within dateRange) — feeds P&L, GSTR-3B, Dept P&L.
+  const [lineItems, setLineItems] = useState<RawLedgerLine[]>([]);
+  // Cumulative (inception → dateRange.end) — feeds the Balance Sheet only; a
+  // balance sheet is a point-in-time snapshot, never a period-only sum.
+  const [cumulativeLineItems, setCumulativeLineItems] = useState<RawLedgerLine[]>([]);
+  const [hospitalStateCode, setHospitalStateCode] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
@@ -181,7 +188,6 @@ const ReportsTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
 
   // Department P&L state
   const [departments, setDepartments] = useState<{ id: string; name: string }[]>([]);
-  const [deptLineItems, setDeptLineItems] = useState<any[]>([]);
   const [deptBillItems, setDeptBillItems] = useState<any[]>([]);
   const [showOverhead, setShowOverhead] = useState(false);
 
@@ -212,13 +218,25 @@ const ReportsTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
 
   const loadData = async () => {
     setLoading(true);
-    const [{ data: accts }, { data: items }, { data: depts }, { data: deptLi }, { data: billItems }, { data: gstItems }, { data: expenses }, { data: jeForExport }, { data: liForExport }] = await Promise.all([
+    const [
+      { data: accts },
+      { data: hosp },
+      periodLines,
+      cumulativeLines,
+      { data: depts },
+      { data: billItems },
+      { data: gstItems },
+      { data: expenses },
+      { data: jeForExport },
+      { data: liForExport },
+    ] = await Promise.all([
       (supabase as any).from("chart_of_accounts").select("*").eq("hospital_id", hospitalId!).eq("is_active", true).order("code"),
-      supabase.from("journal_line_items").select("account_id, account_code, debit_amount, credit_amount").eq("hospital_id", hospitalId!)
-        .gte("created_at", dateRange.start).lte("created_at", dateRange.end + "T23:59:59"),
+      (supabase as any).from("hospitals").select("gstin, state_code").eq("id", hospitalId!).maybeSingle(),
+      // Period (entry_date within dateRange) — P&L, GSTR-3B, Dept P&L direct expenses.
+      fetchLedgerLines(hospitalId!, dateRange.start, dateRange.end),
+      // Cumulative (inception → dateRange.end) — Balance Sheet only.
+      fetchLedgerLines(hospitalId!, null, dateRange.end),
       supabase.from("departments").select("id, name").eq("hospital_id", hospitalId!).eq("is_active", true).order("name", { ascending: true }),
-      (supabase as any).from("journal_line_items").select("account_id, account_code, debit_amount, credit_amount, cost_centre_id").eq("hospital_id", hospitalId!)
-        .gte("created_at", dateRange.start).lte("created_at", dateRange.end + "T23:59:59").not("cost_centre_id", "is", null),
       supabase.from("bill_line_items").select("department, total_amount").eq("hospital_id", hospitalId!)
         .gte("created_at", dateRange.start).lte("created_at", dateRange.end + "T23:59:59"),
       // GSTR-1: bill_line_items with GST
@@ -235,9 +253,10 @@ const ReportsTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
         .gte("created_at", dateRange.start).lte("created_at", dateRange.end + "T23:59:59"),
     ]);
     setAccounts(accts || []);
-    setLineItems(items || []);
+    setHospitalStateCode(hosp?.state_code || (hosp?.gstin ? String(hosp.gstin).slice(0, 2) : null));
+    setLineItems(periodLines);
+    setCumulativeLineItems(cumulativeLines);
     setDepartments(depts || []);
-    setDeptLineItems(deptLi || []);
     setDeptBillItems(billItems || []);
     setGstBillItems(gstItems || []);
     setExpenseRecords(expenses || []);
@@ -247,7 +266,12 @@ const ReportsTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
   };
 
   // ─── Balance helpers ───
-  const balanceByCode = useMemo(() => {
+  // Two independent maps: `lineItems` (period, entry_date within dateRange) feeds
+  // P&L, GSTR-3B, and Dept P&L — all of which report movement WITHIN a period.
+  // `cumulativeLineItems` (inception → dateRange.end) feeds the Balance Sheet —
+  // a point-in-time snapshot must include every balance ever posted, not just
+  // this period's.
+  const periodBalanceByCode = useMemo(() => {
     const map: Record<string, { debit: number; credit: number }> = {};
     for (const li of lineItems) {
       if (!map[li.account_code]) map[li.account_code] = { debit: 0, credit: 0 };
@@ -257,37 +281,48 @@ const ReportsTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
     return map;
   }, [lineItems]);
 
-  const balanceById = useMemo(() => {
+  const cumulativeBalanceByCode = useMemo(() => {
     const map: Record<string, { debit: number; credit: number }> = {};
-    for (const li of lineItems) {
-      if (!map[li.account_id]) map[li.account_id] = { debit: 0, credit: 0 };
-      map[li.account_id].debit += Number(li.debit_amount || 0);
-      map[li.account_id].credit += Number(li.credit_amount || 0);
+    for (const li of cumulativeLineItems) {
+      if (!map[li.account_code]) map[li.account_code] = { debit: 0, credit: 0 };
+      map[li.account_code].debit += Number(li.debit_amount || 0);
+      map[li.account_code].credit += Number(li.credit_amount || 0);
     }
     return map;
-  }, [lineItems]);
+  }, [cumulativeLineItems]);
 
-  // Revenue = credit - debit (credit-normal)
+  // Revenue = credit - debit (credit-normal). P&L is always period-scoped.
   const revenueBalance = (code: string) => {
-    const b = balanceByCode[code];
+    const b = periodBalanceByCode[code];
     return b ? b.credit - b.debit : 0;
   };
 
-  // Expense = debit - credit (debit-normal)
+  // Expense = debit - credit (debit-normal). P&L is always period-scoped.
   const expenseBalance = (code: string) => {
-    const b = balanceByCode[code];
+    const b = periodBalanceByCode[code];
     return b ? b.debit - b.credit : 0;
   };
 
-  // Asset = debit - credit (debit-normal)
+  // Asset = debit - credit (debit-normal). Balance Sheet only — cumulative.
   const assetBalance = (code: string) => {
-    const b = balanceByCode[code];
+    const b = cumulativeBalanceByCode[code];
     return b ? b.debit - b.credit : 0;
   };
 
-  // Liability/Equity = credit - debit (credit-normal)
+  // Liability/Equity = credit - debit (credit-normal). Balance Sheet only — cumulative.
   const liabilityBalance = (code: string) => {
-    const b = balanceByCode[code];
+    const b = cumulativeBalanceByCode[code];
+    return b ? b.credit - b.debit : 0;
+  };
+
+  // Period-scoped asset/liability reads — for GSTR-3B, which reports THIS
+  // return period's output tax and ITC movement, not the lifetime GL balance.
+  const periodAssetBalance = (code: string) => {
+    const b = periodBalanceByCode[code];
+    return b ? b.debit - b.credit : 0;
+  };
+  const periodLiabilityBalance = (code: string) => {
+    const b = periodBalanceByCode[code];
     return b ? b.credit - b.debit : 0;
   };
 
@@ -388,18 +423,29 @@ Write a 5-point CFO-level financial analysis:
 
   // ─── GSTR-1 computed data ───
   const gstr1Data = useMemo(() => {
-    const grouped: Record<string, { hsn_code: string; description: string; gst_percent: number; taxable_value: number; total_gst: number; cgst: number; sgst: number; invoice_count: number; bill_ids: Set<string> }> = {};
+    const grouped: Record<string, { hsn_code: string; description: string; gst_percent: number; taxable_value: number; total_gst: number; cgst: number; sgst: number; igst: number; invoice_count: number; bill_ids: Set<string> }> = {};
     for (const item of gstBillItems) {
       const key = `${item.hsn_code || "NONE"}_${item.gst_percent || 0}`;
-      if (!grouped[key]) grouped[key] = { hsn_code: item.hsn_code || "", description: item.description || "", gst_percent: Number(item.gst_percent || 0), taxable_value: 0, total_gst: 0, cgst: 0, sgst: 0, invoice_count: 0, bill_ids: new Set() };
-      grouped[key].taxable_value += Number(item.taxable_amount || item.total_amount || 0);
-      grouped[key].total_gst += Number(item.gst_amount || 0);
-      grouped[key].cgst += Number(item.gst_amount || 0) / 2;
-      grouped[key].sgst += Number(item.gst_amount || 0) / 2;
+      if (!grouped[key]) grouped[key] = { hsn_code: item.hsn_code || "", description: item.description || "", gst_percent: Number(item.gst_percent || 0), taxable_value: 0, total_gst: 0, cgst: 0, sgst: 0, igst: 0, invoice_count: 0, bill_ids: new Set() };
+      const taxable = Number(item.taxable_amount || item.total_amount || 0);
+      const gstAmount = Number(item.gst_amount || 0);
+      // Split the ALREADY-STORED gst_amount (gstPercent: 100 makes splitGst's
+      // internal amount*rate/100 resolve to gstAmount exactly — no recompute
+      // drift). Buyer state isn't captured per bill line, so this defaults to
+      // intra-state (CGST+SGST) via splitGst's safe fallback — the same
+      // canonical split the e-invoice generator and outward register use, so
+      // all three agree. Becomes correctly inter-state (IGST) the moment buyer
+      // state is captured, with no change needed here.
+      const split = splitGst({ amount: gstAmount, gstPercent: 100, sellerStateCode: hospitalStateCode, buyerStateCode: null });
+      grouped[key].taxable_value += taxable;
+      grouped[key].total_gst += gstAmount;
+      grouped[key].cgst += split.cgst;
+      grouped[key].sgst += split.sgst;
+      grouped[key].igst += split.igst;
       if (item.bill_id) grouped[key].bill_ids.add(item.bill_id);
     }
     return Object.values(grouped).map(g => ({ ...g, invoice_count: g.bill_ids.size })).sort((a, b) => b.taxable_value - a.taxable_value);
-  }, [gstBillItems]);
+  }, [gstBillItems, hospitalStateCode]);
 
   const gstr1Json = useMemo(() => ({
     gstin: "", fp: dateRange.start.slice(0, 7).replace("-", ""),
@@ -1083,8 +1129,12 @@ ${vouchers}
             </CardHeader>
             <CardContent className="space-y-6">
               {(() => {
-                const outputGST = liabilityBalance("2020");
-                const inputITC = assetBalance("1031");
+                // Output GST = CGST (2020) + SGST (2021) charged this period.
+                // ITC = GST Input Tax Credit (1050) claimed this period.
+                // Period-scoped (not cumulative) — a GSTR-3B return reports this
+                // filing period's movement, not the lifetime GL balance.
+                const outputGST = periodLiabilityBalance("2020") + periodLiabilityBalance("2021");
+                const inputITC = periodAssetBalance("1050");
                 const taxableSupplies = gstr1Data.filter(r => r.gst_percent > 0).reduce((s, r) => s + r.taxable_value, 0);
                 const taxOnTaxable = gstr1Data.filter(r => r.gst_percent > 0).reduce((s, r) => s + r.total_gst, 0);
                 const exemptSupplies = gstr1Data.filter(r => !r.gst_percent || r.gst_percent === 0).reduce((s, r) => s + r.taxable_value, 0);
@@ -1351,10 +1401,11 @@ ${vouchers}
                     .filter((bi: any) => bi.department === dept.name)
                     .reduce((s: number, bi: any) => s + Number(bi.total_amount || 0), 0);
 
-                  // Direct expenses: from journal_line_items with cost_centre_id = dept.id
-                  const directExpenses = deptLineItems
-                    .filter((li: any) => li.cost_centre_id === dept.id && li.account_code?.startsWith("5"))
-                    .reduce((s: number, li: any) => s + Number(li.debit_amount || 0) - Number(li.credit_amount || 0), 0);
+                  // Direct expenses: from this period's journal lines tagged to this
+                  // department's cost centre (entry_date-filtered, via `lineItems`).
+                  const directExpenses = lineItems
+                    .filter((li) => li.cost_centre_id === dept.id && li.account_code?.startsWith("5"))
+                    .reduce((s: number, li) => s + Number(li.debit_amount || 0) - Number(li.credit_amount || 0), 0);
 
                   // Overhead allocation: proportional by revenue
                   const overheadShare = showOverhead && totalIncome > 0

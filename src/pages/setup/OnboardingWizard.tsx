@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { useToast } from "@/hooks/use-toast";
-import { Check, ArrowLeft } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import Step1Branding from "./steps/Step1Branding";
 import Step2Departments from "./steps/Step2Departments";
 import Step3Wards from "./steps/Step3Wards";
@@ -44,9 +43,16 @@ const SECTIONS = [
   { label: "Launch",        indices: [13] },
 ];
 
+// Steps shown during initial onboarding. The other step components still exist (indices
+// unchanged) — re-enable any of them later by adding its index back into FLOW.
+const GO_LIVE_STEP = 13;
+const FLOW = [0, GO_LIVE_STEP]; // Branding → Go Live
+const PRE_LAUNCH_STEPS = FLOW.filter((i) => i !== GO_LIVE_STEP).map((i) => ({ index: i, label: STEPS[i].label }));
+const flowNext = (s: number) => { const i = FLOW.indexOf(s); return i === -1 ? s : FLOW[Math.min(i + 1, FLOW.length - 1)]; };
+const flowPrev = (s: number) => { const i = FLOW.indexOf(s); return i <= 0 ? s : FLOW[i - 1]; };
+
 const OnboardingWizard: React.FC = () => {
   const navigate = useNavigate();
-  const { toast } = useToast();
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(true);
   const [hospitalId, setHospitalId] = useState<string | null>(null);
@@ -79,12 +85,12 @@ const OnboardingWizard: React.FC = () => {
 
       setHospitalId(hospital.id);
       setHospitalName(hospital.name);
-      // Resume from where user left off (wizard_step stored in DB)
+      // Resume from where user left off (wizard_step stored in DB), but only to a step that is
+      // part of the current onboarding FLOW and not the final Go Live step.
       const savedStep = (hospital as any).wizard_step;
-      if (typeof savedStep === "number" && savedStep > 0 && savedStep < 13) {
+      if (typeof savedStep === "number" && FLOW.includes(savedStep) && savedStep !== GO_LIVE_STEP) {
         setStep(savedStep);
-        // Mark all previous steps as completed
-        setCompletedSteps(new Set(Array.from({ length: savedStep }, (_, i) => i)));
+        setCompletedSteps(new Set(FLOW.filter((i) => i < savedStep)));
       }
       setLoading(false);
     };
@@ -93,21 +99,12 @@ const OnboardingWizard: React.FC = () => {
 
   const markComplete = (s: number) => {
     setCompletedSteps((prev) => new Set([...prev, s]));
-    const nextStep = s < 13 ? s + 1 : s;
-    if (s < 13) setStep(nextStep);
+    const nextStep = flowNext(s);
+    if (nextStep !== s) setStep(nextStep);
     // Persist current progress so wizard can be resumed
     if (hospitalId) {
       supabase.from("hospitals").update({ wizard_step: nextStep } as any).eq("id", hospitalId).then(() => {});
     }
-  };
-
-  const handleSkipSetup = async () => {
-    if (!hospitalId) return;
-    const confirmed = window.confirm("Skip setup? You can always complete it from Settings.");
-    if (!confirmed) return;
-    await supabase.from("hospitals").update({ setup_complete: true } as any).eq("id", hospitalId);
-    toast({ title: "Setup skipped", description: "You can complete setup from Settings anytime." });
-    navigate("/dashboard", { replace: true });
   };
 
   const handleGoLive = async () => {
@@ -123,8 +120,8 @@ const OnboardingWizard: React.FC = () => {
       {/* Header */}
       <header className="h-14 shrink-0 bg-card border-b border-border flex items-center px-6 gap-4">
         <div className="flex items-center gap-3 min-w-[160px]">
-          {step > 0 && (
-            <button onClick={() => setStep(step - 1)} className="text-muted-foreground hover:text-foreground">
+          {FLOW.indexOf(step) > 0 && (
+            <button onClick={() => setStep(flowPrev(step))} className="text-muted-foreground hover:text-foreground">
               <ArrowLeft size={18} />
             </button>
           )}
@@ -133,7 +130,7 @@ const OnboardingWizard: React.FC = () => {
 
         {/* Section-grouped progress bar */}
         <div className="flex-1 flex items-center justify-center gap-0 overflow-x-auto">
-          {SECTIONS.map((section, si) => (
+          {SECTIONS.filter((section) => section.indices.some((i) => FLOW.includes(i))).map((section, si) => (
             <React.Fragment key={section.label}>
               {si > 0 && <div className="w-px h-4 bg-border mx-2 shrink-0 hidden sm:block" />}
               <div className="flex flex-col items-center gap-1 shrink-0">
@@ -141,7 +138,7 @@ const OnboardingWizard: React.FC = () => {
                   {section.label}
                 </span>
                 <div className="flex items-center gap-1">
-                  {section.indices.map((i) => {
+                  {section.indices.filter((i) => FLOW.includes(i)).map((i) => {
                     const done = completedSteps.has(i);
                     const active = i === step;
                     return (
@@ -167,15 +164,8 @@ const OnboardingWizard: React.FC = () => {
           ))}
         </div>
 
-        <div className="flex items-center gap-3 min-w-[160px] justify-end">
-          <span className="text-[13px] text-muted-foreground">Step {step + 1} of 14</span>
-          <button
-            onClick={handleSkipSetup}
-            className="text-[12px] text-muted-foreground hover:text-foreground underline"
-          >
-            Skip setup
-          </button>
-        </div>
+        {/* Spacer keeps the section stepper centered (mirrors the left title block width). */}
+        <div className="min-w-[160px]" />
       </header>
 
       {/* Content */}
@@ -194,7 +184,7 @@ const OnboardingWizard: React.FC = () => {
           {step === 10 && <Step6Payments     hospitalId={hospitalId!} onComplete={() => markComplete(10)} />}
           {step === 11 && <Step7WhatsApp     hospitalId={hospitalId!} hospitalName={hospitalName} onComplete={() => markComplete(11)} />}
           {step === 12 && <Step7bModules     hospitalId={hospitalId!} onComplete={() => markComplete(12)} onSkip={() => markComplete(12)} />}
-          {step === 13 && <Step8GoLive       hospitalId={hospitalId!} hospitalName={hospitalName} completedSteps={completedSteps} selectedDepts={selectedDepts} onGoLive={handleGoLive} />}
+          {step === 13 && <Step8GoLive       hospitalId={hospitalId!} hospitalName={hospitalName} completedSteps={completedSteps} selectedDepts={selectedDepts} preLaunchSteps={PRE_LAUNCH_STEPS} onGoLive={handleGoLive} />}
         </div>
       </div>
     </div>

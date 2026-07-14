@@ -1,12 +1,14 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { ChevronLeft, Save, Loader2, Trash2, AlertTriangle, X, Activity } from "lucide-react";
+import { ChevronLeft, Save, Loader2, Trash2, AlertTriangle, X, Activity, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { getErrorMessage } from "@/lib/errorMessage";
 import { FormError } from "@/components/ui/FormError";
 import { PLATFORM_STATUS_PILL } from "@/lib/platform-utils";
+import { logAdminAction } from "@/lib/adminAudit";
+import { startImpersonation } from "@/lib/impersonation";
 
 // ── Usage tab data fetcher ────────────────────────────────────────────────────
 interface UsageData {
@@ -186,6 +188,21 @@ export default function HospitalDetailPage() {
   const [selPlan, setSelPlan] = useState("");
   const [selStatus, setSelStatus] = useState("");
   const [subNotes, setSubNotes] = useState("");
+
+  // The Plan / Status dropdowns show the hospital's CURRENT plan and status as the
+  // selected value (no "Keep current" placeholder). Re-sync whenever the underlying
+  // subscription changes (initial load, or after a save + refetch); the deps stay
+  // stable while the admin is mid-edit, so an in-progress selection is never clobbered.
+  useEffect(() => {
+    if (!data) return;
+    if (data.subscription) {
+      setSelPlan(data.subscription.plan_id || "");
+      setSelStatus(data.subscription.status || "trial");
+    } else {
+      setSelPlan(data.plans?.[0]?.id || "");
+      setSelStatus("trial");
+    }
+  }, [data?.subscription?.plan_id, data?.subscription?.status, data?.plans]);
   const [subError, setSubError] = useState<string | null>(null);
   const [pricingError, setPricingError] = useState<string | null>(null);
 
@@ -202,7 +219,7 @@ export default function HospitalDetailPage() {
           .insert({ hospital_id: id, ...payload, status: selStatus || "trial" });
       }
     },
-    onSuccess: () => { setSubError(null); toast.success("Subscription updated"); invalidate(); setSelPlan(""); setSelStatus(""); },
+    onSuccess: () => { setSubError(null); toast.success("Subscription updated"); invalidate(); qc.invalidateQueries({ queryKey: ["subscription-config", id] }); },
     onError: (e: any) => { const m = getErrorMessage(e); setSubError(m); toast.error(m); },
   });
 
@@ -231,6 +248,25 @@ export default function HospitalDetailPage() {
   const [pYearly, setPYearly] = useState("");
   const [pReason, setPReason] = useState("");
 
+  // ── View as hospital (audited impersonation) ──
+  const [impersonating, setImpersonating] = useState(false);
+  const handleViewAsHospital = async () => {
+    if (!id || !hospital) return;
+    if (!window.confirm(`View the app as ${hospital.name}? This starts an audited impersonation session as one of their staff accounts.`)) return;
+    setImpersonating(true);
+    try {
+      await startImpersonation(id);
+      // Full navigation, not client-side routing — clears all React Query
+      // cache and context state built for the admin's own (hospital-less)
+      // session, so the impersonated view starts from a clean slate.
+      window.location.href = "/opd";
+    } catch (e) {
+      toast.error(getErrorMessage(e) || "Failed to start impersonation.");
+    } finally {
+      setImpersonating(false);
+    }
+  };
+
   // ── Delete hospital ──
   // Step 0 = closed, Step 1 = warning modal, Step 2 = type-name confirmation
   const [deleteStep, setDeleteStep] = useState<0 | 1 | 2>(0);
@@ -255,6 +291,17 @@ export default function HospitalDetailPage() {
       return result;
     },
     onSuccess: (result: any) => {
+      setDeleteStep(0);
+      setDeleteNameInput("");
+      if (result?.soft_deleted) {
+        // Phase 1: marked for deletion, nothing purged yet.
+        logAdminAction("hospital_delete_requested", { hospitalId: id, hospitalName: hospital?.name });
+        toast.success(result.message || `${hospital?.name ?? "Hospital"} marked for deletion — 7-day grace period started.`);
+        qc.invalidateQueries({ queryKey: ["platform-hospital", id] });
+        return;
+      }
+      // Phase 2: grace period had already elapsed — this call actually purged everything.
+      logAdminAction("hospital_purged", { hospitalId: id, hospitalName: hospital?.name, details: { deleted_auth_users: result?.deleted_auth_users } });
       const staffMsg = result?.deleted_auth_users > 0
         ? ` · ${result.deleted_auth_users} staff account${result.deleted_auth_users > 1 ? "s" : ""} removed`
         : "";
@@ -268,6 +315,26 @@ export default function HospitalDetailPage() {
     onError: (e: any) => {
       toast.error(getErrorMessage(e) || "Delete failed — see console for details.");
       setDeleteStep(0);
+    },
+  });
+
+  const restoreHospital = useMutation({
+    mutationFn: async () => {
+      const { data: result, error } = await (supabase as any).functions.invoke(
+        "delete-hospital",
+        { body: { hospital_id: id, action: "restore" } },
+      );
+      if (error) throw error;
+      if (result?.error) throw new Error(result.error);
+      return result;
+    },
+    onSuccess: () => {
+      logAdminAction("hospital_restored", { hospitalId: id, hospitalName: hospital?.name });
+      toast.success(`${hospital?.name ?? "Hospital"} restored — deletion cancelled.`);
+      qc.invalidateQueries({ queryKey: ["platform-hospital", id] });
+    },
+    onError: (e: any) => {
+      toast.error(getErrorMessage(e) || "Restore failed — see console for details.");
     },
   });
 
@@ -311,8 +378,16 @@ export default function HospitalDetailPage() {
           <h1 className="text-[14px] font-semibold text-foreground">{hospital.name}</h1>
           <p className="text-[11px] text-muted-foreground">{hospital.state || "India"} · {hospital.beds_count} beds</p>
         </div>
+        <button
+          onClick={handleViewAsHospital}
+          disabled={impersonating}
+          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 border border-violet-300 text-violet-600 hover:bg-violet-50 text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
+        >
+          {impersonating ? <Loader2 size={12} className="animate-spin" /> : <Eye size={12} />}
+          View as Hospital
+        </button>
         {subscription && (
-          <span className={`ml-auto text-[10px] font-medium px-2 py-0.5 rounded-full ${STATUS_PILL[subscription.status] || STATUS_PILL.no_subscription}`}>
+          <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${STATUS_PILL[subscription.status] || STATUS_PILL.no_subscription}`}>
             {subscription.status.replace("_", " ")}
           </span>
         )}
@@ -388,18 +463,49 @@ export default function HospitalDetailPage() {
             {/* Danger zone */}
             <div className="border border-red-300 rounded-xl p-5 space-y-3 bg-red-50">
               <p className="text-xs font-bold uppercase tracking-wider text-red-600">Danger Zone</p>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                Permanently delete this hospital and <strong className="text-foreground">all its data</strong> — patients,
-                appointments, bills, lab results, prescriptions, staff accounts, and every other record.
-                This action <strong className="text-red-600">cannot be undone</strong>.
-              </p>
-              <button
-                onClick={() => setDeleteStep(1)}
-                className="flex items-center gap-2 px-4 py-2 bg-red-600/20 hover:bg-red-600/30 border border-red-600/40 text-red-400 hover:text-red-300 text-xs font-semibold rounded-lg transition-colors"
-              >
-                <Trash2 size={13} />
-                Delete Hospital Permanently
-              </button>
+              {hospital.deleted_at ? (
+                <>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Marked for deletion on{" "}
+                    <strong className="text-foreground">{new Date(hospital.deleted_at).toLocaleString("en-IN")}</strong>.
+                    Will be <strong className="text-red-600">permanently purged</strong> 7 days after that unless restored.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => restoreHospital.mutate()}
+                      disabled={restoreHospital.isPending}
+                      className="flex items-center gap-2 px-4 py-2 bg-green-600/10 hover:bg-green-600/20 border border-green-600/40 text-green-700 text-xs font-semibold rounded-lg transition-colors disabled:opacity-40"
+                    >
+                      {restoreHospital.isPending ? <Loader2 size={13} className="animate-spin" /> : null}
+                      Restore Hospital (cancel deletion)
+                    </button>
+                    <button
+                      onClick={() => setDeleteStep(1)}
+                      className="flex items-center gap-2 px-4 py-2 bg-red-600/20 hover:bg-red-600/30 border border-red-600/40 text-red-400 hover:text-red-300 text-xs font-semibold rounded-lg transition-colors"
+                    >
+                      <Trash2 size={13} />
+                      Purge Now (if grace period has elapsed)
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Delete this hospital and <strong className="text-foreground">all its data</strong> — patients,
+                    appointments, bills, lab results, prescriptions, staff accounts, and every other record.
+                    The hospital is marked for deletion first, with a{" "}
+                    <strong className="text-foreground">7-day grace period</strong> to restore it before the purge
+                    becomes <strong className="text-red-600">permanent and cannot be undone</strong>.
+                  </p>
+                  <button
+                    onClick={() => setDeleteStep(1)}
+                    className="flex items-center gap-2 px-4 py-2 bg-red-600/20 hover:bg-red-600/30 border border-red-600/40 text-red-400 hover:text-red-300 text-xs font-semibold rounded-lg transition-colors"
+                  >
+                    <Trash2 size={13} />
+                    Delete Hospital
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -493,7 +599,6 @@ export default function HospitalDetailPage() {
                   onChange={(e) => setSelPlan(e.target.value)}
                   className="w-full mt-1 h-8 px-3 text-xs bg-background border border-border rounded-lg text-foreground focus:outline-none focus:border-primary"
                 >
-                  <option value="">Keep current</option>
                   {plans.map((p) => (
                     <option key={p.id} value={p.id}>{p.name} — ₹{p.price_monthly.toLocaleString("en-IN")}/mo</option>
                   ))}
@@ -506,7 +611,6 @@ export default function HospitalDetailPage() {
                   onChange={(e) => setSelStatus(e.target.value)}
                   className="w-full mt-1 h-8 px-3 text-xs bg-background border border-border rounded-lg text-foreground focus:outline-none focus:border-primary"
                 >
-                  <option value="">Keep current</option>
                   {["trial","active","past_due","suspended","cancelled"].map((s) => (
                     <option key={s} value={s}>{s}</option>
                   ))}
@@ -745,13 +849,23 @@ export default function HospitalDetailPage() {
 
             {/* Body */}
             <div className="px-6 py-5 space-y-4">
-              <p className="text-sm text-muted-foreground">
-                You are about to permanently delete{" "}
-                <span className="font-bold text-foreground">{hospital.name}</span>.
-              </p>
+              {hospital.deleted_at ? (
+                <p className="text-sm text-muted-foreground">
+                  <span className="font-bold text-foreground">{hospital.name}</span> is already past its 7-day grace
+                  period. Proceeding now will <strong className="text-red-600">permanently and irreversibly purge</strong> all
+                  of its data.
+                </p>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  You are about to mark{" "}
+                  <span className="font-bold text-foreground">{hospital.name}</span> for deletion. It gets a{" "}
+                  <strong className="text-foreground">7-day grace period</strong> to be restored — after that, this data
+                  is purged permanently.
+                </p>
+              )}
               <div className="bg-red-50 border border-red-200 rounded-lg p-4 space-y-2">
                 <p className="text-xs font-semibold text-red-600 uppercase tracking-wider">
-                  The following will be permanently deleted:
+                  {hospital.deleted_at ? "The following will be permanently deleted now:" : "The following will eventually be permanently deleted:"}
                 </p>
                 <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside leading-relaxed">
                   <li>All patient records, UHID history and medical data</li>
@@ -764,7 +878,9 @@ export default function HospitalDetailPage() {
                 </ul>
               </div>
               <p className="text-xs text-red-600 font-medium">
-                This action is irreversible. There is no way to recover this data.
+                {hospital.deleted_at
+                  ? "This action is irreversible. There is no way to recover this data."
+                  : "After marking for deletion, use \"Restore Hospital\" on this page within 7 days to cancel."}
               </p>
             </div>
 
@@ -848,9 +964,11 @@ export default function HospitalDetailPage() {
                 className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 text-white text-sm font-bold rounded-lg transition-colors disabled:opacity-40 disabled:pointer-events-none flex items-center justify-center gap-2"
               >
                 {deleteHospital.isPending ? (
-                  <><Loader2 size={14} className="animate-spin" /> Purging all data…</>
-                ) : (
+                  <><Loader2 size={14} className="animate-spin" /> {hospital.deleted_at ? "Purging all data…" : "Marking for deletion…"}</>
+                ) : hospital.deleted_at ? (
                   <><Trash2 size={14} /> DELETE ALL DATA PERMANENTLY</>
+                ) : (
+                  <><Trash2 size={14} /> MARK FOR DELETION (7-day grace)</>
                 )}
               </button>
             </div>

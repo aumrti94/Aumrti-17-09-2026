@@ -9,7 +9,7 @@ import { format } from "date-fns";
 interface HospRow {
   id: string; name: string; state: string | null; beds_count: number;
   created_at: string; plan_name: string; status: string; plan_id: string | null;
-  hasRecentOpd: boolean; hasRecentBilling: boolean;
+  hasRecentOpd: boolean; hasRecentBilling: boolean; deletedAt: string | null;
 }
 
 const STATUS_PILL = PLATFORM_STATUS_PILL;
@@ -37,7 +37,7 @@ async function fetchHospitals(): Promise<HospRow[]> {
 
   const [hResult, sResult, activeResult] = await Promise.all([
     (supabase as any).from("hospitals")
-      .select("id, name, state, beds_count, created_at")
+      .select("id, name, state, beds_count, created_at, deleted_at")
       .eq("is_active", true)
       .order("name"),
     (supabase as any).from("hospital_subscriptions")
@@ -60,6 +60,7 @@ async function fetchHospitals(): Promise<HospRow[]> {
       plan_id: sub?.plan_id || null,
       hasRecentOpd:     activeOpd.has(h.id),
       hasRecentBilling: activeBill.has(h.id),
+      deletedAt: h.deleted_at || null,
     };
   });
 }
@@ -205,7 +206,14 @@ export default function HospitalsListPage() {
             ) : filtered.map((h) => (
               <tr key={h.id} className="border-t border-border hover:bg-muted/40 transition-colors">
                 <td className="px-5 py-3">
-                  <span className="text-xs font-medium text-foreground">{h.name}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-foreground">{h.name}</span>
+                    {h.deletedAt && (
+                      <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-600 border border-red-500/30 whitespace-nowrap">
+                        Pending Deletion
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-5 py-3 text-xs text-muted-foreground">{h.state || "—"}</td>
                 <td className="px-5 py-3 text-xs text-muted-foreground font-mono">{h.beds_count}</td>

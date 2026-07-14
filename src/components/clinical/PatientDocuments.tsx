@@ -3,8 +3,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Upload, FileText, Eye, Copy, Loader2, Image, FileCheck } from "lucide-react";
-import { callAI } from "@/lib/aiProvider";
+import { Upload, FileText, Eye, Copy, Loader2, Image, FileCheck, Trash2 } from "lucide-react";
+import { analyzeDocument } from "@/lib/documentAI";
 
 interface Doc {
   id: string;
@@ -68,8 +68,8 @@ const PatientDocuments: React.FC<Props> = ({ patientId, hospitalId, userId }) =>
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 10 * 1024 * 1024) {
-      toast({ title: "File too large", description: "Maximum 10MB allowed", variant: "destructive" });
+    if (file.size > 15 * 1024 * 1024) {
+      toast({ title: "File too large", description: "Maximum 15MB allowed", variant: "destructive" });
       return;
     }
     setSelectedFile(file);
@@ -99,51 +99,36 @@ const PatientDocuments: React.FC<Props> = ({ patientId, hospitalId, userId }) =>
         .from("patient-documents")
         .getPublicUrl(uploadData.path).data.publicUrl;
 
-      // Try AI analysis
+      // Real content analysis — reads the ACTUAL document (image / PDF / DOCX / text),
+      // not a truncated base64 string. Maps common id-proof types onto our labels.
       let docName = selectedFile.name;
       let docType = "other";
       let ocrText: string | null = null;
       let ocrSummary: string | null = null;
 
-      if (selectedFile.type.startsWith("image/")) {
-        setAnalysing(true);
-        try {
-          const base64 = await fileToBase64(selectedFile);
-          const response = await callAI({
-            featureKey: "document_ocr",
-            hospitalId,
-            prompt: `This is a patient's medical document from India.
-            
-Extract and return ONLY a JSON object:
-{
-  "document_type": "old_prescription|old_report|discharge_summary|xray_image|insurance_card|id_proof|referral_letter|other",
-  "document_name": "suggested filename",
-  "key_findings": "2-3 sentence summary of what this document contains",
-  "extracted_text": "full text extracted from the document",
-  "important_values": "any critical numbers like drug doses, test results, dates"
-}
-
-Be concise. Return only JSON.
-
-[Image data provided as base64 in the prompt context - analyse the medical document]
-Base64 image data: ${base64.substring(0, 500)}...`,
-            maxTokens: 600,
-          });
-
-          const parsed = JSON.parse(
-            response.text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim()
-          );
-
-          docName = parsed.document_name || selectedFile.name;
-          docType = parsed.document_type || "other";
-          ocrText = parsed.extracted_text || null;
-          ocrSummary = parsed.key_findings || null;
-        } catch (aiErr) {
-          console.warn("AI analysis unavailable:", aiErr);
-          toast({ title: "Document saved", description: "AI analysis unavailable — document saved without OCR" });
+      setAnalysing(true);
+      try {
+        const analysis = await analyzeDocument({
+          file: selectedFile,
+          hospitalId,
+          patientId,
+        });
+        if (analysis.analyzable) {
+          docName = analysis.documentName || selectedFile.name;
+          docType = mapDocType(analysis.documentType);
+          ocrText = analysis.extractedText || null;
+          ocrSummary =
+            [analysis.summary, analysis.importantValues && `Key values: ${analysis.importantValues}`]
+              .filter(Boolean)
+              .join("\n") || null;
+        } else if (analysis.error) {
+          toast({ title: "Document saved", description: analysis.error });
         }
-        setAnalysing(false);
+      } catch (aiErr: any) {
+        console.warn("AI analysis unavailable:", aiErr);
+        toast({ title: "Document saved", description: "AI analysis unavailable — document saved without OCR" });
       }
+      setAnalysing(false);
 
       // Insert record
       await (supabase as any).from("patient_documents").insert({
@@ -173,6 +158,37 @@ Base64 image data: ${base64.substring(0, 500)}...`,
     toast({ title: "Text copied to clipboard" });
   };
 
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const deleteDoc = async (doc: Doc) => {
+    if (!window.confirm(`Delete "${doc.document_name}"? This permanently removes the document and its extracted text.`)) return;
+    setDeletingId(doc.id);
+    try {
+      // Remove the stored file (best-effort — derive the storage path from the
+      // public URL; a failure here shouldn't block deleting the DB record).
+      const marker = "/patient-documents/";
+      const idx = doc.file_url.indexOf(marker);
+      if (idx >= 0) {
+        const path = decodeURIComponent(doc.file_url.slice(idx + marker.length));
+        await supabase.storage.from("patient-documents").remove([path]);
+      }
+
+      // Delete the database row — this is the authoritative removal.
+      const { error } = await (supabase as any)
+        .from("patient_documents")
+        .delete()
+        .eq("id", doc.id);
+      if (error) throw error;
+
+      setDocs((prev) => prev.filter((d) => d.id !== doc.id));
+      toast({ title: "Document deleted" });
+    } catch (err: any) {
+      toast({ title: "Delete failed", description: err.message, variant: "destructive" });
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   return (
     <div>
       <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
@@ -187,7 +203,7 @@ Base64 image data: ${base64.substring(0, 500)}...`,
         <input
           ref={fileRef}
           type="file"
-          accept="image/jpeg,image/png,application/pdf"
+          accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,.docx,.doc,text/plain,.csv"
           className="hidden"
           onChange={handleFileSelect}
         />
@@ -273,6 +289,18 @@ Base64 image data: ${base64.substring(0, 500)}...`,
                       <Copy size={12} />
                     </Button>
                   )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                    disabled={deletingId === doc.id}
+                    onClick={() => deleteDoc(doc)}
+                    title="Delete document"
+                  >
+                    {deletingId === doc.id
+                      ? <Loader2 size={12} className="animate-spin" />
+                      : <Trash2 size={12} />}
+                  </Button>
                 </div>
               </div>
             </div>
@@ -283,16 +311,24 @@ Base64 image data: ${base64.substring(0, 500)}...`,
   );
 };
 
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      resolve(result.split(",")[1] || result);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
+// The engine returns a broad set of clinical/insurance types; fold the ones this
+// component doesn't have icons/labels for onto its nearest known bucket.
+function mapDocType(engineType: string): string {
+  const known = new Set([
+    "old_prescription", "old_report", "discharge_summary", "xray_image",
+    "insurance_card", "id_proof", "referral_letter", "other",
+  ]);
+  if (known.has(engineType)) return engineType;
+  switch (engineType) {
+    case "photo_id": return "id_proof";
+    case "investigation_reports": return "old_report";
+    case "admission_note":
+    case "ot_notes":
+    case "nurses_notes":
+    case "drug_chart":
+    case "pre_auth_approval": return "discharge_summary";
+    default: return "other";
+  }
 }
 
 export default PatientDocuments;

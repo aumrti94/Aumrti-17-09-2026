@@ -4,7 +4,8 @@
 // Cron function (runs every 12 hours) that manages the dunning cadence for
 // past_due subscriptions BEFORE trial-lifecycle-cron suspends them on day 7.
 //
-// Dunning cadence (relative to past_due transition date):
+// Cadence is admin-configurable via dunning_cadence_rules (Sprint 4) — no
+// longer hardcoded here. Default seed matches the original design:
 //   Day 1:  Email (payment_failed template)
 //   Day 2:  Email + WhatsApp
 //   Day 4:  Email + SMS
@@ -30,12 +31,19 @@ const FUNCTIONS_URL = SUPABASE_URL.replace(".supabase.co", ".supabase.co/functio
 
 interface Attempt { attempt_number: number; channel: string }
 
-const CADENCE: Record<number, Attempt[]> = {
-  1: [{ attempt_number: 1, channel: "email" }],
-  2: [{ attempt_number: 2, channel: "email" }, { attempt_number: 2, channel: "whatsapp" }],
-  4: [{ attempt_number: 3, channel: "email" }, { attempt_number: 3, channel: "sms" }],
-  6: [{ attempt_number: 4, channel: "email" }],
-};
+async function loadCadence(db: ReturnType<typeof createClient>): Promise<Record<number, Attempt[]>> {
+  const { data } = await db
+    .from("dunning_cadence_rules")
+    .select("day_offset, attempt_number, channel")
+    .eq("is_active", true)
+    .order("day_offset");
+  const cadence: Record<number, Attempt[]> = {};
+  for (const row of (data ?? [])) {
+    if (!cadence[row.day_offset]) cadence[row.day_offset] = [];
+    cadence[row.day_offset].push({ attempt_number: row.attempt_number, channel: row.channel });
+  }
+  return cadence;
+}
 
 async function invoke(fnName: string, body: Record<string, unknown>) {
   await fetch(`${FUNCTIONS_URL}/${fnName}`, {
@@ -59,7 +67,14 @@ serve(async (req) => {
   const results = { processed: 0, attempts_sent: 0, errors: 0 };
 
   try {
-    // Fetch all past_due subscriptions that are in the 1–6 day window
+    const CADENCE = await loadCadence(db);
+    const configuredDays = Object.keys(CADENCE).map(Number);
+    // Window derives from whatever days are actually configured, not a
+    // hardcoded 1-7 — an admin adding a day-10 rule must not be silently
+    // filtered out here.
+    const minDay = configuredDays.length ? Math.min(...configuredDays) : 1;
+    const maxDay = configuredDays.length ? Math.max(...configuredDays) : 6;
+
     const { data: subs } = await db
       .from("hospital_subscriptions")
       .select(`
@@ -70,8 +85,8 @@ serve(async (req) => {
         hospital_id
       `)
       .eq("status", "past_due")
-      .gte("updated_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
-      .lte("updated_at", new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString());
+      .gte("updated_at", new Date(Date.now() - (maxDay + 1) * 24 * 60 * 60 * 1000).toISOString())
+      .lte("updated_at", new Date(Date.now() - minDay * 24 * 60 * 60 * 1000).toISOString());
 
     for (const sub of (subs ?? [])) {
       const daysPastDue = Math.floor(

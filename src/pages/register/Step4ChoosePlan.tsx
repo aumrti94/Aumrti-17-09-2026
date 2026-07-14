@@ -20,6 +20,7 @@ interface DbPlan {
   is_custom_price: boolean;
   badge_text: string | null;
   description: string | null;
+  feature_highlights?: Array<{ text: string; included: boolean }>;
   enabled_count?: number;
 }
 
@@ -100,6 +101,7 @@ const Step4ChoosePlan: React.FC<Props> = ({ data, onChange }) => {
   const [leadSubmitting, setLeadSubmitting] = useState(false);
   const [leadSubmitted, setLeadSubmitted] = useState(false);
   const [leadMessage, setLeadMessage] = useState("");
+  const [detailPlan, setDetailPlan] = useState<DbPlan | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -108,7 +110,7 @@ const Step4ChoosePlan: React.FC<Props> = ({ data, onChange }) => {
         // Fetch active plans — works for both anon and authenticated sessions
         const { data: rows, error } = await (supabase as any)
           .from("subscription_plans")
-          .select("id, name, slug, price_monthly, price_yearly, max_beds, max_staff, trial_days, is_custom_price, badge_text, description")
+          .select("id, name, slug, price_monthly, price_yearly, max_beds, max_staff, trial_days, is_custom_price, badge_text, description, feature_highlights")
           .eq("is_active", true)
           .order("sort_order");
 
@@ -189,7 +191,7 @@ const Step4ChoosePlan: React.FC<Props> = ({ data, onChange }) => {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6" role="radiogroup" aria-label="Subscription plan">
         {plans.map((plan) => {
           const selected = data.plan === plan.slug;
-          const highlights = PLAN_HIGHLIGHTS[plan.slug];
+          const highlights = (plan.feature_highlights?.length ? plan.feature_highlights : PLAN_HIGHLIGHTS[plan.slug]) || [];
           const isMostPopular = plan.badge_text === "Most Popular";
 
           return (
@@ -256,24 +258,16 @@ const Step4ChoosePlan: React.FC<Props> = ({ data, onChange }) => {
 
               <div className="border-t border-border my-3" />
 
-              {/* Feature list */}
-              <ul className="space-y-1.5">
-                {(highlights || []).map((f) => (
-                  <li
-                    key={f.text}
-                    className={`flex items-start gap-2 text-[13px] ${
-                      f.included ? "text-foreground" : "text-muted-foreground/50"
-                    }`}
-                  >
-                    {f.included ? (
-                      <Check size={14} className="text-[hsl(160,84%,39%)] mt-0.5 shrink-0" />
-                    ) : (
-                      <X size={14} className="mt-0.5 shrink-0" />
-                    )}
-                    {f.text}
-                  </li>
-                ))}
-              </ul>
+              {/* View features → opens the marketing-content modal (keeps cards compact) */}
+              {highlights.length > 0 && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setDetailPlan(plan); }}
+                  className="w-full text-[13px] font-medium text-primary hover:underline"
+                >
+                  View features
+                </button>
+              )}
 
               {/* CTA button */}
               <button
@@ -367,6 +361,63 @@ const Step4ChoosePlan: React.FC<Props> = ({ data, onChange }) => {
           )}
         </div>
       )}
+
+      {/* Plan marketing-content modal (keeps the cards compact) */}
+      {detailPlan && (() => {
+        const dp = detailPlan;
+        const dpHighlights = (dp.feature_highlights?.length ? dp.feature_highlights : PLAN_HIGHLIGHTS[dp.slug]) || [];
+        const isEnt = dp.slug === "enterprise";
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setDetailPlan(null)}>
+            <div className="bg-card border border-border rounded-xl w-full max-w-md max-h-[85vh] overflow-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between p-5 border-b border-border">
+                <div>
+                  {dp.badge_text && (
+                    <span className="inline-block text-[11px] font-medium px-2 py-0.5 rounded bg-primary/10 text-primary mb-1">{dp.badge_text}</span>
+                  )}
+                  <p className="text-lg font-bold text-foreground">{dp.name}</p>
+                  <p className="text-sm text-muted-foreground mt-0.5">
+                    {dp.is_custom_price ? "Custom Pricing" : `${fmtINR(dp.price_monthly)} /month`}
+                  </p>
+                </div>
+                <button onClick={() => setDetailPlan(null)} aria-label="Close">
+                  <X size={18} className="text-muted-foreground hover:text-foreground" />
+                </button>
+              </div>
+              <div className="p-5 space-y-4">
+                {dp.description && <p className="text-sm text-muted-foreground">{dp.description}</p>}
+                <ul className="space-y-2">
+                  {dpHighlights.map((ff) => (
+                    <li key={ff.text} className={`flex items-start gap-2 text-sm ${ff.included ? "text-foreground" : "text-muted-foreground/50"}`}>
+                      {ff.included ? (
+                        <Check size={16} className="text-[hsl(160,84%,39%)] mt-0.5 shrink-0" />
+                      ) : (
+                        <X size={16} className="mt-0.5 shrink-0" />
+                      )}
+                      {ff.text}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="p-5 border-t border-border">
+                <button
+                  onClick={() => {
+                    if (isEnt) { onChange({ plan: "enterprise" }); setDetailPlan(null); setShowLeadForm(true); }
+                    else { onChange({ plan: dp.slug as any }); setDetailPlan(null); }
+                  }}
+                  className={`w-full py-2.5 rounded-md text-sm font-medium transition-colors ${
+                    isEnt
+                      ? "border border-secondary text-secondary hover:bg-secondary hover:text-white"
+                      : "bg-primary text-primary-foreground hover:bg-primary/90"
+                  }`}
+                >
+                  {isEnt ? "Contact Sales" : `Select ${dp.name}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

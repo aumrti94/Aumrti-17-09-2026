@@ -1,6 +1,5 @@
 import React, { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -9,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Download, AlertTriangle, Loader2, CheckCircle2 } from "lucide-react";
 import { formatINR } from "@/lib/currency";
+import { fetchLedgerBalances } from "@/lib/financialStatements";
 
 interface Props {
   hospitalId: string | null;
@@ -22,12 +22,12 @@ interface TBRow {
   total_credit: number;
 }
 
-const TYPE_ORDER = ["asset", "liability", "equity", "income", "expense"] as const;
+const TYPE_ORDER = ["asset", "liability", "equity", "revenue", "expense"] as const;
 const TYPE_LABEL: Record<string, string> = {
   asset: "ASSETS",
   liability: "LIABILITIES",
   equity: "EQUITY",
-  income: "INCOME",
+  revenue: "INCOME / REVENUE",
   expense: "EXPENSES",
 };
 
@@ -65,67 +65,16 @@ const TrialBalanceTab: React.FC<Props> = ({ hospitalId }) => {
     queryKey: ["trial-balance", hospitalId, fromDate, toDate],
     enabled: !!hospitalId && !!fromDate && !!toDate,
     queryFn: async (): Promise<TBRow[]> => {
-      // Step 1 — fetch journal entry IDs in the date range (entry_date).
-      const { data: entries, error: entriesErr } = await (supabase as any)
-        .from("journal_entries")
-        .select("id")
-        .eq("hospital_id", hospitalId)
-        .gte("entry_date", fromDate)
-        .lte("entry_date", toDate);
-      if (entriesErr) throw entriesErr;
-      const entryIds = (entries || []).map((e: any) => e.id);
-      if (entryIds.length === 0) return [];
-
-      // Step 2 — fetch line items for those entries (paginated to bypass 1000-row limit).
-      const allLines: any[] = [];
-      const PAGE = 1000;
-      for (let i = 0; i < entryIds.length; i += 200) {
-        const slice = entryIds.slice(i, i + 200);
-        let from = 0;
-        while (true) {
-          const { data: lines, error } = await (supabase as any)
-            .from("journal_line_items")
-            .select("account_code, account_name, debit_amount, credit_amount")
-            .eq("hospital_id", hospitalId)
-            .in("journal_id", slice)
-            .range(from, from + PAGE - 1);
-          if (error) throw error;
-          if (!lines || lines.length === 0) break;
-          allLines.push(...lines);
-          if (lines.length < PAGE) break;
-          from += PAGE;
-        }
-      }
-
-      // Step 3 — fetch chart of accounts to resolve account_type per code.
-      const { data: coa, error: coaErr } = await (supabase as any)
-        .from("chart_of_accounts")
-        .select("code, name, account_type")
-        .eq("hospital_id", hospitalId);
-      if (coaErr) throw coaErr;
-      const coaMap: Record<string, { name: string; account_type: string }> = {};
-      (coa || []).forEach((a: any) => {
-        coaMap[a.code] = { name: a.name, account_type: a.account_type };
-      });
-
-      // Step 4 — aggregate by account_code.
-      const agg: Record<string, TBRow> = {};
-      for (const li of allLines) {
-        const code = li.account_code || "—";
-        if (!agg[code]) {
-          agg[code] = {
-            account_code: code,
-            account_name: coaMap[code]?.name || li.account_name || code,
-            account_type: coaMap[code]?.account_type || "other",
-            total_debit: 0,
-            total_credit: 0,
-          };
-        }
-        agg[code].total_debit += Number(li.debit_amount || 0);
-        agg[code].total_credit += Number(li.credit_amount || 0);
-      }
-      return Object.values(agg)
-        .filter((r) => r.total_debit !== 0 || r.total_credit !== 0)
+      // Shared ledger aggregator — identical numbers to Financial Statements.
+      const balances = await fetchLedgerBalances(hospitalId!, fromDate, toDate);
+      return balances
+        .map((b) => ({
+          account_code: b.account_code,
+          account_name: b.account_name,
+          account_type: b.account_type,
+          total_debit: b.total_debit,
+          total_credit: b.total_credit,
+        }))
         .sort((a, b) => {
           const ai = TYPE_ORDER.indexOf(a.account_type as any);
           const bi = TYPE_ORDER.indexOf(b.account_type as any);

@@ -68,13 +68,13 @@ const BillQueue: React.FC<Props> = ({
 }) => {
   const { permissions, role } = useHospitalContext();
   return (
-  <aside className="w-80 shrink-0 bg-card border-r border-border flex flex-col overflow-hidden h-full">
+  <aside data-tour="billing-bill-queue" className="w-80 shrink-0 bg-card border-r border-border flex flex-col overflow-hidden h-full">
     {/* Header */}
     <div className="px-4 py-3 border-b border-border flex-shrink-0">
       <div className="flex items-center justify-between">
         <span className="text-sm font-bold text-foreground">Bills</span>
         {hasActionAccess("billing", "new_bill", permissions, role) && (
-          <Button size="sm" className="h-7 text-[11px] gap-1" onClick={onNewBill}>
+          <Button data-tour="billing-new-bill" size="sm" className="h-7 text-[11px] gap-1" onClick={onNewBill}>
             <Plus size={14} /> New Bill
           </Button>
         )}

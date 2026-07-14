@@ -74,7 +74,9 @@ export const autoPostJournalEntry = async (data: PostingData) => {
         total_debit: data.amount,
         total_credit: data.amount,
         is_balanced: true,
-        posted_by: data.postedBy,
+        // posted_by is a uuid FK — coerce an empty string to null so the insert
+        // doesn't fail (and silently drop the journal) when no actor is known.
+        posted_by: data.postedBy || null,
       })
       .select()
       .maybeSingle();
@@ -179,7 +181,7 @@ export const postManualExpenseJournal = async (data: {
       total_debit: data.amount,
       total_credit: data.amount,
       is_balanced: true,
-      posted_by: data.postedBy,
+      posted_by: data.postedBy || null,
     }).select().maybeSingle();
 
     if (error || !entry) return null;
@@ -242,7 +244,7 @@ export const postMultiLineJournal = async (data: {
       entry_date: data.entryDate || new Date().toISOString().split("T")[0],
       description: data.description, entry_type: `auto_${data.sourceModule}` as any,
       source_module: data.sourceModule, source_id: data.sourceId,
-      total_debit: totalDebit, total_credit: totalCredit, is_balanced: true, posted_by: data.postedBy,
+      total_debit: totalDebit, total_credit: totalCredit, is_balanced: true, posted_by: data.postedBy || null,
     }).select().maybeSingle();
     if (error || !entry) return null;
 
