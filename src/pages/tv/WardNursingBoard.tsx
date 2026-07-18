@@ -42,7 +42,7 @@ const WardNursingBoard: React.FC = () => {
         const { data: ud } = await supabase.from("users").select("hospital_id").eq("auth_user_id", session.user.id).single();
         hId = ud?.hospital_id || null;
       } else {
-        const { data: defaultAdmissions } = await supabase.from("admissions").select("hospital_id").eq("status", "admitted").limit(1);
+        const { data: defaultAdmissions } = await supabase.from("admissions").select("hospital_id").eq("status", "active").limit(1);
         if (defaultAdmissions && defaultAdmissions.length > 0) {
           hId = defaultAdmissions[0].hospital_id;
         }
@@ -60,7 +60,7 @@ const WardNursingBoard: React.FC = () => {
       .from("admissions")
       .select("id, patient_id, admitted_at, ward_id, bed_id, patients(full_name, uhid), beds(bed_number), wards(ward_name), users!admissions_admitting_doctor_id_fkey(full_name)")
       .eq("hospital_id", hId)
-      .eq("status", "admitted")
+      .eq("status", "active")
       .order("admitted_at", { ascending: false });
 
     if (wardFilter) {

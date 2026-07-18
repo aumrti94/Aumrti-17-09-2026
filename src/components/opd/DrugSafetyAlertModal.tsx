@@ -5,6 +5,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import type { DrugSafetyResult, DrugInteraction, AllergyConflict } from "@/lib/drugSafetyCheck";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 
 interface Props {
   open: boolean;
@@ -56,6 +57,7 @@ const severityBadge: Record<string, string> = {
 };
 
 const DrugSafetyAlertModal: React.FC<Props> = ({ open, drugName, result, hospitalId, onClose, onAddAnyway, onOverride }) => {
+  const __aiOn = useAIFeature("drug_interaction_analysis");
   const [showOverride, setShowOverride] = useState(false);
   const [overrideReason, setOverrideReason] = useState("");
   const [acknowledged, setAcknowledged] = useState(false);
@@ -85,6 +87,7 @@ const DrugSafetyAlertModal: React.FC<Props> = ({ open, drugName, result, hospita
     setAiLoading(false);
   };
 
+  if (!__aiOn) return null; // AI master or drug-interaction feature disabled
   if (!open) return null;
 
   const config = severityConfig[result.worstSeverity] || severityConfig.moderate;

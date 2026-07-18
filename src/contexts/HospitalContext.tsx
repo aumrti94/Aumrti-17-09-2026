@@ -1,5 +1,56 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { ENTITLEMENT_KEY } from "@/lib/tabPermissions";
+import { resolveEntitlement, type EntitlementMap } from "@/lib/entitlementResolve";
+
+/**
+ * Fetch the plan default + per-hospital override rows and resolve them into the
+ * effective entitlement (see resolveEntitlement). Plan defaults are the base;
+ * per-hospital overrides win per key and can re-enable a plan-withheld tab.
+ */
+async function fetchEntitlement(hospitalId: string): Promise<EntitlementMap | null> {
+  const [hospRes, subRes] = await Promise.all([
+    (supabase as any)
+      .from("hospital_module_entitlements")
+      .select("module_key, tabs, actions")
+      .eq("hospital_id", hospitalId),
+    (supabase as any)
+      .from("hospital_subscriptions")
+      .select("plan_id")
+      .eq("hospital_id", hospitalId)
+      .maybeSingle(),
+  ]);
+
+  const hospRows: any[] = hospRes.data || [];
+  const planId: string | undefined = subRes.data?.plan_id;
+
+  let planRows: any[] = [];
+  if (planId) {
+    const planRes = await (supabase as any)
+      .from("plan_features")
+      .select("module_key, tabs, actions")
+      .eq("plan_id", planId);
+    planRows = planRes.data || [];
+  }
+
+  return resolveEntitlement(planRows, hospRows);
+}
+
+/**
+ * Fold the hospital entitlement into the role-permission blob under the reserved
+ * __entitlement key (see tabPermissions.ts). Strips any prior entitlement first so
+ * re-applies are idempotent. Returns null when nothing is left (no role perms, no
+ * entitlement) to preserve the "null = fully permissive" convention.
+ */
+function applyEntitlement(
+  base: Record<string, any> | null,
+  entitlement: EntitlementMap | null,
+): Record<string, any> | null {
+  const rest = { ...(base || {}) };
+  delete rest[ENTITLEMENT_KEY];
+  if (entitlement) rest[ENTITLEMENT_KEY] = entitlement;
+  return Object.keys(rest).length ? rest : null;
+}
 
 interface HospitalContextValue {
   hospitalId: string | null;
@@ -63,6 +114,8 @@ export const HospitalProvider = ({ children }: { children: React.ReactNode }) =>
   // Prevents auth events (SIGNED_IN, INITIAL_SESSION) from re-triggering a loading
   // cycle when the tab regains focus.
   const resolvedRef = useRef(false);
+  // Remembered so the realtime entitlement listener can rewrite the session cache.
+  const authUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const resolve = async () => {
@@ -133,24 +186,29 @@ export const HospitalProvider = ({ children }: { children: React.ReactNode }) =>
       }
 
       const wasFirstResolution = !resolvedRef.current;
+      authUserIdRef.current = authUserId;
 
       setHospitalId(userData.hospital_id);
       setUserId((userData as any).id ?? null);
       setRole(userData.role);
       setFullName((userData as any).full_name ?? null);
 
-      const { data: permsData, error: permsError } = await supabase
-        .from("role_permissions")
-        .select("permissions")
-        .eq("hospital_id", userData.hospital_id)
-        .eq("role_name", userData.role)
-        .maybeSingle();
+      const [{ data: permsData, error: permsError }, entitlement] = await Promise.all([
+        supabase
+          .from("role_permissions")
+          .select("permissions")
+          .eq("hospital_id", userData.hospital_id)
+          .eq("role_name", userData.role)
+          .maybeSingle(),
+        fetchEntitlement(userData.hospital_id),
+      ]);
 
       if (permsError) {
         console.error("Fetch permissions error:", permsError.message);
       }
 
-      const perms = (permsData?.permissions as Record<string, any>) || null;
+      const rolePerms = (permsData?.permissions as Record<string, any>) || null;
+      const perms = applyEntitlement(rolePerms, entitlement);
       setPermissions(perms);
       resolvedRef.current = true;
       setLoading(false);
@@ -198,14 +256,20 @@ export const HospitalProvider = ({ children }: { children: React.ReactNode }) =>
           return;
         }
 
-        const { data: permsData } = await supabase
-          .from("role_permissions")
-          .select("permissions")
-          .eq("hospital_id", userData.hospital_id)
-          .eq("role_name", userData.role)
-          .maybeSingle();
+        authUserIdRef.current = authUserId;
 
-        const perms = (permsData?.permissions as Record<string, any>) || null;
+        const [{ data: permsData }, entitlement] = await Promise.all([
+          supabase
+            .from("role_permissions")
+            .select("permissions")
+            .eq("hospital_id", userData.hospital_id)
+            .eq("role_name", userData.role)
+            .maybeSingle(),
+          fetchEntitlement(userData.hospital_id),
+        ]);
+
+        const rolePerms = (permsData?.permissions as Record<string, any>) || null;
+        const perms = applyEntitlement(rolePerms, entitlement);
 
         setHospitalId(userData.hospital_id);
         setUserId((userData as any).id ?? null);
@@ -252,6 +316,40 @@ export const HospitalProvider = ({ children }: { children: React.ReactNode }) =>
 
     return () => subscription.unsubscribe();
   }, []);
+
+  // Live-apply platform entitlement changes without a reload. Mirrors the
+  // useSubscriptionConfig realtime channel that already handles module on/off.
+  useEffect(() => {
+    if (!hospitalId) return;
+    const channel = supabase
+      .channel(`module-entitlements-${hospitalId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "hospital_module_entitlements", filter: `hospital_id=eq.${hospitalId}` },
+        async () => {
+          const entitlement = await fetchEntitlement(hospitalId);
+          setPermissions((prev) => {
+            const next = applyEntitlement(prev, entitlement);
+            const authUserId = authUserIdRef.current;
+            if (authUserId) {
+              writeCache(authUserId, {
+                hospitalId,
+                userId,
+                role,
+                permissions: next,
+                fullName,
+                loading: false,
+              });
+            }
+            return next;
+          });
+        },
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [hospitalId, userId, role, fullName]);
 
   const value = React.useMemo(
     () => ({ hospitalId, userId, role, permissions, fullName, loading }),

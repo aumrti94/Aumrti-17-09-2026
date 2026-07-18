@@ -24,7 +24,7 @@ export default function PartographPage() {
   const { data: admissions } = useQuery({
     queryKey: ["admissions-partograph", hospitalId, patientId],
     queryFn: async () => {
-      const { data } = await supabase.from("admissions").select("id, admission_number, admission_date").eq("hospital_id", hospitalId!).eq("patient_id", patientId!).eq("status", "admitted").order("admission_date", { ascending: false }).limit(10);
+      const { data } = await supabase.from("admissions").select("id, admission_number, admission_date").eq("hospital_id", hospitalId!).eq("patient_id", patientId!).eq("status", "active").order("admission_date", { ascending: false }).limit(10);
       return data ?? [];
     },
     enabled: !!hospitalId && !!patientId,

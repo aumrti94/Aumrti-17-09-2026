@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -106,19 +107,23 @@ const OncologyPage: React.FC = () => {
           )}
         </div>
         <div className="flex gap-2">
-          <Button size="sm" onClick={() => setShowNewOrder(true)}>+ New Chemo Order</Button>
-          <Button size="sm" variant="outline" onClick={openRegister}>+ Register Patient</Button>
+          <GatedAction module="oncology" action="new_chemo_order">
+            <Button size="sm" onClick={() => setShowNewOrder(true)}>+ New Chemo Order</Button>
+          </GatedAction>
+          <GatedAction module="oncology" action="register_patient">
+            <Button size="sm" variant="outline" onClick={openRegister}>+ Register Patient</Button>
+          </GatedAction>
         </div>
       </div>
 
       {/* Tabs */}
       <Tabs defaultValue="daycare" className="flex-1 flex flex-col overflow-hidden">
         <TabsList className="mx-4 mt-2 w-fit shrink-0">
-          <TabsTrigger value="daycare">🪑 Daycare Board</TabsTrigger>
-          <TabsTrigger value="orders">📋 Orders</TabsTrigger>
-          <TabsTrigger value="patients">👤 Patients</TabsTrigger>
-          <TabsTrigger value="protocols">⚗️ Protocols</TabsTrigger>
-          <TabsTrigger value="reports">📊 Reports</TabsTrigger>
+          <GatedTabsTrigger module="oncology" value="daycare">🪑 Daycare Board</GatedTabsTrigger>
+          <GatedTabsTrigger module="oncology" value="orders">📋 Orders</GatedTabsTrigger>
+          <GatedTabsTrigger module="oncology" value="patients">👤 Patients</GatedTabsTrigger>
+          <GatedTabsTrigger module="oncology" value="protocols">⚗️ Protocols</GatedTabsTrigger>
+          <GatedTabsTrigger module="oncology" value="reports">📊 Reports</GatedTabsTrigger>
         </TabsList>
         <TabsContent value="daycare" className="flex-1 overflow-auto px-4 pb-4">
           <DaycareBoardTab showNewOrder={showNewOrder} onCloseNewOrder={() => setShowNewOrder(false)} onRefresh={loadKpis} />

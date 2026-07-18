@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useVoiceScribeLanguages } from "@/hooks/useVoiceScribeLanguages";
+import { useAIFeature } from "@/hooks/useAIFeature";
 
 interface SpeechRecognitionLike {
   lang: string;
@@ -43,6 +44,7 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
     setCurrentPatientId(patientId ?? null);
   }, [patientId, setCurrentPatientId]);
   const { toast } = useToast();
+  const voiceScribeAllowed = useAIFeature("voice_scribe");
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   // Parallel recorder during Web Speech so we can fall back to Sarvam if the browser hears nothing.
@@ -436,6 +438,7 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
     }
   }, [useSarvamOrBhashini, setIsRecording, setPanelState]);
 
+  if (!voiceScribeAllowed) return null; // AI master or voice-scribe feature disabled
   if (!isWebSpeechSupported && !useSarvamOrBhashini) return null;
 
   const iconSize = size === "sm" ? "h-3.5 w-3.5" : "h-4 w-4";

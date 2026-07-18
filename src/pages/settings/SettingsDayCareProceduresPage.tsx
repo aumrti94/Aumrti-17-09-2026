@@ -10,6 +10,14 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useHospitalId } from "@/hooks/useHospitalId";
+import { formatINRExact } from "@/lib/currency";
+import {
+  DAY_CARE_POLICY_KEY,
+  DEFAULT_DAY_CARE_POLICY,
+  DayCarePaymentPolicy,
+  deriveDepositDefault,
+  fetchDayCarePolicy,
+} from "@/lib/dayCareGate";
 
 interface Procedure {
   id: string;
@@ -64,6 +72,36 @@ const SettingsDayCareProceduresPage: React.FC = () => {
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["settings-day-care-procedures"] });
+
+  // ── Payment policy (hospital_settings key 'daycare_payment') ───────────────
+  // Drives the Admit gate in the Day Care unit — see lib/dayCareGate.ts and
+  // enforce_daycare_financial_clearance() (20261008000140).
+  const { data: policy = DEFAULT_DAY_CARE_POLICY } = useQuery({
+    queryKey: ["daycare-payment-policy", hospitalId],
+    queryFn: () => fetchDayCarePolicy(hospitalId!),
+    enabled: !!hospitalId,
+  });
+
+  const savePolicy = useMutation({
+    mutationFn: async (next: DayCarePaymentPolicy) => {
+      const { error } = await (supabase as any).from("hospital_settings").upsert({
+        hospital_id: hospitalId!,
+        key: DAY_CARE_POLICY_KEY,
+        value: {
+          require_clearance: next.requireClearance,
+          deposit_percent: next.depositPercent,
+          override_roles: next.overrideRoles,
+        },
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "hospital_id,key" });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["daycare-payment-policy"] });
+      toast({ title: "Payment policy saved" });
+    },
+    onError: (err: any) => toast({ title: "Failed", description: err.message, variant: "destructive" }),
+  });
 
   const addMutation = useMutation({
     mutationFn: async () => {
@@ -143,9 +181,63 @@ const SettingsDayCareProceduresPage: React.FC = () => {
       (p.specialty || "").toLowerCase().includes(q);
   });
 
+  const sampleRate = filtered[0]?.standard_rate ?? 0;
+
   return (
     <SettingsPageWrapper title="Day Care Procedures" hideSave>
       <div className="space-y-4">
+        {/* ── Payment policy ─────────────────────────────────────────────── */}
+        <div className="border border-border rounded-lg p-4 space-y-3 bg-muted/20">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-semibold">Payment before procedure</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                A day care patient leaves the same day, so the deposit is taken up front.
+                This gate blocks Admit until the deposit is collected, the pre-auth is
+                approved, or an authorised user records a reason.
+              </p>
+            </div>
+            <Switch
+              checked={policy.requireClearance}
+              onCheckedChange={(v) => savePolicy.mutate({ ...policy, requireClearance: v })}
+            />
+          </div>
+
+          {policy.requireClearance && (
+            <div className="flex flex-wrap items-end gap-4 pt-1">
+              <div className="space-y-1">
+                <Label className="text-xs">Deposit required (% of procedure rate)</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    className="h-8 w-24"
+                    defaultValue={policy.depositPercent}
+                    onBlur={(e) => {
+                      const pct = Math.min(100, Math.max(0, Number(e.target.value) || 0));
+                      if (pct !== policy.depositPercent) savePolicy.mutate({ ...policy, depositPercent: pct });
+                    }}
+                  />
+                  <span className="text-xs text-muted-foreground">%</span>
+                </div>
+              </div>
+              {sampleRate > 0 && (
+                <p className="text-xs text-muted-foreground pb-2">
+                  e.g. a {formatINRExact(sampleRate)} procedure asks for{" "}
+                  <span className="font-medium text-foreground">
+                    {formatINRExact(deriveDepositDefault(sampleRate, policy))}
+                  </span>{" "}
+                  up front. The counsellor can still edit it per patient.
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground pb-2 ml-auto">
+                Override allowed for: {policy.overrideRoles.join(", ")}
+              </p>
+            </div>
+          )}
+        </div>
+
         <div className="flex gap-3 items-center">
           <div className="relative flex-1">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />

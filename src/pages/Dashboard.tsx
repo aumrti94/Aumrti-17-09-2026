@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
+import { formatINRExact } from "@/lib/currency";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -35,11 +36,7 @@ import OverdueCAPABanner from "@/components/safety/OverdueCAPABanner";
 import NABHQIAlertCard from "@/components/dashboard/NABHQIAlertCard";
 import ABDMComplianceCard from "@/components/dashboard/ABDMComplianceCard";
 
-function formatRevenue(amount: number): string {
-  if (amount >= 10000000) return "₹" + (amount / 10000000).toFixed(1) + "Cr";
-  if (amount >= 100000) return "₹" + (amount / 100000).toFixed(1) + "L";
-  return "₹" + amount.toLocaleString("en-IN");
-}
+const formatRevenue = formatINRExact;
 
 function revenueChange(current: number, last: number) {
   if (last === 0) return { text: "First month", positive: true };

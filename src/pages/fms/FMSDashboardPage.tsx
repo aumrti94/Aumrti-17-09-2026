@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { useModuleAccess } from "@/components/access/useModuleAccess";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { useToast } from "@/hooks/use-toast";
@@ -1383,6 +1384,7 @@ const navTabs = [
 
 const FMSDashboardPage: React.FC = () => {
   const { hospitalId } = useHospitalId();
+  const { tabAllowed } = useModuleAccess();
   const [activeTab, setActiveTab] = useState("assets");
   const [kpis, setKpis] = useState({ assets: 0, overdueMaintenace: 0, amcExpiring: 0, roundsThisMonth: 0, bmwThisMonth: 0 });
 
@@ -1458,7 +1460,7 @@ const FMSDashboardPage: React.FC = () => {
       <div className="flex flex-1 overflow-hidden">
         {/* Left nav */}
         <div className="w-[200px] bg-card border-r border-border flex flex-col">
-          {navTabs.map(tab => {
+          {navTabs.filter((t) => tabAllowed("fms", t.id)).map(tab => {
             const Icon = tab.icon;
             return (
               <button key={tab.id} onClick={() => setActiveTab(tab.id)}

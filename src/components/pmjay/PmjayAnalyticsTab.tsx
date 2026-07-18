@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { formatINRExact } from "@/lib/currency";
 import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -178,7 +179,7 @@ const PmjayAnalyticsTab: React.FC = () => {
             </div>
             <div className="text-center pt-1">
               <div className="text-[11px] text-muted-foreground">Total Outstanding</div>
-              <div className="text-lg font-bold font-mono">₹{(ageing.totalOutstanding / 100000).toFixed(1)}L</div>
+              <div className="text-lg font-bold font-mono">{formatINRExact(ageing.totalOutstanding)}</div>
             </div>
           </div>
         </div>

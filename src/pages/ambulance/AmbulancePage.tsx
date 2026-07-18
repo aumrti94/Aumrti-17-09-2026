@@ -8,6 +8,7 @@ import EquipmentCheckTab from "@/components/ambulance/EquipmentCheckTab";
 import TransitLogTab from "@/components/ambulance/TransitLogTab";
 import FleetTab from "@/components/ambulance/FleetTab";
 
+import { useModuleAccess } from "@/components/access/useModuleAccess";
 const navTabs = [
   { id: "dispatch", label: "Dispatch Board", icon: Ambulance },
   { id: "equipment", label: "Equipment Check", icon: ClipboardCheck },
@@ -17,6 +18,7 @@ const navTabs = [
 
 const AmbulancePage: React.FC = () => {
   const { hospitalId } = useHospitalId();
+  const { tabAllowed } = useModuleAccess();
   const [activeTab, setActiveTab] = useState("dispatch");
   const [kpis, setKpis] = useState({ active: 0, vehicles: 0, checksToday: 0 });
 
@@ -63,7 +65,7 @@ const AmbulancePage: React.FC = () => {
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
         <div className="w-[200px] bg-card border-r border-border flex flex-col">
-          {navTabs.map(tab => {
+          {navTabs.filter((t) => tabAllowed("ambulance", t.id)).map(tab => {
             const Icon = tab.icon;
             return (
               <button key={tab.id} onClick={() => setActiveTab(tab.id)}

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, createContext, useContext } from "react";
+import { formatINRExact } from "@/lib/currency";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useHospitalId } from "@/hooks/useHospitalId";
@@ -16,6 +17,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { differenceInMinutes } from "date-fns";
+import { useModuleAccess } from "@/components/access/useModuleAccess";
 import ActiveAdmissions from "@/components/insurance/ActiveAdmissions";
 import PreAuthQueue from "@/components/insurance/PreAuthQueue";
 import ClaimsToSubmit from "@/components/insurance/ClaimsToSubmit";
@@ -165,12 +167,7 @@ function useInterval(callback: () => void, delay: number) {
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-const fmtL = (n: number): string => {
-  if (n >= 10_000_000) return `₹${(n / 10_000_000).toFixed(1)}Cr`;
-  if (n >= 100_000)    return `₹${(n / 100_000).toFixed(1)}L`;
-  if (n > 0)           return `₹${n.toLocaleString("en-IN")}`;
-  return "₹0";
-};
+const fmtL = (n: number): string => (n > 0 ? formatINRExact(n) : "₹0");
 
 const minutesAgo = (d: Date | null): string => {
   if (!d) return "";
@@ -450,6 +447,7 @@ const InsurancePage: React.FC = () => {
   const [pendingAdmission, setPendingAdmission] = useState<AdmissionContext | null>(null);
   const handleAdmissionHandled = useCallback(() => setPendingAdmission(null), []);
   const [userRole,         setUserRole]         = useState<string | null>(null);
+  const { tabAllowed } = useModuleAccess();
   const [hcxEnabled,       setHcxEnabled]       = useState(false);
 
   // Plan context (shared with children via context)
@@ -900,7 +898,8 @@ const InsurancePage: React.FC = () => {
           <nav className="w-[240px] bg-background border-r border-border flex-shrink-0 flex flex-col py-2 overflow-y-auto">
             {navGroups.map((group, gIdx) => {
               const filteredItems = group.items.filter((item) =>
-                item.roles === null || (userRole !== null && item.roles.includes(userRole))
+                (item.roles === null || (userRole !== null && item.roles.includes(userRole)))
+                && tabAllowed("insurance", item.key)
               );
               if (filteredItems.length === 0) return null;
               return (

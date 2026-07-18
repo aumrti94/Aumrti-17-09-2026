@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { cn } from "@/lib/utils";
 import { AlertTriangle, CheckCircle2, Loader2, ShieldAlert, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -34,6 +35,7 @@ interface Props {
 const ADRCheckPanel: React.FC<Props> = ({
   drugName, drugDose, currentMedications, patientAllergies, hospitalId, onAcknowledged, onBlock,
 }) => {
+  const __aiOn = useAIFeature("drug_interaction_analysis");
   const [loading, setLoading] = useState(true);
   const [result, setResult] = useState<ADRResult | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
@@ -185,6 +187,8 @@ Return ONLY JSON:
       </div>
     );
   }
+
+  if (!__aiOn) return null; // AI master or drug-interaction feature disabled
 
   // Minor or acknowledged
   return (

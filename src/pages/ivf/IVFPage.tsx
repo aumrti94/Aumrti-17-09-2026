@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
@@ -70,12 +71,16 @@ const IVFPage = () => {
       <div className="flex items-center justify-between px-4 border-b bg-background" style={{ height: 52 }}>
         <h1 className="text-base font-bold">🧬 IVF & Assisted Reproduction</h1>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => { setShowRegister(true); setTab("couples"); }}>
-            + Register Couple
-          </Button>
-          <Button size="sm" onClick={() => { setShowStartCycle(true); setTab("cycles"); }}>
-            + Start Cycle
-          </Button>
+          <GatedAction module="ivf" action="register_couple">
+            <Button size="sm" variant="outline" onClick={() => { setShowRegister(true); setTab("couples"); }}>
+              + Register Couple
+            </Button>
+          </GatedAction>
+          <GatedAction module="ivf" action="start_cycle">
+            <Button size="sm" onClick={() => { setShowStartCycle(true); setTab("cycles"); }}>
+              + Start Cycle
+            </Button>
+          </GatedAction>
         </div>
       </div>
 
@@ -92,13 +97,13 @@ const IVFPage = () => {
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab} className="flex-1 flex flex-col overflow-hidden">
         <TabsList className="justify-start px-4 border-b rounded-none bg-background h-11 shrink-0">
-          <TabsTrigger value="couples">👫 Couples</TabsTrigger>
-          <TabsTrigger value="cycles">🔄 Cycles</TabsTrigger>
-          <TabsTrigger value="stimulation">📊 Stimulation</TabsTrigger>
-          <TabsTrigger value="embryology">🧫 Embryology</TabsTrigger>
-          <TabsTrigger value="embryo-bank">❄️ Embryo Bank</TabsTrigger>
-          <TabsTrigger value="andrology">💉 Andrology</TabsTrigger>
-          <TabsTrigger value="icmr">📋 ICMR</TabsTrigger>
+          <GatedTabsTrigger module="ivf" value="couples">👫 Couples</GatedTabsTrigger>
+          <GatedTabsTrigger module="ivf" value="cycles">🔄 Cycles</GatedTabsTrigger>
+          <GatedTabsTrigger module="ivf" value="stimulation">📊 Stimulation</GatedTabsTrigger>
+          <GatedTabsTrigger module="ivf" value="embryology">🧫 Embryology</GatedTabsTrigger>
+          <GatedTabsTrigger module="ivf" value="embryo-bank">❄️ Embryo Bank</GatedTabsTrigger>
+          <GatedTabsTrigger module="ivf" value="andrology">💉 Andrology</GatedTabsTrigger>
+          <GatedTabsTrigger module="ivf" value="icmr">📋 ICMR</GatedTabsTrigger>
         </TabsList>
 
         <TabsContent value="couples" className="flex-1 overflow-auto m-0 p-4">

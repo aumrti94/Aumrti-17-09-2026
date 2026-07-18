@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { ChevronDown, ChevronUp, Bell } from "lucide-react";
+import { getCurrentUserRowId } from "@/lib/currentUser";
 
 interface Alert {
   id: string;
@@ -65,14 +66,18 @@ const UnacknowledgedAlertsPanel: React.FC<{ hospitalId: string | null }> = ({ ho
   }, [hospitalId, fetchAlerts]);
 
   const acknowledge = async (id: string) => {
-    const { data: { user } } = await supabase.auth.getUser();
-    const { error } = await supabase.from("clinical_alerts").update({
+    const { data, error } = await supabase.from("clinical_alerts").update({
       is_acknowledged: true,
-      acknowledged_by: user?.id,
+      acknowledged_by: await getCurrentUserRowId(),
       acknowledged_at: new Date().toISOString(),
-    }).eq("id", id);
+    }).eq("id", id).select("id");
     if (error) {
       toast({ title: "Failed to acknowledge alert", description: error.message, variant: "destructive" });
+      return;
+    }
+    if (!data?.length) {
+      toast({ title: "Could not acknowledge alert", description: "The alert was not updated. Please retry.", variant: "destructive" });
+      fetchAlerts();
       return;
     }
     setAlerts((prev) => prev.filter((a) => a.id !== id));

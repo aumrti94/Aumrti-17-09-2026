@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { Brain, Loader2, FlaskConical, AlertTriangle, BookOpen, RefreshCw } from "lucide-react";
@@ -27,6 +28,7 @@ const ClinicalDecisionSupport: React.FC<Props> = ({
   diagnosis, icdCode, patientAge, patientGender, comorbidities,
   hospitalId, onAddLabOrder,
 }) => {
+  const __aiOn = useAIFeature("icd_coding");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<CDSResult | null>(null);
 
@@ -63,6 +65,7 @@ Return ONLY JSON:
     }
   };
 
+  if (!__aiOn) return null; // AI master or clinical-decision-support disabled
   if (!diagnosis || diagnosis.length < 3) return null;
 
   return (

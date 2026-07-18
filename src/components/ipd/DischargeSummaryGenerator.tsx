@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Bot, Loader2, FileText, AlertTriangle, Printer, PenLine, Trash2 } from "lucide-react";
+import { Bot, Loader2, FileText, AlertTriangle, Printer, PenLine, Trash2, LogOut } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { printDocument, printHeader } from "@/lib/printUtils";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { settleAdmissionAdvance } from "@/lib/settleAdmissionAdvance";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { logRecordAccess } from "@/lib/ims";
 import { logAudit } from "@/lib/auditLog";
@@ -125,6 +126,9 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
   const [showSigModal, setShowSigModal] = useState(false);
   const [sigDataUrl, setSigDataUrl] = useState<string | null>(null);
   const [sigClearCount, setSigClearCount] = useState(0);
+  const [showDirectModal, setShowDirectModal] = useState(false);
+  const [directReason, setDirectReason] = useState("");
+  const [dischargedUnsigned, setDischargedUnsigned] = useState(false);
   const pendingUserRef = useRef<{ authId: string; dbId: string | null } | null>(null);
 
   useEffect(() => {
@@ -340,19 +344,26 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
     setShowSigModal(true);
   };
 
-  // Called when doctor draws and confirms signature in the modal
-  const executeDischarge = useCallback(async () => {
-    if (!sigDataUrl) {
-      toast.error("Please draw your signature before confirming");
-      return;
-    }
-    setShowSigModal(false);
+  /**
+   * Shared discharge commit for both entry points. Everything after the
+   * admissions UPDATE — advance settlement, bed turnover, ABHA, HCX, WhatsApp,
+   * NABH evidence — is identical; only the signature/authorisation fields on the
+   * update itself differ.
+   *
+   * Signed path: discharge_signed_* + signature hash are written.
+   * Direct path: those stay NULL (so "signed" never means anything but a real
+   * e-signature) and the mandatory reason is recorded on the admission plus the
+   * audit trail.
+   */
+  const finaliseDischarge = useCallback(async (opts: {
+    dbUserId: string | null;
+    signatureHash: string | null;
+    unsignedReason?: string;
+  }) => {
     setSigning(true);
 
-    const dbUserId = pendingUserRef.current?.dbId ?? null;
+    const { dbUserId, signatureHash, unsignedReason } = opts;
     const now = new Date().toISOString();
-    const signatureHash = await sha256(sigDataUrl + now);
-
     const lamaBillingWaived = dischargeType === "lama" && !billingCleared;
 
     const { error } = await supabase.from("admissions").update({
@@ -361,9 +372,17 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
       status: "discharged",
       discharge_type: dischargeType,
       discharged_at: now,
-      discharge_signed_by: dbUserId,
-      discharge_signed_at: now,
-      discharge_signature_hash: signatureHash,
+      ...(signatureHash
+        ? {
+            discharge_signed_by: dbUserId,
+            discharge_signed_at: now,
+            discharge_signature_hash: signatureHash,
+          }
+        : {
+            discharge_unsigned_reason: unsignedReason,
+            discharge_unsigned_by: dbUserId,
+            discharge_unsigned_at: now,
+          }),
       ...(lamaBillingWaived ? { lama_billing_ack_by: dbUserId, lama_billing_ack_at: now } : {}),
     } as any).eq("id", admissionId);
 
@@ -376,6 +395,30 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
     // Get bed for housekeeping + patient_id for ABHA linking
     const { data: adm } = await supabase.from("admissions")
       .select("bed_id, ward_id, patient_id").eq("id", admissionId).maybeSingle();
+
+    // Settle this stay's advance so the balance never follows the patient into their
+    // next admission: apply it to the bill, raise any excess for refund approval.
+    // Deliberately non-blocking — an accounting hiccup (e.g. a locked day) must not
+    // trap an already-discharged patient in a bed.
+    if (adm?.patient_id) {
+      try {
+        const settled = await settleAdmissionAdvance({
+          admissionId,
+          hospitalId,
+          patientId: adm.patient_id,
+          settledBy: dbUserId,
+        });
+        if (settled.refundRequested > 0) {
+          toast.info(
+            `Excess advance ₹${settled.refundRequested.toLocaleString("en-IN")} sent for refund approval`,
+          );
+        }
+      } catch (e: any) {
+        toast.error(
+          `Advance not settled: ${e?.message || "unknown error"} — settle it in Billing → Advance.`,
+        );
+      }
+    }
 
     if (adm?.bed_id) {
       await supabase.from("beds").update({ status: "cleaning" as any }).eq("id", adm.bed_id);
@@ -407,8 +450,14 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
     }
 
     setSigned(true);
+    setDischargedUnsigned(!signatureHash);
     setSigning(false);
-    logAudit({ action: "updated", module: "ipd", entityType: "admission", entityId: admissionId, details: { action: "discharged" } });
+    logAudit({
+      action: "updated", module: "ipd", entityType: "admission", entityId: admissionId,
+      details: signatureHash
+        ? { action: "discharged", signed: true }
+        : { action: "discharged", signed: false, unsigned_reason: unsignedReason },
+    });
     if (lamaBillingWaived) {
       logAudit({ action: "updated", module: "ipd", entityType: "admission", entityId: admissionId, details: { action: "lama_billing_waived_ack" } });
     }
@@ -463,10 +512,65 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
     }
 
     logNABHEvidence(hospitalId, "COP.10",
-      `Discharge summary signed and patient discharged: ${admissionId}, signatureHash: ${signatureHash}, AI-assisted: ${summary ? "Yes" : "No"}`);
+      signatureHash
+        ? `Discharge summary signed and patient discharged: ${admissionId}, signatureHash: ${signatureHash}, AI-assisted: ${summary ? "Yes" : "No"}`
+        : `Patient discharged WITHOUT discharge-summary signature: ${admissionId}, reason: ${unsignedReason}`);
 
     onSummaryDone();
-  }, [sigDataUrl, summary, dischargeType, admissionId, hospitalId, onSummaryDone]);
+  }, [summary, dischargeType, billingCleared, admissionId, hospitalId, onSummaryDone]);
+
+  // Called when doctor draws and confirms signature in the modal
+  const executeDischarge = useCallback(async () => {
+    if (!sigDataUrl) {
+      toast.error("Please draw your signature before confirming");
+      return;
+    }
+    setShowSigModal(false);
+    const now = new Date().toISOString();
+    await finaliseDischarge({
+      dbUserId: pendingUserRef.current?.dbId ?? null,
+      signatureHash: await sha256(sigDataUrl + now),
+    });
+  }, [sigDataUrl, finaliseDischarge]);
+
+  /**
+   * Direct discharge — skips the e-signature gate entirely. The billing/LAMA
+   * gates still apply: those protect money and are not what this button bypasses.
+   */
+  const directDischarge = async () => {
+    const lamaBillingWaived = dischargeType === "lama" && !billingCleared;
+    if (!billingCleared && !(lamaBillingWaived && lamaBillingAcknowledged)) {
+      toast.error(
+        lamaBillingWaived
+          ? "Please acknowledge the billing-waiver checkbox before discharging"
+          : "Cannot discharge — billing not cleared"
+      );
+      return;
+    }
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data: userData } = await (supabase as any).from("users")
+      .select("id").eq("auth_user_id", user.id).maybeSingle();
+    pendingUserRef.current = { authId: user.id, dbId: userData?.id ?? null };
+
+    setDirectReason("");
+    setShowDirectModal(true);
+  };
+
+  const executeDirectDischarge = useCallback(async () => {
+    const reason = directReason.trim();
+    if (!reason) {
+      toast.error("A reason is required to discharge without a signature");
+      return;
+    }
+    setShowDirectModal(false);
+    await finaliseDischarge({
+      dbUserId: pendingUserRef.current?.dbId ?? null,
+      signatureHash: null,
+      unsignedReason: reason,
+    });
+  }, [directReason, finaliseDischarge]);
 
   const handlePrint = async () => {
     if (!summary) return;
@@ -508,7 +612,13 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
   if (signed) {
     return (
       <div className="text-center py-6 space-y-2">
-        <p className="text-sm font-semibold text-emerald-600">✅ Discharge summary signed — patient discharged</p>
+        {dischargedUnsigned ? (
+          <p className="text-sm font-semibold text-amber-600">
+            ✅ Patient discharged — summary not signed (reason recorded)
+          </p>
+        ) : (
+          <p className="text-sm font-semibold text-emerald-600">✅ Discharge summary signed — patient discharged</p>
+        )}
       </div>
     );
   }
@@ -628,6 +738,63 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
           </Button>
         )}
       </div>
+
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={directDischarge}
+        disabled={signing || (dischargeType === "lama" && !billingCleared && !lamaBillingAcknowledged)}
+        className="w-full h-8 text-xs border-amber-300 text-amber-700 hover:bg-amber-50"
+      >
+        <LogOut className="h-3 w-3 mr-1" /> Discharge without Signature
+      </Button>
+
+      {/* ── Direct discharge — reason gate (no signature) ────────────────── */}
+      <Dialog open={showDirectModal} onOpenChange={setShowDirectModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <LogOut className="h-4 w-4" />
+              Discharge without Signature
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 pt-1">
+            <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-2 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-800 dark:text-amber-400">
+                This discharges the patient without a doctor's e-signature on the discharge
+                summary. The reason below is recorded on the admission and the audit trail.
+              </p>
+            </div>
+            <Textarea
+              autoFocus
+              value={directReason}
+              onChange={(e) => setDirectReason(e.target.value)}
+              placeholder="Reason for discharging without a signature (required)"
+              className="text-xs min-h-[80px]"
+            />
+            <div className="flex gap-2 pt-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 text-xs flex-1"
+                onClick={() => setShowDirectModal(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="flex-1 h-8 text-xs bg-amber-600 hover:bg-amber-700 text-white"
+                disabled={!directReason.trim() || signing}
+                onClick={executeDirectDischarge}
+              >
+                {signing ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+                Confirm & Discharge
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Discharge e-signature modal (NABH COP.10) ────────────────────── */}
       <Dialog open={showSigModal} onOpenChange={setShowSigModal}>

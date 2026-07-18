@@ -46,7 +46,9 @@ const PatientPrintHubModal: React.FC<Props> = ({
       supabase.from("bills").select("id,bill_number,bill_date,bill_type,total_amount,paid_amount,balance_due,bill_status,payment_status").eq("patient_id", patientId).order("bill_date", { ascending: false }).limit(50),
       supabase.from("lab_orders").select("id,order_date,status,clinical_notes").eq("patient_id", patientId).order("created_at", { ascending: false }).limit(50),
       supabase.from("radiology_orders").select("id,order_date,study_name,modality_type,status").eq("patient_id", patientId).order("created_at", { ascending: false }).limit(50),
-      supabase.from("admissions").select("id,admission_number,admitted_at,discharged_at,status,admitting_diagnosis,discharge_summary_done").eq("patient_id", patientId).order("admitted_at", { ascending: false }).limit(20),
+      // Exclude day care bookings — admitted_at is NULL until the patient reports, and printed
+      // records must not list a visit that hasn't happened. (20261008000138)
+      supabase.from("admissions").select("id,admission_number,admitted_at,discharged_at,status,admitting_diagnosis,discharge_summary_done").eq("patient_id", patientId).neq("status", "scheduled").order("admitted_at", { ascending: false }).limit(20),
       supabase.from("opd_encounters").select("id,visit_date,created_at,chief_complaint,diagnosis,doctor:users!opd_encounters_doctor_id_fkey(full_name)").eq("patient_id", patientId).order("created_at", { ascending: false }).limit(50),
     ]).then(([hosp, b, l, r, a, e]) => {
       setHospitalInfo(hosp.data);

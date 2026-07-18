@@ -8,7 +8,6 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { Constants } from "@/integrations/supabase/types";
 import { useCapacityCheck } from "@/hooks/useCapacityCheck";
-import { mirrorWardToCatalog } from "@/lib/serviceCatalogSync";
 
 const wardTypes = Constants.public.Enums.ward_type;
 
@@ -93,8 +92,6 @@ const SettingsWardsPage: React.FC = () => {
       status: "available" as const,
     }));
     await supabase.from("beds").insert(bedRows);
-    // Mirror the ward tariff into the central service catalog (non-blocking).
-    try { await mirrorWardToCatalog(hid, { id: ward.id, name, rate_per_day: ratePerDay ?? 0 }); } catch { /* sync is best-effort */ }
     return ward;
   };
 
@@ -117,8 +114,6 @@ const SettingsWardsPage: React.FC = () => {
         const updatePayload: any = { name: form.name, type: form.type as any, total_beds: beds, rate_per_day: rate };
         const { error } = await supabase.from("wards").update(updatePayload).eq("id", editingId);
         if (error) throw error;
-        // Keep the catalog mirror in sync with the edited tariff (non-blocking).
-        try { await mirrorWardToCatalog(hid, { id: editingId, name: form.name, rate_per_day: rate }); } catch { /* sync is best-effort */ }
       } else {
         await createWardWithBeds(hid, form.name, form.type, beds, rate, form.bed_prefix, parseInt(form.bed_start) || 1);
       }

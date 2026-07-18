@@ -6,7 +6,6 @@ import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, Plus, X, Receipt } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { mirrorWardToCatalog } from "@/lib/serviceCatalogSync";
 
 const TABS = [
   { key: "consultation", label: "OPD Consultation" },
@@ -257,13 +256,11 @@ const SettingsServicesPage: React.FC = () => {
     upsertFixedCharge({ itemType, label, category: "emergency", invalidateKey: "settings-ed-charges", rows: edCharges, patch });
 
   // Edit a ward's per-day rate: write to wards (source of truth) + mirror to catalog.
-  const updateWardRate = async (wardId: string, wardName: string, value: string) => {
+  const updateWardRate = async (wardId: string, value: string) => {
     const rate = parseFloat(value);
     if (isNaN(rate) || rate < 0) return;
-    const hid = await getHospitalId();
+    // The catalog mirror is kept in sync by a DB trigger (see serviceCatalogSync.ts).
     await (supabase as any).from("wards").update({ rate_per_day: rate }).eq("id", wardId);
-    // Mirror into the catalog (best-effort: ward rate is the billing source of truth).
-    try { await mirrorWardToCatalog(hid, { id: wardId, name: wardName, rate_per_day: rate }); } catch { /* sync is best-effort */ }
     qc.invalidateQueries({ queryKey: ["settings-ward-rates"] });
     qc.invalidateQueries({ queryKey: ["settings-services"] });
   };
@@ -694,7 +691,7 @@ const SettingsServicesPage: React.FC = () => {
                         type="number"
                         defaultValue={w.rate_per_day ? Number(w.rate_per_day) : ""}
                         placeholder="—"
-                        onBlur={(e) => updateWardRate(w.id, w.name, e.target.value)}
+                        onBlur={(e) => updateWardRate(w.id, e.target.value)}
                         className="w-28 h-7 text-right text-sm font-medium tabular-nums bg-transparent border border-transparent hover:border-input focus:border-input rounded px-1 outline-none"
                       />
                     </td>

@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
+import { formatINRExact } from "@/lib/currency";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, TrendingUp, TrendingDown, AlertTriangle } from "lucide-react";
@@ -15,14 +17,10 @@ interface ForecastData {
   risk_factor: string;
 }
 
-const fmt = (n: number) => {
-  if (n >= 10000000) return `₹${(n / 10000000).toFixed(1)}Cr`;
-  if (n >= 100000) return `₹${(n / 100000).toFixed(1)}L`;
-  if (n >= 1000) return `₹${(n / 1000).toFixed(1)}K`;
-  return `₹${n.toLocaleString("en-IN")}`;
-};
+const fmt = formatINRExact;
 
 const RevenueForecastCard: React.FC = () => {
+  const __aiOn = useAIFeature("ai_digest");
   const [loading, setLoading] = useState(false);
   const [forecast, setForecast] = useState<ForecastData | null>(null);
 
@@ -97,6 +95,8 @@ Return ONLY JSON:
     if (c === "medium") return "bg-warning/10 text-warning border-warning/20";
     return "bg-muted text-muted-foreground";
   };
+
+  if (!__aiOn) return null; // AI master or ai_digest feature disabled
 
   return (
     <div className="bg-card border border-border rounded-xl p-5 space-y-4">

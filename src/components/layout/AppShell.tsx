@@ -2,6 +2,7 @@ import React, { Suspense } from "react";
 import { Outlet } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import ModuleGate from "./ModuleGate";
+import { AIEntitlementSync } from "@/components/access/AIEntitlementSync";
 import { SidebarProvider, useSidebar } from "./SidebarContext";
 import AppSidebar from "./AppSidebar";
 import AppHeader from "./AppHeader";
@@ -55,6 +56,7 @@ const ShellContent: React.FC = () => {
     <div className="h-screen w-screen overflow-hidden bg-background">
       <AppHeader />
       <IdleTimer />
+      <AIEntitlementSync />
 
       {/* Desktop sidebar */}
       {!isMobile && <AppSidebar />}

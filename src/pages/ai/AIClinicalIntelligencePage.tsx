@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { GatedTabsTrigger } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Brain, AlertTriangle, TrendingDown, Clock, RefreshCw, Loader2, ChevronRight, Activity } from "lucide-react";
@@ -171,12 +172,12 @@ export default function AIClinicalIntelligencePage() {
       ) : (
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden">
           <TabsList className="flex-shrink-0 h-10 rounded-none bg-card border-b border-border px-4 justify-start gap-1">
-            <TabsTrigger value="deterioration" className="text-[13px]">
+            <GatedTabsTrigger module="ai_clinical" value="deterioration" className="text-[13px]">
               Deterioration Watch
               {counts.critical > 0 && <span className="ml-1.5 bg-red-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">{counts.critical}</span>}
-            </TabsTrigger>
-            <TabsTrigger value="los" className="text-[13px]">LOS Prediction</TabsTrigger>
-            <TabsTrigger value="prior_auth" className="text-[13px]">AI Prior Auth</TabsTrigger>
+            </GatedTabsTrigger>
+            <GatedTabsTrigger module="ai_clinical" value="los" className="text-[13px]">LOS Prediction</GatedTabsTrigger>
+            <GatedTabsTrigger module="ai_clinical" value="prior_auth" className="text-[13px]">AI Prior Auth</GatedTabsTrigger>
           </TabsList>
 
           {/* ── Deterioration Watch ── */}

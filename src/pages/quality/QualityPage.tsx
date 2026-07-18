@@ -17,6 +17,7 @@ import FileIncidentModal from "@/components/quality/FileIncidentModal";
 import ScheduleAuditModal from "@/components/quality/ScheduleAuditModal";
 import PainManagementTab from "@/components/quality/PainManagementTab";
 
+import { useModuleAccess } from "@/components/access/useModuleAccess";
 const navTabs = [
   { id: "nabh", label: "NABH Dashboard", emoji: "📊" },
   { id: "indicators", label: "Quality Indicators", emoji: "🎯" },
@@ -30,6 +31,7 @@ const navTabs = [
 
 const QualityPage: React.FC = () => {
   const navigate = useNavigate();
+  const { tabAllowed } = useModuleAccess();
   const [activeTab, setActiveTab] = useState("nabh");
   const [incidentModalOpen, setIncidentModalOpen] = useState(false);
   const [auditModalOpen, setAuditModalOpen] = useState(false);
@@ -118,7 +120,7 @@ const QualityPage: React.FC = () => {
 
       <div className="flex flex-1 overflow-hidden">
         <div className="w-[220px] bg-card border-r border-border flex flex-col">
-          {navTabs.map((tab) => (
+          {navTabs.filter((t) => tabAllowed("quality", t.id)).map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}

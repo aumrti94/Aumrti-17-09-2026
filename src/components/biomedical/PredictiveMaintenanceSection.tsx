@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
@@ -20,6 +21,7 @@ interface Prediction {
 }
 
 const PredictiveMaintenanceSection: React.FC = () => {
+  const __aiOn = useAIFeature("ai_digest");
   const { hospitalId } = useHospitalId();
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
@@ -107,6 +109,7 @@ Return ONLY JSON:
     return "outline";
   };
 
+  if (!__aiOn) return null;
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">

@@ -32,7 +32,6 @@ const PRIORITY_COLORS: Record<string, string> = {
 
 const TasksTab: React.FC<Props> = ({ hospitalId }) => {
   const [tasks, setTasks] = useState<any[]>([]);
-  const [staff, setStaff] = useState<any[]>([]);
   const [wardFilter, setWardFilter] = useState("all");
   const [wards, setWards] = useState<any[]>([]);
   const [completing, setCompleting] = useState<any>(null);
@@ -51,15 +50,8 @@ const TasksTab: React.FC<Props> = ({ hospitalId }) => {
   useEffect(() => {
     if (!hospitalId) return;
     loadTasks();
-    supabase.from("users").select("id, full_name").eq("hospital_id", hospitalId).then(({ data }) => setStaff(data || []));
     supabase.from("wards").select("id, name").eq("hospital_id", hospitalId).then(({ data }) => setWards(data || []));
   }, [hospitalId, wardFilter]);
-
-  const assignTask = async (taskId: string, userId: string) => {
-    await supabase.from("housekeeping_tasks").update({ assigned_to: userId, status: "assigned" } as any).eq("id", taskId);
-    toast.success("Task assigned");
-    loadTasks();
-  };
 
   const startTask = async (taskId: string) => {
     await supabase.from("housekeeping_tasks").update({ status: "in_progress", started_at: new Date().toISOString() } as any).eq("id", taskId);
@@ -108,9 +100,12 @@ const TasksTab: React.FC<Props> = ({ hospitalId }) => {
     setChecklist(prev => prev.map((c: any, i: number) => i === idx ? { ...c, done: !c.done } : c));
   };
 
+  // No "Assigned" column: there is no housekeeping role to assign to (app_role has
+  // none), so the picker only ever offered doctors/admins and the status was
+  // unreachable. Any legacy 'assigned' row is surfaced under Pending below so it
+  // can still be started rather than being orphaned off the board.
   const columns = [
     { key: "pending", label: "Pending", color: "bg-amber-50 border-amber-200" },
-    { key: "assigned", label: "Assigned", color: "bg-blue-50 border-blue-200" },
     { key: "in_progress", label: "In Progress", color: "bg-indigo-50 border-indigo-200" },
     { key: "completed", label: "Completed Today", color: "bg-emerald-50 border-emerald-200" },
   ];
@@ -131,10 +126,13 @@ const TasksTab: React.FC<Props> = ({ hospitalId }) => {
       </div>
 
       {/* Kanban Board */}
-      <div className="flex-1 grid grid-cols-4 gap-3 min-h-0 overflow-hidden">
+      <div className="flex-1 grid grid-cols-3 gap-3 min-h-0 overflow-hidden">
         {columns.map(col => {
           const colTasks = tasks.filter(t => {
             if (col.key === "completed") return t.status === "completed" && t.completed_at?.startsWith(today);
+            // Legacy 'assigned' rows (written before the assign step was removed)
+            // share the Pending column — otherwise they'd vanish from the board.
+            if (col.key === "pending") return t.status === "pending" || t.status === "assigned";
             return t.status === col.key;
           });
           return (
@@ -144,7 +142,7 @@ const TasksTab: React.FC<Props> = ({ hospitalId }) => {
               </div>
               <div className="flex-1 overflow-y-auto p-2 space-y-2">
                 {colTasks.map(task => (
-                  <TaskCard key={task.id} task={task} staff={staff} onAssign={assignTask} onStart={startTask} onComplete={openComplete} />
+                  <TaskCard key={task.id} task={task} onStart={startTask} onComplete={openComplete} />
                 ))}
                 {colTasks.length === 0 && <p className="text-[11px] text-muted-foreground text-center py-4">No tasks</p>}
               </div>
@@ -191,7 +189,7 @@ const TasksTab: React.FC<Props> = ({ hospitalId }) => {
   );
 };
 
-const TaskCard: React.FC<{ task: any; staff: any[]; onAssign: (id: string, uid: string) => void; onStart: (id: string) => void; onComplete: (task: any) => void }> = ({ task, staff, onAssign, onStart, onComplete }) => {
+const TaskCard: React.FC<{ task: any; onStart: (id: string) => void; onComplete: (task: any) => void }> = ({ task, onStart, onComplete }) => {
   const elapsed = Math.round((Date.now() - new Date(task.created_at).getTime()) / 60000);
   const elapsedStr = elapsed < 60 ? `${elapsed} min ago` : `${Math.floor(elapsed / 60)}h ${elapsed % 60}m ago`;
 
@@ -215,15 +213,7 @@ const TaskCard: React.FC<{ task: any; staff: any[]; onAssign: (id: string, uid: 
         <Clock className="h-3 w-3" /> {elapsedStr}
       </div>
 
-      {task.status === "pending" && (
-        <Select onValueChange={(uid) => onAssign(task.id, uid)}>
-          <SelectTrigger className="h-7 text-[10px]"><SelectValue placeholder="Assign →" /></SelectTrigger>
-          <SelectContent>
-            {staff.map(s => <SelectItem key={s.id} value={s.id} className="text-xs">{s.full_name}</SelectItem>)}
-          </SelectContent>
-        </Select>
-      )}
-      {task.status === "assigned" && (
+      {(task.status === "pending" || task.status === "assigned") && (
         <Button size="sm" variant="outline" className="w-full h-7 text-[10px]" onClick={() => onStart(task.id)}>
           <Play className="h-3 w-3 mr-1" /> Start
         </Button>

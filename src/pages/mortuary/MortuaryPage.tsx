@@ -6,6 +6,7 @@ import { useHospitalId } from "@/hooks/useHospitalId";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -411,8 +412,12 @@ export default function MortuaryPage() {
       <div className="h-[52px] flex items-center justify-between px-4 border-b bg-background shrink-0">
         <h1 className="text-base font-bold">🏥 Mortuary & Medico-Legal</h1>
         <div className="flex gap-2">
-          <Button size="sm" onClick={() => setAdmitModal(true)}>+ Admit to Mortuary</Button>
-          <Button size="sm" variant="outline" onClick={() => setMlcModal(true)}>MLC Registration</Button>
+          <GatedAction module="mortuary" action="admit">
+            <Button size="sm" onClick={() => setAdmitModal(true)}>+ Admit to Mortuary</Button>
+          </GatedAction>
+          <GatedAction module="mortuary" action="mlc_registration">
+            <Button size="sm" variant="outline" onClick={() => setMlcModal(true)}>MLC Registration</Button>
+          </GatedAction>
         </div>
       </div>
 
@@ -439,11 +444,11 @@ export default function MortuaryPage() {
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab} className="flex-1 flex flex-col overflow-hidden px-3 pb-3">
         <TabsList className="shrink-0 w-full justify-start">
-          <TabsTrigger value="register">📋 Register</TabsTrigger>
-          <TabsTrigger value="mccd">📜 MCCD</TabsTrigger>
-          <TabsTrigger value="mlc">🚔 MLC</TabsTrigger>
-          <TabsTrigger value="release">🔑 Release</TabsTrigger>
-          <TabsTrigger value="organ">🫀 Organ Donation</TabsTrigger>
+          <GatedTabsTrigger module="mortuary" value="register">📋 Register</GatedTabsTrigger>
+          <GatedTabsTrigger module="mortuary" value="mccd">📜 MCCD</GatedTabsTrigger>
+          <GatedTabsTrigger module="mortuary" value="mlc">🚔 MLC</GatedTabsTrigger>
+          <GatedTabsTrigger module="mortuary" value="release">🔑 Release</GatedTabsTrigger>
+          <GatedTabsTrigger module="mortuary" value="organ">🫀 Organ Donation</GatedTabsTrigger>
         </TabsList>
 
         {/* ═══ TAB 1: REGISTER ═══ */}

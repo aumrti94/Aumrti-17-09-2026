@@ -12,6 +12,7 @@ import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger,
 } from "@/components/ui/sheet";
 import { useHospitalId } from "@/hooks/useHospitalId";
+import { getCurrentUserRowId } from "@/lib/currentUser";
 
 interface Alert {
   id: string;
@@ -107,33 +108,49 @@ const AlertsPanel: React.FC<{ kpis?: any }> = ({ kpis }) => {
     return () => { supabase.removeChannel(channel); };
   }, [fetchAlerts]);
 
-  const acknowledge = async (id: string) => {
-    const { data: { user } } = await supabase.auth.getUser();
-    const { error } = await supabase.from("clinical_alerts").update({
+  // .select() distinguishes a real write from a row RLS silently refused.
+  const markAcknowledged = async (ids: string[]): Promise<string[]> => {
+    const { data, error } = await supabase.from("clinical_alerts").update({
       is_acknowledged:  true,
-      acknowledged_by:  user?.id,
+      acknowledged_by:  await getCurrentUserRowId(),
       acknowledged_at:  new Date().toISOString(),
-    }).eq("id", id);
+    }).in("id", ids).select("id");
 
-    if (error) {
-      toast({ title: "Failed to acknowledge", description: error.message, variant: "destructive" });
-      return;
+    if (error) throw error;
+    return (data || []).map(r => r.id);
+  };
+
+  const acknowledge = async (id: string) => {
+    try {
+      const acked = await markAcknowledged([id]);
+      if (!acked.length) {
+        toast({ title: "Could not acknowledge", description: "The alert was not updated. Please retry.", variant: "destructive" });
+        fetchAlerts();
+        return;
+      }
+      setAlerts(prev => prev.filter(a => a.id !== id));
+      toast({ title: "Alert acknowledged" });
+    } catch (e: any) {
+      toast({ title: "Failed to acknowledge", description: e.message, variant: "destructive" });
     }
-    setAlerts(prev => prev.filter(a => a.id !== id));
-    toast({ title: "Alert acknowledged" });
   };
 
   const acknowledgeAll = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
     const ids = alerts.map(a => a.id);
     if (!ids.length) return;
-    await supabase.from("clinical_alerts").update({
-      is_acknowledged: true,
-      acknowledged_by: user?.id,
-      acknowledged_at: new Date().toISOString(),
-    }).in("id", ids);
-    setAlerts([]);
-    toast({ title: "All alerts acknowledged" });
+    try {
+      const acked = await markAcknowledged(ids);
+      if (acked.length < ids.length) {
+        toast({ title: `${ids.length - acked.length} alert(s) could not be acknowledged`, variant: "destructive" });
+        fetchAlerts();
+        return;
+      }
+      setAlerts([]);
+      toast({ title: "All alerts acknowledged" });
+    } catch (e: any) {
+      toast({ title: "Failed to acknowledge", description: e.message, variant: "destructive" });
+      fetchAlerts();
+    }
   };
 
   const saveRule = async () => {

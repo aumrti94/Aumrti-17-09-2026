@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { callAI } from "@/lib/aiProvider";
 import { autoPostJournalEntry } from "@/lib/accounting";
-import { formatINR } from "@/lib/currency";
+import { formatINR, formatINRExact } from "@/lib/currency";
 import { cn } from "@/lib/utils";
 import {
   CheckCircle2, AlertTriangle, IndianRupee, Download,
@@ -854,21 +854,21 @@ Requirements:
                 <KpiCard
                   icon={<IndianRupee size={12} />}
                   label="Total Outstanding"
-                  value={(() => { const v = kpis.pendingAmount; return v >= 100000 ? `₹${(v/100000).toFixed(1)}L` : formatINR(v); })()}
+                  value={formatINRExact(kpis.pendingAmount)}
                   sub={`${kpis.pendingCount} claims approved, awaiting payment`}
                   accent="text-amber-700"
                 />
                 <KpiCard
                   icon={<TrendingDown size={12} />}
                   label="Received This Month"
-                  value={(() => { const v = kpis.receivedThisMonth; return v >= 100000 ? `₹${(v/100000).toFixed(1)}L` : formatINR(v); })()}
+                  value={formatINRExact(kpis.receivedThisMonth)}
                   sub="TPA payments received"
                   accent="text-emerald-700"
                 />
                 <KpiCard
                   icon={<AlertTriangle size={12} />}
                   label="Underpayments Disputed"
-                  value={(() => { const v = kpis.underpaymentDisputed; return v >= 100000 ? `₹${(v/100000).toFixed(1)}L` : formatINR(v); })()}
+                  value={formatINRExact(kpis.underpaymentDisputed)}
                   sub={`${kpis.underpaymentDisputedCount} active dispute${kpis.underpaymentDisputedCount !== 1 ? "s" : ""}`}
                   accent={kpis.underpaymentDisputed > 0 ? "text-red-700" : "text-foreground"}
                 />
@@ -962,9 +962,7 @@ Requirements:
                       )}
                     </TableCell>
                     <TableCell className="text-xs text-right tabular-nums font-medium">
-                      {t.totalReceived >= 100000
-                        ? `₹${(t.totalReceived / 100000).toFixed(1)}L`
-                        : formatINR(t.totalReceived)}
+                      {formatINRExact(t.totalReceived)}
                     </TableCell>
                   </TableRow>
                 ))}

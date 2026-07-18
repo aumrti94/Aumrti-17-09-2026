@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Plus, AlertTriangle, Loader2 } from "lucide-react";
@@ -60,12 +61,16 @@ const BiomedicalPage: React.FC = () => {
       <div className="flex items-center justify-between px-5 py-3 border-b border-border shrink-0" style={{ height: 52 }}>
         <h1 className="text-base font-bold text-foreground">🔧 Biomedical Engineering</h1>
         <div className="flex gap-2">
-          <Button size="sm" onClick={() => setShowAddEquipment(true)}>
-            <Plus size={14} className="mr-1" /> Add Equipment
-          </Button>
-          <Button size="sm" variant="destructive" onClick={() => setShowBreakdown(true)}>
-            <AlertTriangle size={14} className="mr-1" /> Report Breakdown
-          </Button>
+          <GatedAction module="biomedical" action="add_equipment">
+            <Button size="sm" onClick={() => setShowAddEquipment(true)}>
+              <Plus size={14} className="mr-1" /> Add Equipment
+            </Button>
+          </GatedAction>
+          <GatedAction module="biomedical" action="report_breakdown">
+            <Button size="sm" variant="destructive" onClick={() => setShowBreakdown(true)}>
+              <AlertTriangle size={14} className="mr-1" /> Report Breakdown
+            </Button>
+          </GatedAction>
         </div>
       </div>
 
@@ -82,18 +87,18 @@ const BiomedicalPage: React.FC = () => {
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab} className="flex-1 flex flex-col overflow-hidden">
         <TabsList className="shrink-0 mx-5 w-fit">
-          <TabsTrigger value="equipment">🖥 Equipment</TabsTrigger>
-          <TabsTrigger value="maintenance">📅 Maintenance</TabsTrigger>
-          <TabsTrigger value="calibration">🔬 Calibration</TabsTrigger>
-          <TabsTrigger value="breakdowns">📋 Breakdowns</TabsTrigger>
-          <TabsTrigger value="alerts">
+          <GatedTabsTrigger module="biomedical" value="equipment">🖥 Equipment</GatedTabsTrigger>
+          <GatedTabsTrigger module="biomedical" value="maintenance">📅 Maintenance</GatedTabsTrigger>
+          <GatedTabsTrigger module="biomedical" value="calibration">🔬 Calibration</GatedTabsTrigger>
+          <GatedTabsTrigger module="biomedical" value="breakdowns">📋 Breakdowns</GatedTabsTrigger>
+          <GatedTabsTrigger module="biomedical" value="alerts">
             ⚠️ Alerts
             {(kpis.pmOverdue + kpis.amcExpiring) > 0 && (
               <Badge variant="destructive" className="ml-1 text-[10px] px-1.5 py-0">{kpis.pmOverdue + kpis.amcExpiring}</Badge>
             )}
-          </TabsTrigger>
-          <TabsTrigger value="predictive">🤖 AI Predictive</TabsTrigger>
-          <TabsTrigger value="reports">📊 Reports</TabsTrigger>
+          </GatedTabsTrigger>
+          <GatedTabsTrigger module="biomedical" value="predictive">🤖 AI Predictive</GatedTabsTrigger>
+          <GatedTabsTrigger module="biomedical" value="reports">📊 Reports</GatedTabsTrigger>
         </TabsList>
 
         <TabsContent value="equipment" className="flex-1 overflow-hidden m-0 px-5 pt-3">

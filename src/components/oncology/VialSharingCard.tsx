@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Pill, ArrowRight, Sparkles, Loader2, Check } from "lucide-react";
 import { callAI } from "@/lib/aiProvider";
 import { supabase } from "@/integrations/supabase/client";
+import { useAIFeature } from "@/hooks/useAIFeature";
 
 interface VialSharingCardProps {
   orders: any[];
@@ -39,6 +40,7 @@ function formatWindow(isoTime: string): string {
 }
 
 const VialSharingCard: React.FC<VialSharingCardProps> = ({ orders, hospitalId }) => {
+  const __aiOn = useAIFeature("vial_wastage");
   const [opportunities, setOpportunities] = useState<SharingOpp[]>([]);
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [loadingAI, setLoadingAI] = useState(false);
@@ -158,6 +160,7 @@ Give one concise paragraph with the most impactful recommendation and estimated 
     }
   };
 
+  if (!__aiOn) return null; // AI master or vial-wastage feature disabled
   if (opportunities.length === 0) return null;
 
   const totalSaving = opportunities.reduce((s, o) => s + o.estimatedSaving, 0);

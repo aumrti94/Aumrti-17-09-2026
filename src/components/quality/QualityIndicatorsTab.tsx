@@ -101,7 +101,7 @@ const QualityIndicatorsTab: React.FC = () => {
       (async () => {
         const [{ count: occupied }, { count: totalBeds }] = await Promise.all([
           (supabase as any).from("admissions").select("id", { count: "exact", head: true })
-            .eq("hospital_id", hospitalId).eq("status", "admitted"),
+            .eq("hospital_id", hospitalId).eq("status", "active"),
           (supabase as any).from("beds").select("id", { count: "exact", head: true })
             .eq("hospital_id", hospitalId).eq("is_active", true),
         ]);

@@ -10,12 +10,16 @@ import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
 import {
   SAMPLE_REJECTION_REASONS,
+  LabPaymentPendingError,
   collectOrderSamples,
   receiveOrderSamples,
   startOrderProcessing,
   rejectSample,
   resolveOrderBarcode,
 } from "@/lib/labSamples";
+import { recordAncillaryOverride } from "@/lib/ancillaryGateChecks";
+import { useHospitalContext } from "@/contexts/HospitalContext";
+import PaymentPendingDialog from "@/components/shared/PaymentPendingDialog";
 import PatientIdentityConfirmDialog from "./PatientIdentityConfirmDialog";
 import OnboardingTour from "@/components/onboarding/OnboardingTour";
 
@@ -40,7 +44,7 @@ interface SampleRow {
     status: string;
     order_date: string;
     admission_id: string | null;
-    patients: { full_name: string; uhid: string } | null;
+    patients: { id: string; full_name: string; uhid: string } | null;
   } | null;
 }
 
@@ -65,6 +69,13 @@ const CollectionWorkstation: React.FC<Props> = ({ hospitalId, admittedOnly = fal
   const [tab, setTab] = useState<(typeof STATUS_TABS)[number]["key"]>("pending");
   const [loading, setLoading] = useState(true);
   const [actingId, setActingId] = useState<string | null>(null);
+  const { role } = useHospitalContext();
+  /** Set when the payment gate refuses a collection — drives PaymentPendingDialog. */
+  const [blocked, setBlocked] = useState<{
+    row: SampleRow;
+    unpaidAmount: number;
+    overrideAvailable: boolean;
+  } | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<SampleRow | null>(null);
   const [rejectReason, setRejectReason] = useState<string>(SAMPLE_REJECTION_REASONS[0]);
@@ -86,7 +97,7 @@ const CollectionWorkstation: React.FC<Props> = ({ hospitalId, admittedOnly = fal
       .from("lab_samples")
       .select(`
         id, sample_type, barcode, status, rejection_reason, recollected_from_sample_id, created_at, collected_at,
-        lab_orders!inner(id, accession_number, priority, status, order_date, admission_id, patients(full_name, uhid))
+        lab_orders!inner(id, accession_number, priority, status, order_date, admission_id, patients(id, full_name, uhid))
       `)
       .eq("hospital_id", hospitalId)
       .eq("status", tab)
@@ -154,13 +165,49 @@ const CollectionWorkstation: React.FC<Props> = ({ hospitalId, admittedOnly = fal
     }
   };
 
+  /** Runs the collection, optionally after an audited override of the payment gate. */
+  const runCollect = async (row: SampleRow, overridden = false) => {
+    await collectOrderSamples({
+      orderId: row.lab_orders!.id,
+      userId: currentUserId!,
+      uhid: row.lab_orders!.patients?.uhid,
+      role,
+      overridden,
+    });
+    toast({ title: "📦 Collected — order moved to the lab queue" });
+    fetchSamples();
+  };
+
+  const handleOverride = async (reason: string) => {
+    const row = blocked?.row;
+    if (!row || !currentUserId) return;
+    setActingId(row.id);
+    try {
+      const ok = await recordAncillaryOverride({
+        hospitalId,
+        service: "lab",
+        patientId: row.lab_orders?.patients?.id ?? null,
+        reason,
+        overriddenBy: currentUserId,
+        detail: `Order ${row.lab_orders?.id?.slice(0, 8)}`,
+      });
+      // Refuse to proceed unaudited — the audit row IS the justification for bypassing.
+      if (!ok) throw new Error("The override could not be recorded, so the sample was not collected.");
+      setBlocked(null);
+      await runCollect(row, true);
+    } catch (e: any) {
+      toast({ title: "Override failed", description: e.message, variant: "destructive" });
+    } finally {
+      setActingId(null);
+    }
+  };
+
   const act = async (row: SampleRow, action: "collect" | "receive" | "process") => {
     if (!currentUserId || !row.lab_orders) return;
     setActingId(row.id);
     try {
       if (action === "collect") {
-        await collectOrderSamples({ orderId: row.lab_orders.id, userId: currentUserId, uhid: row.lab_orders.patients?.uhid });
-        toast({ title: "📦 Collected — order moved to the lab queue" });
+        await runCollect(row);
       } else if (action === "receive") {
         await receiveOrderSamples({ orderId: row.lab_orders.id, userId: currentUserId });
         toast({ title: "📥 Received at lab" });
@@ -168,9 +215,15 @@ const CollectionWorkstation: React.FC<Props> = ({ hospitalId, admittedOnly = fal
         await startOrderProcessing({ orderId: row.lab_orders.id, userId: currentUserId });
         toast({ title: "🔬 Processing started" });
       }
-      fetchSamples();
+      if (action !== "collect") fetchSamples();
     } catch (e: any) {
-      toast({ title: "Action failed", description: e.message, variant: "destructive" });
+      // A pending payment is not an error the collector did anything wrong — it's a step they
+      // need to route the attendant through, so it gets its own dialog rather than a red toast.
+      if (e instanceof LabPaymentPendingError) {
+        setBlocked({ row, unpaidAmount: e.unpaidAmount, overrideAvailable: e.overrideAvailable });
+      } else {
+        toast({ title: "Action failed", description: e.message, variant: "destructive" });
+      }
     } finally {
       setActingId(null);
     }
@@ -317,6 +370,17 @@ const CollectionWorkstation: React.FC<Props> = ({ hospitalId, admittedOnly = fal
           onClose={() => setCollectConfirm(null)}
         />
       )}
+
+      {/* Payment gate — only ever fires for a pre-paid hospital's unpaid IPD order */}
+      <PaymentPendingDialog
+        open={!!blocked}
+        onClose={() => setBlocked(null)}
+        unpaidAmount={blocked?.unpaidAmount ?? 0}
+        overrideAvailable={blocked?.overrideAvailable ?? false}
+        onOverride={handleOverride}
+        blockedAction="sample cannot be collected"
+        busy={!!actingId}
+      />
 
       {/* Reject dialog */}
       <Dialog open={!!rejecting} onOpenChange={(o) => { if (!o) setRejecting(null); }}>

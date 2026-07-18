@@ -50,6 +50,9 @@ const PortalFeedback: React.FC<{ session: PortalSession }> = ({ session }) => {
         .select("id, admitted_at, ward_id")
         .eq("patient_id", session.patientId)
         .eq("hospital_id", session.hospitalId)
+        // Never invite feedback on a day care booking — the visit hasn't happened yet, and
+        // its NULL admitted_at would sort it to the top. (20261008000138)
+        .neq("status", "scheduled")
         .order("admitted_at", { ascending: false })
         .limit(3);
 

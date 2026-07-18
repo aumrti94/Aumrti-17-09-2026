@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Clock, AlertTriangle, Loader2, RefreshCw, Bot } from "lucide-react";
@@ -32,6 +33,7 @@ interface Props {
 }
 
 const RadiologyTATPanel: React.FC<Props> = ({ hospitalId }) => {
+  const __aiOn = useAIFeature("radiology_tat_predictor");
   const [loading, setLoading] = useState(false);
   const [pending, setPending] = useState<PendingStudy[] | null>(null);
   const [modalityTAT, setModalityTAT] = useState<ModalityTAT[]>([]);
@@ -164,6 +166,7 @@ Give a 2-3 sentence analysis identifying the main TAT bottleneck and specific ac
   const overdueCount = pending?.filter(p => p.risk === "overdue").length ?? 0;
   const atRiskCount = pending?.filter(p => p.risk === "at_risk").length ?? 0;
 
+  if (!__aiOn) return null;
   return (
     <div className="flex flex-col h-full overflow-hidden p-4 space-y-4">
       {/* Header */}

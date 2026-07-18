@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { formatINRExact } from "@/lib/currency";
 import { Search, Download, ChevronDown, ChevronRight, Plus, BarChart3 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
@@ -193,7 +194,7 @@ const StockOverview: React.FC = () => {
       <div className="flex-shrink-0 bg-card border-b border-border px-4 py-2 flex gap-3">
         {[
           { label: "Total SKUs", value: kpis.totalSku, color: "text-foreground" },
-          { label: "Stock Value", value: `₹${(kpis.totalValue / 1000).toFixed(1)}K`, color: "text-primary" },
+          { label: "Stock Value", value: formatINRExact(kpis.totalValue), color: "text-primary" },
           { label: "Low Stock", value: kpis.lowStock, color: kpis.lowStock > 0 ? "text-destructive" : "text-success" },
           { label: "Expiring Soon", value: kpis.expiring, color: kpis.expiring > 0 ? "text-amber-600" : "text-success" },
         ].map((k) => (

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { formatINRExact } from "@/lib/currency";
+import { generateAdmissionNumber } from "@/lib/admissionNumber";
 import { generatePatientUhid } from "@/lib/patient-records";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -33,6 +35,12 @@ interface Props {
   estimateOnlyMode?: boolean;
   existingAdmissionId?: string;
   existingPatient?: { id: string; full_name: string; uhid: string } | null;
+  // Seed the estimate fields. Day care passes the booked procedure's standard_rate and
+  // 1 day, so the counsellor confirms a number rather than recalling it — the deposit the
+  // Admit gate checks against comes straight from here.
+  prefillEstimatedAmount?: number;
+  prefillDepositRequired?: number;
+  prefillEstimatedDays?: number;
 }
 
 interface PatientResult {
@@ -56,6 +64,9 @@ const AdmitPatientModal: React.FC<Props> = ({
   estimateOnlyMode = false,
   existingAdmissionId,
   existingPatient,
+  prefillEstimatedAmount,
+  prefillDepositRequired,
+  prefillEstimatedDays,
 }) => {
   const [step, setStep] = useState(estimateOnlyMode ? 3 : 1);
   const [search, setSearch] = useState("");
@@ -207,11 +218,25 @@ const AdmitPatientModal: React.FC<Props> = ({
     setPayerType("cash"); setPayerId(null);
     setDietaryInstruction("regular");
     setAdmittedId(null);
-    setEstimatedDays(3); setEstimatedAmount(""); setDepositRequired(""); setEstimateRemarks(""); setPackageId("");
+    // Reset to the caller's seed where given (day care seeds the booked procedure's rate),
+    // otherwise to the blank IPD defaults.
+    setEstimatedDays(prefillEstimatedDays ?? 3);
+    setEstimatedAmount(prefillEstimatedAmount != null ? String(prefillEstimatedAmount) : "");
+    setDepositRequired(prefillDepositRequired != null ? String(prefillDepositRequired) : "");
+    setEstimateRemarks(""); setPackageId("");
     setShowAdvanceModal(false); setEstimateSaved(false);
   };
 
   // Fetch patient allergies when selected
+  // Seed the estimate fields from the caller on open. resetForm() only runs on close, so a
+  // first open would otherwise show blanks and the counsellor would have to retype the rate.
+  useEffect(() => {
+    if (!open) return;
+    if (prefillEstimatedDays != null) setEstimatedDays(prefillEstimatedDays);
+    if (prefillEstimatedAmount != null) setEstimatedAmount(String(prefillEstimatedAmount));
+    if (prefillDepositRequired != null) setDepositRequired(String(prefillDepositRequired));
+  }, [open, prefillEstimatedAmount, prefillDepositRequired, prefillEstimatedDays]);
+
   useEffect(() => {
     if (!selectedPatient) { setPatientAllergies(null); setAllergyVerified(false); return; }
     (supabase as any).from("patients").select("allergies").eq("id", selectedPatient.id).maybeSingle()
@@ -301,8 +326,17 @@ const AdmitPatientModal: React.FC<Props> = ({
     }
     setSubmitting(true);
     setFormError(null);
-    const seq = Date.now().toString().slice(-4);
-    const admNum = `IPD-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${seq}`;
+    // Real per-hospital daily sequence (IPD-20260717-0001). This was the last 4 digits of a
+    // millisecond timestamp, so it never started at 1, could not be ordered or reconciled,
+    // and two admissions in the same second could collide on it.
+    let admNum: string;
+    try {
+      admNum = await generateAdmissionNumber(hospitalId, admissionType);
+    } catch (e: any) {
+      setFormError(e?.message || "Could not generate an admission number");
+      setSubmitting(false);
+      return;
+    }
 
     const { error } = await supabase.from("admissions").insert({
       hospital_id: hospitalId,
@@ -407,7 +441,7 @@ const AdmitPatientModal: React.FC<Props> = ({
             hospital_id: hospitalId, patient_id: selectedPatient.id, admission_id: newAdm.id,
             insurance_id: insuranceId || null, status: "draft", insurance_type: insuranceType, estimated_amount: estimatedAmount,
           });
-          toast({ title: "Insurance pre-auth created", description: `Est. ₹${estimatedAmount.toLocaleString("en-IN")} · Visit /insurance to complete` });
+          toast({ title: "Insurance pre-auth created", description: `Est. ${formatINRExact(estimatedAmount)} · Visit /insurance to complete` });
         }
       }
 
@@ -444,7 +478,7 @@ const AdmitPatientModal: React.FC<Props> = ({
         remarks: estimateRemarks || null,
         is_estimate_given: true,
       });
-      toast({ title: "Estimate saved", description: `₹${Number(estimatedAmount).toLocaleString("en-IN")} estimated · ₹${Number(depositRequired).toLocaleString("en-IN")} deposit` });
+      toast({ title: "Estimate saved", description: `${formatINRExact(Number(estimatedAmount))} estimated · ${formatINRExact(Number(depositRequired))} deposit` });
       setEstimateSaved(true);
       if (Number(depositRequired) > 0) setShowAdvanceModal(true);
       else { onAdmitted(); onClose(); }
@@ -921,8 +955,8 @@ const AdmitPatientModal: React.FC<Props> = ({
                 <Row label="Insurance" value={insuranceType.replace("_", " ")} />
                 <Row label="Diet" value={dietaryInstruction.replace(/_/g, " ")} />
                 {expectedDischarge && <Row label="Expected Discharge" value={expectedDischarge} />}
-                {estimatedAmount && <Row label="Estimated Amount" value={`₹${Number(estimatedAmount).toLocaleString("en-IN")}`} />}
-                {depositRequired && <Row label="Deposit Required" value={`₹${Number(depositRequired).toLocaleString("en-IN")}`} />}
+                {estimatedAmount && <Row label="Estimated Amount" value={`${formatINRExact(Number(estimatedAmount))}`} />}
+                {depositRequired && <Row label="Deposit Required" value={`${formatINRExact(Number(depositRequired))}`} />}
                 {(mustBmi || mustWeightLoss || mustAcuteDisease) && (
                   <Row label="MUST Nutritional Risk"
                     value={`Score ${mustScore} — ${mustRisk} Risk`} />
@@ -955,7 +989,7 @@ const AdmitPatientModal: React.FC<Props> = ({
           }}
           onCreated={() => {
             setShowAdvanceModal(false);
-            toast({ title: "Deposit collected", description: `₹${Number(depositRequired).toLocaleString("en-IN")} advance receipt created` });
+            toast({ title: "Deposit collected", description: `${formatINRExact(Number(depositRequired))} advance receipt created` });
             if (estimateOnlyMode && estimateSaved) { onAdmitted(); onClose(); }
           }}
         />

@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { X, ExternalLink, Sparkles, Loader2 } from "lucide-react";
+import { X, ExternalLink, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { callAI } from "@/lib/aiProvider";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAIFeature } from "@/hooks/useAIFeature";
 
 export type KPIType = "revenue" | "beds" | "opd" | "alerts" | "doctors" | "discounts" | "followups";
 
@@ -33,45 +34,45 @@ const DrillDownDrawer: React.FC<DrillDownDrawerProps> = ({
   open, onClose, config, children,
 }) => {
   const navigate = useNavigate();
+  const aiOn = useAIFeature("ai_digest");
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState(false);
 
+  // Insights are generated on demand, not on open — each one is a billed AI call,
+  // and the drawer is opened far more often than the insight is actually wanted.
+  // Reset whatever was generated when the drawer closes or switches KPI.
   useEffect(() => {
-    if (!open || !config) {
-      setAiInsight(null);
-      setAiError(false);
+    setAiInsight(null);
+    setAiError(false);
+    setAiLoading(false);
+  }, [open, config?.type]);
+
+  const generateInsight = async () => {
+    if (!config?.hospitalId || !config.aiPrompt) {
+      setAiError(true);
       return;
     }
-
-    const fetchInsight = async () => {
-      if (!config.hospitalId || !config.aiPrompt) {
+    setAiLoading(true);
+    setAiError(false);
+    try {
+      const res = await callAI({
+        featureKey: "ai_digest",
+        hospitalId: config.hospitalId,
+        prompt: config.aiPrompt,
+        maxTokens: 150,
+      });
+      if (res.error || !res.text) {
         setAiError(true);
-        return;
+      } else {
+        setAiInsight(res.text);
       }
-      setAiLoading(true);
-      setAiError(false);
-      try {
-        const res = await callAI({
-          featureKey: "ai_digest",
-          hospitalId: config.hospitalId,
-          prompt: config.aiPrompt,
-          maxTokens: 150,
-        });
-        if (res.error || !res.text) {
-          setAiError(true);
-        } else {
-          setAiInsight(res.text);
-        }
-      } catch {
-        setAiError(true);
-      } finally {
-        setAiLoading(false);
-      }
-    };
-
-    fetchInsight();
-  }, [open, config]);
+    } catch {
+      setAiError(true);
+    } finally {
+      setAiLoading(false);
+    }
+  };
 
   // Close on Escape
   useEffect(() => {
@@ -134,26 +135,57 @@ const DrillDownDrawer: React.FC<DrillDownDrawerProps> = ({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-          {/* AI Insight */}
-          <div className="bg-primary/5 rounded-[10px] p-3.5 border-l-[3px] border-l-primary">
-            <div className="flex items-center gap-1.5 mb-2">
-              <Sparkles size={13} className="text-primary" />
-              <span className="text-[11px] font-bold text-primary uppercase tracking-wide">AI Insight</span>
-            </div>
-            {aiLoading ? (
-              <div className="space-y-2">
-                <Skeleton className="h-3 w-full" />
-                <Skeleton className="h-3 w-4/5" />
-                <Skeleton className="h-3 w-3/5" />
+          {/* AI Insight — hidden when the hospital's AI features are disabled */}
+          {aiOn && (
+            <div className="bg-primary/5 rounded-[10px] p-3.5 border-l-[3px] border-l-primary">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles size={13} className="text-primary" />
+                  <span className="text-[11px] font-bold text-primary uppercase tracking-wide">AI Insight</span>
+                </div>
+                {aiInsight && !aiLoading && (
+                  <button
+                    onClick={generateInsight}
+                    className="text-[10px] font-medium text-primary hover:bg-primary/10 px-2 py-0.5 rounded-full transition-colors"
+                  >
+                    Regenerate
+                  </button>
+                )}
               </div>
-            ) : aiError || !aiInsight ? (
+
+              {/* Plain summary of the numbers is always shown — it needs no AI call. */}
               <p className="text-[12px] text-muted-foreground leading-relaxed">
                 {config.currentValue} — {config.period}. {config.changeText || ""}
               </p>
-            ) : (
-              <p className="text-[13px] text-foreground/80 leading-relaxed">{aiInsight}</p>
-            )}
-          </div>
+
+              {aiLoading ? (
+                <div className="space-y-2 mt-2.5">
+                  <Skeleton className="h-3 w-full" />
+                  <Skeleton className="h-3 w-4/5" />
+                  <Skeleton className="h-3 w-3/5" />
+                </div>
+              ) : aiInsight ? (
+                <p className="text-[13px] text-foreground/80 leading-relaxed mt-2.5">{aiInsight}</p>
+              ) : (
+                <div className="mt-2.5">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 gap-1.5 text-[11px]"
+                    onClick={generateInsight}
+                  >
+                    <Sparkles size={12} />
+                    {aiError ? "Retry AI insight" : "Generate AI insight"}
+                  </Button>
+                  {aiError && (
+                    <p className="text-[11px] text-destructive mt-1.5">
+                      Couldn't generate an insight. Please try again.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* KPI-specific content */}
           {children}

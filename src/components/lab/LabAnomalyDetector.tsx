@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Sparkles, Loader2, AlertTriangle, TrendingUp, TrendingDown } from "lucide-react";
@@ -39,6 +40,7 @@ const SEVERITY_STYLE: Record<string, string> = {
 };
 
 const LabAnomalyDetector: React.FC<Props> = ({ patientId, hospitalId, currentResults, orderId, autoRun = false }) => {
+  const __aiOn = useAIFeature("lab_anomaly");
   const [loading, setLoading] = useState(false);
   const [anomalies, setAnomalies] = useState<Anomaly[] | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -187,6 +189,7 @@ Provide max 4 anomalies, most critical first. Focus on actionable clinical insig
     );
   }
 
+  if (!__aiOn) return null;
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">

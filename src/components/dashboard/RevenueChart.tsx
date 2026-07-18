@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
+import { formatINRExact } from "@/lib/currency";
 import {
   AreaChart,
   Area,
@@ -8,11 +9,9 @@ import {
 } from "recharts";
 import { supabase } from "@/integrations/supabase/client";
 
-function formatRevShort(n: number) {
-  if (n >= 10000000) return "₹" + (n / 10000000).toFixed(1) + "Cr";
-  if (n >= 100000) return "₹" + (n / 100000).toFixed(1) + "L";
-  return "₹" + n.toLocaleString("en-IN");
-}
+// Only ever used for summary text and the tooltip — never an axis tick — so it
+// shows the exact amount.
+const formatRevShort = formatINRExact;
 
 const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 

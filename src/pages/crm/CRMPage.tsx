@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -313,12 +314,16 @@ Guidelines:
       <div className="flex items-center justify-between px-6 h-[52px] border-b bg-background shrink-0">
         <h1 className="text-base font-bold">📣 CRM & Patient Acquisition</h1>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => { setEditDoctor(null); setShowAddDoctor(true); }}>
-            <Plus className="w-4 h-4 mr-1" /> Add Referral Doctor
-          </Button>
-          <Button size="sm" onClick={() => setShowNewCampaign(true)}>
-            <Plus className="w-4 h-4 mr-1" /> New Campaign
-          </Button>
+          <GatedAction module="crm" action="add_referral_doctor">
+            <Button size="sm" variant="outline" onClick={() => { setEditDoctor(null); setShowAddDoctor(true); }}>
+              <Plus className="w-4 h-4 mr-1" /> Add Referral Doctor
+            </Button>
+          </GatedAction>
+          <GatedAction module="crm" action="new_campaign">
+            <Button size="sm" onClick={() => setShowNewCampaign(true)}>
+              <Plus className="w-4 h-4 mr-1" /> New Campaign
+            </Button>
+          </GatedAction>
         </div>
       </div>
 
@@ -346,11 +351,11 @@ Guidelines:
       {/* TABS */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden px-6">
         <TabsList className="shrink-0 mb-2 w-fit">
-          <TabsTrigger value="referrals">👨‍⚕️ Referrals</TabsTrigger>
-          <TabsTrigger value="campaigns">📣 Campaigns</TabsTrigger>
-          <TabsTrigger value="reviews">⭐ Reviews</TabsTrigger>
-          <TabsTrigger value="segments">👥 Segments</TabsTrigger>
-          <TabsTrigger value="analytics">📊 Analytics</TabsTrigger>
+          <GatedTabsTrigger module="crm" value="referrals">👨‍⚕️ Referrals</GatedTabsTrigger>
+          <GatedTabsTrigger module="crm" value="campaigns">📣 Campaigns</GatedTabsTrigger>
+          <GatedTabsTrigger module="crm" value="reviews">⭐ Reviews</GatedTabsTrigger>
+          <GatedTabsTrigger module="crm" value="segments">👥 Segments</GatedTabsTrigger>
+          <GatedTabsTrigger module="crm" value="analytics">📊 Analytics</GatedTabsTrigger>
         </TabsList>
 
         {/* ═══ TAB 1: REFERRALS ═══ */}

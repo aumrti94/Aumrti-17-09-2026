@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { hasTabAccess, parseModuleTabs, MODULE_TABS } from "./tabPermissions";
+import { hasTabAccess, hasActionAccess, parseModuleTabs, MODULE_TABS, ENTITLEMENT_KEY } from "./tabPermissions";
 
 // Nursing module completion plan, Phase 7 — /nursing's 7 sub-tabs wired into the same
 // hasTabAccess()/MODULE_TABS permission system every other module (ipd, opd, ot, ...) uses.
@@ -81,5 +81,52 @@ describe("lab MODULE_TABS + hasTabAccess", () => {
       ["analyzer", "calibration", "collection", "external", "histopathology", "history", "notes", "qc", "results", "sample", "tat", "worklist"]
     );
     expect(Object.values(parsed).every((v) => v === true)).toBe(true);
+  });
+});
+
+// Platform-controlled per-hospital entitlement floor (billing-only customisation).
+// The __entitlement blob is injected by HospitalContext and must gate access for
+// EVERY role — including the admins that the per-role layer normally bypasses —
+// because it represents what the hospital actually subscribed to.
+describe("hospital entitlement floor (__entitlement)", () => {
+  const entitlement = {
+    [ENTITLEMENT_KEY]: {
+      billing: { tabs: { leakage: false }, actions: { waive_amount: false } },
+    },
+  };
+
+  it("withholds an un-subscribed tab even from super_admin / hospital_admin", () => {
+    for (const role of ["super_admin", "hospital_admin", "billing_executive"]) {
+      expect(hasTabAccess("billing", "leakage", entitlement, role)).toBe(false);
+    }
+  });
+
+  it("withholds an un-subscribed action even from admins", () => {
+    for (const role of ["super_admin", "hospital_admin", "billing_executive"]) {
+      expect(hasActionAccess("billing", "waive_amount", entitlement, role)).toBe(false);
+    }
+  });
+
+  it("leaves entitled tabs/actions of the same module fully accessible", () => {
+    expect(hasTabAccess("billing", "bills", entitlement, "billing_executive")).toBe(true);
+    expect(hasTabAccess("billing", "collections", entitlement, "super_admin")).toBe(true);
+    expect(hasActionAccess("billing", "new_bill", entitlement, "billing_executive")).toBe(true);
+  });
+
+  it("does not affect modules with no entitlement entry", () => {
+    expect(hasTabAccess("lab", "worklist", entitlement, "lab_technician")).toBe(true);
+  });
+
+  it("effective access = entitlement AND role: a role-denied tab stays hidden regardless of entitlement", () => {
+    const both = {
+      billing: { tabs: { collections: false } },
+      [ENTITLEMENT_KEY]: { billing: { tabs: { leakage: false } } },
+    };
+    // withheld by role
+    expect(hasTabAccess("billing", "collections", both, "billing_executive")).toBe(false);
+    // withheld by entitlement (and would be hidden for admins too)
+    expect(hasTabAccess("billing", "leakage", both, "billing_executive")).toBe(false);
+    // allowed by both
+    expect(hasTabAccess("billing", "bills", both, "billing_executive")).toBe(true);
   });
 });

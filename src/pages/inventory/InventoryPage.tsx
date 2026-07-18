@@ -16,6 +16,7 @@ import ConsolidatedStockPanel from "@/components/inventory/ConsolidatedStockPane
 import StockCountPanel from "@/components/inventory/StockCountPanel";
 import RfqPanel from "@/components/inventory/RfqPanel";
 import AnomaliesPanel from "@/components/inventory/AnomaliesPanel";
+import { useModuleAccess } from "@/components/access/useModuleAccess";
 
 const navTabs = [
   { id: "stock", label: "Stock Overview", icon: Package },
@@ -33,6 +34,7 @@ const navTabs = [
 ];
 
 const InventoryPage: React.FC = () => {
+  const { tabAllowed } = useModuleAccess();
   const [activeTab, setActiveTab] = useState("stock");
   const [showDemandReview, setShowDemandReview] = useState(false);
   const [hospitalId, setHospitalId] = useState("");
@@ -124,7 +126,7 @@ const InventoryPage: React.FC = () => {
 
       <div className="flex flex-1 overflow-hidden">
         <div className="w-[200px] flex-shrink-0 bg-card border-r border-border flex flex-col py-2">
-          {navTabs.map((tab) => {
+          {navTabs.filter((tab) => tabAllowed("inventory", tab.id)).map((tab) => {
             const Icon = tab.icon;
             return (
               <button

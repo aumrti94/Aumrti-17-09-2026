@@ -1,11 +1,11 @@
 /**
  * advanceBillSync
  *
- * Single source-of-truth for recording an IPD advance deposit as a real
+ * Single source-of-truth for recording an admission advance deposit as a real
  * payment against the admission's draft bill.
  *
  * Responsibilities:
- *  1. Find the draft IPD bill for the admission.
+ *  1. Find the draft bill for the admission (IPD or day care — see lib/admissionBill.ts).
  *  2. Insert a bill_payments row (is_advance = true) — idempotent guard
  *     prevents double-insertion if called twice for the same receipt.
  *  3. Increment bills.paid_amount and recalculate balance_due / payment_status.
@@ -14,9 +14,11 @@
  *  - AdvanceReceiptModal   (when admissionId is known)
  *  - IPDFinancialTab       (handleDeposit)
  *  - AdvanceApplicationTab (backward-compat path for old admissions)
+ *  - settleAdmissionAdvance (transitively, at discharge)
  */
 
 import { supabase } from "@/integrations/supabase/client";
+import { findAdmissionBill } from "@/lib/admissionBill";
 
 export async function syncAdvanceToBill(params: {
   admissionId: string;
@@ -29,16 +31,20 @@ export async function syncAdvanceToBill(params: {
 }): Promise<string | null> {
   const { admissionId, hospitalId, amount, paymentMode, userId, referenceNo, notes } = params;
 
-  // 1. Find the IPD bill for this admission
+  // 1. Find the bill for this admission.
+  //    paymentStatuses: [] — unlike a new charge, an advance may legitimately be recorded
+  //    against a bill that is already settled, so payment status must not filter it out.
+  const found = await findAdmissionBill(hospitalId, admissionId, { paymentStatuses: [] });
+
+  if (!found) return null; // No bill yet — skip silently
+
   const { data: bill } = await (supabase as any)
     .from("bills")
     .select("id, paid_amount, total_amount, balance_due")
-    .eq("admission_id", admissionId)
-    .eq("hospital_id",  hospitalId)
-    .eq("bill_type",    "ipd")
+    .eq("id", found.id)
     .maybeSingle();
 
-  if (!bill) return null; // No bill yet — skip silently
+  if (!bill) return null;
 
   // 2. Guard: skip if an is_advance payment of this exact amount already exists
   //    (prevents double-counting when utility is called more than once)

@@ -6,6 +6,9 @@ import { X, Search, ArrowLeft, CheckCircle2, Printer, IndianRupee, Loader2, Aler
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { autoPostJournalEntry } from "@/lib/accounting";
 import { recordServiceCharge } from "@/lib/serviceBilling";
+import { postAncillaryOrderCharges } from "@/lib/ancillaryCharges";
+import { fetchIpdAncillaryPolicy, resolveChargePaymentStatus } from "@/lib/ipdAncillaryGate";
+import AdmissionLinker from "@/components/shared/AdmissionLinker";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { printDocument } from "@/lib/printUtils";
 import { cn } from "@/lib/utils";
@@ -70,6 +73,9 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
 
   // Step management
   const [step, setStep] = useState<Step>("order");
+  // The hospital's lab payment mode, held in state so the button label and flow branch decide
+  // synchronously. Defaults to post_paid until the policy loads.
+  const [labMode, setLabMode] = useState<"post_paid" | "pre_paid">("post_paid");
 
   // Order form state
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -86,6 +92,15 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
   const [linkedEncounter, setLinkedEncounter] = useState<string | null>(null);
   const [linkedAdmission, setLinkedAdmission] = useState<string | null>(linkedAdmissionId || null);
   const [linkInfo, setLinkInfo] = useState<string | null>(null);
+
+  // Resolve the hospital's lab payment mode once, for the button label + branch. Pre-paid means
+  // "collect before the sample is drawn", so an admitted patient's order goes through the same
+  // in-modal payment step OPD uses instead of the charge-to-advance shortcut.
+  useEffect(() => {
+    if (!hospitalId) return;
+    fetchIpdAncillaryPolicy(hospitalId).then((p) => setLabMode(p.lab.mode));
+  }, [hospitalId]);
+  const ipdPrePaid = !!linkedAdmission && labMode === "pre_paid";
   const [pendingTestNames, setPendingTestNames] = useState<string[]>([]);
 
   // Payment step state
@@ -250,14 +265,9 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
           });
         }
       });
-    supabase.from("admissions").select("id")
-      .eq("hospital_id", hospitalId).eq("patient_id", selectedPatient.id).eq("status", "active").limit(1)
-      .then(({ data }) => {
-        if (data?.[0]) {
-          setLinkedAdmission(data[0].id);
-          setLinkInfo(prev => prev ? prev + " & IPD admission" : "🔗 Linked to active IPD admission");
-        }
-      });
+    // Admission linking is handled by <AdmissionLinker> below — it resolves ALL active
+    // admissions and lets the user pick when there is more than one, instead of grabbing an
+    // arbitrary one here (which silently billed charges to the wrong stay).
   }, [selectedPatient, hospitalId]);
 
   const addTest = (test: Test) => {
@@ -351,8 +361,9 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
     if (!selectedPatient) { toast({ title: "Please select a patient", variant: "destructive" }); return; }
     if (selectedTests.length === 0) { toast({ title: "Please select at least one test", variant: "destructive" }); return; }
 
-    // IPD patients: charge to advance, skip cash payment step
-    if (linkedAdmission) {
+    // IPD + post_paid: accrue to the admission bill, no cash step (charge to advance).
+    // IPD + pre_paid, and OPD: fall through to the in-modal payment step below.
+    if (linkedAdmission && !ipdPrePaid) {
       await createOrderIPD();
       return;
     }
@@ -377,7 +388,16 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
     }
   };
 
-  // IPD fast path: create order + advance debit directly
+  /**
+   * IPD path: create the order, then post its charges at order time.
+   *
+   * This used to mint a standalone bill_type:'lab' bill whose lines carried no
+   * source_dedupe_key, while the discharge sweep independently pulled the same tests onto the
+   * IPD bill under keys of its own — two lines per test, and a duplicate GL posting to match.
+   * Charges now go through postAncillaryOrderCharges, which posts onto the admission bill
+   * using the sweep's own keys (lab:{lab_order_items.id}), so the sweep recognises and skips
+   * them. Whether the patient pays now or at discharge is the hospital's setting.
+   */
   const createOrderIPD = async () => {
     setSubmitting(true);
     try {
@@ -385,6 +405,9 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
       if (!user) throw new Error("Not authenticated");
       const { data: userData } = await supabase.from("users").select("id").eq("auth_user_id", user.id).limit(1).maybeSingle();
       if (!userData) throw new Error("User record not found");
+
+      const policy = await fetchIpdAncillaryPolicy(hospitalId);
+      const paymentStatus = resolveChargePaymentStatus({ isIPD: true, mode: policy.lab.mode });
 
       const { data: order, error: orderErr } = await supabase.from("lab_orders").insert({
         hospital_id: hospitalId,
@@ -396,12 +419,17 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
         admission_id: linkedAdmission,
         status: "ordered",
         billing_status: "billed",
+        // Was omitted entirely, so IPD lab orders sat at the column default 'pending_payment'
+        // while radiology set its own — the same screen behaving two ways.
+        payment_status: paymentStatus,
         ordered_at: new Date().toISOString(),
         accession_number: await fetchAccession(),
       } as any).select("id").maybeSingle();
       if (orderErr || !order) throw orderErr || new Error("Failed to create order");
 
-      await supabase.from("lab_order_items").insert(
+      // .select() so each item's id is known: the charge is keyed per test (lab:{item.id}),
+      // matching the discharge sweep, which pulls from lab_order_items — not per order.
+      const { data: orderItems, error: itemsErr } = await supabase.from("lab_order_items").insert(
         selectedTests.map(t => ({
           hospital_id: hospitalId,
           lab_order_id: order.id,
@@ -411,7 +439,9 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
           reference_range: t.normal_min != null && t.normal_max != null
             ? `${t.normal_min}–${t.normal_max} ${t.unit || ""}` : t.normal_max != null ? `< ${t.normal_max} ${t.unit || ""}` : null,
         }))
-      );
+      ).select("id, test_id");
+      if (itemsErr) throw itemsErr;
+
       const sampleTypes = [...new Set(selectedTests.map(t => t.sample_type))];
       await supabase.from("lab_samples").insert(
         sampleTypes.map(st => ({
@@ -420,71 +450,35 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
         }))
       );
 
-      // Auto-create bill for IPD charge-to-advance
+      // Rates are resolved ONCE, here, and handed to the charge posting. In pre_paid mode the
+      // cashier collects this exact number, so it must be the number that lands on the bill.
       const rates = await fetchRates();
-      const subtotal = rates.reduce((s, r) => s + r.rate, 0);
-      const gstTotal = rates.reduce((s, r) => s + r.gstAmount, 0);
-      const totalAmount = subtotal + gstTotal;
+      const rateByTestId = new Map(rates.map(r => [r.id, r]));
 
-      if (totalAmount > 0) {
-        const billNum = await generateBillNumber(hospitalId, "LAB");
-        const { data: bill } = await supabase.from("bills").insert({
-          hospital_id: hospitalId,
-          patient_id: selectedPatient!.id,
-          admission_id: linkedAdmission,
-          bill_number: billNum,
-          bill_type: "lab",
-          bill_status: "final",
-          bill_date: new Date().toISOString().split("T")[0],
-          total_amount: totalAmount,
-          subtotal,
-          gst_amount: gstTotal,
-          paid_amount: 0,
-          balance_due: totalAmount,
-          payment_status: "unpaid",
-          created_by: userData.id,
-        }).select("id").maybeSingle();
+      const charged = await postAncillaryOrderCharges({
+        hospitalId,
+        patientId: selectedPatient!.id,
+        admissionId: linkedAdmission,
+        service: "lab",
+        orderedBy: userData.id,
+        policy,
+        items: (orderItems || []).map((oi: any) => {
+          const r = rateByTestId.get(oi.test_id);
+          return {
+            sourceId: oi.id,
+            dedupeKey: `lab:${oi.id}`,
+            description: `Lab: ${r?.name || "Test"}`,
+            unitPrice: r?.rate ?? 0,
+            gstPercent: r?.gstPct ?? 0,
+          };
+        }),
+      });
 
-        if (bill) {
-          await supabase.from("bill_line_items").insert(
-            rates.map(r => ({
-              hospital_id: hospitalId,
-              bill_id: bill.id,
-              description: `Lab: ${r.name}`,
-              item_type: "lab",
-              quantity: 1,
-              unit_rate: r.rate,
-              taxable_amount: r.rate,
-              gst_percent: r.gstPct,
-              gst_amount: r.gstAmount,
-              total_amount: r.total,
-              service_date: new Date().toISOString().split("T")[0],
-              source_module: "lab",
-              ordered_by: userData.id,
-              source_record_id: order.id,
-            }))
-          );
-
-          for (const r of rates) {
-            recordServiceCharge({
-              hospitalId, patientId: selectedPatient!.id, admissionId: linkedAdmission,
-              serviceModule: "lab", serviceRefId: order.id,
-              serviceName: `Lab: ${r.name}`,
-              unitRate: r.rate, gstPercent: r.gstPct, gstAmount: r.gstAmount, totalAmount: r.total,
-              billId: bill.id, performedBy: userData.id,
-            });
-          }
-
-          await autoPostJournalEntry({
-            triggerEvent: "bill_finalized_lab",
-            sourceModule: "lab",
-            sourceId: bill.id,
-            amount: totalAmount,
-            description: `Lab Revenue (IPD) - Bill ${billNum}`,
-            hospitalId,
-            postedBy: user.id,
-          });
-        }
+      if (!charged.ok) {
+        // Leaving an uncharged order behind would let the gate clear it as "no charge found"
+        // — a free test. Undo the order rather than ship that.
+        await supabase.from("lab_orders").delete().eq("id", order.id);
+        throw new Error(charged.error || "Lab charges could not be posted — order cancelled");
       }
 
       if (priority === "stat") {
@@ -502,7 +496,14 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
         "compliant"
       );
 
-      toast({ title: `✓ Lab order created — Bill generated & charged to IPD` });
+      toast(
+        paymentStatus === "pending_payment"
+          ? {
+              title: "✓ Lab order created — payment pending",
+              description: "The sample cannot be collected until the amount is paid at the billing counter.",
+            }
+          : { title: "✓ Lab order created — charged to the IPD bill" }
+      );
       onCreated();
 
     } catch (err: any) {
@@ -531,11 +532,54 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
       const pmodeMap: Record<string, string> = { cash: "cash", upi: "upi", card: "card", neft: "net_banking" };
       const dbPaymentMode = pmodeMap[paymentMode] || "cash";
 
-      // 1. Create bill (paid immediately)
+      // 1. Create the order + items FIRST. For an admitted patient the paid line must carry
+      //    the dedupe key lab:{lab_order_items.id}, which the discharge sweep also uses — so
+      //    the order items must exist (and their ids be known) before the bill lines are cut,
+      //    or the sweep would bill the same tests a second time.
+      const { data: order, error: orderErr } = await supabase.from("lab_orders").insert({
+        hospital_id: hospitalId,
+        patient_id: selectedPatient!.id,
+        ordered_by: userData.id,
+        priority,
+        clinical_notes: clinicalNotes || null,
+        encounter_id: linkedEncounter,
+        // An admitted patient's paid receipt is tied to the admission; OPD orders are not.
+        admission_id: ipdPrePaid ? linkedAdmission : null,
+        status: "ordered",
+        billing_status: "billed",
+        payment_status: "paid",
+        ordered_at: new Date().toISOString(),
+        accession_number: await fetchAccession(),
+      } as any).select("id").maybeSingle();
+      if (orderErr || !order) throw orderErr || new Error("Lab order creation failed");
+
+      const { data: orderItems, error: itemsErr } = await supabase.from("lab_order_items").insert(
+        selectedTests.map(t => ({
+          hospital_id: hospitalId,
+          lab_order_id: order.id,
+          test_id: t.id,
+          status: "ordered",
+          result_unit: t.unit,
+          reference_range: t.normal_min != null && t.normal_max != null
+            ? `${t.normal_min}–${t.normal_max} ${t.unit || ""}` : t.normal_max != null ? `< ${t.normal_max} ${t.unit || ""}` : null,
+        }))
+      ).select("id, test_id");
+      if (itemsErr) throw itemsErr;
+
+      const sampleTypes = [...new Set(selectedTests.map(t => t.sample_type))];
+      await supabase.from("lab_samples").insert(
+        sampleTypes.map(st => ({
+          hospital_id: hospitalId, lab_order_id: order.id,
+          sample_type: st, barcode: `BC-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, status: "pending",
+        }))
+      );
+
+      // 2. Create bill (paid immediately)
       const billNumber = await generateBillNumber(hospitalId, "LAB");
       const { data: bill, error: billErr } = await (supabase as any).from("bills").insert({
         hospital_id: hospitalId,
         patient_id: selectedPatient!.id,
+        admission_id: ipdPrePaid ? linkedAdmission : null,
         encounter_id: linkedEncounter || null,
         bill_number: billNumber,
         bill_type: "lab",
@@ -553,7 +597,7 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
       }).select("id").maybeSingle();
       if (billErr || !bill) throw billErr || new Error("Bill creation failed");
 
-      // 2. Record payment in bill_payments (drives revenue analytics + collections)
+      // 3. Record payment in bill_payments (drives revenue analytics + collections)
       await (supabase as any).from("bill_payments").insert({
         hospital_id: hospitalId,
         bill_id: bill.id,
@@ -578,70 +622,45 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
         });
       } catch { /* accounting failure must not block patient care */ }
 
-      // 3. Bill line items (one per test — item_type "lab" matches DB constraint)
+      // 4. Bill line items — one per order item, keyed lab:{item.id} so the discharge sweep
+      //    recognises the already-paid tests and does not re-bill them.
+      const rateByTestId = new Map(testRates.map(t => [t.id, t]));
       await (supabase as any).from("bill_line_items").insert(
-        testRates.map(t => ({
-          hospital_id: hospitalId,
-          bill_id: bill.id,
-          description: `Lab: ${t.name}`,
-          item_type: "lab",
-          quantity: 1,
-          unit_rate: t.rate,
-          taxable_amount: t.rate,
-          gst_percent: t.gstPct,
-          gst_amount: t.gstAmount,
-          total_amount: t.total,
-          service_date: today,
-          source_module: "lab",
-          ordered_by: userData.id,
-        }))
+        (orderItems || []).map((oi: any) => {
+          const t = rateByTestId.get(oi.test_id);
+          return {
+            hospital_id: hospitalId,
+            bill_id: bill.id,
+            description: `Lab: ${t?.name || "Test"}`,
+            item_type: "lab",
+            quantity: 1,
+            unit_rate: t?.rate ?? 0,
+            taxable_amount: t?.rate ?? 0,
+            gst_percent: t?.gstPct ?? 0,
+            gst_amount: t?.gstAmount ?? 0,
+            total_amount: t?.total ?? 0,
+            service_date: today,
+            source_module: "lab",
+            ordered_by: userData.id,
+            payment_status: "paid",
+            source_record_id: oi.id,
+            source_dedupe_key: `lab:${oi.id}`,
+          };
+        })
       );
 
-      for (const t of testRates) {
+      for (const oi of (orderItems || []) as any[]) {
+        const t = rateByTestId.get(oi.test_id);
         recordServiceCharge({
-          hospitalId, patientId: selectedPatient!.id, encounterId: linkedEncounter || null,
-          serviceModule: "lab",
-          serviceName: `Lab: ${t.name}`,
-          unitRate: t.rate, gstPercent: t.gstPct, gstAmount: t.gstAmount, totalAmount: t.total,
+          hospitalId, patientId: selectedPatient!.id,
+          admissionId: ipdPrePaid ? linkedAdmission : null,
+          encounterId: linkedEncounter || null,
+          serviceModule: "lab", serviceRefId: oi.id,
+          serviceName: `Lab: ${t?.name || "Test"}`,
+          unitRate: t?.rate ?? 0, gstPercent: t?.gstPct ?? 0, gstAmount: t?.gstAmount ?? 0, totalAmount: t?.total ?? 0,
           billId: bill.id, performedBy: userData.id,
         });
       }
-
-      // 3. Create lab order (billing_status: billed — payment was just collected above)
-      const { data: order, error: orderErr } = await supabase.from("lab_orders").insert({
-        hospital_id: hospitalId,
-        patient_id: selectedPatient!.id,
-        ordered_by: userData.id,
-        priority,
-        clinical_notes: clinicalNotes || null,
-        encounter_id: linkedEncounter,
-        admission_id: null,
-        status: "ordered",
-        billing_status: "billed",
-        ordered_at: new Date().toISOString(),
-        accession_number: await fetchAccession(),
-      } as any).select("id").maybeSingle();
-      if (orderErr || !order) throw orderErr || new Error("Lab order creation failed");
-
-      // 4. Order items + samples
-      await supabase.from("lab_order_items").insert(
-        selectedTests.map(t => ({
-          hospital_id: hospitalId,
-          lab_order_id: order.id,
-          test_id: t.id,
-          status: "ordered",
-          result_unit: t.unit,
-          reference_range: t.normal_min != null && t.normal_max != null
-            ? `${t.normal_min}–${t.normal_max} ${t.unit || ""}` : t.normal_max != null ? `< ${t.normal_max} ${t.unit || ""}` : null,
-        }))
-      );
-      const sampleTypes = [...new Set(selectedTests.map(t => t.sample_type))];
-      await supabase.from("lab_samples").insert(
-        sampleTypes.map(st => ({
-          hospital_id: hospitalId, lab_order_id: order.id,
-          sample_type: st, barcode: `BC-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, status: "pending",
-        }))
-      );
 
       if (priority === "stat") {
         await supabase.from("clinical_alerts").insert({
@@ -725,6 +744,12 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
                     {linkInfo}
                   </div>
                 )}
+                <AdmissionLinker
+                  hospitalId={hospitalId}
+                  patientId={selectedPatient?.id ?? null}
+                  preferredAdmissionId={linkedAdmissionId}
+                  onChange={setLinkedAdmission}
+                />
               </div>
 
               {/* Priority */}
@@ -860,7 +885,7 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
                 >
                   {loadingRates || submitting
                     ? <><Loader2 className="h-4 w-4 animate-spin" /> Processing...</>
-                    : linkedAdmission
+                    : (linkedAdmission && !ipdPrePaid)
                     ? "📋 Create Order (Charge to Advance) →"
                     : "📋 Proceed to Payment →"
                   }

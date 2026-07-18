@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { GatedTabsTrigger } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -152,9 +153,9 @@ export default function ResearchPlatformPage() {
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden">
         <TabsList className="flex-shrink-0 h-10 rounded-none bg-card border-b border-border px-4 justify-start gap-1">
-          <TabsTrigger value="cohort" className="text-[13px]">Cohort Builder</TabsTrigger>
-          <TabsTrigger value="deidentify" className="text-[13px]">De-identification</TabsTrigger>
-          <TabsTrigger value="export" className="text-[13px]">FHIR Export</TabsTrigger>
+          <GatedTabsTrigger module="research" value="cohort" className="text-[13px]">Cohort Builder</GatedTabsTrigger>
+          <GatedTabsTrigger module="research" value="deidentify" className="text-[13px]">De-identification</GatedTabsTrigger>
+          <GatedTabsTrigger module="research" value="export" className="text-[13px]">FHIR Export</GatedTabsTrigger>
         </TabsList>
 
         {/* ── Cohort Builder ── */}

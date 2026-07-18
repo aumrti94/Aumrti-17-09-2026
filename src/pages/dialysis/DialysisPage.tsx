@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { Monitor, CalendarDays, Users, ClipboardList, BarChart3, Plus } from "lucide-react";
@@ -66,22 +67,26 @@ const DialysisPage: React.FC = () => {
           )}
         </div>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => { setShowRegister(true); setTab("patients"); }}>
-            <Plus className="w-4 h-4 mr-1" /> Register Patient
-          </Button>
-          <Button size="sm" onClick={() => { setShowSchedule(true); setTab("schedule"); }}>
-            <CalendarDays className="w-4 h-4 mr-1" /> Schedule Session
-          </Button>
+          <GatedAction module="dialysis" action="register_patient">
+            <Button size="sm" variant="outline" onClick={() => { setShowRegister(true); setTab("patients"); }}>
+              <Plus className="w-4 h-4 mr-1" /> Register Patient
+            </Button>
+          </GatedAction>
+          <GatedAction module="dialysis" action="schedule_session">
+            <Button size="sm" onClick={() => { setShowSchedule(true); setTab("schedule"); }}>
+              <CalendarDays className="w-4 h-4 mr-1" /> Schedule Session
+            </Button>
+          </GatedAction>
         </div>
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="flex-1 flex flex-col overflow-hidden">
         <TabsList className="h-11 w-full justify-start rounded-none border-b border-border bg-muted/30 px-4 shrink-0">
-          <TabsTrigger value="machines" className="gap-1.5"><Monitor className="w-4 h-4" /> Machine Board</TabsTrigger>
-          <TabsTrigger value="schedule" className="gap-1.5"><CalendarDays className="w-4 h-4" /> Schedule</TabsTrigger>
-          <TabsTrigger value="patients" className="gap-1.5"><Users className="w-4 h-4" /> Patients</TabsTrigger>
-          <TabsTrigger value="sessions" className="gap-1.5"><ClipboardList className="w-4 h-4" /> Sessions</TabsTrigger>
-          <TabsTrigger value="reports" className="gap-1.5"><BarChart3 className="w-4 h-4" /> Reports</TabsTrigger>
+          <GatedTabsTrigger module="dialysis" value="machines" className="gap-1.5"><Monitor className="w-4 h-4" /> Machine Board</GatedTabsTrigger>
+          <GatedTabsTrigger module="dialysis" value="schedule" className="gap-1.5"><CalendarDays className="w-4 h-4" /> Schedule</GatedTabsTrigger>
+          <GatedTabsTrigger module="dialysis" value="patients" className="gap-1.5"><Users className="w-4 h-4" /> Patients</GatedTabsTrigger>
+          <GatedTabsTrigger module="dialysis" value="sessions" className="gap-1.5"><ClipboardList className="w-4 h-4" /> Sessions</GatedTabsTrigger>
+          <GatedTabsTrigger module="dialysis" value="reports" className="gap-1.5"><BarChart3 className="w-4 h-4" /> Reports</GatedTabsTrigger>
         </TabsList>
 
         <TabsContent value="machines" className="flex-1 overflow-hidden m-0">

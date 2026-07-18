@@ -119,6 +119,7 @@ const settingsGroups: SettingsGroup[] = [
       { icon: Workflow, title: "Discharge Workflow", desc: "Discharge checklist and approval flow", route: "/settings/discharge-workflow" },
       { icon: ShieldCheck, title: "Approval Rules", desc: "Discount, refund and override approvals", route: "/settings/approvals" },
       { icon: ListChecks, title: "OPD Queue Config", desc: "Token generation and queue rules", route: "/settings/opd-workflow" },
+      { icon: IndianRupee, title: "IPD Ancillary Payment", desc: "Pay-before-service vs accrue-to-bill for pharmacy, lab, radiology", route: "/settings/ipd-ancillary-payment" },
       { icon: Settings2, title: "Notification Config", desc: "SMS, email and push notification rules", route: "/settings/notifications" },
       { icon: MessageSquare, title: "WhatsApp Bot", desc: "Automated WhatsApp message config", route: "/settings/whatsapp" },
       { icon: CalendarClock, title: "Scheduled Reports", desc: "Auto-generate and email reports", route: "/settings/report-schedules" },

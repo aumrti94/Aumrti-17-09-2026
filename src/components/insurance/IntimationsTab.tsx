@@ -5,9 +5,10 @@ import { useHospitalId } from "@/hooks/useHospitalId";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { AlertTriangle, CheckCircle2, Clock, Send, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, Send, RefreshCw, X, XCircle } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
+import { getCurrentUserRowId } from "@/lib/currentUser";
 
 interface IntimationRow {
   id: string;
@@ -42,6 +43,7 @@ const STATUS_STYLES: Record<string, string> = {
   sent:         "bg-emerald-50 text-emerald-700 border-emerald-200",
   failed:       "bg-red-50 text-red-700 border-red-200",
   acknowledged: "bg-blue-50 text-blue-700 border-blue-200",
+  cancelled:    "bg-muted text-muted-foreground border-border",
 };
 
 const STATUS_ICON: Record<string, React.ReactNode> = {
@@ -49,14 +51,21 @@ const STATUS_ICON: Record<string, React.ReactNode> = {
   sent:         <Send size={12} className="shrink-0" />,
   failed:       <AlertTriangle size={12} className="shrink-0" />,
   acknowledged: <CheckCircle2 size={12} className="shrink-0" />,
+  cancelled:    <XCircle size={12} className="shrink-0" />,
 };
+
+/** Statuses where the deadline no longer matters — nothing is owed to the TPA. */
+const TERMINAL_STATUSES = ["acknowledged", "sent", "cancelled"];
 
 function deadlineBadge(deadline: string | null, status: string): React.ReactNode {
   if (!deadline) return null;
   const dt = new Date(deadline);
   const now = new Date();
   const overdue = dt < now;
-  if (status === "acknowledged" || status === "sent") {
+  // 'cancelled' must be terminal here: the admission it was raised for was called off, so
+  // showing its passed deadline as a red OVERDUE would be chasing a procedure that will
+  // never happen.
+  if (TERMINAL_STATUSES.includes(status)) {
     return (
       <span className="text-[11px] text-muted-foreground">
         {format(dt, "dd-MMM HH:mm")}
@@ -129,12 +138,15 @@ const IntimationsTab: React.FC = () => {
   useEffect(() => { loadData(); }, [loadData]);
 
   const dismissAlert = async (alertId: string) => {
-    const { data: { user } } = await supabase.auth.getUser();
-    await (supabase as any).from("clinical_alerts").update({
+    const { error } = await (supabase as any).from("clinical_alerts").update({
       is_acknowledged: true,
-      acknowledged_by: user?.id,
+      acknowledged_by: await getCurrentUserRowId(),
       acknowledged_at: new Date().toISOString(),
     }).eq("id", alertId);
+    if (error) {
+      toast({ title: "Failed to dismiss alert", description: error.message, variant: "destructive" });
+      return;
+    }
     setAlerts(prev => prev.filter(a => a.id !== alertId));
   };
 

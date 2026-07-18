@@ -1,11 +1,18 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/hooks/use-toast";
-import { LogOut, CheckCircle2 } from "lucide-react";
+import { LogOut, CheckCircle2, XCircle } from "lucide-react";
+import { settleAdmissionAdvance } from "@/lib/settleAdmissionAdvance";
+import { findAdmissionBill } from "@/lib/admissionBill";
+import { formatINRExact } from "@/lib/currency";
+import {
+  DayCareDischargeReadiness,
+  evaluateDayCareDischargeReadiness,
+} from "@/lib/dayCareDischarge";
 
 interface Props {
   open: boolean;
@@ -25,13 +32,40 @@ const DayCareDischargeModal: React.FC<Props> = ({
   onDischarged,
 }) => {
   const [procedureDone, setProcedureDone] = useState(false);
-  const [billingCleared, setBillingCleared] = useState(false);
   const [patientStable, setPatientStable] = useState(false);
   const [consentSigned, setConsentSigned] = useState(false);
   const [dischargeNotes, setDischargeNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [readiness, setReadiness] = useState<DayCareDischargeReadiness | null>(null);
 
-  const allChecked = procedureDone && billingCleared && patientStable && consentSigned;
+  // Billing readiness is DERIVED, never self-attested. The old "Bill finalised and payment
+  // cleared" checkbox could be ticked on a bill that did not exist.
+  useEffect(() => {
+    if (!open) { setReadiness(null); return; }
+    (async () => {
+      const { data: adm } = await (supabase as any)
+        .from("admissions")
+        .select("hospital_id, insurance_type")
+        .eq("id", admissionId)
+        .maybeSingle();
+      if (!adm) { setReadiness(evaluateDayCareDischargeReadiness(null, "self_pay")); return; }
+
+      const found = await findAdmissionBill(adm.hospital_id, admissionId, { paymentStatuses: [] });
+      if (!found) {
+        setReadiness(evaluateDayCareDischargeReadiness(null, adm.insurance_type || "self_pay"));
+        return;
+      }
+      const { data: bill } = await (supabase as any)
+        .from("bills")
+        .select("bill_status, payment_status, balance_due")
+        .eq("id", found.id)
+        .maybeSingle();
+      setReadiness(evaluateDayCareDischargeReadiness(bill ?? null, adm.insurance_type || "self_pay"));
+    })();
+  }, [open, admissionId]);
+
+  const clinicalChecked = procedureDone && patientStable && consentSigned;
+  const allChecked = clinicalChecked && !!readiness && readiness.blocking.length === 0;
 
   const handleDischarge = async () => {
     if (!allChecked) {
@@ -47,7 +81,7 @@ const DayCareDischargeModal: React.FC<Props> = ({
         status: "discharged",
         discharged_at: now,
         discharge_notes: dischargeNotes || null,
-        discharge_type: "day_care",
+        discharge_type: "daycare",
       } as any)
       .eq("id", admissionId);
 
@@ -57,15 +91,46 @@ const DayCareDischargeModal: React.FC<Props> = ({
       return;
     }
 
+    // Settle this stay's advance (same rule as a regular discharge) so the balance
+    // never carries into the patient's next admission. Non-blocking: the patient is
+    // already discharged, so an accounting failure only warns.
+    const { data: adm } = await supabase
+      .from("admissions")
+      .select("hospital_id, patient_id")
+      .eq("id", admissionId)
+      .maybeSingle();
+
+    if (adm?.hospital_id && adm?.patient_id) {
+      try {
+        const settled = await settleAdmissionAdvance({
+          admissionId,
+          hospitalId: adm.hospital_id,
+          patientId: adm.patient_id,
+        });
+        if (settled.refundRequested > 0) {
+          toast({
+            title: `Excess advance ${formatINRExact(settled.refundRequested)} sent for refund approval`,
+          });
+        }
+      } catch (e: any) {
+        toast({
+          title: "Advance not settled",
+          description: `${e?.message || "Unknown error"} — settle it in Billing → Advance.`,
+          variant: "destructive",
+        });
+      }
+    }
+
     toast({ title: "Patient discharged", description: `${patientName} — day care complete` });
     onDischarged();
     onClose();
     setSubmitting(false);
   };
 
+  // Clinical items stay self-attested — a nurse IS the source of truth on "patient stable".
+  // Billing is not: it is derived below from the actual bill.
   const checks = [
     { id: "proc", label: "Procedure completed successfully", checked: procedureDone, onChange: setProcedureDone },
-    { id: "billing", label: "Bill finalised and payment cleared", checked: billingCleared, onChange: setBillingCleared },
     { id: "stable", label: "Patient stable, vitals checked, fit for discharge", checked: patientStable, onChange: setPatientStable },
     { id: "consent", label: "Discharge instructions given, consent signed", checked: consentSigned, onChange: setConsentSigned },
   ];
@@ -98,6 +163,27 @@ const DayCareDischargeModal: React.FC<Props> = ({
                 <label htmlFor={c.id} className="text-sm cursor-pointer">{c.label}</label>
               </div>
             ))}
+
+            {/* Derived, not tickable — read straight off the bill. */}
+            <div className="flex items-start gap-3">
+              {readiness?.blocking.length === 0 ? (
+                <CheckCircle2 size={16} className="text-teal-600 shrink-0 mt-0.5" />
+              ) : (
+                <XCircle size={16} className="text-red-500 shrink-0 mt-0.5" />
+              )}
+              <div>
+                <span className="text-sm">Bill finalised and payment cleared</span>
+                {!readiness && (
+                  <p className="text-xs text-muted-foreground">Checking bill…</p>
+                )}
+                {readiness?.blocking.map((b, i) => (
+                  <p key={i} className="text-xs text-red-600">{b}</p>
+                ))}
+                {readiness && readiness.blocking.length === 0 && !readiness.paymentCleared && (
+                  <p className="text-xs text-muted-foreground">Payer settles after discharge.</p>
+                )}
+              </div>
+            </div>
           </div>
 
           <div className="space-y-1">

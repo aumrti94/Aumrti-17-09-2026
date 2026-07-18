@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
+import { useSubscriptionConfig, isModuleKeyAllowed } from "@/hooks/useSubscriptionConfig";
 
 export type AIFeature =
   | "clinical_note"
@@ -26,6 +27,7 @@ let cacheHospitalId: string | null = null;
 
 export function useAIFeatureFlag(feature: AIFeature): boolean {
   const { hospitalId } = useHospitalId();
+  const { enabledModules, isLoading: subLoading } = useSubscriptionConfig();
   const [enabled, setEnabled] = useState<boolean>(DEFAULTS[feature]);
 
   useEffect(() => {
@@ -50,7 +52,10 @@ export function useAIFeatureFlag(feature: AIFeature): boolean {
     })();
   }, [hospitalId, feature]);
 
-  return enabled;
+  // The platform "AI Features" master is a hard floor over the hospital-admin flag:
+  // if AI is disabled for the hospital, every AI feature reads as off.
+  const master = subLoading ? true : isModuleKeyAllowed("ai_suite", enabledModules);
+  return master && enabled;
 }
 
 // Invalidate the module-level cache when settings are saved

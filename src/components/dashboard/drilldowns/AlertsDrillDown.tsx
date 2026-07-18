@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
+import { getCurrentUserRowId } from "@/lib/currentUser";
 
 interface Alert {
   id: string;
@@ -40,41 +41,53 @@ const AlertsDrillDown: React.FC = () => {
 
   useEffect(() => { fetch(); }, [fetch]);
 
-  const acknowledge = async (id: string) => {
-    const { data: { user } } = await supabase.auth.getUser();
-    const { error } = await supabase.from("clinical_alerts").update({
+  // Returns the ids actually written. .select() is what makes a row that RLS
+  // silently refused distinguishable from a successful write — without it a
+  // zero-row update looks identical to success.
+  const markAcknowledged = async (ids: string[]): Promise<string[]> => {
+    const { data, error } = await supabase.from("clinical_alerts").update({
       is_acknowledged: true,
-      acknowledged_by: user?.id,
+      acknowledged_by: await getCurrentUserRowId(),
       acknowledged_at: new Date().toISOString(),
-    }).eq("id", id);
+    }).in("id", ids).select("id");
 
-    if (error) {
-      console.error("Acknowledge failed:", error);
-      toast({ title: "Failed to acknowledge alert", description: error.message, variant: "destructive" });
-      return;
+    if (error) throw error;
+    return (data || []).map((r) => r.id);
+  };
+
+  const acknowledge = async (id: string) => {
+    try {
+      const acked = await markAcknowledged([id]);
+      if (!acked.length) {
+        toast({ title: "Could not acknowledge alert", description: "The alert was not updated. Please retry.", variant: "destructive" });
+        fetch();
+        return;
+      }
+      setAlerts((prev) => prev.filter((a) => a.id !== id));
+      toast({ title: "Alert acknowledged" });
+    } catch (e: any) {
+      console.error("Acknowledge failed:", e);
+      toast({ title: "Failed to acknowledge alert", description: e.message, variant: "destructive" });
     }
-    setAlerts((prev) => prev.filter((a) => a.id !== id));
-    toast({ title: "Alert acknowledged" });
   };
 
   const acknowledgeAll = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    let failCount = 0;
-    for (const a of alerts) {
-      const { error } = await supabase.from("clinical_alerts").update({
-        is_acknowledged: true,
-        acknowledged_by: user?.id,
-        acknowledged_at: new Date().toISOString(),
-      }).eq("id", a.id);
-      if (error) failCount++;
-    }
-    if (failCount > 0) {
-      toast({ title: `${failCount} alert(s) failed to acknowledge`, variant: "destructive" });
+    const ids = alerts.map((a) => a.id);
+    if (!ids.length) return;
+    try {
+      const acked = await markAcknowledged(ids);
+      if (acked.length < ids.length) {
+        toast({ title: `${ids.length - acked.length} alert(s) could not be acknowledged`, variant: "destructive" });
+        fetch();
+        return;
+      }
+      setAlerts([]);
+      toast({ title: "All alerts acknowledged" });
+    } catch (e: any) {
+      console.error("Acknowledge all failed:", e);
+      toast({ title: "Failed to acknowledge alerts", description: e.message, variant: "destructive" });
       fetch();
-      return;
     }
-    setAlerts([]);
-    toast({ title: "All alerts acknowledged" });
   };
 
   const sevIcon = (s: string) => {

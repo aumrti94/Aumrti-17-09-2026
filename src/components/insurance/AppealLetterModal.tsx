@@ -12,6 +12,7 @@ import {
   ShieldAlert, Upload, ExternalLink, RotateCcw, Clock,
 } from "lucide-react";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { supabase } from "@/integrations/supabase/client";
 import { differenceInDays, addDays, format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -124,6 +125,7 @@ function printText(title: string, body: string) {
 const AppealLetterModal: React.FC<AppealLetterModalProps> = ({
   open, onOpenChange, claim, hospitalId, planTier, onAppealSubmitted,
 }) => {
+  const __aiOn = useAIFeature("appeal_letter");
   const [step, setStep]           = useState<AppealStep>(1);
   const [strategy, setStrategy]   = useState<AppealStrategy | null>(null);
   const [letter, setLetter]       = useState("");
@@ -537,7 +539,7 @@ Format: Official complaint letter, under 600 words.`;
                         {canUseAI ? "Generate an AI-powered appeal letter with the improved clinical prompt" : "Build your appeal letter manually below"}
                       </p>
                       {canUseAI && (
-                        <Button onClick={generateAppealLetter} className="gap-1.5 bg-violet-600 hover:bg-violet-700">
+                        <Button hidden={!__aiOn} onClick={generateAppealLetter} className="gap-1.5 bg-violet-600 hover:bg-violet-700">
                           <Sparkles size={14} /> Generate AI Appeal Letter
                         </Button>
                       )}
@@ -559,7 +561,7 @@ Format: Official complaint letter, under 600 words.`;
                       />
                       <div className="flex gap-2 flex-wrap">
                         {canUseAI && (
-                          <Button size="sm" variant="outline" className="gap-1.5 text-violet-700 border-violet-300 hover:bg-violet-50" onClick={generateAppealLetter}>
+                          <Button size="sm" variant="outline" className="gap-1.5 text-violet-700 border-violet-300 hover:bg-violet-50" hidden={!__aiOn} onClick={generateAppealLetter}>
                             <RotateCcw size={12} /> Regenerate
                           </Button>
                         )}
@@ -659,7 +661,7 @@ Formal letter, under 300 words.`;
                     </a>
                   </div>
                   {!irdaiText && !generating && (
-                    <Button onClick={generateIrdaiComplaint} className="gap-1.5 w-full">
+                    <Button hidden={!__aiOn} onClick={generateIrdaiComplaint} className="gap-1.5 w-full">
                       {canUseAI ? <><Sparkles size={14} /> Generate IRDAI Complaint (AI)</> : "Build IRDAI Complaint"}
                     </Button>
                   )}
@@ -683,7 +685,7 @@ Formal letter, under 300 words.`;
                         <Button size="sm" variant="outline" className="gap-1.5" onClick={() => { navigator.clipboard.writeText(irdaiText); toast({ title: "Copied" }); }}>
                           <FileText size={12} /> Copy
                         </Button>
-                        <Button size="sm" variant="outline" className="gap-1.5" onClick={generateIrdaiComplaint}>
+                        <Button size="sm" variant="outline" className="gap-1.5" hidden={!__aiOn} onClick={generateIrdaiComplaint}>
                           <RotateCcw size={12} /> Regenerate
                         </Button>
                         <a

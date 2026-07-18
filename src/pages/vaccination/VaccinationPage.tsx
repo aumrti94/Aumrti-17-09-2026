@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -63,12 +64,16 @@ const VaccinationPage: React.FC = () => {
           <span>💉</span> Vaccination & Immunization
         </h1>
         <div className="flex items-center gap-2">
-          <Button size="sm" onClick={() => { setTab("record"); setShowRecordModal(true); }}>
-            <Syringe className="h-4 w-4 mr-1" /> Record Vaccine
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => { setTab("camps"); setShowCampModal(true); }}>
-            + Plan Camp
-          </Button>
+          <GatedAction module="vaccination" action="record_vaccine">
+            <Button size="sm" onClick={() => { setTab("record"); setShowRecordModal(true); }}>
+              <Syringe className="h-4 w-4 mr-1" /> Record Vaccine
+            </Button>
+          </GatedAction>
+          <GatedAction module="vaccination" action="plan_camp">
+            <Button size="sm" variant="outline" onClick={() => { setTab("camps"); setShowCampModal(true); }}>
+              + Plan Camp
+            </Button>
+          </GatedAction>
         </div>
       </div>
 
@@ -121,14 +126,14 @@ const VaccinationPage: React.FC = () => {
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab} className="flex-1 flex flex-col overflow-hidden px-4">
         <TabsList className="w-fit shrink-0 mb-2">
-          <TabsTrigger value="patient-card">👤 Patient Card</TabsTrigger>
-          <TabsTrigger value="due-list">📅 Due List</TabsTrigger>
-          <TabsTrigger value="record">💉 Record Vaccine</TabsTrigger>
-          <TabsTrigger value="cold-chain">🧊 Cold Chain</TabsTrigger>
-          <TabsTrigger value="camps">🏕️ Camps</TabsTrigger>
-          <TabsTrigger value="stock">📦 Stock</TabsTrigger>
-          <TabsTrigger value="adult-schedule">🧑 Adult Schedule</TabsTrigger>
-          <TabsTrigger value="catalogue">➕ Add Vaccine</TabsTrigger>
+          <GatedTabsTrigger module="vaccination" value="patient-card">👤 Patient Card</GatedTabsTrigger>
+          <GatedTabsTrigger module="vaccination" value="due-list">📅 Due List</GatedTabsTrigger>
+          <GatedTabsTrigger module="vaccination" value="record">💉 Record Vaccine</GatedTabsTrigger>
+          <GatedTabsTrigger module="vaccination" value="cold-chain">🧊 Cold Chain</GatedTabsTrigger>
+          <GatedTabsTrigger module="vaccination" value="camps">🏕️ Camps</GatedTabsTrigger>
+          <GatedTabsTrigger module="vaccination" value="stock">📦 Stock</GatedTabsTrigger>
+          <GatedTabsTrigger module="vaccination" value="adult-schedule">🧑 Adult Schedule</GatedTabsTrigger>
+          <GatedTabsTrigger module="vaccination" value="catalogue">➕ Add Vaccine</GatedTabsTrigger>
         </TabsList>
 
         <TabsContent value="patient-card" className="flex-1 overflow-auto mt-0">

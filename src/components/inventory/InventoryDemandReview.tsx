@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { useToast } from "@/hooks/use-toast";
 import { Brain, Loader2, CheckCircle2 } from "lucide-react";
 
@@ -25,6 +26,7 @@ interface Recommendation {
 }
 
 const InventoryDemandReview: React.FC<Props> = ({ hospitalId, onClose }) => {
+  const __aiOn = useAIFeature("ai_digest");
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -130,6 +132,7 @@ Return ONLY JSON array:
     onClose();
   };
 
+  if (!__aiOn) return null;
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">

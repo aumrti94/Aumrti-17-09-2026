@@ -50,6 +50,10 @@ const CaseBundleModal: React.FC<Props> = ({ open, onClose, record, hospitalId })
       const { data } = await (supabase as any).from("admissions")
         .select("*, patients(full_name, uhid, phone, gender, dob), beds(bed_number), wards(name)")
         .eq("patient_id", patientId).eq("hospital_id", hospitalId)
+        // Day care bookings have admitted_at NULL and Postgres sorts NULLs first on DESC, so
+        // without this a future booking would be picked as "the latest admission" and the case
+        // bundle built off a visit that hasn't happened. (20261008000138)
+        .neq("status", "scheduled")
         .order("admitted_at", { ascending: false }).limit(1).maybeSingle();
       admission = data;
     }

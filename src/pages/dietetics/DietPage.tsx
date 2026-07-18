@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { toast } from "sonner";
 import { format, differenceInHours } from "date-fns";
@@ -102,7 +103,7 @@ const DietPage: React.FC = () => {
       .from("admissions")
       .select("id, patient_id, ward_id, bed_id, admitted_at, admitting_diagnosis, patients(id, full_name, uhid, date_of_birth, gender, allergies), wards(ward_name), beds(bed_number)")
       .eq("hospital_id", hid)
-      .eq("status", "admitted")
+      .eq("status", "active")
       .order("admitted_at", { ascending: true });
 
     const allAdmitted = admitted || [];
@@ -449,12 +450,16 @@ Note any special preparations for the diet type.`,
       <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-card" style={{ height: 52 }}>
         <h1 className="text-base font-bold text-foreground">🥗 Dietetics & Nutrition</h1>
         <div className="flex gap-2">
-          <Button size="sm" className="h-8 text-xs" onClick={() => { setTab("orders"); setOrderPatient(null); }}>
-            <Plus className="h-3.5 w-3.5 mr-1" /> New Diet Order
-          </Button>
-          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => { setTab("screening"); setSelectedPatient(null); }}>
-            <Stethoscope className="h-3.5 w-3.5 mr-1" /> Screening
-          </Button>
+          <GatedAction module="dietetics" action="new_diet_order">
+            <Button size="sm" className="h-8 text-xs" onClick={() => { setTab("orders"); setOrderPatient(null); }}>
+              <Plus className="h-3.5 w-3.5 mr-1" /> New Diet Order
+            </Button>
+          </GatedAction>
+          <GatedAction module="dietetics" action="new_screening">
+            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => { setTab("screening"); setSelectedPatient(null); }}>
+              <Stethoscope className="h-3.5 w-3.5 mr-1" /> Screening
+            </Button>
+          </GatedAction>
         </div>
       </div>
 
@@ -471,11 +476,11 @@ Note any special preparations for the diet type.`,
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab} className="flex-1 flex flex-col overflow-hidden">
         <TabsList className="mx-4 mt-1 w-fit">
-          <TabsTrigger value="screening" className="text-xs gap-1"><Stethoscope className="h-3 w-3" /> Screening</TabsTrigger>
-          <TabsTrigger value="orders" className="text-xs gap-1"><Utensils className="h-3 w-3" /> Diet Orders</TabsTrigger>
-          <TabsTrigger value="tracking" className="text-xs gap-1"><ClipboardCheck className="h-3 w-3" /> Meal Tracking</TabsTrigger>
-          <TabsTrigger value="plans" className="text-xs gap-1"><Bot className="h-3 w-3" /> Meal Plans</TabsTrigger>
-          <TabsTrigger value="reports" className="text-xs gap-1"><BarChart3 className="h-3 w-3" /> Reports</TabsTrigger>
+          <GatedTabsTrigger module="dietetics" value="screening" className="text-xs gap-1"><Stethoscope className="h-3 w-3" /> Screening</GatedTabsTrigger>
+          <GatedTabsTrigger module="dietetics" value="orders" className="text-xs gap-1"><Utensils className="h-3 w-3" /> Diet Orders</GatedTabsTrigger>
+          <GatedTabsTrigger module="dietetics" value="tracking" className="text-xs gap-1"><ClipboardCheck className="h-3 w-3" /> Meal Tracking</GatedTabsTrigger>
+          <GatedTabsTrigger module="dietetics" value="plans" className="text-xs gap-1"><Bot className="h-3 w-3" /> Meal Plans</GatedTabsTrigger>
+          <GatedTabsTrigger module="dietetics" value="reports" className="text-xs gap-1"><BarChart3 className="h-3 w-3" /> Reports</GatedTabsTrigger>
         </TabsList>
 
         {/* ═══ TAB 1: SCREENING ═══ */}
@@ -887,7 +892,7 @@ const ReportsTab: React.FC<{ hospitalId: string | null }> = ({ hospitalId }) => 
       const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
 
       const [totalAdm, screenedRes, highRiskRes] = await Promise.all([
-        supabase.from("admissions").select("id", { count: "exact", head: true }).eq("hospital_id", hospitalId).gte("admitted_at", monthStart).eq("status", "admitted"),
+        supabase.from("admissions").select("id", { count: "exact", head: true }).eq("hospital_id", hospitalId).gte("admitted_at", monthStart).eq("status", "active"),
         supabase.from("nutritional_screenings").select("id", { count: "exact", head: true }).eq("hospital_id", hospitalId).gte("screened_at", monthStart),
         supabase.from("nutritional_screenings").select("id", { count: "exact", head: true }).eq("hospital_id", hospitalId).gte("screened_at", monthStart).in("risk_level", ["high", "very_high"]),
       ]);

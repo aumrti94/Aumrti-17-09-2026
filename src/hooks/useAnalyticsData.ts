@@ -590,6 +590,11 @@ export async function computeReadmissionMetrics(hospitalId: string, range: DateR
     .select("id, patient_id, admitted_at")
     .eq("hospital_id", hospitalId)
     .in("patient_id", patientIds)
+    // A booked-but-not-yet-arrived day care procedure is not a readmission. Its NULL
+    // admitted_at currently yields NaN in the window comparison below (which happens to
+    // evaluate false), so this guard makes the intent explicit rather than relying on
+    // NaN semantics to keep the readmission rate honest. (20261008000138)
+    .neq("status", "scheduled")
     .order("admitted_at", { ascending: true });
 
   const byPatient: Record<string, { id: string; admitted_at: string }[]> = {};

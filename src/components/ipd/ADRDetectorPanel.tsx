@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Bot, Loader2, AlertTriangle, FlaskConical } from "lucide-react";
@@ -31,6 +32,7 @@ const SEVERITY_BADGE: Record<string, string> = {
 };
 
 const ADRDetectorPanel: React.FC<Props> = ({ admissionId, hospitalId }) => {
+  const __aiOn = useAIFeature("adr_detector");
   const [loading, setLoading] = useState(false);
   const [flags, setFlags] = useState<ADRFlag[] | null>(null);
   const [rawText, setRawText] = useState<string | null>(null);
@@ -96,6 +98,7 @@ If no ADRs detected, return []. Respond ONLY with valid JSON — no markdown, no
     setLoading(false);
   };
 
+  if (!__aiOn) return null;
   return (
     <div className="border border-border rounded-xl p-4 bg-card mt-3">
       <div className="flex items-center justify-between mb-2">

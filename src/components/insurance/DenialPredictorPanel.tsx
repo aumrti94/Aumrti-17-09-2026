@@ -7,6 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { callAI } from "@/lib/aiProvider";
 import { Bot, Loader2, AlertTriangle, CheckCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAIFeature } from "@/hooks/useAIFeature";
 
 interface DenialPrediction {
   denial_probability: number;
@@ -34,8 +35,11 @@ interface Props {
 
 const DenialPredictorPanel: React.FC<Props> = ({ claimData, preAuthNumber, hospitalId, onProceedSubmit, onRiskAssessed }) => {
   const { toast } = useToast();
+  const aiOn = useAIFeature("denial_predictor");
   const [loading, setLoading] = useState(false);
   const [prediction, setPrediction] = useState<DenialPrediction | null>(null);
+
+  if (!aiOn) return null; // AI master or denial-predictor feature disabled
 
   const runPrediction = async () => {
     setLoading(true);

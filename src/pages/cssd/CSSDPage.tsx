@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
@@ -63,22 +64,26 @@ const CSSDPage: React.FC = () => {
           )}
         </div>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => { setShowNewCycle(true); setTab("sterilize"); }}>
-            <Plus className="w-4 h-4 mr-1" /> New Cycle
-          </Button>
-          <Button size="sm" onClick={() => { setShowIssue(true); setTab("issue"); }}>
-            <ArrowUpDown className="w-4 h-4 mr-1" /> Issue Set to OT
-          </Button>
+          <GatedAction module="cssd" action="new_cycle">
+            <Button size="sm" variant="outline" onClick={() => { setShowNewCycle(true); setTab("sterilize"); }}>
+              <Plus className="w-4 h-4 mr-1" /> New Cycle
+            </Button>
+          </GatedAction>
+          <GatedAction module="cssd" action="issue_set">
+            <Button size="sm" onClick={() => { setShowIssue(true); setTab("issue"); }}>
+              <ArrowUpDown className="w-4 h-4 mr-1" /> Issue Set to OT
+            </Button>
+          </GatedAction>
         </div>
       </div>
 
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab} className="flex-1 flex flex-col overflow-hidden">
         <TabsList className="h-11 w-full justify-start rounded-none border-b border-border bg-muted/30 px-4 shrink-0">
-          <TabsTrigger value="sterilize" className="gap-1.5"><RefreshCw className="w-4 h-4" /> Sterilize</TabsTrigger>
-          <TabsTrigger value="sets" className="gap-1.5"><Package className="w-4 h-4" /> Sets & Instruments</TabsTrigger>
-          <TabsTrigger value="issue" className="gap-1.5"><ArrowUpDown className="w-4 h-4" /> Issue / Return</TabsTrigger>
-          <TabsTrigger value="logs" className="gap-1.5"><ClipboardList className="w-4 h-4" /> Logs</TabsTrigger>
+          <GatedTabsTrigger module="cssd" value="sterilize" className="gap-1.5"><RefreshCw className="w-4 h-4" /> Sterilize</GatedTabsTrigger>
+          <GatedTabsTrigger module="cssd" value="sets" className="gap-1.5"><Package className="w-4 h-4" /> Sets & Instruments</GatedTabsTrigger>
+          <GatedTabsTrigger module="cssd" value="issue" className="gap-1.5"><ArrowUpDown className="w-4 h-4" /> Issue / Return</GatedTabsTrigger>
+          <GatedTabsTrigger module="cssd" value="logs" className="gap-1.5"><ClipboardList className="w-4 h-4" /> Logs</GatedTabsTrigger>
         </TabsList>
 
         <TabsContent value="sterilize" className="flex-1 overflow-hidden m-0">

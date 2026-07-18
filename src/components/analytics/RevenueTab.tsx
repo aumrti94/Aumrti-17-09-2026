@@ -12,13 +12,11 @@ import {
 } from "@/hooks/useAnalyticsData";
 import { Skeleton } from "@/components/ui/skeleton";
 import RevenueForecastCard from "./RevenueForecastCard";
+import { formatINRExact, formatINRCompact } from "@/lib/currency";
 
-const fmt = (n: number) => {
-  if (n >= 10000000) return `₹${(n / 10000000).toFixed(1)}Cr`;
-  if (n >= 100000) return `₹${(n / 100000).toFixed(1)}L`;
-  if (n >= 1000) return `₹${(n / 1000).toFixed(1)}K`;
-  return `₹${n.toLocaleString("en-IN")}`;
-};
+// Exact for anything read as an amount; compact (fmtAxis) only for axis ticks.
+const fmt = formatINRExact;
+const fmtAxis = formatINRCompact;
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -99,7 +97,7 @@ const RevenueTab: React.FC<{ range: DateRange }> = ({ range }) => {
             <AreaChart data={trend || []}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
               <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={d => d.slice(5)} />
-              <YAxis tick={{ fontSize: 10 }} tickFormatter={v => fmt(v)} />
+              <YAxis tick={{ fontSize: 10 }} tickFormatter={v => fmtAxis(v)} />
               <Tooltip formatter={(v: number) => fmt(v)} labelFormatter={l => `Date: ${l}`} />
               <defs>
                 <linearGradient id="colCollected" x1="0" y1="0" x2="0" y2="1">
@@ -145,7 +143,7 @@ const RevenueTab: React.FC<{ range: DateRange }> = ({ range }) => {
           <ResponsiveContainer width="100%" height={180}>
             <BarChart data={payModes || []} layout="vertical">
               <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-              <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={v => fmt(v)} />
+              <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={v => fmtAxis(v)} />
               <YAxis type="category" dataKey="mode" tick={{ fontSize: 10 }} width={80} />
               <Tooltip formatter={(v: number) => fmt(v)} />
               <Bar dataKey="total" name="Amount" radius={[0, 4, 4, 0]}>

@@ -1,21 +1,36 @@
 import { Clock, AlertTriangle, XCircle, X } from "lucide-react";
 import { useState } from "react";
 import { useSubscriptionConfig } from "@/hooks/useSubscriptionConfig";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
+
+const DISMISS_KEY = "trialBannerDismissedOn";
+
+/** Local calendar day as YYYY-MM-DD (used to reset the dismissal each day). */
+function todayKey(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 /**
- * Shows a dismissable sticky banner in the hospital app when:
+ * Shows a dismissable sticky banner on the hospital main Dashboard (/dashboard) when:
  *   - Trial has ≤ 7 days left
  *   - Trial has expired
  *   - Account is suspended or past_due
  *
- * Wire this into AppShell (or Dashboard) below the top navigation bar.
+ * Rendered from AppShell but only visible on /dashboard. Dismissing it hides the
+ * banner until the next calendar day (persisted in localStorage).
  * It renders nothing when the account is in good standing.
  */
 export default function TrialBanner() {
   const { status, trialDaysLeft, isExpired, isSuspended, isLoading } = useSubscriptionConfig();
-  const [dismissed, setDismissed] = useState(false);
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const [dismissed, setDismissed] = useState(
+    () => localStorage.getItem(DISMISS_KEY) === todayKey()
+  );
+
+  // Only surface on the hospital main Dashboard, not on every module screen.
+  if (pathname !== "/dashboard") return null;
 
   if (isLoading || dismissed) return null;
 
@@ -97,7 +112,10 @@ export default function TrialBanner() {
         {ctaLabel}
       </button>
       <button
-        onClick={() => setDismissed(true)}
+        onClick={() => {
+          localStorage.setItem(DISMISS_KEY, todayKey());
+          setDismissed(true);
+        }}
         className="text-white/70 hover:text-white transition-colors ml-1"
         aria-label="Dismiss"
       >

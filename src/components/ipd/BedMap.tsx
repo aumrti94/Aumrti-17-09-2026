@@ -96,12 +96,21 @@ const BedMap: React.FC<Props> = ({ beds, selectedBedId, onSelectBed, hospitalId,
 
       {/* Filters: Ward · Department · Doctor */}
       <div className="flex-shrink-0 border-b border-slate-100 px-3 py-2 space-y-1.5">
+        {/* Ward options come from the wards master; Department/Doctor are derived from
+            the patients currently admitted — so with no admissions there is genuinely
+            nothing to filter by. Disable + say so, rather than showing an empty list
+            that reads as broken. */}
         <select
           value={activeWard}
           onChange={(e) => setActiveWard(e.target.value)}
-          className="w-full h-7 text-xs border border-slate-200 rounded-md px-2 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#1A2F5A]/40"
+          disabled={wards.length === 0}
+          title={wards.length === 0 ? "No wards configured — add them in Settings → Wards & Beds" : undefined}
+          className={cn(
+            "w-full h-7 text-xs border border-slate-200 rounded-md px-2 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#1A2F5A]/40",
+            wards.length === 0 && "opacity-60 cursor-not-allowed"
+          )}
         >
-          <option value="all">All Wards</option>
+          <option value="all">{wards.length ? "All Wards" : "No wards configured"}</option>
           {wards.map((w) => (
             <option key={w.id} value={w.id}>{w.name}</option>
           ))}
@@ -109,9 +118,14 @@ const BedMap: React.FC<Props> = ({ beds, selectedBedId, onSelectBed, hospitalId,
         <select
           value={activeDept}
           onChange={(e) => setActiveDept(e.target.value)}
-          className="w-full h-7 text-xs border border-slate-200 rounded-md px-2 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#1A2F5A]/40"
+          disabled={departments.length === 0}
+          title={departments.length === 0 ? "Departments are listed from admitted patients' doctors — none admitted yet" : undefined}
+          className={cn(
+            "w-full h-7 text-xs border border-slate-200 rounded-md px-2 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#1A2F5A]/40",
+            departments.length === 0 && "opacity-60 cursor-not-allowed"
+          )}
         >
-          <option value="all">All Departments</option>
+          <option value="all">{departments.length ? "All Departments" : "No departments — none admitted"}</option>
           {departments.map((d) => (
             <option key={d} value={d}>{d}</option>
           ))}
@@ -120,9 +134,14 @@ const BedMap: React.FC<Props> = ({ beds, selectedBedId, onSelectBed, hospitalId,
           <select
             value={activeDoctor}
             onChange={(e) => setActiveDoctor(e.target.value)}
-            className="flex-1 h-7 text-xs border border-slate-200 rounded-md px-2 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#1A2F5A]/40"
+            disabled={doctors.length === 0}
+            title={doctors.length === 0 ? "Doctors are listed from admitted patients — none admitted yet" : undefined}
+            className={cn(
+              "flex-1 h-7 text-xs border border-slate-200 rounded-md px-2 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#1A2F5A]/40",
+              doctors.length === 0 && "opacity-60 cursor-not-allowed"
+            )}
           >
-            <option value="all">All Doctors</option>
+            <option value="all">{doctors.length ? "All Doctors" : "No doctors — none admitted"}</option>
             {doctors.map((d) => (
               <option key={d} value={d}>{d}</option>
             ))}

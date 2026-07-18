@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { isAIFeatureAllowed } from "./aiEntitlement";
 
 /**
  * Safely parses a Fetch response as JSON, handling cases where the body might be empty, 
@@ -475,6 +476,11 @@ const getEnvKey = (provider: string): string | undefined => {
 // ── Main callAI function ──────────────────────────
 
 export const callAI = async (request: AIRequest): Promise<AIResponse> => {
+  // Platform/hospital AI entitlement floor — the single "AI Features" master switch
+  // and per-feature toggles gate EVERY AI call here, regardless of the caller.
+  if (!isAIFeatureAllowed(request.featureKey, request.hospitalId)) {
+    return { text: "", provider: "disabled", model: "disabled", error: "AI features are disabled for this hospital." };
+  }
   try {
     // AI configuration is GLOBAL (platform-controlled) — not per hospital.
     // Step 1: Look up the global feature-specific config, fall back to global_default.

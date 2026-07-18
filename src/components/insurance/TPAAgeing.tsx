@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { formatINRExact } from "@/lib/currency";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -68,7 +69,7 @@ const TPAAgeing: React.FC = () => {
     setLoading(false);
   };
 
-  const fmt = (n: number) => n > 0 ? `₹${(n / 100000).toFixed(1)}L` : "—";
+  const fmt = (n: number) => n > 0 ? formatINRExact(n) : "—";
   const fmtFull = (n: number) => `₹${n.toLocaleString("en-IN")}`;
   const totals = buckets.reduce((acc, b) => ({
     r0: acc.r0 + b.range0_30, r1: acc.r1 + b.range31_60, r2: acc.r2 + b.range61_90, r3: acc.r3 + b.range90plus, t: acc.t + b.total, c: acc.c + b.count

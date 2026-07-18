@@ -7,6 +7,7 @@ import HomeCareActivePlansTab from "@/components/home-care/HomeCareActivePlansTa
 import HomeCareVisitTab from "@/components/home-care/HomeCareVisitTab";
 import HomeTeleMonitoringTab from "@/components/home-care/HomeTeleMonitoringTab";
 
+import { useModuleAccess } from "@/components/access/useModuleAccess";
 const navTabs = [
   { id: "plans", label: "Active Plans", icon: Home },
   { id: "visits", label: "Visit Schedule", icon: Calendar },
@@ -15,6 +16,7 @@ const navTabs = [
 
 const HomeCarePage: React.FC = () => {
   const { hospitalId } = useHospitalId();
+  const { tabAllowed } = useModuleAccess();
   const [activeTab, setActiveTab] = useState("plans");
   const [kpis, setKpis] = useState({ activePlans: 0, visitsToday: 0, overdue: 0, alerts: 0 });
 
@@ -56,7 +58,7 @@ const HomeCarePage: React.FC = () => {
 
       <div className="flex flex-1 overflow-hidden">
         <div className="w-[200px] bg-card border-r border-border flex flex-col">
-          {navTabs.map(tab => {
+          {navTabs.filter((t) => tabAllowed("home_care", t.id)).map(tab => {
             const Icon = tab.icon;
             return (
               <button key={tab.id} onClick={() => setActiveTab(tab.id)}

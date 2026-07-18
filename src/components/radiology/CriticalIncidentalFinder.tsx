@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, Bot, Loader2, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAIFeature } from "@/hooks/useAIFeature";
 
 interface Incidental {
   finding: string;
@@ -38,6 +39,7 @@ const SEV_BADGE: Record<string, string> = {
 const CriticalIncidentalFinder: React.FC<Props> = ({
   findings, impression, hospitalId, orderId, patientId, patientName, studyName,
 }) => {
+  const __aiOn = useAIFeature("critical_incidental_finder");
   const [loading, setLoading] = useState(false);
   const [incidentals, setIncidentals] = useState<Incidental[] | null>(null);
   const [rawText, setRawText] = useState<string | null>(null);
@@ -144,6 +146,8 @@ clinical_significance levels:
       </div>
     );
   }
+
+  if (!__aiOn) return null; // AI master or critical-incidental feature disabled
 
   return (
     <div className="space-y-2 mt-3">

@@ -22,6 +22,8 @@ import { useAIFeatureFlag } from "@/hooks/useAIFeatureFlag";
 import AIAttestationModal from "@/components/ai/AIAttestationModal";
 import PCPNDTFormModal from "./PCPNDTFormModal";
 import DicomViewerPanel from "./DicomViewerPanel";
+import PaymentPendingDialog from "@/components/shared/PaymentPendingDialog";
+import { checkRadiologyOrderClearance, recordAncillaryOverride } from "@/lib/ancillaryGateChecks";
 
 interface Report {
   id: string;
@@ -147,6 +149,9 @@ const RadiologyReportingWorkspace: React.FC<Props> = ({ order, hospitalId, onSta
 
   // Saving state
   const [saving, setSaving] = useState(false);
+  /** Set when the payment gate refuses to start the study — drives PaymentPendingDialog. */
+  const [blocked, setBlocked] = useState<{ unpaidAmount: number; overrideAvailable: boolean } | null>(null);
+  const [overriding, setOverriding] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -203,15 +208,50 @@ const RadiologyReportingWorkspace: React.FC<Props> = ({ order, hospitalId, onSta
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const updateOrderStatus = async (newStatus: string) => {
+  const updateOrderStatus = async (newStatus: string, overridden = false) => {
     // PCPNDT: never allow direct "reported" transition for USG — must go through validateAndSign()
     if (newStatus === "reported" && (order.is_pcpndt || order.modality_type?.toLowerCase() === "usg")) {
       validateAndSign();
       return;
     }
+
+    // The payment gate applies to STARTING the study and nothing else. Once the scan has
+    // happened, blocking 'images_acquired' or 'reported' would strand a completed study as
+    // unreportable — the radiation dose is already delivered; withholding the report helps
+    // nobody and harms the patient.
+    if (newStatus === "in_progress" && !overridden) {
+      const clearance = await checkRadiologyOrderClearance(order.id, role);
+      if (!clearance.cleared) {
+        setBlocked({ unpaidAmount: clearance.unpaidAmount, overrideAvailable: clearance.overrideAvailable });
+        return;
+      }
+    }
+
     await supabase.from("radiology_orders").update({ status: newStatus }).eq("id", order.id);
     onStatusChange();
     toast({ title: `Status updated to ${newStatus.replace(/_/g, " ")}` });
+  };
+
+  const handlePaymentOverride = async (reason: string) => {
+    if (!currentUserId) return;
+    setOverriding(true);
+    try {
+      const ok = await recordAncillaryOverride({
+        hospitalId,
+        service: "radiology",
+        patientId: order.patient_id ?? null,
+        reason,
+        overriddenBy: currentUserId,
+        detail: order.study_name || undefined,
+      });
+      if (!ok) throw new Error("The override could not be recorded, so the study was not started.");
+      setBlocked(null);
+      await updateOrderStatus("in_progress", true);
+    } catch (e: any) {
+      toast({ title: "Override failed", description: e.message, variant: "destructive" });
+    } finally {
+      setOverriding(false);
+    }
   };
 
   const saveDraft = async () => {
@@ -994,6 +1034,17 @@ const RadiologyReportingWorkspace: React.FC<Props> = ({ order, hospitalId, onSta
           onSaved={() => { setPcpndtRecordExists(true); setShowPcpndtModal(false); onStatusChange(); }}
         />
       )}
+
+      {/* Payment gate — only ever fires for a pre-paid hospital's unpaid IPD order */}
+      <PaymentPendingDialog
+        open={!!blocked}
+        onClose={() => setBlocked(null)}
+        unpaidAmount={blocked?.unpaidAmount ?? 0}
+        overrideAvailable={blocked?.overrideAvailable ?? false}
+        onOverride={handlePaymentOverride}
+        blockedAction="study cannot be started"
+        busy={overriding}
+      />
     </div>
   );
 };

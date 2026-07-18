@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { FlaskConical, Loader2, Bot, CheckCircle2 } from "lucide-react";
@@ -49,6 +50,7 @@ const URGENCY_BADGE: Record<string, string> = {
 };
 
 const LabInterpretationPanel: React.FC<Props> = ({ results, hospitalId, patientId }) => {
+  const __aiOn = useAIFeature("lab_auto_interpreter");
   const [loading, setLoading] = useState(false);
   const [differentials, setDifferentials] = useState<Differential[] | null>(null);
   const [rawText, setRawText] = useState<string | null>(null);
@@ -116,6 +118,7 @@ Return [] if all results are normal and no differential is warranted.`,
     setLoading(false);
   };
 
+  if (!__aiOn) return null;
   return (
     <div className="border rounded-lg overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2 bg-muted/40 border-b">

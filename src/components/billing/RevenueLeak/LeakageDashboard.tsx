@@ -17,6 +17,7 @@ import {
   Loader2, Zap, ChevronDown, ChevronRight, FlaskConical, ScanLine, Bot,
 } from "lucide-react";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
 import { getPendingInvestigations, type PendingInvestigationRow } from "@/lib/pendingInvestigations";
@@ -103,6 +104,7 @@ const inr = (n: number) =>
   `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
 const LeakageDashboard: React.FC = () => {
+  const __aiOn = useAIFeature("revenue_leakage");
   const { hospitalId } = useHospitalId();
   const { toast }      = useToast();
 
@@ -297,6 +299,7 @@ Keep response concise (under 250 words). Use Indian hospital context.`,
               : <><Zap size={11} /> Run Scan</>}
           </Button>
           <Button
+            hidden={!__aiOn}
             size="sm"
             variant="outline"
             className="h-7 text-[11px] gap-1"

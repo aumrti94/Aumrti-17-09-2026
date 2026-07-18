@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { generateBillNumber } from "@/hooks/useBillNumber";
-import { autoPostJournalEntry } from "@/lib/accounting";
-import { calcGST } from "@/lib/currency";
+import { formatINRExact } from "@/lib/currency";
 import { DEFAULT_PHARMACY_GST_PERCENT } from "@/lib/gstRules";
+import { postAncillaryOrderCharges, type AncillaryChargeItem } from "@/lib/ancillaryCharges";
+import { fetchIpdAncillaryPolicy } from "@/lib/ipdAncillaryGate";
+import { checkPharmacyDispenseClearance, recordAncillaryOverride } from "@/lib/ancillaryGateChecks";
+import { useHospitalContext } from "@/contexts/HospitalContext";
+import PaymentPendingDialog from "@/components/shared/PaymentPendingDialog";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -10,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Pill, Save, Check, RotateCcw, AlertTriangle, Loader2 } from "lucide-react";
+import { Pill, Save, Check, RotateCcw, AlertTriangle, Loader2, IndianRupee } from "lucide-react";
 import FiveRightsPanel from "./FiveRightsPanel";
 import ADRCheckPanel from "./ADRCheckPanel";
 import AllergyBanner from "@/components/clinical/AllergyBanner";
@@ -80,6 +83,22 @@ const DispensingWorkspace: React.FC<Props> = ({ hospitalId, prescription, onDisp
   const [ndpsApprovedCountersignerId, setNdpsApprovedCountersignerId] = useState<string | null>(null);
   const [ndpsPrescriberLicence, setNdpsPrescriberLicence] = useState("");
   const [currentDispensingId, setCurrentDispensingId] = useState<string | null>(null);
+  /** True when this hospital takes payment before pharmacy is handed over. */
+  const [prePaidPharmacy, setPrePaidPharmacy] = useState(false);
+  /** Set when the payment gate refuses the handover — drives PaymentPendingDialog. */
+  const [blocked, setBlocked] = useState<{ unpaidAmount: number; overrideAvailable: boolean } | null>(null);
+  const { role } = useHospitalContext();
+
+  // These drugs are priced and charged but still behind the counter, waiting on the attendant
+  // to pay. Step B ("Confirm Dispense") is what actually hands them over.
+  const awaitingPayment =
+    prescription?.status === "awaiting_payment" ||
+    (prescription?.source === "dispensing" && prescription?.status === "awaiting_payment");
+
+  useEffect(() => {
+    if (!hospitalId || !prescription?.admission_id) { setPrePaidPharmacy(false); return; }
+    fetchIpdAncillaryPolicy(hospitalId).then(p => setPrePaidPharmacy(p.pharmacy.mode === "pre_paid"));
+  }, [hospitalId, prescription?.admission_id]);
 
   const loadPrescription = useCallback(async () => {
     if (!prescription) {
@@ -259,6 +278,134 @@ const DispensingWorkspace: React.FC<Props> = ({ hospitalId, prescription, onDisp
     handleDispenseAll(countersignerId, prescriberLicence);
   };
 
+  /**
+   * Step B of the pre-paid pharmacy flow: the money is in, hand the drugs over.
+   *
+   * Step A already created the dispensing rows and posted the charges but deliberately left
+   * the stock and the NDPS register untouched, because nothing had actually left the shelf.
+   * This does that half — reading back the items step A recorded rather than the on-screen
+   * rows, so what is deducted is exactly what was priced and paid for.
+   */
+  const handleConfirmDispense = async (overridden = false) => {
+    if (!prescription || !patient || !currentDispensingId) return;
+    setDispensing(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+      const { data: userData } = await supabase.from("users").select("id").eq("auth_user_id", user.id).maybeSingle();
+      if (!userData) throw new Error("User not found");
+
+      if (!overridden) {
+        const clearance = await checkPharmacyDispenseClearance(currentDispensingId, role);
+        if (!clearance.cleared) {
+          setBlocked({ unpaidAmount: clearance.unpaidAmount, overrideAvailable: clearance.overrideAvailable });
+          return;
+        }
+      }
+
+      const { data: items } = await supabase
+        .from("pharmacy_dispensing_items")
+        .select("id, drug_id, batch_id, drug_name, quantity_dispensed, is_ndps")
+        .eq("dispensing_id", currentDispensingId);
+
+      for (const it of (items || []) as any[]) {
+        if (!it.batch_id || !it.quantity_dispensed) continue;
+
+        // Re-read the batch: step A may have been minutes or hours ago and other dispenses
+        // will have moved this batch since. Deducting from a stale figure would corrupt stock.
+        const { data: batch } = await supabase
+          .from("drug_batches")
+          .select("quantity_available")
+          .eq("id", it.batch_id)
+          .maybeSingle();
+        if (!batch) continue;
+
+        await supabase
+          .from("drug_batches")
+          .update({ quantity_available: Math.max(0, Number(batch.quantity_available) - Number(it.quantity_dispensed)) })
+          .eq("id", it.batch_id);
+
+        const row = drugRows.find(r => r.drug_id === it.drug_id);
+        if ((it.is_ndps || row?.drug_schedule === "H1") && it.drug_id) {
+          const { data: lastEntry } = await supabase
+            .from("ndps_register")
+            .select("balance_after")
+            .eq("drug_id", it.drug_id)
+            .eq("hospital_id", hospitalId)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          await supabase.from("ndps_register").insert({
+            hospital_id: hospitalId,
+            drug_id: it.drug_id,
+            drug_name: it.drug_name,
+            drug_schedule: row?.drug_schedule || "X",
+            transaction_type: "issue",
+            quantity: it.quantity_dispensed,
+            balance_after: Math.max(0, Number((lastEntry?.balance_after || 0) - it.quantity_dispensed)),
+            patient_name: patient.full_name,
+            pharmacist_id: userData.id,
+            second_pharmacist_id: ndpsApprovedCountersignerId || null,
+            countersigned_by: ndpsApprovedCountersignerId || null,
+            countersigned_at: ndpsApprovedCountersignerId ? new Date().toISOString() : null,
+            prescriber_licence: ndpsPrescriberLicence || null,
+          });
+        }
+      }
+
+      await supabase.from("pharmacy_dispensing").update({ status: "dispensed" }).eq("id", currentDispensingId);
+
+      if (prescription.admission_id) {
+        const { data: pendingDisp } = await supabase
+          .from("pharmacy_dispensing")
+          .select("id")
+          .eq("admission_id", prescription.admission_id)
+          .eq("hospital_id", hospitalId)
+          .in("status", ["pending", "processing", "awaiting_payment"])
+          .limit(1);
+        if (!pendingDisp || pendingDisp.length === 0) {
+          await supabase.from("admissions").update({ pharmacy_cleared: true }).eq("id", prescription.admission_id);
+        }
+      }
+
+      logNABHEvidence(
+        hospitalId,
+        "MOM",
+        `Drugs handed over to ${patient.full_name} after payment: ${(items || []).map((i: any) => i.drug_name).join(", ")}.`
+      );
+
+      toast({ title: "✓ Dispensed", description: "Payment collected and drugs handed over." });
+      onDispensed();
+    } catch (err: any) {
+      toast({ title: "Dispense failed", description: err.message, variant: "destructive" });
+    } finally {
+      setDispensing(false);
+    }
+  };
+
+  const handlePharmacyOverride = async (reason: string) => {
+    if (!currentDispensingId) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    const { data: userData } = user
+      ? await supabase.from("users").select("id").eq("auth_user_id", user.id).maybeSingle()
+      : { data: null };
+    if (!userData) { toast({ title: "Override failed", description: "User not found", variant: "destructive" }); return; }
+
+    const ok = await recordAncillaryOverride({
+      hospitalId,
+      service: "pharmacy",
+      patientId: prescription?.patient_id ?? null,
+      reason,
+      overriddenBy: userData.id,
+      detail: drugRows.filter(r => r.dispense_qty > 0).map(r => r.drug_name).join(", "),
+    });
+    if (!ok) { toast({ title: "Override failed", description: "The override could not be recorded, so nothing was dispensed.", variant: "destructive" }); return; }
+
+    setBlocked(null);
+    await handleConfirmDispense(true);
+  };
+
   const handleDispenseAll = async (ndpsCountersignerId?: string, ndpsLicence?: string) => {
     if (!prescription || !patient) return;
     setDispensing(true);
@@ -272,6 +419,20 @@ const DispensingWorkspace: React.FC<Props> = ({ hospitalId, prescription, onDisp
         .eq("auth_user_id", user.id)
         .maybeSingle();
       if (!userData) throw new Error("User not found");
+
+      // Pharmacy is structurally different from lab/radiology: the charge does not exist until
+      // the drugs are picked and priced from a batch, so "pay before dispense" is
+      // chicken-and-egg. It is resolved by splitting the action in two —
+      //   A) price it, charge it, send the attendant to the counter (NO stock moves);
+      //   B) once paid, hand the drugs over (stock + NDPS register).
+      // handleConfirmDispense below is step B. In post_paid mode both happen at once, exactly
+      // as they always have.
+      const policy = prescription.admission_id
+        ? await fetchIpdAncillaryPolicy(hospitalId)
+        : null;
+      const prePaidPharmacy = policy?.pharmacy.mode === "pre_paid";
+      // The drugs only leave the shelf now if nobody has to pay first.
+      const willHandOverNow = !prePaidPharmacy;
 
       // Reuse cached dispensingId on re-entry after NDPS approval
       let dispensingId: string | null = currentDispensingId || (prescription.source === "dispensing" ? prescription.id : null);
@@ -289,7 +450,7 @@ const DispensingWorkspace: React.FC<Props> = ({ hospitalId, prescription, onDisp
             prescription_id: prescription.prescription_id || null,
             dispensed_by: userData.id,
             dispensing_type: "ip",
-            status: "dispensed",
+            status: willHandOverNow ? "dispensed" : "awaiting_payment",
           })
           .select("id")
           .maybeSingle();
@@ -311,6 +472,9 @@ const DispensingWorkspace: React.FC<Props> = ({ hospitalId, prescription, onDisp
       }
 
       let totalAmount = 0;
+      // Collected so each dispensed item can be charged under the key the discharge sweep
+      // uses: pharmacy:dispense-item:{pharmacy_dispensing_items.id}.
+      const chargeItems: AncillaryChargeItem[] = [];
 
       for (const row of drugRows) {
         if (row.dispense_qty <= 0 || !row.selected_batch_id) continue;
@@ -321,14 +485,18 @@ const DispensingWorkspace: React.FC<Props> = ({ hospitalId, prescription, onDisp
         const itemTotal = row.mrp * row.dispense_qty;
         totalAmount += itemTotal;
 
-        // Deduct stock
-        await supabase
-          .from("drug_batches")
-          .update({ quantity_available: batch.quantity_available - row.dispense_qty })
-          .eq("id", row.selected_batch_id);
+        // Deduct stock — only when the drugs actually leave the shelf. In pre_paid mode the
+        // attendant is being sent to the counter and nothing has been handed over yet;
+        // decrementing here would lose stock for a dispense that may never be paid for.
+        if (willHandOverNow) {
+          await supabase
+            .from("drug_batches")
+            .update({ quantity_available: batch.quantity_available - row.dispense_qty })
+            .eq("id", row.selected_batch_id);
+        }
 
         // Insert dispensing item
-        await supabase
+        const { data: dispItem } = await supabase
           .from("pharmacy_dispensing_items")
           .insert({
             hospital_id: hospitalId,
@@ -346,12 +514,30 @@ const DispensingWorkspace: React.FC<Props> = ({ hospitalId, prescription, onDisp
             five_rights_verified: row.five_rights_verified,
             is_ndps: row.is_ndps,
             ndps_second_pharmacist_id: row.ndps_second_pharmacist_id || null,
+          })
+          .select("id")
+          .maybeSingle();
+
+        if (dispItem) {
+          chargeItems.push({
+            sourceId: dispItem.id,
+            dedupeKey: `pharmacy:dispense-item:${dispItem.id}`,
+            description: `Pharmacy: ${row.drug_name}`,
+            unitPrice: row.mrp,
+            quantity: row.dispense_qty,
+            // The batch's own GST, not a hardcoded rate. The discharge sweep assumes a flat
+            // 12% for pharmacy while the batch carries the real figure — posting from the
+            // batch here makes the charge match what was actually sold.
+            gstPercent: batch.gst_percent ?? DEFAULT_PHARMACY_GST_PERCENT,
           });
+        }
 
         // NDPS/Schedule-H1 register entry — H1 (Rule 65) needs register logging too,
         // but never the NDPS dual-signoff step, so this stays independent of the
         // is_ndps-only confirmation-step gate used elsewhere in this file.
-        if ((row.is_ndps || row.drug_schedule === "H1") && row.drug_id) {
+        // Like stock, this is a record of a HANDOVER — it must not be written for drugs still
+        // sitting behind the counter awaiting payment.
+        if (willHandOverNow && (row.is_ndps || row.drug_schedule === "H1") && row.drug_id) {
           // Get current balance
           const { data: lastEntry } = await supabase
             .from("ndps_register")
@@ -388,7 +574,7 @@ const DispensingWorkspace: React.FC<Props> = ({ hospitalId, prescription, onDisp
       await supabase
         .from("pharmacy_dispensing")
         .update({
-          status: "dispensed",
+          status: willHandOverNow ? "dispensed" : "awaiting_payment",
           total_amount: totalAmount,
           net_amount: totalAmount,
         })
@@ -401,47 +587,36 @@ const DispensingWorkspace: React.FC<Props> = ({ hospitalId, prescription, onDisp
         `5-rights verified for ${patient.full_name}: ${drugRows.map(r => r.drug_name).join(", ")}. Dispensed ₹${totalAmount.toFixed(0)}.`
       );
 
-      // Auto-create pharmacy bill in bills table for IPD billing sync
-      if (prescription.admission_id && totalAmount > 0) {
-        // Calculate actual GST from individual items
-        let totalGst = 0;
-        for (const row of drugRows) {
-          if (row.dispense_qty <= 0 || !row.selected_batch_id) continue;
-          const batch = row.batches.find(b => b.id === row.selected_batch_id);
-          const batchGst = batch?.gst_percent ?? DEFAULT_PHARMACY_GST_PERCENT;
-          const itemTotal = row.mrp * row.dispense_qty;
-          totalGst += calcGST(itemTotal, batchGst);
+      // Post the charges.
+      //
+      // This replaces a block that created a bill_type:'pharmacy' HEADER carrying a real
+      // balance_due and posted a GL entry against it — while inserting ZERO line items. The
+      // bill's total and its (empty) lines disagreed from birth, the balance was AR nobody
+      // could ever collect, and the discharge sweep then billed the same drugs again from
+      // pharmacy_dispensing_items. Charges now land on the admission bill under the sweep's
+      // own key, so there is one line per drug and the sweep skips it.
+      if (prescription.admission_id && chargeItems.length > 0) {
+        const charged = await postAncillaryOrderCharges({
+          hospitalId,
+          patientId: prescription.patient_id,
+          admissionId: prescription.admission_id,
+          service: "pharmacy",
+          orderedBy: userData.id,
+          policy: policy ?? undefined,
+          items: chargeItems,
+        });
+        if (!charged.ok) {
+          throw new Error(charged.error || "Pharmacy charges could not be posted");
         }
+      }
 
-        const billNum = await generateBillNumber(hospitalId, "PHARM");
-        const { data: pharmBill } = await supabase.from("bills").insert({
-          hospital_id: hospitalId,
-          patient_id: prescription.patient_id,
-          admission_id: prescription.admission_id,
-          bill_number: billNum,
-          bill_type: "pharmacy",
-          bill_status: "final",
-          bill_date: new Date().toISOString().split("T")[0],
-          total_amount: totalAmount + totalGst,
-          subtotal: totalAmount,
-          gst_amount: totalGst,
-          paid_amount: 0,
-          balance_due: totalAmount + totalGst,
-          payment_status: "unpaid",
-          created_by: userData.id,
-        }).select("id").maybeSingle();
-
-        if (pharmBill) {
-          await autoPostJournalEntry({
-            triggerEvent: "bill_finalized_pharmacy",
-            sourceModule: "pharmacy",
-            sourceId: pharmBill.id,
-            amount: totalAmount + totalGst,
-            description: `Pharmacy Revenue - Bill ${billNum}`,
-            hospitalId,
-            postedBy: user.id,
-          });
-        }
+      if (!willHandOverNow) {
+        toast({
+          title: "Sent to billing counter",
+          description: `${formatINRExact(totalAmount)} due. The drugs stay behind the counter until payment is collected — then use Confirm Dispense.`,
+        });
+        onDispensed?.();
+        return;
       }
 
       // Auto-sync: mark pharmacy cleared if all IP meds for this admission are dispensed
@@ -759,19 +934,48 @@ const DispensingWorkspace: React.FC<Props> = ({ hospitalId, prescription, onDisp
         <Button variant="ghost" size="sm" className="text-xs h-9">
           <Save size={14} className="mr-1" /> Save Partial
         </Button>
-        <Button
-          size="sm"
-          className="h-10 px-6 text-xs font-bold"
-          disabled={!canDispenseAll}
-          onClick={handleDispenseAll}
-        >
-          {dispensing ? (
-            <><Loader2 size={14} className="mr-1 animate-spin" /> Processing...</>
-          ) : (
-            <><Check size={14} className="mr-1" /> Dispense All</>
-          )}
-        </Button>
+        {/* Step B: the drugs are priced and charged, waiting only on the money. */}
+        {awaitingPayment ? (
+          <Button
+            size="sm"
+            className="h-10 px-6 text-xs font-bold"
+            disabled={dispensing}
+            onClick={() => handleConfirmDispense()}
+          >
+            {dispensing ? (
+              <><Loader2 size={14} className="mr-1 animate-spin" /> Processing...</>
+            ) : (
+              <><Check size={14} className="mr-1" /> Confirm Dispense</>
+            )}
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            className="h-10 px-6 text-xs font-bold"
+            disabled={!canDispenseAll}
+            onClick={() => handleDispenseAll()}
+          >
+            {dispensing ? (
+              <><Loader2 size={14} className="mr-1 animate-spin" /> Processing...</>
+            ) : prePaidPharmacy ? (
+              <><IndianRupee size={14} className="mr-1" /> Send to Counter</>
+            ) : (
+              <><Check size={14} className="mr-1" /> Dispense All</>
+            )}
+          </Button>
+        )}
       </div>
+
+      {/* Payment gate — only ever fires for a pre-paid hospital's unpaid dispense */}
+      <PaymentPendingDialog
+        open={!!blocked}
+        onClose={() => setBlocked(null)}
+        unpaidAmount={blocked?.unpaidAmount ?? 0}
+        overrideAvailable={blocked?.overrideAvailable ?? false}
+        onOverride={handlePharmacyOverride}
+        blockedAction="drugs cannot be handed over"
+        busy={dispensing}
+      />
     </div>
   );
 };

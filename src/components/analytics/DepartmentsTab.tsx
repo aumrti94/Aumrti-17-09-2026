@@ -7,13 +7,11 @@ import { useDeptPerformance, useDeptDoctors, useDeptTopServices } from "@/hooks/
 import AnalyticsKPICard from "./AnalyticsKPICard";
 import DepartmentDetailModal from "./DepartmentDetailModal";
 import type { DateRange } from "@/hooks/useAnalyticsData";
+import { formatINRExact, formatINRCompact } from "@/lib/currency";
 
-const fmt = (n: number) => {
-  if (n >= 10000000) return `₹${(n / 10000000).toFixed(1)}Cr`;
-  if (n >= 100000) return `₹${(n / 100000).toFixed(1)}L`;
-  if (n >= 1000) return `₹${(n / 1000).toFixed(1)}K`;
-  return `₹${n.toLocaleString("en-IN")}`;
-};
+// Exact for anything read as an amount; compact (fmtAxis) only for axis ticks.
+const fmt = formatINRExact;
+const fmtAxis = formatINRCompact;
 
 const DepartmentsTab: React.FC<{ range: DateRange }> = ({ range }) => {
   const { data: depts, isLoading } = useDeptPerformance(range);
@@ -121,7 +119,7 @@ const DepartmentsTab: React.FC<{ range: DateRange }> = ({ range }) => {
                 <ResponsiveContainer width="100%" height={Math.max(150, topServices.length * 28)}>
                   <BarChart data={topServices} layout="vertical">
                     <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                    <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={v => fmt(v)} />
+                    <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={v => fmtAxis(v)} />
                     <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={140} />
                     <Tooltip formatter={(v: number) => fmt(v)} />
                     <Bar dataKey="total" name="Revenue" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />

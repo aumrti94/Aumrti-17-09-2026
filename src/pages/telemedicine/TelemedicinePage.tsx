@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { cn } from "@/lib/utils";
 import {
   Video, Phone, Plus, Monitor, Square, ClipboardList,
@@ -309,9 +310,11 @@ const TelemedicinePage: React.FC = () => {
             <h2 className="text-sm font-bold">Teleconsults</h2>
             <p className="text-xs text-muted-foreground">{format(new Date(), "dd MMM yyyy")}</p>
           </div>
-          <Button size="sm" variant="outline" onClick={() => setShowSchedule(true)} className="gap-1">
-            <Plus size={14} /> Schedule
-          </Button>
+          <GatedAction module="telemedicine" action="schedule_consult">
+            <Button size="sm" variant="outline" onClick={() => setShowSchedule(true)} className="gap-1">
+              <Plus size={14} /> Schedule
+            </Button>
+          </GatedAction>
         </div>
 
         {/* Today's stats strip */}
@@ -330,9 +333,9 @@ const TelemedicinePage: React.FC = () => {
 
         <Tabs value={tab} onValueChange={setTab} className="px-2 pt-2">
           <TabsList className="w-full">
-            <TabsTrigger value="waiting" className="flex-1 text-xs">Waiting</TabsTrigger>
-            <TabsTrigger value="scheduled" className="flex-1 text-xs">Scheduled</TabsTrigger>
-            <TabsTrigger value="completed" className="flex-1 text-xs">Done</TabsTrigger>
+            <GatedTabsTrigger module="telemedicine" value="waiting" className="flex-1 text-xs">Waiting</GatedTabsTrigger>
+            <GatedTabsTrigger module="telemedicine" value="scheduled" className="flex-1 text-xs">Scheduled</GatedTabsTrigger>
+            <GatedTabsTrigger module="telemedicine" value="completed" className="flex-1 text-xs">Done</GatedTabsTrigger>
           </TabsList>
         </Tabs>
 

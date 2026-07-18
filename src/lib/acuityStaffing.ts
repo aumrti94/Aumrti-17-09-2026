@@ -45,7 +45,7 @@ export async function computeWardAcuity(
     `)
     .eq("hospital_id", hospitalId)
     .eq("ward_id", wardId)
-    .eq("status", "admitted")
+    .eq("status", "active")
     .order("ipd_vitals.recorded_at", { ascending: false });
 
   // Deduplicate to latest vitals per admission

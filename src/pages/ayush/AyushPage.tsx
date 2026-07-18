@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -99,12 +100,16 @@ export default function AyushPage() {
       <div className="flex items-center justify-between px-4 border-b bg-background" style={{ height: 52 }}>
         <h1 className="text-base font-bold flex items-center gap-2">🌿 AYUSH & Integrative Medicine</h1>
         <div className="flex gap-2">
-          <Button size="sm" onClick={() => setShowWalkIn(true)}>
-            <Plus className="h-4 w-4 mr-1" /> New Consultation
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => { setActiveTab("panchakarma"); setShowNewPK(true); }}>
-            <Plus className="h-4 w-4 mr-1" /> Panchakarma
-          </Button>
+          <GatedAction module="ayush" action="new_consultation">
+            <Button size="sm" onClick={() => setShowWalkIn(true)}>
+              <Plus className="h-4 w-4 mr-1" /> New Consultation
+            </Button>
+          </GatedAction>
+          <GatedAction module="ayush" action="new_panchakarma">
+            <Button size="sm" variant="outline" onClick={() => { setActiveTab("panchakarma"); setShowNewPK(true); }}>
+              <Plus className="h-4 w-4 mr-1" /> Panchakarma
+            </Button>
+          </GatedAction>
         </div>
       </div>
 
@@ -151,10 +156,10 @@ export default function AyushPage() {
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden">
         <TabsList className="mx-4 mt-2 w-fit">
-          <TabsTrigger value="consultation">📋 Consultation</TabsTrigger>
-          <TabsTrigger value="prakriti">🧬 Prakriti</TabsTrigger>
-          <TabsTrigger value="panchakarma">🛁 Panchakarma</TabsTrigger>
-          <TabsTrigger value="prescriptions">💊 Prescriptions</TabsTrigger>
+          <GatedTabsTrigger module="ayush" value="consultation">📋 Consultation</GatedTabsTrigger>
+          <GatedTabsTrigger module="ayush" value="prakriti">🧬 Prakriti</GatedTabsTrigger>
+          <GatedTabsTrigger module="ayush" value="panchakarma">🛁 Panchakarma</GatedTabsTrigger>
+          <GatedTabsTrigger module="ayush" value="prescriptions">💊 Prescriptions</GatedTabsTrigger>
         </TabsList>
         <TabsContent value="consultation" className="flex-1 overflow-hidden m-0 p-0">
           <ConsultationTab system={system} showNew={showNewConsult} onShowNewDone={() => setShowNewConsult(false)} />

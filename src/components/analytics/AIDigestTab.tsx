@@ -6,6 +6,7 @@ import { Bot, ChevronLeft, ChevronRight, RefreshCw, Send, Loader2, CheckCircle }
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { formatINRExact } from "@/lib/currency";
 
 async function getHospitalId(): Promise<string | null> {
   const { data: { user } } = await supabase.auth.getUser();
@@ -55,9 +56,9 @@ async function fetchTodayKPIs(hospitalId: string, dateStr: string) {
   return {
     rows: [
       { label: "OPD Patients", today: String(opdCount), vs: opdCount > opdYest ? `+${opdCount - opdYest} ↑` : `${opdCount - opdYest}`, ok: true },
-      { label: "Revenue Collected", today: `₹${(revenue / 100000).toFixed(1)}L`, vs: `${revChange >= 0 ? "↑" : "↓"} ${Math.abs(revChange)}%`, ok: revChange >= 0 },
+      { label: "Revenue Collected", today: formatINRExact(revenue), vs: `${revChange >= 0 ? "↑" : "↓"} ${Math.abs(revChange)}%`, ok: revChange >= 0 },
       { label: "Bed Occupancy", today: `${bedOccPct}%`, vs: `${occupiedBeds}/${totalBeds}`, ok: bedOccPct >= 60 },
-      { label: "Pending Bills", today: `₹${(pending / 100000).toFixed(1)}L`, vs: `${pendingRes.data?.length || 0} bills`, ok: pending < 500000 },
+      { label: "Pending Bills", today: formatINRExact(pending), vs: `${pendingRes.data?.length || 0} bills`, ok: pending < 500000 },
       { label: "Lab Pending", today: String(labPending), vs: "tests", ok: labPending < 10 },
       { label: "Critical Alerts", today: String(critAlerts), vs: "unack.", ok: critAlerts === 0 },
     ],

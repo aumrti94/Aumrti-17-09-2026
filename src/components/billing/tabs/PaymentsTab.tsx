@@ -10,6 +10,7 @@ import type { BillRecord } from "@/pages/billing/BillingPage";
 import type { PaymentRecord } from "@/components/billing/BillEditor";
 import RefundModal from "@/components/billing/RefundModal";
 import { recordBillPayment } from "@/lib/billPayments";
+import { isAdmissionBill } from "@/lib/admissionBill";
 
 const PAYMENT_MODES = [
   { value: "cash", label: "💵 Cash" },
@@ -44,7 +45,7 @@ const PaymentsTab: React.FC<Props> = ({ bill, hospitalId, payments, netAdvanceBa
   const netPatientPayable = Math.max(0, (bill.patient_payable || bill.total_amount) - Number(bill.discount_amount || 0));
 
   // For IPD bills: patient_payable − advance − cash already paid
-  const effectiveBalanceDue = (bill.bill_type === "ipd" && netAdvanceBalance != null)
+  const effectiveBalanceDue = (isAdmissionBill(bill.bill_type) && netAdvanceBalance != null)
     ? Math.max(0, netPatientPayable - netAdvanceBalance - totalDirectPaid)
     : bill.balance_due;
 
@@ -79,7 +80,7 @@ const PaymentsTab: React.FC<Props> = ({ bill, hospitalId, payments, netAdvanceBa
 
     const newPaid = bill.paid_amount + totalCollecting;
     // For IPD bills, advance + all direct cash payments determine true balance
-    const advanceCovered = (bill.bill_type === "ipd" && netAdvanceBalance != null) ? netAdvanceBalance : 0;
+    const advanceCovered = (isAdmissionBill(bill.bill_type) && netAdvanceBalance != null) ? netAdvanceBalance : 0;
     const allDirectPaid = totalDirectPaid + totalCollecting;
     const newBalance = Math.max(0, netPatientPayable - advanceCovered - allDirectPaid);
     const newStatus: "paid" | "partial" = newBalance <= 0 ? "paid" : "partial";
@@ -112,7 +113,7 @@ const PaymentsTab: React.FC<Props> = ({ bill, hospitalId, payments, netAdvanceBa
   return (
     <div className="space-y-6">
       {/* Advance-settled notice for IPD bills */}
-      {bill.bill_type === "ipd" && netAdvanceBalance != null && effectiveBalanceDue === 0 && bill.balance_due > 0 && (
+      {isAdmissionBill(bill.bill_type) && netAdvanceBalance != null && effectiveBalanceDue === 0 && bill.balance_due > 0 && (
         <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
           <p className="text-[13px] font-semibold text-emerald-800">Bill settled via advance</p>
           <p className="text-[12px] text-emerald-600 mt-0.5">

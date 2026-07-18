@@ -4,6 +4,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { Search, CheckCircle, X, Loader2, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { BillRecord } from "@/pages/billing/BillingPage";
@@ -24,6 +25,7 @@ interface Props {
 }
 
 const RevenueIntelligencePanel: React.FC<Props> = ({ bill, hospitalId, lineItems }) => {
+  const __aiOn = useAIFeature("revenue_leakage");
   const { toast } = useToast();
   const [scanning, setScanning] = useState(false);
   const [scanned, setScanned] = useState(false);
@@ -187,6 +189,7 @@ Return ONLY JSON array (empty array if no issues):
     return "bg-muted text-muted-foreground border-border";
   };
 
+  if (!__aiOn) return null;
   return (
     <div className="px-4 py-2 flex-shrink-0">
       {!scanned ? (

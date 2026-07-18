@@ -6,6 +6,7 @@ import { callAI } from "@/lib/aiProvider";
 import NABHAssistantPanel from "@/components/nabh/NABHAssistantPanel";
 import NABHBadge from "@/components/nabh/NABHBadge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { GatedTabsTrigger } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -885,9 +886,9 @@ Keep each section concise and clinically actionable. Use plain text with numbere
               { v: "trends",        l: "📈 Trends" },
               { v: "ai",            l: "🤖 AI Insights" },
             ].map(t => (
-              <TabsTrigger key={t.v} value={t.v}
+              <GatedTabsTrigger module="ipc" key={t.v} value={t.v}
                 className="text-[13px] rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:bg-transparent px-4 h-full"
-              >{t.l}</TabsTrigger>
+              >{t.l}</GatedTabsTrigger>
             ))}
           </TabsList>
 

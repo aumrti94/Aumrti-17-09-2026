@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { ScanSearch, Sparkles, Loader2, Check, X, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
@@ -30,6 +31,7 @@ const SEV_CLS: Record<string, string> = {
 };
 
 const AnomaliesPanel: React.FC<Props> = ({ hospitalId }) => {
+  const __aiOn = useAIFeature("inventory_anomaly_digest");
   const { toast } = useToast();
   const [anomalies, setAnomalies] = useState<Anomaly[]>([]);
   const [loading, setLoading] = useState(false);
@@ -92,6 +94,7 @@ const AnomaliesPanel: React.FC<Props> = ({ hospitalId }) => {
 
   const counts = anomalies.reduce((m, a) => { m[a.anomaly_type] = (m[a.anomaly_type] || 0) + 1; return m; }, {} as Record<string, number>);
 
+  if (!__aiOn) return null;
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <div className="flex-shrink-0 bg-card border-b border-border px-5 py-2.5 flex items-center gap-3 flex-wrap">

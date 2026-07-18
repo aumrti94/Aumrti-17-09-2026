@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalContext } from "@/contexts/HospitalContext";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { GatedTabsTrigger } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -654,18 +655,18 @@ const ABDMConsentPage: React.FC = () => {
       <div className="flex-1 overflow-hidden">
         <Tabs defaultValue="consents" className="flex flex-col h-full">
           <TabsList className="shrink-0 justify-start rounded-none border-b bg-card h-9 px-5 w-full gap-0">
-            <TabsTrigger value="consents" className="text-xs relative">
+            <GatedTabsTrigger module="abdm" value="consents" className="text-xs relative">
               Active Consents
               {pendingCount > 0 && (
                 <span className="ml-1.5 inline-flex items-center justify-center h-4 w-4 rounded-full bg-amber-500 text-white text-[9px] font-bold">{pendingCount}</span>
               )}
-            </TabsTrigger>
-            <TabsTrigger value="care_contexts" className="text-xs">Care Contexts</TabsTrigger>
-            <TabsTrigger value="gateway_logs" className="text-xs">Gateway Logs</TabsTrigger>
-            <TabsTrigger value="hiu_fetch" className="text-xs">Fetch Records (HIU)</TabsTrigger>
-            <TabsTrigger value="compliance" className="text-xs flex items-center gap-1">
+            </GatedTabsTrigger>
+            <GatedTabsTrigger module="abdm" value="care_contexts" className="text-xs">Care Contexts</GatedTabsTrigger>
+            <GatedTabsTrigger module="abdm" value="gateway_logs" className="text-xs">Gateway Logs</GatedTabsTrigger>
+            <GatedTabsTrigger module="abdm" value="hiu_fetch" className="text-xs">Fetch Records (HIU)</GatedTabsTrigger>
+            <GatedTabsTrigger module="abdm" value="compliance" className="text-xs flex items-center gap-1">
               <BarChart3 size={11} /> Compliance Score
-            </TabsTrigger>
+            </GatedTabsTrigger>
           </TabsList>
 
           <TabsContent value="consents" className="flex-1 overflow-auto p-5 mt-0">

@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { formatINRExact } from "@/lib/currency";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -30,7 +31,7 @@ const SEVERITY_CONFIG = {
 };
 
 const fmt = (n: number) =>
-  n >= 100000 ? `₹${(n / 100000).toFixed(1)}L` : `₹${n.toLocaleString("en-IN")}`;
+  formatINRExact(n);
 
 export const RevenueLeakDetector: React.FC<{ hospitalId: string }> = ({ hospitalId }) => {
   const { toast } = useToast();

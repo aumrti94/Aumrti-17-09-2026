@@ -201,16 +201,18 @@ const NABHQIAlertCard: React.FC<Props> = ({ hospitalId, role }) => {
       const { data: { user } } = await supabase.auth.getUser();
 
       // Mark alert acknowledged
-      const { error } = await (supabase as any)
+      const { data, error } = await (supabase as any)
         .from("clinical_alerts")
         .update({
           is_acknowledged: true,
-          acknowledged_by: user?.id ?? null,
+          acknowledged_by: await getCurrentUserRowId(),
           acknowledged_at: new Date().toISOString(),
         })
-        .eq("id", dismissTarget.id);
+        .eq("id", dismissTarget.id)
+        .select("id");
 
       if (error) throw error;
+      if (!data?.length) throw new Error("The alert was not updated. Please retry.");
 
       // Log the action note to config_change_logs for NABH IMS audit trail
       await (supabase as any).from("config_change_logs").insert({

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -32,6 +33,7 @@ const RISK_STYLE: Record<string, string> = {
 };
 
 const BloodDemandForecastPanel: React.FC = () => {
+  const __aiOn = useAIFeature("blood_demand_forecaster");
   const { hospitalId } = useHospitalId();
   const [loading, setLoading] = useState(false);
   const [forecasts, setForecasts] = useState<DayForecast[] | null>(null);
@@ -180,6 +182,7 @@ Return ONLY valid JSON:
 
   const criticalDays = forecasts?.filter(f => f.shortage_risk === "critical").length ?? 0;
 
+  if (!__aiOn) return null;
   return (
     <div className="border rounded-lg overflow-hidden mt-4">
       <div className="flex items-center justify-between px-4 py-2.5 bg-muted/40 border-b">

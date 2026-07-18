@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { BarChart3, Loader2, ShoppingCart, TrendingUp, X } from "lucide-react";
@@ -27,6 +28,7 @@ interface Props {
 }
 
 const DrugForecastPanel: React.FC<Props> = ({ itemId, itemName, currentStock, hospitalId, onClose }) => {
+  const __aiOn = useAIFeature("ai_digest");
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [forecast, setForecast] = useState<ForecastResult | null>(null);
@@ -121,6 +123,7 @@ Return ONLY JSON:
     }
   };
 
+  if (!__aiOn) return null;
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center">
       <div className="bg-card rounded-xl border border-border shadow-xl w-[440px] max-h-[80vh] overflow-auto">

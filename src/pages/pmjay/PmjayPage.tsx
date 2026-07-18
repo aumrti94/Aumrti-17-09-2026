@@ -1,5 +1,6 @@
 import React from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ShieldCheck, Loader2, Plus } from "lucide-react";
@@ -42,9 +43,11 @@ const PMJAYPage = () => {
           </span>
         </div>
         {newFormLabel && (
-          <Button size="sm" className="gap-1.5" onClick={() => setShowNewForm(true)}>
-            <Plus size={14} /> {newFormLabel}
-          </Button>
+          <GatedAction module="pmjay" action="new_form">
+            <Button size="sm" className="gap-1.5" onClick={() => setShowNewForm(true)}>
+              <Plus size={14} /> {newFormLabel}
+            </Button>
+          </GatedAction>
         )}
       </div>
 
@@ -55,11 +58,11 @@ const PMJAYPage = () => {
           className="w-full flex-1 flex flex-col"
         >
           <TabsList className="w-fit mb-4 grid grid-cols-5 h-auto p-1">
-            <TabsTrigger value="preauth" className="text-[14px] py-2">Pre-Authorization</TabsTrigger>
-            <TabsTrigger value="beneficiaries" className="text-[14px] py-2">Beneficiaries</TabsTrigger>
-            <TabsTrigger value="claims" className="text-[14px] py-2">Cashless Claims</TabsTrigger>
-            <TabsTrigger value="catalog" className="text-[14px] py-2">HBP Catalog</TabsTrigger>
-            <TabsTrigger value="analytics" className="text-[14px] py-2">Analytics</TabsTrigger>
+            <GatedTabsTrigger module="pmjay" value="preauth" className="text-[14px] py-2">Pre-Authorization</GatedTabsTrigger>
+            <GatedTabsTrigger module="pmjay" value="beneficiaries" className="text-[14px] py-2">Beneficiaries</GatedTabsTrigger>
+            <GatedTabsTrigger module="pmjay" value="claims" className="text-[14px] py-2">Cashless Claims</GatedTabsTrigger>
+            <GatedTabsTrigger module="pmjay" value="catalog" className="text-[14px] py-2">HBP Catalog</GatedTabsTrigger>
+            <GatedTabsTrigger module="pmjay" value="analytics" className="text-[14px] py-2">Analytics</GatedTabsTrigger>
           </TabsList>
 
           <TabsContent value="preauth" className="flex-1 overflow-hidden m-0">

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Clock, AlertTriangle } from "lucide-react";
+import { initiateDischargeWorkflow, DISCHARGE_INITIATED_EVENT } from "@/lib/dischargeWorkflow";
 
 interface Props {
   admissionId: string;
@@ -12,52 +13,42 @@ const DischargeTATTimer: React.FC<Props> = ({ admissionId, hospitalId, medicalCl
   const [startTime, setStartTime] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
 
+  // Pick up a workflow started elsewhere — e.g. the "Initiate Discharge" button
+  // in the workspace action bar — so the clock appears without a reload.
+  useEffect(() => {
+    const onInitiated = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.admissionId === admissionId) setStartTime(detail.startedAt);
+    };
+    window.addEventListener(DISCHARGE_INITIATED_EVENT, onInitiated);
+    return () => window.removeEventListener(DISCHARGE_INITIATED_EVENT, onInitiated);
+  }, [admissionId]);
+
+  // Show the clock whenever the workflow is already running, not only after
+  // medical clearance — the discharge may have been ordered before it.
+  useEffect(() => {
+    if (!admissionId) return;
+    let cancelled = false;
+    (supabase as any).from("admissions")
+      .select("discharge_ordered_at")
+      .eq("id", admissionId)
+      .maybeSingle()
+      .then(({ data }: { data: any }) => {
+        if (!cancelled && data?.discharge_ordered_at) setStartTime(data.discharge_ordered_at);
+      });
+    return () => { cancelled = true; };
+  }, [admissionId]);
+
+  // Medical clearance implies the discharge has been ordered — start the
+  // workflow if the button was never pressed.
   useEffect(() => {
     if (!medicalCleared || !admissionId) return;
-
-    const init = async () => {
-      const { data } = await supabase
-        .from("admissions")
-        .select("*")
-        .eq("id", admissionId)
-        .maybeSingle();
-
-      const dischargeOrderedAt = (data as any)?.discharge_ordered_at;
-      if (dischargeOrderedAt) {
-        setStartTime(dischargeOrderedAt);
-      } else {
-        const now = new Date().toISOString();
-        await supabase.from("admissions").update({
-          discharge_ordered_at: now,
-        } as any).eq("id", admissionId);
-        setStartTime(now);
-        // Parallel team notifications: fire once when discharge order is first created
-        if (hospitalId) {
-          Promise.all([
-            supabase.from("clinical_alerts").insert({
-              hospital_id: hospitalId,
-              alert_type: "discharge_initiated",
-              severity: "low",
-              alert_message: "Discharge initiated — Billing: please finalise the IPD bill immediately.",
-            } as any),
-            supabase.from("clinical_alerts").insert({
-              hospital_id: hospitalId,
-              alert_type: "discharge_initiated",
-              severity: "low",
-              alert_message: "Discharge initiated — Pharmacy: clear all pending dispenses and check medication returns.",
-            } as any),
-            supabase.from("clinical_alerts").insert({
-              hospital_id: hospitalId,
-              alert_type: "discharge_initiated",
-              severity: "low",
-              alert_message: "Discharge initiated — Nursing: prepare discharge paperwork, patient education, and verify insurance documents.",
-            } as any),
-          ]).catch(() => {});
-        }
-      }
-    };
-    init();
-  }, [medicalCleared, admissionId]);
+    let cancelled = false;
+    initiateDischargeWorkflow(admissionId, hospitalId)
+      .then(({ startedAt }) => { if (!cancelled) setStartTime(startedAt); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [medicalCleared, admissionId, hospitalId]);
 
   useEffect(() => {
     if (!startTime) return;
@@ -82,7 +73,7 @@ const DischargeTATTimer: React.FC<Props> = ({ admissionId, hospitalId, medicalCl
     }
   }, [elapsed, startTime, hospitalId]);
 
-  if (!medicalCleared || !startTime) return null;
+  if (!startTime) return null;
 
   const hours = Math.floor(elapsed / 3600);
   const mins = Math.floor((elapsed % 3600) / 60);

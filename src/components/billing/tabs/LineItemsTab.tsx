@@ -12,6 +12,7 @@ import LeakageScanner from "@/components/billing/LeakageScanner";
 import UnbilledServicesModal from "@/components/billing/UnbilledServicesModal";
 import EnhancementRequestModal from "@/components/billing/EnhancementRequestModal";
 import { autoPullAdmissionCharges } from "@/lib/ipdBilling";
+import { isAdmissionBill } from "@/lib/admissionBill";
 import { formatINR, roundCurrency } from "@/lib/currency";
 import { getDefaultGSTRate } from "@/lib/gstRules";
 import { fetchPreAuthCeiling, type PreAuthCeiling } from "@/lib/insuranceCeiling";
@@ -106,7 +107,7 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
 
   useEffect(() => {
     if (!bill.admission_id || !hospitalId) return;
-    if (bill.bill_type === "ipd") {
+    if (isAdmissionBill(bill.bill_type)) {
       fetchPreAuthCeiling(bill.admission_id, hospitalId).then(setPreAuthCeiling);
       // Fetch net advance balance — same formula as AdvanceApplicationTab:
       // viewBalance (ipd_advances net) + unmirroredTotal (legacy advance_receipts)
@@ -135,7 +136,7 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
         setNetAdvance(Number(advRes.data?.balance || 0) + unmirroredTotal);
       });
     }
-    if (bill.bill_type === "ipd" || bill.bill_type === "daycare") {
+    if (isAdmissionBill(bill.bill_type)) {
       fetchPackageContext(bill.admission_id).then(setPackageCtx);
     }
   }, [bill.admission_id, hospitalId, bill.bill_type, bill.id]);
@@ -213,22 +214,39 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
     setSearchResults(data || []);
   };
 
-  const VALID_ITEM_TYPES = ['consultation','procedure','room_charge','lab','radiology','pharmacy','surgery','package','nursing','consumable','blood','oxygen','other','service'];
+  /**
+   * The one pricing rule for a catalog service. Shared by the pre-auth ceiling
+   * projection and the actual insert — those must agree, or the ceiling check
+   * guards a different amount than the one that lands on the bill.
+   *
+   * The catalogued item_type is used as-is. It used to be coerced to "other"
+   * for anything outside a 14-value allow-list that mirrored a bill_line_items
+   * CHECK constraint — but that constraint was dropped (20261008000051) because
+   * the billing engine legitimately writes many other types. The coercion
+   * outlived it and silently mis-taxed every catalog service outside the list:
+   * "other" carries 18% GST in gstRules, so a room charge, OT fee, or dialysis
+   * session added from this picker was taxed at 18% while the exact same service
+   * billed by its own module (autoChargeService, chargeOTCase) was exempt. It
+   * also erased the item_type that the pre-discharge OT-billing check greps for,
+   * so a hand-added OT charge never satisfied it.
+   */
+  const priceServiceLine = (svc: any) => {
+    const rate = Number(svc.fee) || 0;
+    const itemType = svc.item_type || "other";
+    const gstPct =
+      svc.gst_percent != null && svc.gst_percent > 0
+        ? Number(svc.gst_percent)
+        : getDefaultGSTRate(itemType, rate);
+    const gstAmt = roundCurrency(rate * gstPct / 100);
+    return { rate, itemType, gstPct, taxable: rate, gstAmt, total: roundCurrency(rate + gstAmt) };
+  };
 
   const insertServiceLine = async (
     svc: any,
     opts: { isInsuranceCovered?: boolean } = {}
   ) => {
     if (!hospitalId) return;
-    const rate = Number(svc.fee) || 0;
-    const itemType = VALID_ITEM_TYPES.includes(svc.item_type) ? svc.item_type : "other";
-    const gstPct =
-      svc.gst_percent != null && svc.gst_percent > 0
-        ? Number(svc.gst_percent)
-        : getDefaultGSTRate(itemType, rate);
-    const taxable = rate;
-    const gstAmt = roundCurrency(taxable * gstPct / 100);
-    const total = roundCurrency(taxable + gstAmt);
+    const { rate, itemType, gstPct, taxable, gstAmt, total } = priceServiceLine(svc);
 
     const payload: Record<string, any> = {
       hospital_id: hospitalId,
@@ -308,14 +326,8 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
     }
 
     // ── Pre-auth ceiling enforcement (IPD insurance bills only) ──────────────
-    if (bill.bill_type === "ipd" && bill.admission_id && preAuthCeiling) {
-      const rate = Number(svc.fee) || 0;
-      const itemType = VALID_ITEM_TYPES.includes(svc.item_type) ? svc.item_type : "other";
-      const gstPct =
-        svc.gst_percent != null && svc.gst_percent > 0
-          ? Number(svc.gst_percent)
-          : getDefaultGSTRate(itemType, rate);
-      const newItemTotal = roundCurrency(rate + rate * gstPct / 100);
+    if (isAdmissionBill(bill.bill_type) && bill.admission_id && preAuthCeiling) {
+      const newItemTotal = priceServiceLine(svc).total;
 
       const runningNow = roundCurrency(
         lineItems.reduce((s, i) => s + Number(i.total_amount), 0)
@@ -440,8 +452,8 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
   // For IPD bills use the live net advance balance (deposits − refunds) from the view.
   // bill.paid_amount is inflated by syncAdvanceToBill auto-syncs and can diverge.
   const totalDirectCashPaid = payments.reduce((s, p) => s + p.amount, 0);
-  const advancePaid = (bill.bill_type === "ipd" && netAdvance !== null) ? netAdvance : Math.min(bill.paid_amount, bill.advance_received || 0);
-  const directPaid  = (bill.bill_type === "ipd") ? totalDirectCashPaid : Math.max(0, bill.paid_amount - advancePaid);
+  const advancePaid = (isAdmissionBill(bill.bill_type) && netAdvance !== null) ? netAdvance : Math.min(bill.paid_amount, bill.advance_received || 0);
+  const directPaid  = (isAdmissionBill(bill.bill_type)) ? totalDirectCashPaid : Math.max(0, bill.paid_amount - advancePaid);
   const effectivePaid = advancePaid + directPaid;
   const balanceDue  = patientPayable - effectivePaid;
 
@@ -651,7 +663,7 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
           <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
             <Sparkles size={32} className="mb-3 opacity-25" />
             <p className="text-sm font-medium mb-1">No charges on this bill yet</p>
-            {bill.bill_type === "ipd" && bill.admission_id && isEditable && (
+            {isAdmissionBill(bill.bill_type) && bill.admission_id && isEditable && (
               <Button size="sm" className="mt-3 gap-1.5 text-xs" onClick={handleRecalcIPD} disabled={recalculating}>
                 <RefreshCw size={13} className={recalculating ? "animate-spin" : ""} />
                 {recalculating ? "Recalculating…" : "Pull IPD Charges"}

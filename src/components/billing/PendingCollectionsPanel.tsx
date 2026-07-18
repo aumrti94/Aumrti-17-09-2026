@@ -68,7 +68,23 @@ export default function PendingCollectionsPanel() {
       if (error) throw error;
 
       const mapped = (data || [])
-        .filter((r: any) => r.bills?.payment_status !== "paid")
+        .filter((r: any) => {
+          // Never offer to collect against a bill that is already settled. An IPD bill flips
+          // to 'paid' the moment an advance deposit covers its running total (syncAdvanceToBill
+          // → paid_amount → computeBillTotals); its charges are then paid FOR by the advance,
+          // and collecting them again at the counter would take the money a second time.
+          //
+          // balance_due is the authoritative "still owed" figure — a charge is only collectable
+          // while the bill it sits on still has an outstanding balance. (The deadlock this used
+          // to guard against — a pre-paid charge on an advance-covered bill being uncollectable
+          // — is handled where it belongs, in the gate: an advance-covered charge is cleared,
+          // so the service proceeds without a counter payment. See ipdAncillaryGate.)
+          const b = r.bills;
+          if (!b) return false;
+          if (b.payment_status === "paid") return false;
+          if (Number(b.balance_due) <= 0 && Number(b.paid_amount) > 0) return false;
+          return true;
+        })
         .map((r: any) => ({
         id: r.id,
         bill_id: r.bill_id,
@@ -99,8 +115,21 @@ export default function PendingCollectionsPanel() {
     if (!userId || !hospitalId) return;
     setPaying(item.id);
     try {
-      const newPaid = item.bill_paid_amount + item.total_amount;
-      const newBalance = Math.max(0, item.bill_balance_due - item.total_amount);
+      // Re-read the bill rather than trusting the list's snapshot. On a consolidated
+      // admission bill, advances land asynchronously via syncAdvanceToBill, so
+      // bill_paid_amount captured at load time can be stale by the time the cashier clicks —
+      // and writing a total derived from it would clobber a deposit that arrived in between.
+      const { data: fresh } = await (supabase as any)
+        .from("bills")
+        .select("paid_amount, balance_due")
+        .eq("id", item.bill_id)
+        .maybeSingle();
+
+      const paidNow = Number(fresh?.paid_amount ?? item.bill_paid_amount) || 0;
+      const balanceNow = Number(fresh?.balance_due ?? item.bill_balance_due) || 0;
+
+      const newPaid = paidNow + item.total_amount;
+      const newBalance = Math.max(0, balanceNow - item.total_amount);
       const newStatus: "paid" | "partial" = newBalance <= 0 ? "paid" : "partial";
 
       const result = await recordBillPayment({

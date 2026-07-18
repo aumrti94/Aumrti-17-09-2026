@@ -6,6 +6,7 @@ export const GST_RATE_RULES: Record<string, number> = {
   surgery: 0,
   room_charge: 0,       // ≤ ₹5000/day: 0%; > ₹5000/day: 5% — checked at item level
   room_charge_luxury: 5,
+  room_charge_icu: 0,   // ICU/NICU/PICU: exempt at any rate (CBIC clarification) — see getRoomChargeGSTRate
   lab: 0,
   radiology: 0,
   nursing: 0,

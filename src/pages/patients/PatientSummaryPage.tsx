@@ -80,7 +80,10 @@ const PatientSummaryPage: React.FC = () => {
     ] = await Promise.all([
       supabase.from("patients").select("*").eq("id", patientId).maybeSingle(),
       (supabase as any).from("opd_encounters").select("id,chief_complaint,diagnosis,icd10_code,created_at,status").eq("patient_id", patientId).order("created_at", { ascending: false }).limit(20),
-      (supabase as any).from("admissions").select("id,admitted_at,discharged_at,status,final_diagnosis,ward_id").eq("patient_id", patientId).order("admitted_at", { ascending: false }).limit(10),
+      // Exclude day care bookings: they have admitted_at NULL until the patient reports, and
+      // Postgres sorts NULLs first on DESC — a future booking would otherwise head up the
+      // patient's admission history with a blank date. (20261008000138)
+      (supabase as any).from("admissions").select("id,admitted_at,discharged_at,status,final_diagnosis,ward_id").eq("patient_id", patientId).neq("status", "scheduled").order("admitted_at", { ascending: false }).limit(10),
       (supabase as any).from("lab_order_items").select("id,test_name,result_value,reference_range,resulted_at,lab_orders!inner(created_at,patient_id)").eq("lab_orders.patient_id", patientId).order("lab_orders.created_at", { ascending: false }).limit(30),
       (supabase as any).from("prescriptions").select("id,items,created_at").eq("patient_id", patientId).order("created_at", { ascending: false }).limit(5),
       (supabase as any).from("opd_tokens").select("id,visit_date,token_number,doctor_id,status").eq("patient_id", patientId).gte("visit_date", new Date().toISOString().slice(0, 10)).neq("status", "cancelled").limit(3),

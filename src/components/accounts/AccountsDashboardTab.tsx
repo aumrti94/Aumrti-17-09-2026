@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo } from "react";
+import { formatINRCompact } from "@/lib/currency";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowUpRight, ArrowDownRight, TrendingUp, Wallet, Landmark, AlertTriangle, X } from "lucide-react";
@@ -118,11 +119,8 @@ const AccountsDashboardTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
   }, [ledgerBalances]);
 
   const fmt = (n: number) => `₹${Math.abs(n).toLocaleString("en-IN", { minimumFractionDigits: 0 })}`;
-  const fmtShort = (n: number) => {
-    if (n >= 100000) return `₹${(n / 100000).toFixed(1)}L`;
-    if (n >= 1000) return `₹${(n / 1000).toFixed(1)}K`;
-    return `₹${n.toFixed(0)}`;
-  };
+  // Axis ticks only — every displayed amount uses the exact `fmt` above.
+  const fmtShort = formatINRCompact;
 
   const kpis = [
     { label: "Revenue This Month", value: fmt(totalRevenue), icon: ArrowUpRight, color: "text-emerald-600", bg: "bg-emerald-50 dark:bg-emerald-950/20" },

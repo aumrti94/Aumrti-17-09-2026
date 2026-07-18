@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
 import { ClipboardList, Trash2, BedDouble, CalendarDays, BarChart3, Plus, Clock } from "lucide-react";
 import HousekeepingTasksTab from "@/components/housekeeping/TasksTab";
@@ -60,12 +61,16 @@ const HousekeepingPage: React.FC = () => {
       <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-card" style={{ height: 52 }}>
         <h1 className="text-base font-bold text-foreground">🧹 Housekeeping & Facility</h1>
         <div className="flex gap-2">
-          <Button size="sm" className="h-8 text-xs" onClick={() => setShowNewTask(true)}>
-            <Plus className="h-3.5 w-3.5 mr-1" /> New Task
-          </Button>
-          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setShowBMW(true)}>
-            <ClipboardList className="h-3.5 w-3.5 mr-1" /> BMW Entry
-          </Button>
+          <GatedAction module="housekeeping" action="new_task">
+            <Button size="sm" className="h-8 text-xs" onClick={() => setShowNewTask(true)}>
+              <Plus className="h-3.5 w-3.5 mr-1" /> New Task
+            </Button>
+          </GatedAction>
+          <GatedAction module="housekeeping" action="bmw_entry">
+            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setShowBMW(true)}>
+              <ClipboardList className="h-3.5 w-3.5 mr-1" /> BMW Entry
+            </Button>
+          </GatedAction>
         </div>
       </div>
 
@@ -82,11 +87,11 @@ const HousekeepingPage: React.FC = () => {
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab} className="flex-1 flex flex-col min-h-0">
         <TabsList className="mx-4 mb-0 w-fit" style={{ height: 44 }}>
-          <TabsTrigger value="tasks" className="text-xs gap-1"><ClipboardList className="h-3.5 w-3.5" /> Tasks</TabsTrigger>
-          <TabsTrigger value="bmw" className="text-xs gap-1"><Trash2 className="h-3.5 w-3.5" /> BMW Log</TabsTrigger>
-          <TabsTrigger value="linen" className="text-xs gap-1"><BedDouble className="h-3.5 w-3.5" /> Linen</TabsTrigger>
-          <TabsTrigger value="schedules" className="text-xs gap-1"><CalendarDays className="h-3.5 w-3.5" /> Schedules</TabsTrigger>
-          <TabsTrigger value="reports" className="text-xs gap-1"><BarChart3 className="h-3.5 w-3.5" /> Reports</TabsTrigger>
+          <GatedTabsTrigger module="housekeeping" value="tasks" className="text-xs gap-1"><ClipboardList className="h-3.5 w-3.5" /> Tasks</GatedTabsTrigger>
+          <GatedTabsTrigger module="housekeeping" value="bmw" className="text-xs gap-1"><Trash2 className="h-3.5 w-3.5" /> BMW Log</GatedTabsTrigger>
+          <GatedTabsTrigger module="housekeeping" value="linen" className="text-xs gap-1"><BedDouble className="h-3.5 w-3.5" /> Linen</GatedTabsTrigger>
+          <GatedTabsTrigger module="housekeeping" value="schedules" className="text-xs gap-1"><CalendarDays className="h-3.5 w-3.5" /> Schedules</GatedTabsTrigger>
+          <GatedTabsTrigger module="housekeeping" value="reports" className="text-xs gap-1"><BarChart3 className="h-3.5 w-3.5" /> Reports</GatedTabsTrigger>
         </TabsList>
 
         <TabsContent value="tasks" className="flex-1 min-h-0 overflow-hidden m-0 px-4 py-2">

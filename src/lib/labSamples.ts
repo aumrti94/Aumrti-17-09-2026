@@ -4,6 +4,7 @@
 // Collection workstation, and (Phase 9) the ward collection worklist all drive the
 // same lab_samples / lab_order_items / lab_orders transitions through one code path.
 import { supabase } from "@/integrations/supabase/client";
+import { checkLabOrderClearance } from "@/lib/ancillaryGateChecks";
 
 export const SAMPLE_REJECTION_REASONS = [
   "Hemolyzed",
@@ -32,12 +33,42 @@ export async function resolveOrderBarcode(orderId: string, uhid?: string | null)
   );
 }
 
-/** Mark all of an order's pending samples collected (+ items + order). Returns the label barcode. */
+/** Thrown when a pre-paid hospital's lab order has not been paid for yet. */
+export class LabPaymentPendingError extends Error {
+  readonly unpaidAmount: number;
+  readonly overrideAvailable: boolean;
+  constructor(unpaidAmount: number, overrideAvailable: boolean) {
+    super("Payment is pending for this lab order — the sample cannot be collected yet.");
+    this.name = "LabPaymentPendingError";
+    this.unpaidAmount = unpaidAmount;
+    this.overrideAvailable = overrideAvailable;
+  }
+}
+
+/**
+ * Mark all of an order's pending samples collected (+ items + order). Returns the label barcode.
+ *
+ * Sample collection is THE block point for lab: it is the first irreversible step, and it is
+ * the chokepoint both callers (the Collection workstation and the result workspace) already
+ * share — so the gate lives here rather than in either UI. Result ENTRY is deliberately never
+ * gated: by then the sample is drawn and the work is done, and blocking would strand it.
+ *
+ * Pass `overridden: true` only after recordAncillaryOverride has written the audit row.
+ */
 export async function collectOrderSamples(opts: {
   orderId: string;
   userId: string;
   uhid?: string | null;
+  role?: string | null;
+  overridden?: boolean;
 }): Promise<string> {
+  if (!opts.overridden) {
+    const clearance = await checkLabOrderClearance(opts.orderId, opts.role);
+    if (!clearance.cleared) {
+      throw new LabPaymentPendingError(clearance.unpaidAmount, clearance.overrideAvailable);
+    }
+  }
+
   const now = new Date().toISOString();
   const barcode = await resolveOrderBarcode(opts.orderId, opts.uhid);
 

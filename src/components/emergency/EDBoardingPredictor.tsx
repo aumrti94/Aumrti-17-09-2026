@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { BedDouble, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
@@ -44,6 +45,7 @@ const DISP_LABEL: Record<string, string> = {
 };
 
 const EDBoardingPredictor: React.FC<Props> = ({ visits, hospitalId }) => {
+  const __aiOn = useAIFeature("ed_boarding_predictor");
   const [loading, setLoading] = useState(false);
   const [predictions, setPredictions] = useState<BoardingRisk[] | null>(null);
   const [rawText, setRawText] = useState<string | null>(null);
@@ -141,6 +143,7 @@ Return ONLY valid JSON array:
 
   const highCount = predictions?.filter(p => p.boarding_risk === "high").length ?? 0;
 
+  if (!__aiOn) return null;
   return (
     <div className="flex-shrink-0 border-b border-white/10 bg-slate-800 px-3 py-2">
       <div className="flex items-center justify-between mb-2">

@@ -158,6 +158,11 @@ export const ROUTE_TO_MODULE_KEY: Record<string, string> = {
 
 export const CANONICAL_MODULE_KEYS: string[] = [
   ...new Set(Object.values(ROUTE_TO_MODULE_KEY)),
+  // Pseudo-module: the "AI Features" master switch. Not a route (never gated by
+  // ModuleGate, never rendered in the normal module grid — it has no MODULE_CATEGORY),
+  // but tracked here so it resolves through plan→hospital like any module and so
+  // isModuleKeyAllowed treats it as a real gate. Default ON (fail-open).
+  "ai_suite",
 ];
 
 // These are always accessible regardless of plan (core UX)
@@ -246,6 +251,10 @@ async function fetchSubscriptionConfig(hospitalId: string): Promise<Omit<Subscri
       // No plan_features rows → treat as fully open (legacy hospital)
       enabledModules.push(key);
     } else if (planMap.get(key) === true) {
+      enabledModules.push(key);
+    } else if (key === "ai_suite" && planMap.get(key) !== false) {
+      // AI master defaults ON: enabled unless the plan explicitly disables it
+      // (a plan predating this feature has no ai_suite row → AI stays on).
       enabledModules.push(key);
     }
   }

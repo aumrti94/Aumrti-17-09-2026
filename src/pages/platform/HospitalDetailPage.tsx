@@ -2,7 +2,9 @@ import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { ChevronLeft, Save, Loader2, Trash2, AlertTriangle, X, Activity, Eye } from "lucide-react";
+import { ChevronLeft, Save, Loader2, Trash2, AlertTriangle, X, Activity, Eye, SlidersHorizontal, Sparkles } from "lucide-react";
+import { MODULE_TABS, MODULE_ACTIONS } from "@/lib/tabPermissions";
+import { ModuleAccessDrawer } from "@/components/access/ModuleAccessDrawer";
 import { toast } from "sonner";
 import { getErrorMessage } from "@/lib/errorMessage";
 import { FormError } from "@/components/ui/FormError";
@@ -116,7 +118,7 @@ const STATUS_PILL = PLATFORM_STATUS_PILL;
 // ── data fetchers ─────────────────────────────────────────────
 
 async function fetchHospitalDetail(id: string) {
-  const [hRes, sRes, overRes, pricRes, plansRes] = await Promise.all([
+  const [hRes, sRes, overRes, pricRes, plansRes, entRes] = await Promise.all([
     (supabase as any).from("hospitals").select("*").eq("id", id).maybeSingle(),
     (supabase as any).from("hospital_subscriptions")
       .select("*, subscription_plans(id,name,slug,price_monthly,price_yearly)")
@@ -127,6 +129,8 @@ async function fetchHospitalDetail(id: string) {
       .select("*").eq("hospital_id", id).maybeSingle(),
     (supabase as any).from("subscription_plans")
       .select("id, name, slug, price_monthly").eq("is_active", true).order("sort_order"),
+    (supabase as any).from("hospital_module_entitlements")
+      .select("module_key, tabs, actions").eq("hospital_id", id),
   ]);
   return {
     hospital: hRes.data,
@@ -134,13 +138,18 @@ async function fetchHospitalDetail(id: string) {
     overrides: (overRes.data || []) as Array<{ module_key: string; is_enabled: boolean; reason: string | null }>,
     pricing: pricRes.data,
     plans: (plansRes.data || []) as Array<{ id: string; name: string; slug: string; price_monthly: number }>,
+    entitlements: (entRes.data || []) as Array<{ module_key: string; tabs: Record<string, boolean>; actions: Record<string, boolean> }>,
   };
 }
 
 async function fetchPlanFeatures(planId: string) {
   const { data } = await (supabase as any).from("plan_features")
-    .select("module_key, is_enabled").eq("plan_id", planId);
-  return new Map<string, boolean>((data || []).map((f: any) => [f.module_key, f.is_enabled]));
+    .select("module_key, is_enabled, tabs, actions").eq("plan_id", planId);
+  const enabled = new Map<string, boolean>((data || []).map((f: any) => [f.module_key, f.is_enabled]));
+  const details = new Map<string, { tabs: Record<string, boolean>; actions: Record<string, boolean> }>(
+    (data || []).map((f: any) => [f.module_key, { tabs: f.tabs || {}, actions: f.actions || {} }])
+  );
+  return { enabled, details };
 }
 
 // ── component ─────────────────────────────────────────────────
@@ -241,6 +250,56 @@ export default function HospitalDetailPage() {
         .delete().eq("hospital_id", id).eq("module_key", key);
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["platform-hospital", id] }); },
+  });
+
+  // ── Per-module tab/action entitlement (Customise drawer) ──
+  // The hospital layer stores overrides RELATIVE to the plan default: a tab/action
+  // key is persisted only when the hospital's choice diverges from the plan default
+  // (explicit `true` re-enables a plan-withheld tab; explicit `false` withholds one
+  // the plan allows). A module row with no divergent keys is deleted → pure inherit.
+  const [customiseKey, setCustomiseKey] = useState<string | null>(null);
+
+  const saveEntitlement = useMutation({
+    mutationFn: async ({ moduleKey, tabs, actions }: { moduleKey: string; tabs: Record<string, boolean>; actions: Record<string, boolean> }) => {
+      const planDetail = planFeatureMap?.details.get(moduleKey);
+      const diffVsPlan = (draft: Record<string, boolean>, planKind: Record<string, boolean> | undefined) => {
+        const out: Record<string, boolean> = {};
+        for (const [k, v] of Object.entries(draft)) {
+          const planOn = planKind?.[k] !== false; // plan stores only false; absent = on
+          if ((v !== false) !== planOn) out[k] = v; // keep only keys that diverge from the plan
+        }
+        return out;
+      };
+      const tabsOverride = diffVsPlan(tabs, planDetail?.tabs);
+      const actionsOverride = diffVsPlan(actions, planDetail?.actions);
+
+      if (Object.keys(tabsOverride).length === 0 && Object.keys(actionsOverride).length === 0) {
+        // Matches the plan exactly → drop the row so the hospital purely inherits.
+        await (supabase as any).from("hospital_module_entitlements")
+          .delete().eq("hospital_id", id).eq("module_key", moduleKey);
+        return;
+      }
+      const authUser = (await supabase.auth.getUser()).data.user;
+      await (supabase as any).from("hospital_module_entitlements").upsert(
+        {
+          hospital_id: id,
+          module_key: moduleKey,
+          tabs: tabsOverride,
+          actions: actionsOverride,
+          updated_by: authUser?.id ?? null,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "hospital_id,module_key" }
+      );
+    },
+    onSuccess: (_r, vars) => {
+      logAdminAction("hospital_module_entitlement_updated", { hospitalId: id, hospitalName: data?.hospital?.name, details: { module: vars.moduleKey } });
+      toast.success("Module access customised");
+      setCustomiseKey(null);
+      qc.invalidateQueries({ queryKey: ["platform-hospital", id] });
+      qc.invalidateQueries({ queryKey: ["subscription-config", id] });
+    },
+    onError: (e: any) => toast.error(getErrorMessage(e)),
   });
 
   // ── Pricing override ──
@@ -361,11 +420,33 @@ export default function HospitalDetailPage() {
     );
   }
 
-  const { hospital, subscription, overrides, pricing, plans } = data!;
+  const { hospital, subscription, overrides, pricing, plans, entitlements } = data!;
   if (!hospital) return <div className="p-6 text-muted-foreground text-sm">Hospital not found.</div>;
 
   const overrideMap = new Map(overrides.map((o) => [o.module_key, o.is_enabled]));
+  const entitlementMap = new Map(entitlements.map((e) => [e.module_key, e]));
   const categories = [...new Set(CANONICAL_MODULE_KEYS.map((k) => MODULE_CATEGORY[k]).filter(Boolean))];
+
+  // A module can be fine-tuned only if we have a tab/action catalog for it.
+  const isCustomisable = (key: string) =>
+    (MODULE_TABS[key]?.length ?? 0) > 0 || (MODULE_ACTIONS[key]?.length ?? 0) > 0;
+  // Effective on/off for a tab/action = hospitalExplicit ?? planDefault ?? on.
+  const planDetails = planFeatureMap?.details;
+  const effectiveOn = (moduleKey: string, kind: "tabs" | "actions", key: string): boolean => {
+    const hosp = entitlementMap.get(moduleKey)?.[kind]?.[key];
+    if (hosp !== undefined) return hosp;
+    const plan = planDetails?.get(moduleKey)?.[kind]?.[key];
+    if (plan !== undefined) return plan;
+    return true;
+  };
+  // How many tabs+actions are effectively withheld (plan ∪ hospital) — drives the badge.
+  const restrictionCount = (key: string) => {
+    let n = 0;
+    for (const t of MODULE_TABS[key] ?? []) if (!effectiveOn(key, "tabs", t.key)) n++;
+    for (const a of MODULE_ACTIONS[key] ?? []) if (!effectiveOn(key, "actions", a.key)) n++;
+    return n;
+  };
+  const openCustomise = (moduleKey: string) => setCustomiseKey(moduleKey);
 
   return (
     <div className="flex flex-col h-full">
@@ -646,6 +727,58 @@ export default function HospitalDetailPage() {
               Blue = enabled by plan · Amber = manually overridden · Grey = disabled.
               Click to override. Right-click toggle resets to plan default.
             </p>
+
+            {/* ── AI Features master switch (pseudo-module ai_suite) ── */}
+            {(() => {
+              const aiPlanDefault = planFeatureMap?.enabled.get("ai_suite") ?? true;
+              const aiHasOverride = overrideMap.has("ai_suite");
+              const aiEffective = aiHasOverride ? overrideMap.get("ai_suite")! : aiPlanDefault;
+              const aiWithheld = restrictionCount("ai_suite");
+              return (
+                <div className={`flex items-center justify-between px-4 py-3 rounded-xl border ${aiEffective ? aiHasOverride ? "bg-amber-50 border-amber-400/60" : "bg-violet-50 border-violet-300/60" : "bg-muted/40 border-border/60"}`}>
+                  <div className="flex items-center gap-2.5">
+                    <Sparkles size={16} className={aiEffective ? "text-violet-600" : "text-muted-foreground"} />
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">AI Features {aiEffective ? "" : "· disabled"}</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        Master switch for all AI across the app.{" "}
+                        {aiEffective
+                          ? aiWithheld > 0
+                            ? `${aiWithheld} AI feature${aiWithheld > 1 ? "s" : ""} individually off.`
+                            : "Use the sliders to turn off individual AI features."
+                          : "All AI is off for this hospital."}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {aiEffective && (
+                      <button
+                        type="button"
+                        onClick={() => openCustomise("ai_suite")}
+                        title="Customise individual AI features"
+                        className={`relative flex items-center justify-center h-6 w-6 rounded-md border transition-colors ${aiWithheld > 0 ? "bg-amber-100 border-amber-400/70 text-amber-700" : "bg-background border-border/70 text-muted-foreground hover:text-foreground"}`}
+                      >
+                        <SlidersHorizontal size={12} />
+                        {aiWithheld > 0 && (
+                          <span className="absolute -top-1.5 -right-1.5 min-w-[13px] h-[13px] px-0.5 rounded-full bg-amber-500 text-white text-[8px] font-bold leading-[13px] text-center">{aiWithheld}</span>
+                        )}
+                      </button>
+                    )}
+                    <div
+                      onClick={() => toggleModule.mutate({ key: "ai_suite", enabled: !aiEffective })}
+                      onContextMenu={(e) => { e.preventDefault(); if (aiHasOverride) removeOverride.mutate("ai_suite"); }}
+                      title={aiHasOverride ? "Right-click to reset to plan default" : "Click to override"}
+                      className="cursor-pointer"
+                    >
+                      <div className={`w-9 h-[18px] rounded-full relative transition-colors ${aiEffective ? aiHasOverride ? "bg-amber-500" : "bg-violet-500" : "bg-muted"}`}>
+                        <div className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white shadow transition-transform ${aiEffective ? "translate-x-4" : "translate-x-0.5"}`} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             {categories.map((cat) => {
               const keys = CANONICAL_MODULE_KEYS.filter((k) => MODULE_CATEGORY[k] === cat);
               if (!keys.length) return null;
@@ -654,7 +787,7 @@ export default function HospitalDetailPage() {
                   <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider mb-3">{cat}</p>
                   <div className="grid grid-cols-3 gap-2">
                     {keys.map((key) => {
-                      const planDefault = planFeatureMap?.get(key) ?? true;
+                      const planDefault = planFeatureMap?.enabled.get(key) ?? true;
                       const hasOverride = overrideMap.has(key);
                       const effective = hasOverride ? overrideMap.get(key)! : planDefault;
                       return (
@@ -672,8 +805,29 @@ export default function HospitalDetailPage() {
                           title={hasOverride ? "Right-click to reset to plan default" : "Click to override"}
                         >
                           <span className="truncate">{MODULE_NAME[key] || key}</span>
-                          <div className={`w-7 h-3.5 rounded-full relative shrink-0 ml-2 transition-colors ${effective ? hasOverride ? "bg-amber-500" : "bg-blue-500" : "bg-muted"}`}>
-                            <div className={`absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white shadow transition-transform ${effective ? "translate-x-3.5" : "translate-x-0.5"}`} />
+                          <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                            {effective && isCustomisable(key) && (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); openCustomise(key); }}
+                                title="Customise tabs & buttons for this hospital"
+                                className={`relative flex items-center justify-center h-5 w-5 rounded-md border transition-colors ${
+                                  restrictionCount(key) > 0
+                                    ? "bg-amber-100 border-amber-400/70 text-amber-700"
+                                    : "bg-background/60 border-border/70 text-muted-foreground hover:text-foreground hover:border-foreground/40"
+                                }`}
+                              >
+                                <SlidersHorizontal size={11} />
+                                {restrictionCount(key) > 0 && (
+                                  <span className="absolute -top-1.5 -right-1.5 min-w-[13px] h-[13px] px-0.5 rounded-full bg-amber-500 text-white text-[8px] font-bold leading-[13px] text-center">
+                                    {restrictionCount(key)}
+                                  </span>
+                                )}
+                              </button>
+                            )}
+                            <div className={`w-7 h-3.5 rounded-full relative transition-colors ${effective ? hasOverride ? "bg-amber-500" : "bg-blue-500" : "bg-muted"}`}>
+                              <div className={`absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white shadow transition-transform ${effective ? "translate-x-3.5" : "translate-x-0.5"}`} />
+                            </div>
                           </div>
                         </div>
                       );
@@ -974,6 +1128,20 @@ export default function HospitalDetailPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Customise tabs/buttons for this hospital (per-module entitlement) ── */}
+      {customiseKey && (
+        <ModuleAccessDrawer
+          moduleKey={customiseKey}
+          moduleLabel={customiseKey === "ai_suite" ? "AI Features" : (MODULE_NAME[customiseKey] || customiseKey)}
+          subtitle="Toggle off what this hospital didn’t subscribe to. Overrides the plan default; applies to every user & role."
+          initialTabs={Object.fromEntries((MODULE_TABS[customiseKey] ?? []).map((t) => [t.key, effectiveOn(customiseKey, "tabs", t.key)]))}
+          initialActions={Object.fromEntries((MODULE_ACTIONS[customiseKey] ?? []).map((a) => [a.key, effectiveOn(customiseKey, "actions", a.key)]))}
+          saving={saveEntitlement.isPending}
+          onClose={() => setCustomiseKey(null)}
+          onSave={(tabs, actions) => saveEntitlement.mutate({ moduleKey: customiseKey, tabs, actions })}
+        />
       )}
 
     </div>

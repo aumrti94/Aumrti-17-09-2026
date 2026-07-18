@@ -115,11 +115,15 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
         .select("id, transaction_type, amount, payment_mode, reference_no, description, created_at, users(full_name)")
         .eq("admission_id", admissionId)
         .order("created_at", { ascending: false }),
+      // Legacy receipts that live only in advance_receipts (pre dual-write fix).
+      // MUST be scoped to THIS admission: scoping by patient pulled in every advance
+      // the patient ever paid — including ones already recorded on a previous stay —
+      // which double-counted them and invented a bogus "refund due" on this admission.
       (supabase as any)
         .from("advance_receipts")
         .select("id, amount, payment_mode, receipt_number, notes, created_at")
         .eq("hospital_id", hospitalId)
-        .eq("patient_id", patientId)
+        .eq("admission_id", admissionId)
         .order("created_at", { ascending: false }),
       (supabase as any)
         .from("ipd_advances")

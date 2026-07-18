@@ -1,4 +1,5 @@
 import React, { useState, useCallback } from "react";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
 import { Button } from "@/components/ui/button";
@@ -235,6 +236,9 @@ Return ONLY valid JSON:
     pct >= 85 ? <TrendingUp className="h-3 w-3" /> :
     pct >= 70 ? <Minus className="h-3 w-3" /> :
     <TrendingDown className="h-3 w-3" />;
+
+  const aiFeatureOn = useAIFeature("bed_demand_forecaster");
+  if (!aiFeatureOn) return null; // AI master or bed-demand feature disabled
 
   return (
     <div className="rounded-xl border border-border bg-card overflow-hidden">

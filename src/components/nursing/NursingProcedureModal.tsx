@@ -87,7 +87,7 @@ export default function NursingProcedureModal({ open, onClose, hospitalId, defau
       let activeAdmissionId = admissionId || null;
       if (!activeAdmissionId) {
         const { data: adm } = await supabase.from("admissions").select("id")
-          .eq("hospital_id", hospitalId).eq("patient_id", patientId).eq("status", "admitted").limit(1).maybeSingle();
+          .eq("hospital_id", hospitalId).eq("patient_id", patientId).eq("status", "active").limit(1).maybeSingle();
         if (adm) activeAdmissionId = adm.id;
       }
 

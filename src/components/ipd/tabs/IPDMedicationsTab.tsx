@@ -245,6 +245,10 @@ const IPDMedicationsTab: React.FC<Props> = ({
         .select("id")
         .eq("patient_id", patientId)
         .neq("id", admissionId)
+        // Day care bookings sort first (NULL admitted_at on DESC) and carry no medication
+        // history, so they would silently displace real prior admissions from these 3 slots.
+        // (20261008000138)
+        .neq("status", "scheduled")
         .order("admitted_at", { ascending: false })
         .limit(3);
 

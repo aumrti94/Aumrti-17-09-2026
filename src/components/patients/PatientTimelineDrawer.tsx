@@ -106,7 +106,9 @@ const PatientTimelineDrawer: React.FC<Props> = ({ patient, hospitalId, onClose }
           .eq("patient_id", pid).order("created_at", { ascending: false }).limit(200),
         supabase.from("admissions")
           .select("id, admitted_at, discharged_at, admission_number, admitting_diagnosis, status, ward:wards(name), doctor:users!admissions_admitting_doctor_id_fkey(full_name)")
-          .eq("patient_id", pid).order("admitted_at", { ascending: false }).limit(100),
+          // A day care booking has admitted_at NULL until arrival; it is not a timeline event
+          // yet, and NULLs sort first on DESC. (20261008000138)
+          .eq("patient_id", pid).neq("status", "scheduled").order("admitted_at", { ascending: false }).limit(100),
         supabase.from("lab_orders")
           .select("id, order_date, order_time, created_at, status, clinical_notes, encounter_id, items:lab_order_items(id, result_value, result_unit, result_flag, status, test:lab_test_master(test_name))")
           .eq("patient_id", pid).order("created_at", { ascending: false }).limit(100),

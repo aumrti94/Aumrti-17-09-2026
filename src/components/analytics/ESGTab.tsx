@@ -11,6 +11,7 @@ import {
 } from "recharts";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { useHospitalId as useHospId } from "@/hooks/useHospitalId";
 import { Leaf, Plus, Brain, Loader2 } from "lucide-react";
 
@@ -24,6 +25,7 @@ interface Metric {
 }
 
 const ESGTab: React.FC = () => {
+  const __aiOn = useAIFeature("esg_recommendations");
   const { hospitalId } = useHospitalId();
   const { toast } = useToast();
   const [metrics, setMetrics] = useState<Metric[]>([]);
@@ -296,7 +298,7 @@ Respond with exactly 5 recommendations, one per line, starting with an action ve
               <span className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">AI Carbon Reduction Recommendations</span>
               <span className="text-[10px] border border-emerald-200 bg-emerald-100 text-emerald-700 rounded px-1.5 py-px font-medium">E7 — NABH Excellence</span>
             </div>
-            <Button size="sm" variant="outline" onClick={getAIRecommendations} disabled={aiLoading}
+            <Button hidden={!__aiOn} size="sm" variant="outline" onClick={getAIRecommendations} disabled={aiLoading}
               className="h-7 text-xs gap-1.5 border-emerald-300 text-emerald-700 hover:bg-emerald-50">
               {aiLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Brain className="h-3 w-3" />}
               {aiRecs.length > 0 ? "Refresh Recommendations" : "Get AI Recommendations"}

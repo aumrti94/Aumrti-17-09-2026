@@ -4,7 +4,8 @@
  * Every module that delivers a service should call autoChargeService().
  * The function is:
  *   - IDEMPOTENT: guarded by a billing_status check on the source record
- *   - IPD-aware: appends to the active IPD discharge bill when admission_id present
+ *   - Admission-aware: appends to the admission's bill (IPD or day care) when admission_id
+ *     is present — see lib/admissionBill.ts for how the bill_type is resolved
  *   - OPD-aware: finds or creates an OPD encounter bill
  *   - Self-pay-aware: creates a standalone bill for walk-in services
  *   - GST-aware: looks up service_master for GST % before billing
@@ -27,12 +28,13 @@
 
 import { supabase } from "@/integrations/supabase/client";
 import { generateBillNumber } from "@/hooks/useBillNumber";
+import { findOrCreateAdmissionBill } from "@/lib/admissionBill";
 import { autoPostJournalEntry } from "@/lib/accounting";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
 import { roundCurrency, calcGST } from "@/lib/currency";
 import { getModuleDefaultRate, getRate, SERVICE_RATE_CODES } from "@/lib/serviceRates";
 
-// ── Module constants (match service_charges.service_module CHECK constraint) ──
+// ── Module constants (written to service_charges.service_module, which is free text) ──
 export const MODULE_DIALYSIS      = "dialysis";
 export const MODULE_PHYSIO        = "physiotherapy";
 export const MODULE_HOME_CARE     = "home_care";
@@ -51,6 +53,7 @@ export const MODULE_DENTAL        = "dental";
 export const MODULE_IVF           = "ivf";
 export const MODULE_OTHER         = "other";
 export const MODULE_OT            = "ot";
+export const MODULE_DAY_CARE      = "day_care";
 
 export interface ServiceBillingResult {
   billId:   string;
@@ -99,25 +102,6 @@ async function lookupServiceRate(
     fee:        Number(data?.fee) || 0,
     gstPercent: data?.gst_applicable ? Number(data.gst_percent) || 0 : 0,
   };
-}
-
-/**
- * Find the active IPD bill for an admission (the bill that auto-pull feeds into).
- */
-async function findIpdBill(
-  hospitalId: string, admissionId: string,
-): Promise<string | null> {
-  const { data } = await (supabase as any)
-    .from("bills")
-    .select("id")
-    .eq("hospital_id", hospitalId)
-    .eq("admission_id", admissionId)
-    .eq("bill_type", "ipd")
-    .in("payment_status", ["unpaid", "partial"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  return data?.id ?? null;
 }
 
 /**
@@ -291,27 +275,15 @@ export async function autoChargeService(
   let isNewBill = false;
 
   if (admissionId) {
-    // IPD: append to active IPD bill
-    const ipdBillId = await findIpdBill(hospitalId, admissionId);
-    if (ipdBillId) {
-      billId = ipdBillId;
-    } else {
-      // No IPD bill yet — create one (edge case: service before bill creation)
-      const bn = await generateBillNumber(hospitalId, "IPD");
-      const { data: nb } = await (supabase as any)
-        .from("bills")
-        .insert({
-          hospital_id:    hospitalId, patient_id: patientId,
-          admission_id:   admissionId,
-          bill_number:    bn, bill_type: "ipd", bill_date: serviceDate,
-          bill_status:    "draft", payment_status: "unpaid",
-          subtotal: 0, gst_amount: 0, total_amount: 0,
-          patient_payable: 0, balance_due: 0,
-        })
-        .select("id").maybeSingle();
-      billId    = nb!.id;
-      isNewBill = true;
-    }
+    // Append to the admission's bill, creating it if the service beat bill creation.
+    // findOrCreateAdmissionBill resolves bill_type from the admission itself, so a day care
+    // patient's charges land on their 'daycare' bill instead of silently spawning a second
+    // 'ipd' bill. Behaviour for IPD admissions is unchanged.
+    const resolved = await findOrCreateAdmissionBill(
+      hospitalId, patientId, admissionId, serviceDate,
+    );
+    billId    = resolved.id;
+    isNewBill = resolved.isNew;
   } else if (encounterId) {
     if (serviceModule === MODULE_ED) {
       // ED: encounterId carries the ed_visit id. Consolidate onto one 'emergency' bill

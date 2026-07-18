@@ -81,6 +81,10 @@ const PortalTimeline: React.FC<{ session: PortalSession }> = ({ session }) => {
         .select("id, admitted_at, discharged_at, status, ward_id, admitting_doctor_id")
         .eq("patient_id", session.patientId)
         .eq("hospital_id", session.hospitalId)
+        // A day care booking has admitted_at NULL until the patient reports; Postgres sorts
+        // NULLs first on DESC, so it would top the patient's timeline with a blank date for
+        // a visit that hasn't happened yet. (20261008000138)
+        .neq("status", "scheduled")
         .order("admitted_at", { ascending: false })
         .limit(50);
 

@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { useToast } from "@/hooks/use-toast";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { TrendingUp, AlertTriangle, CheckCircle2, Loader2, RefreshCw, ShieldAlert } from "lucide-react";
@@ -30,6 +31,7 @@ const RISK_CONFIG = {
 };
 
 const ReadmissionRiskPanel: React.FC<Props> = ({ admissionId, patientId, hospitalId }) => {
+  const __aiOn = useAIFeature("readmission_predictor");
   const { toast } = useToast();
   const [risk, setRisk] = useState<RiskData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -157,6 +159,7 @@ Be specific to the data. "low" = score <35, "medium" = 35-65, "high" = >65.`;
   const cfg = risk ? RISK_CONFIG[risk.level] : null;
   const Icon = cfg?.icon || TrendingUp;
 
+  if (!__aiOn) return null;
   return (
     <div className="border border-border rounded-xl bg-card p-4 space-y-3">
       <div className="flex items-center justify-between gap-2 flex-wrap">

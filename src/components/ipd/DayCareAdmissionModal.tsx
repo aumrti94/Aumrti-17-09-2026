@@ -6,13 +6,27 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Stethoscope, Search, User, ClipboardList } from "lucide-react";
+import { formatINRExact } from "@/lib/currency";
+import { generateAdmissionNumber } from "@/lib/admissionNumber";
+import { Stethoscope, Search, User, ClipboardList, CalendarClock } from "lucide-react";
+
+/** What the caller needs to open Estimate & Deposit straight after a booking. */
+export interface DayCareBooking {
+  admissionId:   string;
+  patientId:     string;
+  patientName:   string;
+  uhid:          string;
+  procedureName: string;
+  standardRate:  number;
+  /** IST calendar date (YYYY-MM-DD) the procedure is booked for — lets the board jump to it. */
+  scheduledDate: string;
+}
 
 interface Props {
   open: boolean;
   onClose: () => void;
   hospitalId: string;
-  onAdmitted: () => void;
+  onBooked: (booking: DayCareBooking) => void;
 }
 
 interface PatientResult {
@@ -42,7 +56,7 @@ interface Doctor {
 
 const insuranceTypes = ["self_pay", "insurance", "pmjay", "cghs", "echs"] as const;
 
-const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onAdmitted }) => {
+const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onBooked }) => {
   const [step, setStep] = useState(1);
   const [search, setSearch] = useState("");
   const [results, setResults] = useState<PatientResult[]>([]);
@@ -112,9 +126,21 @@ const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onA
     setSearching(false);
   };
 
-  const handleAdmit = async () => {
-    if (!selectedPatient || !selectedProcedure || !doctorId) {
-      toast({ title: "Required fields missing", description: "Select patient, procedure, and doctor.", variant: "destructive" });
+  /**
+   * Book the procedure — do NOT admit.
+   *
+   * The patient is admitted later, from the Scheduled tab, once they actually report AND
+   * are financially cleared. Booking therefore writes status='scheduled' with admitted_at
+   * left NULL; admitted_at is reserved for real arrival so the same-day discharge rule
+   * always measures against when the patient was actually here. (20261008000138)
+   */
+  const handleBook = async () => {
+    if (!selectedPatient || !selectedProcedure || !doctorId || !scheduledTime) {
+      toast({
+        title: "Required fields missing",
+        description: "Select patient, procedure, doctor, and the scheduled date & time.",
+        variant: "destructive",
+      });
       return;
     }
     setSubmitting(true);
@@ -122,12 +148,18 @@ const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onA
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setSubmitting(false); return; }
 
-    const admNum = `DC-${Date.now().toString().slice(-8)}`;
-    const now = new Date().toISOString();
-    const sameDay = new Date();
-    sameDay.setHours(23, 59, 0, 0);
+    // Real per-hospital daily sequence (DC-20260717-0001), not a timestamp slice.
+    let admNum: string;
+    try {
+      admNum = await generateAdmissionNumber(hospitalId, "daycare");
+    } catch (e: any) {
+      toast({ title: "Booking failed", description: e?.message || "Could not generate an admission number", variant: "destructive" });
+      setSubmitting(false);
+      return;
+    }
+    const scheduledAt = new Date(scheduledTime);
 
-    const { error } = await supabase.from("admissions").insert({
+    const { data: inserted, error } = await supabase.from("admissions").insert({
       hospital_id: hospitalId,
       patient_id: selectedPatient.id,
       admitting_doctor_id: doctorId,
@@ -136,21 +168,38 @@ const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onA
       admitting_diagnosis: selectedProcedure.procedure_name,
       insurance_type: insuranceType,
       insurance_id: insuranceId || null,
-      admitted_at: scheduledTime ? new Date(scheduledTime).toISOString() : now,
-      expected_discharge_date: sameDay.toISOString().slice(0, 10),
-      status: "active",
+      scheduled_at: scheduledAt.toISOString(),
+      admitted_at: null,
+      // Day care discharges on the day of the procedure, not the day it was booked.
+      expected_discharge_date: scheduledAt.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }),
+      status: "scheduled",
       day_care_procedure_id: selectedProcedure.id,
-      notes: clinicalNotes || null,
-    } as any);
+      // admissions has no `notes` column — writing one silently failed the whole
+      // insert. nursing_handover_notes is the real column for admission-time
+      // clinical notes (AdmitPatientModal writes it, and ClaimBundleGenerator
+      // already renders it under the heading "Clinical Notes").
+      nursing_handover_notes: clinicalNotes.trim() || null,
+    } as any).select("id").maybeSingle();
 
-    if (error) {
-      toast({ title: "Admission failed", description: error.message, variant: "destructive" });
+    if (error || !inserted) {
+      toast({ title: "Booking failed", description: error?.message || "Unknown error", variant: "destructive" });
       setSubmitting(false);
       return;
     }
 
-    toast({ title: `Day care admission created`, description: `${selectedPatient.full_name} — ${selectedProcedure.procedure_name}` });
-    onAdmitted();
+    toast({
+      title: "Procedure booked",
+      description: `${selectedPatient.full_name} — ${selectedProcedure.procedure_name}. Give the estimate and collect the deposit before admitting.`,
+    });
+    onBooked({
+      admissionId:   inserted.id,
+      patientId:     selectedPatient.id,
+      patientName:   selectedPatient.full_name,
+      uhid:          selectedPatient.uhid,
+      procedureName: selectedProcedure.procedure_name,
+      standardRate:  Number(selectedProcedure.standard_rate) || 0,
+      scheduledDate: scheduledAt.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }),
+    });
     onClose();
     setSubmitting(false);
   };
@@ -161,7 +210,7 @@ const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onA
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Stethoscope size={18} className="text-teal-600" />
-            Day Care Admission
+            Book Day Care Procedure
           </DialogTitle>
         </DialogHeader>
 
@@ -245,7 +294,7 @@ const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onA
                     <div className="font-medium">{proc.procedure_name}</div>
                     <div className="text-muted-foreground">
                       {proc.procedure_code && `${proc.procedure_code} · `}
-                      {proc.duration_minutes} min · ₹{proc.standard_rate.toLocaleString()}
+                      {proc.duration_minutes} min · {formatINRExact(Number(proc.standard_rate) || 0)}
                       {proc.pre_auth_required && " · Pre-auth required"}
                     </div>
                   </button>
@@ -266,7 +315,9 @@ const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onA
                 </select>
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium">Scheduled Time</label>
+                <label className="text-xs font-medium flex items-center gap-1">
+                  <CalendarClock size={12} />Scheduled Date &amp; Time *
+                </label>
                 <Input type="datetime-local" value={scheduledTime} onChange={e => setScheduledTime(e.target.value)} className="text-xs" />
               </div>
             </div>
@@ -302,19 +353,25 @@ const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onA
 
             {selectedProcedure?.pre_auth_required && insuranceType !== "self_pay" && (
               <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
-                This procedure requires insurance pre-authorisation. An intimation will be auto-created after admission.
+                This procedure requires insurance pre-authorisation. An intimation will be raised
+                automatically, due 2 hours before the scheduled time.
               </div>
             )}
+
+            <div className="text-xs text-muted-foreground bg-muted/50 border rounded p-2">
+              Booking does not admit the patient. Give the estimate and collect the deposit, then
+              admit from the Scheduled tab when they report.
+            </div>
 
             <div className="flex gap-2 justify-end">
               <Button variant="outline" size="sm" onClick={() => setStep(1)}>Back</Button>
               <Button
                 size="sm"
                 className="bg-teal-600 hover:bg-teal-700"
-                onClick={handleAdmit}
-                disabled={submitting || !selectedProcedure || !doctorId}
+                onClick={handleBook}
+                disabled={submitting || !selectedProcedure || !doctorId || !scheduledTime}
               >
-                {submitting ? "Admitting…" : "Admit Patient"}
+                {submitting ? "Booking…" : "Book Procedure"}
               </Button>
             </div>
           </div>

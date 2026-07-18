@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, Sparkles, Loader2 } from "lucide-react";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 
 interface Criterion {
   id: string;
@@ -46,6 +47,7 @@ const statusBadge = (status: string) => {
 };
 
 const NABHDashboard: React.FC = () => {
+  const __aiOn = useAIFeature("nabh_criteria_mapper");
   const { toast } = useToast();
   const [criteria, setCriteria] = useState<Criterion[]>([]);
   const [audits, setAudits] = useState<AuditRecord[]>([]);
@@ -173,7 +175,7 @@ const NABHDashboard: React.FC = () => {
         { data: labTAT },
       ] = await Promise.all([
         supabase.from("patients").select("id", { count: "exact", head: true }),
-        supabase.from("admissions").select("id", { count: "exact", head: true }).eq("status", "admitted"),
+        supabase.from("admissions").select("id", { count: "exact", head: true }).eq("status", "active"),
         supabase.from("lab_orders").select("id", { count: "exact", head: true }).eq("order_date", today),
         (supabase as any).from("incident_reports").select("id", { count: "exact", head: true }).eq("status", "open"),
         (supabase as any).from("capa_actions").select("id", { count: "exact", head: true }).eq("status", "open"),
@@ -413,7 +415,7 @@ Return a brief assessment (max 150 words) covering:
             AI NABH Criteria Mapper
           </p>
           <p className="text-[10px] text-muted-foreground mb-2">Analyses system data and maps it to NABH 5th Edition criteria chapters.</p>
-          <Button size="sm" variant="outline" onClick={runAIMapping} disabled={aiMapping} className="w-full text-xs gap-1.5 mb-2">
+          <Button hidden={!__aiOn} size="sm" variant="outline" onClick={runAIMapping} disabled={aiMapping} className="w-full text-xs gap-1.5 mb-2">
             {aiMapping ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} className="text-primary" />}
             {aiMapping ? "Mapping criteria..." : "Run AI Criteria Mapping"}
           </Button>

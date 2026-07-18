@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { X, Loader2, Bot, Printer } from "lucide-react";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { printDocument, printHeader } from "@/lib/printUtils";
 import { formatDateIST } from "@/lib/dateUtils";
 import { cn } from "@/lib/utils";
@@ -33,6 +34,7 @@ const ReferralLetterModal: React.FC<Props> = ({
   open, onClose, hospitalId, patientName, patientUhid,
   chiefComplaint = "", diagnosis = "", doctorName = "", encounterId, onReferred,
 }) => {
+  const __aiOn = useAIFeature("discharge_summary");
   const [toDoctor, setToDoctor] = useState("");
   const [toHospitalDept, setToHospitalDept] = useState("");
   const [urgency, setUrgency] = useState<"routine" | "urgent" | "emergency">("routine");
@@ -169,7 +171,7 @@ ${printHeader(hospitalName, "REFERRAL LETTER", `<p style="font-size:11px;color:#
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-[11px] text-muted-foreground font-medium">Clinical Summary</label>
-              <button onClick={generateSummary} disabled={generating || (!chiefComplaint && !diagnosis)}
+              <button hidden={!__aiOn} onClick={generateSummary} disabled={generating || (!chiefComplaint && !diagnosis)}
                 className="text-[10px] flex items-center gap-1 text-primary hover:underline disabled:opacity-40">
                 {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bot className="h-3 w-3" />}
                 AI Generate

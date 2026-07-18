@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { GatedTabsTrigger } from "@/components/access/GatedTabsTrigger";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -156,9 +157,9 @@ const MentalHealthPage: React.FC = () => {
           {/* Tabs */}
           <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden">
             <TabsList className="shrink-0 w-full justify-start rounded-none border-b bg-card h-10 px-5">
-              <TabsTrigger value="consultation" className="text-xs">Consultation</TabsTrigger>
-              <TabsTrigger value="psychometric" className="text-xs">Psychometric Scales</TabsTrigger>
-              <TabsTrigger value="therapy" className="text-xs">Therapy Plans</TabsTrigger>
+              <GatedTabsTrigger module="mental_health" value="consultation" className="text-xs">Consultation</GatedTabsTrigger>
+              <GatedTabsTrigger module="mental_health" value="psychometric" className="text-xs">Psychometric Scales</GatedTabsTrigger>
+              <GatedTabsTrigger module="mental_health" value="therapy" className="text-xs">Therapy Plans</GatedTabsTrigger>
             </TabsList>
 
             <TabsContent value="consultation" className="flex-1 overflow-hidden mt-0 p-3">

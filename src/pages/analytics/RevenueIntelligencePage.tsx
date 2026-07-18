@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
-import { formatCurrency } from "@/lib/currency";
+import { formatCurrency, formatINRCompact } from "@/lib/currency";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -143,7 +143,7 @@ export default function RevenueIntelligencePage() {
                     <BarChart data={serviceData}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                      <YAxis tickFormatter={v => `₹${(v/1000).toFixed(0)}K`} tick={{ fontSize: 11 }} />
+                      <YAxis tickFormatter={formatINRCompact} tick={{ fontSize: 11 }} />
                       <Tooltip formatter={(v: number) => [formatCurrency(v), "Revenue"]} />
                       <Bar dataKey="revenue" fill="#1A2F5A" radius={[4, 4, 0, 0]} />
                     </BarChart>
@@ -196,7 +196,7 @@ export default function RevenueIntelligencePage() {
                     <LineChart data={revenueTrend}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                      <YAxis tickFormatter={v => `₹${(v/100000).toFixed(1)}L`} tick={{ fontSize: 11 }} />
+                      <YAxis tickFormatter={formatINRCompact} tick={{ fontSize: 11 }} />
                       <Tooltip formatter={(v: number) => [formatCurrency(v), "Revenue"]} />
                       <Line type="monotone" dataKey="revenue" stroke="#1A2F5A" strokeWidth={2} dot={{ r: 4 }} />
                     </LineChart>

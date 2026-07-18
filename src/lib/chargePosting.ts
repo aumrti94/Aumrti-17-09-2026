@@ -1,23 +1,64 @@
 import { supabase } from "@/integrations/supabase/client";
 import { calcGST } from "@/lib/currency";
 import { generateBillNumber } from "@/hooks/useBillNumber";
+import { findOrCreateAdmissionBill } from "@/lib/admissionBill";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
 import { getModuleDefaultRate } from "@/lib/serviceRates";
 import { recordServiceCharge } from "@/lib/serviceBilling";
+import {
+  IpdAncillaryMode,
+  fetchIpdAncillaryPolicy,
+  resolveChargePaymentStatus,
+  serviceForSourceModule,
+  shouldDebitAdvance,
+} from "@/lib/ipdAncillaryGate";
 
 export interface PostChargeOpts {
   hospitalId: string;
   patientId: string;
-  admissionId?: string | null;      // set → IPD track (advance_covered)
+  admissionId?: string | null;      // set → IPD track
   encounterId?: string | null;
   description: string;
-  itemType: string;                  // e.g. "lab_test" | "radiology" | "dialysis" | "procedure"
+  /**
+   * The bill_line_items.item_type. NOTE: this column has a CHECK constraint — use the
+   * canonical values ("lab", "radiology", "pharmacy", …), not prose. "lab_test" is NOT
+   * valid and will be rejected by the DB.
+   */
+  itemType: string;
   quantity?: number;
   unitPrice?: number;                // override; else fetched from service_master
+  /**
+   * GST % to apply to unitPrice. Only consulted when unitPrice is supplied — when it is not,
+   * the rate lookup below resolves GST alongside the fee.
+   *
+   * Passing unitPrice WITHOUT this silently bills 0% GST. That matters most in pre_paid mode,
+   * where the cashier collects a number now that must equal the bill line at discharge; any
+   * gap becomes a refund.
+   */
+  gstPercent?: number;
   sourceModule: "lab" | "radiology" | "ot" | "dialysis" | "physio" | "blood_bank" | "nursing" | "pharmacy";
   sourceId: string;                  // FK to originating record
   dedupeKey?: string;                // defaults to `${sourceModule}:${sourceId}`
   orderedBy?: string;
+  /**
+   * Post onto this exact bill instead of resolving one. Used by 'separate' receipt mode,
+   * where the caller mints one receipt bill per order and posts each item onto it — the
+   * charge deliberately does NOT go on the admission bill.
+   */
+  billId?: string;
+  /**
+   * The hospital's pre/post-paid mode for this service. Supply it when you already hold the
+   * policy to skip a settings read; omit it and this resolves it itself. Ignored for modules
+   * the policy does not govern (see serviceForSourceModule).
+   */
+  mode?: IpdAncillaryMode;
+  /**
+   * Whether an IPD charge may debit the admission's advance ledger. Defaults true, which is
+   * the long-standing behaviour for dialysis/physio. lab/radiology/pharmacy pass false — the
+   * discharge sweep never debited advances for them, and starting to would silently move
+   * ipd_advance_balances for every admitted patient in the system.
+   */
+  debitAdvance?: boolean;
 }
 
 export interface PostChargeResult {
@@ -31,8 +72,13 @@ export interface PostChargeResult {
 
 /**
  * Point-of-Care Charge Capture: creates a bill line item at ORDER time.
+ *
  * OPD → payment_status = pending_payment (must pay at cash counter before service)
- * IPD → payment_status = advance_covered (debited from advance balance)
+ * IPD → depends on the hospital's per-service policy (see lib/ipdAncillaryGate.ts):
+ *   - post_paid (the default, and every non-ancillary module) → advance_covered, i.e.
+ *     "the admission is carrying this, settle at discharge", and the advance is debited.
+ *   - pre_paid (pharmacy/lab/radiology only, opt-in) → pending_payment, which puts the
+ *     charge in the cashier's worklist and blocks the service until it is collected.
  */
 export async function postCharge(opts: PostChargeOpts): Promise<PostChargeResult> {
   const {
@@ -43,7 +89,16 @@ export async function postCharge(opts: PostChargeOpts): Promise<PostChargeResult
 
   const dedupeKey = opts.dedupeKey || `${sourceModule}:${sourceId}`;
   const isIPD = !!admissionId;
-  const paymentStatus: "pending_payment" | "advance_covered" = isIPD ? "advance_covered" : "pending_payment";
+
+  // Only pharmacy/lab/radiology are governed. For every other module — dialysis, physio, OT,
+  // blood bank, nursing — serviceForSourceModule returns null, which pins mode to post_paid
+  // and reproduces this function's original hardcoded ternary exactly. The short-circuit also
+  // means their charge path never pays for a settings read.
+  const service = isIPD ? serviceForSourceModule(sourceModule) : null;
+  const mode: IpdAncillaryMode = !service
+    ? "post_paid"
+    : opts.mode ?? (await fetchIpdAncillaryPolicy(hospitalId))[service].mode;
+  const paymentStatus = resolveChargePaymentStatus({ isIPD, mode });
 
   try {
     // 1. Idempotency check — skip if already posted
@@ -60,7 +115,10 @@ export async function postCharge(opts: PostChargeOpts): Promise<PostChargeResult
 
     // 2. Resolve unit price
     let resolvedRate = unitPrice;
-    let gstPct = 0;
+    // Seed from the caller. This used to be a bare `0`, so any caller supplying unitPrice
+    // skipped the lookup below and silently billed 0% GST. Callers that omit both still get
+    // their GST resolved from service_master exactly as before.
+    let gstPct = opts.gstPercent ?? 0;
     if (!resolvedRate) {
       const { data: svc } = await (supabase as any)
         .from("service_master")
@@ -71,7 +129,11 @@ export async function postCharge(opts: PostChargeOpts): Promise<PostChargeResult
         .limit(1)
         .maybeSingle();
       resolvedRate = svc?.fee ? Number(svc.fee) : 0;
-      gstPct = svc?.gst_applicable ? Number(svc.gst_percent) || 0 : 0;
+      // An explicitly supplied gstPercent wins over the master — the caller resolved the rate
+      // this charge was quoted at, and the quote must match the bill.
+      if (opts.gstPercent === undefined) {
+        gstPct = svc?.gst_applicable ? Number(svc.gst_percent) || 0 : 0;
+      }
       // Last resort: the module's configured default rate (service_rates) so
       // specialized modules bill the configured amount instead of ₹0.
       if (!resolvedRate) {
@@ -88,39 +150,18 @@ export async function postCharge(opts: PostChargeOpts): Promise<PostChargeResult
     // 3. Find or create bill
     let billId: string;
 
-    if (isIPD && admissionId) {
-      // Look for existing draft IPD bill for this admission
-      const { data: ipdBill } = await (supabase as any)
-        .from("bills")
-        .select("id")
-        .eq("hospital_id", hospitalId)
-        .eq("admission_id", admissionId)
-        .eq("bill_type", "ipd")
-        .in("bill_status", ["draft", "final"])
-        .limit(1)
-        .maybeSingle();
-
-      if (ipdBill) {
-        billId = ipdBill.id;
-      } else {
-        const billNumber = await generateBillNumber(hospitalId, "IPD");
-        const { data: newBill, error: be } = await (supabase as any)
-          .from("bills")
-          .insert({
-            hospital_id: hospitalId,
-            patient_id: patientId,
-            admission_id: admissionId,
-            bill_number: billNumber,
-            bill_type: "ipd",
-            bill_date: new Date().toISOString().split("T")[0],
-            bill_status: "draft",
-            payment_status: "unpaid",
-            subtotal: 0, gst_amount: 0, total_amount: 0, patient_payable: 0, balance_due: 0,
-          })
-          .select("id")
-          .maybeSingle();
-        if (be || !newBill) return { success: false, error: be?.message || "IPD bill creation failed" };
-        billId = newBill.id;
+    if (opts.billId) {
+      // Caller owns the bill (separate-receipt mode). Nothing to resolve.
+      billId = opts.billId;
+    } else if (isIPD && admissionId) {
+      // Resolve the admission's bill by its own type (ipd or daycare). Hardcoding 'ipd' here
+      // meant a day care patient's charge could not see their daycare bill and minted a
+      // second, wrongly-typed one.
+      try {
+        const resolved = await findOrCreateAdmissionBill(hospitalId, patientId, admissionId);
+        billId = resolved.id;
+      } catch (e: any) {
+        return { success: false, error: e?.message || "Admission bill creation failed" };
       }
     } else {
       // OPD: find or create bill for this encounter
@@ -204,8 +245,14 @@ export async function postCharge(opts: PostChargeOpts): Promise<PostChargeResult
       billId, performedBy: orderedBy,
     });
 
-    // 6. IPD: debit the advance balance
-    if (isIPD && admissionId && totalAmount > 0) {
+    // 6. IPD: debit the advance balance.
+    //
+    // This condition keys off paymentStatus, NOT off isIPD as it once did. In pre_paid mode
+    // the cashier physically takes cash for this charge; debiting the advance as well takes
+    // the money twice from a patient who already handed it over. The debit must follow "the
+    // admission is carrying this" (advance_covered), never the care setting.
+    if (isIPD && admissionId && totalAmount > 0 &&
+        shouldDebitAdvance({ paymentStatus, debitAdvance: opts.debitAdvance })) {
       await (supabase as any).from("ipd_advances").insert({
         hospital_id: hospitalId,
         admission_id: admissionId,

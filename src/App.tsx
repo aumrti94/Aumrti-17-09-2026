@@ -122,6 +122,7 @@ const IVFPage = lazy(() => import("./pages/ivf/IVFPage"));
 const SettingsRadiologyPage = lazy(() => import("./pages/settings/SettingsRadiologyPage"));
 const PCPNDTRegisterPage = lazy(() => import("./pages/radiology/PCPNDTRegisterPage"));
 const SettingsDayCareProceduresPage = lazy(() => import("./pages/settings/SettingsDayCareProceduresPage"));
+const SettingsIPDAncillaryPaymentPage = lazy(() => import("./pages/settings/SettingsIPDAncillaryPaymentPage"));
 const SchedulingPage = lazy(() => import("./pages/schedule/SchedulingPage"));
 const AmbulancePage = lazy(() => import("./pages/ambulance/AmbulancePage"));
 const HomeCarePage = lazy(() => import("./pages/home-care/HomeCarePage"));
@@ -381,6 +382,7 @@ const App = () => (
             <Route path="/settings/icd-codes" element={<RG path="/settings"><SM name="ICD Codes"><SettingsICDCodesPage /></SM></RG>} />
             <Route path="/settings/radiology" element={<RG path="/settings"><SM name="Radiology Settings"><SettingsRadiologyPage /></SM></RG>} />
             <Route path="/settings/day-care-procedures" element={<RG path="/settings"><SM name="Day Care Procedures"><SettingsDayCareProceduresPage /></SM></RG>} />
+            <Route path="/settings/ipd-ancillary-payment" element={<RG path="/settings"><SM name="IPD Ancillary Payment"><SettingsIPDAncillaryPaymentPage /></SM></RG>} />
             <Route path="/settings/templates" element={<RG path="/settings"><SM name="EMR Templates"><SpecialtyTemplateBuilderPage /></SM></RG>} />
             <Route path="/accounts" element={<RG path="/accounts"><MG moduleKey="accounts"><SM name="Accounts"><AccountsPage /></SM></MG></RG>} />
             <Route path="/accounts/setup" element={<RG path="/accounts"><MG moduleKey="accounts"><SM name="Opening Balances"><OpeningBalancesPage /></SM></MG></RG>} />

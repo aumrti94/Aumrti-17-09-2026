@@ -13,13 +13,13 @@ export const PLATFORM_STATUS_PILL: Record<string, string> = {
 };
 
 // ── Indian currency formatting ───────────────────────────────────────────────
-// Uses Indian numbering system: lakhs (L) and crores (Cr).
-export function fmtINR(n: number): string {
-  if (n >= 10_00_000) return `₹${(n / 10_00_000).toFixed(1)}Cr`;
-  if (n >= 1_00_000)  return `₹${(n / 1_00_000).toFixed(1)}L`;
-  if (n >= 1_000)     return `₹${(n / 1_000).toFixed(0)}K`;
-  return `₹${Math.round(n).toLocaleString("en-IN")}`;
-}
+// Exact rupees with Indian digit grouping (1,50,000 — lakh, not 150,000).
+//
+// This used to abbreviate to Cr/L/K, and its crore threshold was wrong:
+// 10_00_000 is TEN LAKH, not a crore (1_00_00_000), so ₹10,00,000 of MRR
+// rendered as "₹1.0Cr" — overstated 10×. Deferring to the shared exact
+// formatter removes the abbreviation and the bug with it.
+export { formatINRExact as fmtINR } from "./currency";
 
 // ── Hospital health score computation ────────────────────────────────────────
 // Shared between ChurnRadarPage, HospitalsListPage

@@ -123,12 +123,18 @@ const RefundApprovalsInbox: React.FC<Props> = ({ hospitalId, onBillSelect }) => 
       }
     }
 
-    // Billing-desk cash refunds (RefundModal always sets bill_id) also record
-    // an advance-ledger disbursement entry — moved here from request time so
-    // nothing is disbursed before a second person approves it. Pharmacy-return
-    // refunds (credit_note_id only, no bill_id) never had this entry and still
-    // don't.
-    if (row.bill_id && row.admission_id && row.patient_id) {
+    // Advance refunds also record an advance-ledger disbursement entry — moved here from
+    // request time so nothing is disbursed before a second person approves it.
+    //
+    // An advance refund is identified by having NO credit_note_id, NOT by having a bill_id.
+    // The gate used to be `row.bill_id && ...`, which silently skipped this entry whenever
+    // settleAdmissionAdvance emitted bill_id: null — i.e. a deposit that was never billed
+    // against anything. The result was cash out of the drawer and a GL posting, while
+    // ipd_advance_balances still reported the full deposit as held, forever. Unreachable at
+    // discharge (a discharged patient always has a bill); a CANCELLED booking reaches it.
+    //
+    // Pharmacy-return refunds (credit_note_id set) correctly still get no advance entry.
+    if (!row.credit_note_id && row.admission_id && row.patient_id) {
       await (supabase as any).from("ipd_advances").insert({
         hospital_id: hospitalId,
         admission_id: row.admission_id,

@@ -8,13 +8,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useDoctorScores, type DoctorScore } from "@/hooks/useDoctorDeptData";
 import type { DateRange } from "@/hooks/useAnalyticsData";
 import DoctorDetailModal from "./DoctorDetailModal";
+import { formatINRExact } from "@/lib/currency";
 
-const fmt = (n: number) => {
-  if (n >= 10000000) return `₹${(n / 10000000).toFixed(1)}Cr`;
-  if (n >= 100000) return `₹${(n / 100000).toFixed(1)}L`;
-  if (n >= 1000) return `₹${(n / 1000).toFixed(1)}K`;
-  return `₹${n.toLocaleString("en-IN")}`;
-};
+const fmt = formatINRExact;
 
 type SortKey = "revenue" | "opdCount" | "ipdCount" | "otCases";
 

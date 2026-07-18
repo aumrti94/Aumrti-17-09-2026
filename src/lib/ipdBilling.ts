@@ -2,7 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { calcGST } from "@/lib/currency";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
 import { buildOTChargeLineItems, recordOTServiceCharges, recordServiceCharge } from "@/lib/serviceBilling";
-import { getRoomChargeGSTRate } from "@/lib/gstRules";
+import { getRoomChargeGSTRate, DEFAULT_PHARMACY_GST_PERCENT } from "@/lib/gstRules";
 
 // service_charges.service_module for sweep-added item_types that don't already
 // match a canonical MODULE_ string (lab/radiology/pharmacy already do).
@@ -33,15 +33,50 @@ export const IPD_FALLBACK_BED_RATES: Record<string, number> = {
 /**
  * Excludes bill_types that already have dedicated, correctly-deduped handling
  * earlier in autoPullAdmissionCharges (lab: lab_order_items pull, keyed
- * lab:{id}; pharmacy: pharmacy_dispensing_items pull, keyed
+ * lab:{id}; radiology: radiology_orders pull, keyed radiology:{id};
+ * pharmacy: pharmacy_dispensing_items pull, keyed
  * pharmacy:dispense-item:{id}) from the generic sibling-bill-copy sweep.
  * Those sibling bills' own line items were never given a matching
  * source_dedupe_key, so copying them too would double-charge the discharge
- * bill for the same lab test or drug. Extracted as a pure function so the
+ * bill for the same lab test, scan or drug. Extracted as a pure function so the
  * exact double-charge regression can be unit tested directly.
+ *
+ * 'radiology' was missing from this list, and the omission was live: the
+ * sibling copy fell back to `bill-line:{item.id}` (the modal sets no
+ * source_dedupe_key) while the dedicated pull wrote `radiology:{order.id}`.
+ * Two different keys for one scan meant addUniqueItem inserted both, so every
+ * IPD radiology order placed through NewRadiologyOrderModal was billed TWICE
+ * at discharge. The comment at the call site claimed radiology "has no
+ * dedicated pull above" — it does, and has since the pull was written.
  */
 export function filterSiblingBillsForSweep<T extends { bill_type: string | null }>(bills: T[]): T[] {
-  return bills.filter((rb) => rb.bill_type !== "lab" && rb.bill_type !== "pharmacy");
+  return bills.filter(
+    (rb) => rb.bill_type !== "lab" && rb.bill_type !== "pharmacy" && rb.bill_type !== "radiology"
+  );
+}
+
+/**
+ * The dedupe identity of a bill line, as the discharge sweep computes it.
+ *
+ * This is a CONTRACT, not an implementation detail. lib/ancillaryCharges.ts posts
+ * lab/radiology/pharmacy charges at order time under keys like `lab:{lab_order_items.id}`;
+ * this function is what the sweep uses to recognise those already-posted lines and skip them.
+ * If the two disagree by a single byte, every pre-paid order is billed twice at discharge —
+ * the exact bug this whole area has a history of. Exported so that contract can be unit-tested
+ * directly against the keys ancillaryCharges writes.
+ */
+export function buildDedupeKey(item: {
+  description?: string | null;
+  item_type?: string | null;
+  source_module?: string | null;
+  source_dedupe_key?: string | null;
+  source_record_id?: string | null;
+}): string {
+  if (item.source_dedupe_key) {
+    return `${item.source_module || "manual"}::${item.source_dedupe_key}::${item.item_type || "other"}`;
+  }
+  // Backward-compat for rows that never got a dedupe key.
+  return `${item.source_module || "manual"}::${item.source_record_id || (item.description || "").trim().toLowerCase()}::${item.item_type || "other"}`;
 }
 
 /**
@@ -56,6 +91,22 @@ export function resolveRoomRateFallback(
   const wardRate = Number(wardRatePerDay) || 0;
   if (wardRate > 0) return wardRate;
   return IPD_FALLBACK_BED_RATES[bedCategory || "general"] ?? 600;
+}
+
+/**
+ * Room charges apply only to an admission that actually occupies a bed.
+ *
+ * Day care holds none — 20261008000137 made bed_id/ward_id nullable for it. Without this
+ * guard the room block still runs (the admission row is truthy, just with null joins),
+ * falls through every rate lookup to its ₹500/"general"/1-day fallback, and invents a
+ * "Room: Ward - Bed  (1 days)" charge for a bed the patient never lay in.
+ */
+export function shouldChargeRoom(
+  admissionType: string | null | undefined,
+  bedId: string | null | undefined
+): boolean {
+  if ((admissionType || "").toLowerCase() === "daycare") return false;
+  return !!bedId;
 }
 
 /**
@@ -95,19 +146,7 @@ export async function autoPullAdmissionCharges(
     .select("id, description, item_type, source_module, source_record_id, source_dedupe_key")
     .eq("bill_id", billId);
 
-  const buildKey = (item: {
-    description?: string | null;
-    item_type?: string | null;
-    source_module?: string | null;
-    source_dedupe_key?: string | null;
-    source_record_id?: string | null;
-  }) => {
-    if (item.source_dedupe_key) {
-      return `${item.source_module || "manual"}::${item.source_dedupe_key}::${item.item_type || "other"}`;
-    }
-    // Backward-compat for rows that never got a dedupe key
-    return `${item.source_module || "manual"}::${item.source_record_id || (item.description || "").trim().toLowerCase()}::${item.item_type || "other"}`;
-  };
+  const buildKey = buildDedupeKey;
 
   const existingKeys = new Set<string>(
     (scopedExisting || []).map((item: any) => buildKey(item))
@@ -120,6 +159,37 @@ export async function autoPullAdmissionCharges(
     items.push(item);
     if (nursingProcedureId) nursingProcedureIdsToMark.push(nursingProcedureId);
     return true;
+  };
+
+  // ----- Existing lab/radiology/pharmacy charges ANYWHERE on this admission -----
+  //
+  // Charges are now posted at ORDER time (lib/ancillaryCharges.ts). Under the 'separate'
+  // receipt setting they land on their own paid receipt bill, not this one — so a bill-scoped
+  // dedupe would not see them and the sweep would bill the same test/scan/drug again here.
+  //
+  // This is deliberately a SECOND set rather than a widening of existingKeys above. The
+  // generic sibling-bill-copy sweep further down depends on the bill-scoped view: its whole
+  // job is to copy sibling lines (OT implants, day care procedures) onto this bill, and those
+  // lines DO carry real dedupe keys like ot:{id}:implant:{x}. Widening the shared set would
+  // make that copy see its own source rows as "already present" and skip them — silently
+  // dropping OT revenue from the discharge bill. Only the three dedicated pulls consult this.
+  const { data: admissionWideExisting } = await (supabase as any)
+    .from("bill_line_items")
+    .select("id, description, item_type, source_module, source_record_id, source_dedupe_key, bills!inner(admission_id)")
+    .eq("hospital_id", hospitalId)
+    .eq("bills.admission_id", admissionId)
+    .in("source_module", ["lab", "radiology", "pharmacy"]);
+
+  const admissionWideKeys = new Set<string>(
+    (admissionWideExisting || []).map((item: any) => buildKey(item))
+  );
+
+  /** Dedupe for the lab/radiology/pharmacy pulls: this bill OR any receipt on this admission. */
+  const addUniqueAncillaryItem = (item: any) => {
+    const key = buildKey(item);
+    if (admissionWideKeys.has(key)) return false;
+    admissionWideKeys.add(key);
+    return addUniqueItem(item);
   };
 
   // Pre-fetch admission metadata for patient-based fallback lookup
@@ -201,7 +271,7 @@ export async function autoPullAdmissionCharges(
         ? Number((labItemRates[i] as any).data.fee)
         : labRate.fee;
       const labGst = calcGST(finalRate, labRate.gstPct);
-      addUniqueItem({
+      addUniqueAncillaryItem({
         hospital_id: hospitalId,
         bill_id: billId,
         item_type: "lab",
@@ -216,6 +286,10 @@ export async function autoPullAdmissionCharges(
         source_module: "lab",
         source_record_id: li.id,
         source_dedupe_key: `lab:${li.id}`,
+        // Anything the sweep pulls is by definition carried by the admission and settled at
+        // discharge. Without this the row took the column default 'pending_payment', which is
+        // why the cashier's worklist needed a bill-level filter to hide IPD noise.
+        payment_status: "advance_covered",
       });
     });
   }
@@ -259,7 +333,7 @@ export async function autoPullAdmissionCharges(
       ? Number(studyRate.gst_percent) || 0
       : radRate.gstPct;
     const radGst = calcGST(radFee, radGstPct);
-    addUniqueItem({
+    addUniqueAncillaryItem({
       hospital_id: hospitalId,
       bill_id: billId,
       item_type: "radiology",
@@ -274,6 +348,7 @@ export async function autoPullAdmissionCharges(
       source_module: "radiology",
       source_record_id: ro.id,
       source_dedupe_key: `radiology:${ro.id}`,
+      payment_status: "advance_covered",
     });
   });
 
@@ -291,7 +366,12 @@ export async function autoPullAdmissionCharges(
       const dedupe = item.id
         ? `pharmacy:dispense-item:${item.id}`
         : `pharmacy:dispense:${pd.id}:${item.drug_name}:${item.quantity_dispensed}`;
-      addUniqueItem({
+      // The dispense captured the batch's own gst_percent — use it rather than assuming 12%,
+      // which silently mispriced any drug taxed at another rate. Falls back to 12% only when
+      // the row genuinely has no rate recorded.
+      const pharmGstPct = Number(item.gst_percent ?? DEFAULT_PHARMACY_GST_PERCENT);
+      const pharmGst = calcGST(total, pharmGstPct);
+      addUniqueAncillaryItem({
         hospital_id: hospitalId,
         bill_id: billId,
         item_type: "pharmacy",
@@ -299,12 +379,13 @@ export async function autoPullAdmissionCharges(
         quantity: Number(item.quantity_dispensed),
         unit_rate: Number(item.unit_price),
         taxable_amount: total,
-        gst_percent: 12,
-        gst_amount: total * 0.12,
-        total_amount: total * 1.12,
+        gst_percent: pharmGstPct,
+        gst_amount: pharmGst,
+        total_amount: total + pharmGst,
         source_module: "pharmacy",
         source_record_id: item.id || pd.id, // real UUID
         source_dedupe_key: dedupe,
+        payment_status: "advance_covered",
       });
     });
   });
@@ -509,12 +590,32 @@ export async function autoPullAdmissionCharges(
   const { data: admission } = await supabase
     .from("admissions")
     .select(
-      "admitted_at, discharged_at, ward_id, bed_id, wards(name, type, rate_per_day), beds(bed_number, bed_category)"
+      "admitted_at, discharged_at, admission_type, ward_id, bed_id, wards(name, type, rate_per_day), beds(bed_number, bed_category)"
     )
     .eq("id", admissionId)
     .maybeSingle();
 
   if (admission) {
+    // Delete unconditionally, before deciding whether to re-add: this keeps the day-count
+    // current for inpatients AND retro-cleans a phantom room charge previously written onto
+    // a bed-less (day care) bill, which would otherwise survive every re-pull.
+    const roomDedupeKey = `ipd:room:${admissionId}`;
+    await (supabase as any)
+      .from("bill_line_items")
+      .delete()
+      .eq("bill_id", billId)
+      .eq("source_dedupe_key", roomDedupeKey);
+    existingKeys.delete(
+      buildKey({
+        source_module: "ipd",
+        source_dedupe_key: roomDedupeKey,
+        item_type: "room_charge",
+      })
+    );
+  }
+
+  if (admission && shouldChargeRoom((admission as any).admission_type, (admission as any).bed_id)) {
+    const roomDedupeKey = `ipd:room:${admissionId}`;
     const admitDate = new Date(admission.admitted_at || Date.now());
     const dischDate = admission.discharged_at
       ? new Date(admission.discharged_at)
@@ -575,21 +676,6 @@ export async function autoPullAdmissionCharges(
     const roomTotal = ratePerDay * days;
     const roomGst = calcGST(roomTotal, roomGstPct);
 
-    // Always delete the previous room line item so day-count stays current.
-    const roomDedupeKey = `ipd:room:${admissionId}`;
-    await (supabase as any)
-      .from("bill_line_items")
-      .delete()
-      .eq("bill_id", billId)
-      .eq("source_dedupe_key", roomDedupeKey);
-    existingKeys.delete(
-      buildKey({
-        source_module: "ipd",
-        source_dedupe_key: roomDedupeKey,
-        item_type: "room_charge",
-      })
-    );
-
     addUniqueItem({
       hospital_id: hospitalId,
       bill_id: billId,
@@ -616,9 +702,9 @@ export async function autoPullAdmissionCharges(
     .eq("admission_id", admissionId)
     .neq("id", billId);
 
-  // Every other bill_type (radiology, ot, daycare, etc.) still needs this
-  // generic sweep, since they have no dedicated pull above — only lab/
-  // pharmacy are excluded (see filterSiblingBillsForSweep).
+  // Every other bill_type (ot, daycare, etc.) still needs this generic sweep,
+  // since they have no dedicated pull above — lab/radiology/pharmacy do have
+  // one and are excluded (see filterSiblingBillsForSweep).
   const relatedBills = filterSiblingBillsForSweep(relatedBillsRaw || []);
 
   if (relatedBills?.length) {

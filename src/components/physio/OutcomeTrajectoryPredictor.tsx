@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +16,7 @@ interface Props {
 }
 
 const OutcomeTrajectoryPredictor: React.FC<Props> = ({ referralId, diagnosis, scores }) => {
+  const __aiOn = useAIFeature("voice_scribe");
   const { hospitalId } = useHospitalId();
   const [prediction, setPrediction] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -91,6 +93,7 @@ Return ONLY JSON:
     ? "⚠️ Progress below expected — review treatment plan"
     : "✅ Progress matches expected trajectory";
 
+  if (!__aiOn) return null;
   return (
     <Card className={`mt-3 ${trajectoryColor}`}>
       <CardContent className="p-3 space-y-2">

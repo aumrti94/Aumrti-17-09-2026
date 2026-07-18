@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Users, Loader2, Bot, ArrowRight, CheckCircle2 } from "lucide-react";
@@ -38,6 +39,7 @@ interface Props {
 }
 
 const NurseWorkloadOptimizerPanel: React.FC<Props> = ({ snapshots, hospitalId }) => {
+  const __aiOn = useAIFeature("nurse_workload_optimizer");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<OptimizationResult | null>(null);
   const [rawText, setRawText] = useState<string | null>(null);
@@ -110,6 +112,7 @@ If all wards are adequately staffed, return reassignments as [] and overall_stat
     setLoading(false);
   };
 
+  if (!__aiOn) return null;
   return (
     <div className="border rounded-lg overflow-hidden mt-4">
       <div className="flex items-center justify-between px-4 py-2.5 bg-muted/40 border-b">

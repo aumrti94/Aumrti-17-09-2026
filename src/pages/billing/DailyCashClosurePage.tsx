@@ -8,24 +8,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Lock, CheckCircle2, AlertTriangle, Clock, ChevronDown, Printer } from "lucide-react";
+import { computeDayClosureTotals, EMPTY_TOTALS, type SystemTotals } from "@/lib/dayClosureTotals";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-interface SystemTotals {
-  cash: number;
-  upi: number;
-  card: number;
-  cheque: number;
-  net_banking: number;
-  insurance: number;
-  other: number;
-  /** Refunds processed today (refund_payables, status='processed') — net cash OUT. */
-  refunds: number;
-  /** Advance deposits received today not yet mirrored into bill_payments (syncAdvanceToBill
-   *  skips silently when no draft IPD bill exists yet) — net cash IN otherwise invisible here. */
-  advances: number;
-  total: number;
-}
 
 interface PaymentRow {
   id: string;
@@ -50,7 +35,6 @@ const MODE_LABELS: Record<string, string> = {
   cash: "Cash", upi: "UPI", card: "Card",
   cheque: "Cheque", net_banking: "Net Banking", insurance: "Insurance / TPA",
 };
-const EMPTY_TOTALS: SystemTotals = { cash: 0, upi: 0, card: 0, cheque: 0, net_banking: 0, insurance: 0, other: 0, refunds: 0, advances: 0, total: 0 };
 
 // bill_line_items.item_type → Tally revenue head label
 const LINE_ITEM_GROUP: Record<string, string> = {
@@ -143,54 +127,38 @@ const DailyCashClosurePage: React.FC = () => {
     }));
     setPayments(rows);
 
-    // Aggregate by mode
-    const totals = { ...EMPTY_TOTALS };
-    for (const r of rows) {
-      const m = r.payment_mode;
-      if (m === "cash")        totals.cash        += r.amount;
-      else if (m === "upi")    totals.upi         += r.amount;
-      else if (m === "card")   totals.card        += r.amount;
-      else if (m === "cheque") totals.cheque      += r.amount;
-      else if (m === "net_banking") totals.net_banking += r.amount;
-      else if (m === "insurance" || m === "pmjay" || m === "cghs" || m === "echs")
-        totals.insurance += r.amount;
-      else totals.other += r.amount;
-    }
-    // Refunds processed today — net cash OUT that bill_payments alone never showed,
-    // so a refund used to create an unexplained physical-count shortfall.
+    // Refunds processed today — real money OUT, deducted from the tender it left by.
     const { data: refundsData } = await (supabase as any)
       .from("refund_payables")
-      .select("amount")
+      .select("amount, refund_mode")
       .eq("hospital_id", hospitalId)
       .eq("status", "processed")
       .gte("processed_at", closureDate)
       .lte("processed_at", closureDate + "T23:59:59");
-    totals.refunds = (refundsData || []).reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
 
-    // Advance deposits received today that syncAdvanceToBill hasn't (yet) mirrored
-    // into bill_payments — e.g. collected before a draft IPD bill exists. Only the
-    // unmirrored portion counts here; the mirrored portion is already inside
-    // totals.cash/upi/etc via the bill_payments query above.
+    // Advance deposits received today, and the slice of them syncAdvanceToBill has
+    // already mirrored into bill_payments.
     const { data: advancesData } = await (supabase as any)
       .from("ipd_advances")
-      .select("amount")
+      .select("amount, payment_mode")
       .eq("hospital_id", hospitalId)
       .eq("transaction_type", "deposit")
       .gte("created_at", closureDate)
       .lte("created_at", closureDate + "T23:59:59");
-    const advanceDepositsTotal = (advancesData || []).reduce((s: number, a: any) => s + Number(a.amount || 0), 0);
 
     const { data: mirroredAdvancesData } = await (supabase as any)
       .from("bill_payments")
-      .select("amount")
+      .select("amount, payment_mode")
       .eq("hospital_id", hospitalId)
       .eq("payment_date", closureDate)
       .eq("is_advance", true);
-    const advanceMirroredTotal = (mirroredAdvancesData || []).reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
-    totals.advances = Math.max(0, advanceDepositsTotal - advanceMirroredTotal);
 
-    totals.total = totals.cash + totals.upi + totals.card + totals.cheque + totals.net_banking + totals.insurance + totals.other
-      - totals.refunds + totals.advances;
+    const totals = computeDayClosureTotals({
+      payments: rows.map(r => ({ mode: r.payment_mode, amount: r.amount })),
+      refunds: (refundsData || []).map((r: any) => ({ mode: r.refund_mode, amount: Number(r.amount || 0) })),
+      advanceDeposits: (advancesData || []).map((a: any) => ({ mode: a.payment_mode, amount: Number(a.amount || 0) })),
+      mirroredAdvances: (mirroredAdvancesData || []).map((p: any) => ({ mode: p.payment_mode, amount: Number(p.amount || 0) })),
+    });
     setSystemTotals(totals);
 
     // Fetch revenue by service type for today's finalized bills (for Tally summary)
@@ -323,6 +291,10 @@ const DailyCashClosurePage: React.FC = () => {
 
   // ── Tally Day Summary print ───────────────────────────────────────────────
 
+  const dateLabel = new Date(closureDate + "T00:00:00").toLocaleDateString("en-IN", {
+    day: "2-digit", month: "long", year: "numeric",
+  });
+
   const printTallySummary = useCallback(() => {
     const fmtAmt = (n: number) =>
       n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -332,14 +304,22 @@ const DailyCashClosurePage: React.FC = () => {
     const netVariance = systemTotals.total - totalRevenue;
     const balanced = Math.abs(netVariance) < 1;
 
+    // Each bucket is NET of advances received and refunds paid out, so those are
+    // NOT listed as extra rows here — that would debit/credit them a second time.
+    // A bucket can legitimately go negative (a day whose refunds exceed its
+    // takings in that tender), which posts as CR; a `> 0` guard would have
+    // dropped the row and silently unbalanced the voucher.
+    const ledgerRow = (label: string, amount: number) =>
+      Math.abs(amount) >= 0.005 &&
+      `<tr><td class="lbl">${label}</td><td class="amt">₹ ${fmtAmt(Math.abs(amount))}</td>` +
+      `<td class="tag ${amount >= 0 ? "dr" : "cr"}">${amount >= 0 ? "DR" : "CR"}</td></tr>`;
+
     const collectionRows = [
-      systemTotals.cash      > 0 && `<tr><td class="lbl">Cash in Hand</td><td class="amt">₹ ${fmtAmt(systemTotals.cash)}</td><td class="tag dr">DR</td></tr>`,
-      digitalTotal           > 0 && `<tr><td class="lbl">Bank — UPI / Card / Net Banking</td><td class="amt">₹ ${fmtAmt(digitalTotal)}</td><td class="tag dr">DR</td></tr>`,
-      systemTotals.cheque    > 0 && `<tr><td class="lbl">Bank — Cheque</td><td class="amt">₹ ${fmtAmt(systemTotals.cheque)}</td><td class="tag dr">DR</td></tr>`,
-      systemTotals.insurance > 0 && `<tr><td class="lbl">AR — Insurance / TPA</td><td class="amt">₹ ${fmtAmt(systemTotals.insurance)}</td><td class="tag dr">DR</td></tr>`,
-      systemTotals.other     > 0 && `<tr><td class="lbl">Other Receipts</td><td class="amt">₹ ${fmtAmt(systemTotals.other)}</td><td class="tag dr">DR</td></tr>`,
-      systemTotals.advances  > 0 && `<tr><td class="lbl">Advances (not yet billed)</td><td class="amt">₹ ${fmtAmt(systemTotals.advances)}</td><td class="tag dr">DR</td></tr>`,
-      systemTotals.refunds   > 0 && `<tr><td class="lbl">Refunds Paid Out</td><td class="amt">₹ ${fmtAmt(systemTotals.refunds)}</td><td class="tag cr">CR</td></tr>`,
+      ledgerRow("Cash in Hand", systemTotals.cash),
+      ledgerRow("Bank — UPI / Card / Net Banking", digitalTotal),
+      ledgerRow("Bank — Cheque", systemTotals.cheque),
+      ledgerRow("AR — Insurance / TPA", systemTotals.insurance),
+      ledgerRow("Other Receipts", systemTotals.other),
     ].filter(Boolean).join("");
 
     const revenueRows = Object.entries(revenueByHead)
@@ -445,9 +425,6 @@ const DailyCashClosurePage: React.FC = () => {
   const fmt = (n: number) => formatINR(n);
   const fmtTime = (ts: string) =>
     new Date(ts).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
-  const dateLabel = new Date(closureDate + "T00:00:00").toLocaleDateString("en-IN", {
-    day: "2-digit", month: "long", year: "numeric",
-  });
 
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -547,16 +524,23 @@ const DailyCashClosurePage: React.FC = () => {
                 <span className="font-mono font-semibold tabular-nums">{fmt(systemTotals.other)}</span>
               </div>
             )}
-            {systemTotals.advances > 0 && (
-              <div className="flex justify-between items-center text-[12px] text-emerald-700">
-                <span className="w-32">Advances (not yet billed)</span>
-                <span className="font-mono font-semibold tabular-nums">+{fmt(systemTotals.advances)}</span>
-              </div>
-            )}
-            {systemTotals.refunds > 0 && (
-              <div className="flex justify-between items-center text-[12px] text-destructive">
-                <span className="w-32">Refunds Paid Out</span>
-                <span className="font-mono font-semibold tabular-nums">-{fmt(systemTotals.refunds)}</span>
+            {(systemTotals.advances > 0 || systemTotals.refunds > 0) && (
+              <div className="mt-2 pt-1.5 border-t border-dashed border-border space-y-1">
+                <p className="text-[9px] text-muted-foreground uppercase tracking-wider">
+                  Included above — for reference
+                </p>
+                {systemTotals.advances > 0 && (
+                  <div className="flex justify-between items-center text-[12px] text-emerald-700">
+                    <span className="w-32">Advance deposits taken</span>
+                    <span className="font-mono font-semibold tabular-nums">+{fmt(systemTotals.advances)}</span>
+                  </div>
+                )}
+                {systemTotals.refunds > 0 && (
+                  <div className="flex justify-between items-center text-[12px] text-destructive">
+                    <span className="w-32">Refunds Paid Out</span>
+                    <span className="font-mono font-semibold tabular-nums">-{fmt(systemTotals.refunds)}</span>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -575,7 +559,9 @@ const DailyCashClosurePage: React.FC = () => {
                 <span className="text-muted-foreground w-32">{MODE_LABELS[m]}</span>
                 <Input
                   type="number"
-                  min={0}
+                  // No min: a tender's net movement is legitimately negative on a
+                  // day its refunds exceed its takings (e.g. a ₹3,500 cash refund
+                  // against ₹2,177 cash in), and the count must be able to match.
                   step="0.01"
                   placeholder="0"
                   value={manual[m]}

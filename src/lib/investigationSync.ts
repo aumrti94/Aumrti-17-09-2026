@@ -31,6 +31,11 @@ export interface SyncLabOrdersResult {
   /** Prescribed test names with no active lab_test_master match — NOT ordered.
    *  Callers should surface these so staff can order them manually. */
   unmatched: string[];
+  /** ids of the lab_orders actually created by this call.
+   *  Needed to charge them: the charge is keyed per lab_order_items row (lab:{item.id}), so
+   *  callers re-query the items for these orders rather than guessing. Only NEW orders are
+   *  listed — a skipped duplicate was already charged when it was first created. */
+  orderIds: string[];
 }
 
 /**
@@ -47,9 +52,10 @@ export async function syncLabOrders(opts: {
   admissionId?: string | null;
   items: LabOrderInput[];
 }): Promise<SyncLabOrdersResult> {
-  if (!opts.items.length) return { created: 0, unmatched: [] };
+  if (!opts.items.length) return { created: 0, unmatched: [], orderIds: [] };
   let created = 0;
   const unmatched: string[] = [];
+  const orderIds: string[] = [];
 
   // Fetch existing lab orders for this encounter/admission to avoid dupes
   let existingTests: string[] = [];
@@ -125,10 +131,19 @@ export async function syncLabOrders(opts: {
     );
 
     created++;
+    orderIds.push(newOrderId as string);
     existingTests.push(item.test_name.toLowerCase());
   }
 
-  return { created, unmatched };
+  return { created, unmatched, orderIds };
+}
+
+export interface SyncRadiologyOrdersResult {
+  created: number;
+  /** ids of the radiology_orders actually created by this call — the charge is keyed
+   *  radiology:{order.id}. Only NEW orders are listed; a skipped duplicate was already
+   *  charged when it was first created. */
+  orderIds: string[];
 }
 
 /**
@@ -141,9 +156,10 @@ export async function syncRadiologyOrders(opts: {
   encounterId?: string | null;
   admissionId?: string | null;
   items: RadiologyOrderInput[];
-}): Promise<number> {
-  if (!opts.items.length) return 0;
+}): Promise<SyncRadiologyOrdersResult> {
+  if (!opts.items.length) return { created: 0, orderIds: [] };
   let created = 0;
+  const orderIds: string[] = [];
 
   // Check existing to avoid dupes
   let existingStudies: string[] = [];
@@ -176,7 +192,7 @@ export async function syncRadiologyOrders(opts: {
     );
 
     const radOrderedAt = new Date().toISOString();
-    const { error } = await (supabase as any)
+    const { data: newRad, error } = await (supabase as any)
       .from("radiology_orders")
       .insert({
         hospital_id: opts.hospitalId,
@@ -192,10 +208,12 @@ export async function syncRadiologyOrders(opts: {
         status: "ordered",
         billing_status: "unbilled",
         ordered_at: radOrderedAt,
-      });
+      })
+      .select("id")
+      .maybeSingle();
 
-    if (error) {
-      console.error("Radiology order insert failed:", error.message);
+    if (error || !newRad) {
+      console.error("Radiology order insert failed:", error?.message);
       continue;
     }
 
@@ -207,10 +225,11 @@ export async function syncRadiologyOrders(opts: {
     );
 
     created++;
+    orderIds.push(newRad.id as string);
     existingStudies.push(item.study_name.toLowerCase());
   }
 
-  return created;
+  return { created, orderIds };
 }
 
 // Common lab/radiology keyword patterns for text parsing (IPD ward rounds)

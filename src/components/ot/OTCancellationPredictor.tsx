@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { XCircle, Loader2, ShieldAlert, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
@@ -35,6 +36,7 @@ const RISK_BADGE: Record<string, string> = {
 };
 
 const OTCancellationPredictor: React.FC<Props> = ({ hospitalId, selectedDate }) => {
+  const __aiOn = useAIFeature("ot_cancellation_predictor");
   const [loading, setLoading] = useState(false);
   const [risks, setRisks] = useState<CancellationRisk[] | null>(null);
   const [rawText, setRawText] = useState<string | null>(null);
@@ -133,6 +135,7 @@ Return all cases. For safe cases use risk "low" with empty risk_factors.`;
 
   const highCount = risks?.filter(r => r.cancellation_risk === "high").length ?? 0;
 
+  if (!__aiOn) return null;
   return (
     <div className="border-t border-border bg-background">
       <button

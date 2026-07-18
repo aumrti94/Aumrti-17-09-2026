@@ -145,7 +145,7 @@ export default function BookPackageModal({ open, onClose }: Props) {
       if (includedRad.length > 0 && hospitalId) {
         try {
           const { syncRadiologyOrders } = await import("@/lib/investigationSync");
-          radCount = await syncRadiologyOrders({
+          const radSync = await syncRadiologyOrders({
             hospitalId,
             patientId,
             orderedBy: userId || "",
@@ -153,6 +153,7 @@ export default function BookPackageModal({ open, onClose }: Props) {
             admissionId: null,
             items: includedRad.map(r => ({ study_name: r, urgency: "routine", clinical_indication: `Health Package: ${selectedPkg.package_name}` })),
           });
+          radCount = radSync.created;
         } catch (e) {
           console.error("Package radiology order sync error:", e);
         }

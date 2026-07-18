@@ -23,6 +23,7 @@ import { autoPostJournalEntry } from "@/lib/accounting";
 import { logAudit } from "@/lib/auditLog";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
 import { autoPullAdmissionCharges } from "@/lib/ipdBilling";
+import { isAdmissionBill } from "@/lib/admissionBill";
 import { formatINR } from "@/lib/currency";
 import type { BillRecord } from "@/pages/billing/BillingPage";
 
@@ -474,7 +475,7 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
       <RevenueIntelligencePanel bill={bill} hospitalId={hospitalId} lineItems={lineItems} />
 
       {/* Estimate vs Actual comparison (IPD bills only) */}
-      {estimateData && bill.bill_type === "ipd" && (() => {
+      {estimateData && isAdmissionBill(bill.bill_type) && (() => {
         const actual = Math.max(0, bill.patient_payable ?? bill.total_amount);
         const estimated = estimateData.estimated_amount || 0;
         const overrun = estimated > 0 ? ((actual - estimated) / estimated) * 100 : 0;
@@ -529,7 +530,7 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
           <TabsTrigger value="items" className="text-xs">Line Items</TabsTrigger>
           <TabsTrigger value="payments" className="text-xs">Payments</TabsTrigger>
           <TabsTrigger value="insurance" className="text-xs">Insurance</TabsTrigger>
-          {bill.bill_type === "ipd" && bill.admission_id && (
+          {isAdmissionBill(bill.bill_type) && bill.admission_id && (
             <TabsTrigger value="advance" className="text-xs flex items-center gap-1">
               Advance
               {(bill as any).advance_applied > 0 && (
@@ -566,7 +567,7 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
         <TabsContent value="insurance" className="overflow-auto max-h-full mt-0 p-5">
           <InsuranceTab bill={bill} hospitalId={hospitalId} onRefresh={onRefresh} />
         </TabsContent>
-        {bill.bill_type === "ipd" && bill.admission_id && (
+        {isAdmissionBill(bill.bill_type) && bill.admission_id && (
           <TabsContent value="advance" className="overflow-auto max-h-full mt-0 p-5">
             <AdvanceApplicationTab
               billId={bill.id}

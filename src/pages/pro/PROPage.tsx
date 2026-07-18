@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -119,7 +120,7 @@ const PROPage: React.FC = () => {
 
     // Rights not signed
     const today = new Date().toISOString().split("T")[0];
-    const { data: admitted } = await supabase.from("admissions").select("id, patient_id").eq("hospital_id", hospitalId).eq("status", "admitted");
+    const { data: admitted } = await supabase.from("admissions").select("id, patient_id").eq("hospital_id", hospitalId).eq("status", "active");
     if (admitted && admitted.length > 0) {
       const { data: signed } = await supabase.from("patient_rights_acknowledgements").select("admission_id").eq("hospital_id", hospitalId);
       const signedIds = new Set((signed || []).map((s: any) => s.admission_id));
@@ -157,7 +158,7 @@ const PROPage: React.FC = () => {
   }, []);
 
   const loadPendingRights = useCallback(async () => {
-    const { data: admitted } = await supabase.from("admissions").select("id, patient_id, ward_id, admitted_at").eq("hospital_id", hospitalId).eq("status", "admitted");
+    const { data: admitted } = await supabase.from("admissions").select("id, patient_id, ward_id, admitted_at").eq("hospital_id", hospitalId).eq("status", "active");
     if (!admitted || admitted.length === 0) { setPendingRights([]); return; }
     const { data: signed } = await supabase.from("patient_rights_acknowledgements").select("admission_id").eq("hospital_id", hospitalId);
     const signedIds = new Set((signed || []).map((s: any) => s.admission_id));
@@ -419,8 +420,12 @@ const PROPage: React.FC = () => {
       <div className="flex items-center justify-between px-4 h-[52px] border-b border-border shrink-0">
         <h1 className="text-base font-bold text-foreground">🤝 Patient Relations</h1>
         <div className="flex gap-2">
-          <Button size="sm" onClick={() => setGrievanceModal(true)}><Plus size={14} className="mr-1" />New Grievance</Button>
-          <Button size="sm" variant="outline" onClick={() => setVisitorModal(true)}><Plus size={14} className="mr-1" />Visitor Pass</Button>
+          <GatedAction module="patient_relations" action="new_grievance">
+            <Button size="sm" onClick={() => setGrievanceModal(true)}><Plus size={14} className="mr-1" />New Grievance</Button>
+          </GatedAction>
+          <GatedAction module="patient_relations" action="visitor_pass">
+            <Button size="sm" variant="outline" onClick={() => setVisitorModal(true)}><Plus size={14} className="mr-1" />Visitor Pass</Button>
+          </GatedAction>
         </div>
       </div>
 
@@ -446,11 +451,11 @@ const PROPage: React.FC = () => {
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab} className="flex-1 flex flex-col overflow-hidden px-4">
         <TabsList className="shrink-0 w-fit">
-          <TabsTrigger value="grievances">📋 Grievances</TabsTrigger>
-          <TabsTrigger value="feedback">⭐ Feedback</TabsTrigger>
-          <TabsTrigger value="visitors">🪪 Visitor Passes</TabsTrigger>
-          <TabsTrigger value="rights">📜 Patient Rights</TabsTrigger>
-          <TabsTrigger value="analytics">📊 Analytics</TabsTrigger>
+          <GatedTabsTrigger module="patient_relations" value="grievances">📋 Grievances</GatedTabsTrigger>
+          <GatedTabsTrigger module="patient_relations" value="feedback">⭐ Feedback</GatedTabsTrigger>
+          <GatedTabsTrigger module="patient_relations" value="visitors">🪪 Visitor Passes</GatedTabsTrigger>
+          <GatedTabsTrigger module="patient_relations" value="rights">📜 Patient Rights</GatedTabsTrigger>
+          <GatedTabsTrigger module="patient_relations" value="analytics">📊 Analytics</GatedTabsTrigger>
         </TabsList>
 
         {/* TAB 1 — Grievances */}

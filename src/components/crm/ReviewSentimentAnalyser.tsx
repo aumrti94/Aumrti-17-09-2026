@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -25,6 +26,7 @@ const TOPIC_COLORS: Record<string, string> = {
 };
 
 const ReviewSentimentAnalyser: React.FC<Props> = ({ review, onUpdated }) => {
+  const __aiOn = useAIFeature("voice_scribe");
   const { hospitalId } = useHospitalId();
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
@@ -103,6 +105,7 @@ Return ONLY JSON:
     );
   }
 
+  if (!__aiOn) return null;
   return (
     <div className="mt-2 space-y-1.5">
       <div className="flex flex-wrap gap-1">

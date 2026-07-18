@@ -1,13 +1,17 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Plus, Edit2, Save, X, Loader2, Check, Users, Sparkles, ArrowUp, ArrowDown, Trash2 } from "lucide-react";
+import { Plus, Edit2, Save, X, Loader2, Check, Users, Sparkles, ArrowUp, ArrowDown, Trash2, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { ALL_MODULES } from "@/lib/modules";
 import { ROUTE_TO_MODULE_KEY, CANONICAL_MODULE_KEYS } from "@/hooks/useSubscriptionConfig";
 import { getErrorMessage } from "@/lib/errorMessage";
 import { FormError } from "@/components/ui/FormError";
 import { callAIOrThrow } from "@/lib/aiProvider";
+import { MODULE_TABS, MODULE_ACTIONS } from "@/lib/tabPermissions";
+import { ModuleAccessDrawer } from "@/components/access/ModuleAccessDrawer";
+
+type ModuleDetail = { tabs: Record<string, boolean>; actions: Record<string, boolean> };
 
 type Highlight = { text: string; included: boolean };
 
@@ -57,14 +61,17 @@ const ALL_KEYS = CANONICAL_MODULE_KEYS;
 async function fetchPlans() {
   const [pRes, fRes] = await Promise.all([
     (supabase as any).from("subscription_plans").select("*").order("sort_order"),
-    (supabase as any).from("plan_features").select("plan_id, module_key, is_enabled"),
+    (supabase as any).from("plan_features").select("plan_id, module_key, is_enabled, tabs, actions"),
   ]);
   const featureMap = new Map<string, Map<string, boolean>>();
+  const featureDetailMap = new Map<string, Map<string, ModuleDetail>>();
   for (const f of (fRes.data || [])) {
     if (!featureMap.has(f.plan_id)) featureMap.set(f.plan_id, new Map());
     featureMap.get(f.plan_id)!.set(f.module_key, f.is_enabled);
+    if (!featureDetailMap.has(f.plan_id)) featureDetailMap.set(f.plan_id, new Map());
+    featureDetailMap.get(f.plan_id)!.set(f.module_key, { tabs: f.tabs || {}, actions: f.actions || {} });
   }
-  return { plans: (pRes.data || []) as Plan[], featureMap };
+  return { plans: (pRes.data || []) as Plan[], featureMap, featureDetailMap };
 }
 
 const BLANK_PLAN: Partial<Plan> = {
@@ -82,6 +89,10 @@ export default function PlansManagerPage() {
   const [form, setForm] = useState<Partial<Plan>>(BLANK_PLAN);
   const [enabledKeys, setEnabledKeys] = useState<Set<string>>(new Set());
   const [isNew, setIsNew] = useState(false);
+  // Per-module tab/action defaults for the plan being edited (module_key → withheld maps).
+  // Staged locally; persisted with the rest of the plan on "Save Changes".
+  const [planDetails, setPlanDetails] = useState<Map<string, ModuleDetail>>(new Map());
+  const [customiseKey, setCustomiseKey] = useState<string | null>(null);
 
   const toggleKey = (key: string) => {
     setEnabledKeys((prev) => {
@@ -133,7 +144,17 @@ export default function PlansManagerPage() {
     // Mirror the app's gate exactly: with any feature rows, a module is enabled only when
     // its row is === true (missing row = disabled). Zero rows = legacy "all open".
     const hasRows = planFeatures.size > 0;
-    setEnabledKeys(new Set(ALL_KEYS.filter((k) => (hasRows ? planFeatures.get(k) === true : true))));
+    setEnabledKeys(new Set(ALL_KEYS.filter((k) => {
+      // AI master defaults ON: a plan with no ai_suite row still has AI enabled.
+      if (k === "ai_suite") return planFeatures.get("ai_suite") !== false;
+      return hasRows ? planFeatures.get(k) === true : true;
+    })));
+    const details = data?.featureDetailMap.get(plan.id);
+    setPlanDetails(
+      details
+        ? new Map(Array.from(details, ([k, v]) => [k, { tabs: { ...v.tabs }, actions: { ...v.actions } }]))
+        : new Map(),
+    );
     setEditing(plan.id);
   };
 
@@ -141,6 +162,7 @@ export default function PlansManagerPage() {
     setForm({ ...BLANK_PLAN });
     setIsNew(true);
     setEnabledKeys(new Set(ALL_KEYS));
+    setPlanDetails(new Map());
     setEditing("new");
   };
 
@@ -164,8 +186,11 @@ export default function PlansManagerPage() {
         const { error } = await (supabase as any).from("subscription_plans").update(payload).eq("id", planId);
         if (error) throw error;
       }
-      // Upsert all plan_features
-      const rows = ALL_KEYS.map((k) => ({ plan_id: planId, module_key: k, is_enabled: enabledKeys.has(k) }));
+      // Upsert all plan_features (module on/off + per-module tab/action defaults)
+      const rows = ALL_KEYS.map((k) => {
+        const d = planDetails.get(k);
+        return { plan_id: planId, module_key: k, is_enabled: enabledKeys.has(k), tabs: d?.tabs ?? {}, actions: d?.actions ?? {} };
+      });
       const { error: featError } = await (supabase as any).from("plan_features")
         .upsert(rows, { onConflict: "plan_id,module_key" });
       if (featError) throw featError;
@@ -496,6 +521,42 @@ export default function PlansManagerPage() {
                 </label>
               </div>
 
+              {/* AI Features master (pseudo-module ai_suite) */}
+              {(() => {
+                const aiOn = enabledKeys.has("ai_suite");
+                const d = planDetails.get("ai_suite");
+                const aiWithheld = d ? Object.values(d.actions || {}).filter((v) => v === false).length : 0;
+                return (
+                  <div className="mb-5">
+                    <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider mb-2">Artificial Intelligence</p>
+                    <div className={`flex items-center justify-between px-3 py-2.5 rounded-lg border ${aiOn ? "bg-violet-50 border-violet-300/60" : "bg-muted/40 border-border/60"}`}>
+                      <label className="flex items-center gap-2 cursor-pointer flex-1 text-xs">
+                        <input type="checkbox" className="sr-only" checked={aiOn} onChange={() => toggleKey("ai_suite")} />
+                        <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${aiOn ? "bg-violet-500 border-violet-500" : "border-border"}`}>
+                          {aiOn && <Check size={8} className="text-white" />}
+                        </div>
+                        <Sparkles size={13} className={aiOn ? "text-violet-600" : "text-muted-foreground"} />
+                        <span className="font-medium text-foreground">AI Features</span>
+                        <span className="text-[10px] text-muted-foreground truncate">— master switch for all AI</span>
+                      </label>
+                      {aiOn && (
+                        <button
+                          type="button"
+                          onClick={() => setCustomiseKey("ai_suite")}
+                          title="Customise individual AI features for this plan"
+                          className={`relative flex items-center justify-center h-6 w-6 rounded-md border shrink-0 transition-colors ${aiWithheld > 0 ? "bg-amber-100 border-amber-400/70 text-amber-700" : "bg-background border-border/70 text-muted-foreground hover:text-foreground"}`}
+                        >
+                          <SlidersHorizontal size={12} />
+                          {aiWithheld > 0 && (
+                            <span className="absolute -top-1.5 -right-1.5 min-w-[13px] h-[13px] px-0.5 rounded-full bg-amber-500 text-white text-[8px] font-bold leading-[13px] text-center">{aiWithheld}</span>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Module checklist grouped by category */}
               <div>
                 <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider mb-3">Module Access</p>
@@ -508,19 +569,42 @@ export default function PlansManagerPage() {
                     const key = ROUTE_KEY[m.route] ?? ROUTE_KEY[m.route.split("?")[0]];
                     if (!key) return null;
                     const on = enabledKeys.has(key);
+                    const customisable = (MODULE_TABS[key]?.length ?? 0) > 0 || (MODULE_ACTIONS[key]?.length ?? 0) > 0;
+                    const d = planDetails.get(key);
+                    const withheld = d
+                      ? Object.values(d.tabs || {}).filter((v) => v === false).length +
+                        Object.values(d.actions || {}).filter((v) => v === false).length
+                      : 0;
                     return (
-                      <label key={key} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-xs transition-colors ${on ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:bg-muted"}`}>
-                        <input
-                          type="checkbox"
-                          className="sr-only"
-                          checked={on}
-                          onChange={() => toggleKey(key)}
-                        />
-                        <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${on ? "bg-primary border-primary" : "border-border"}`}>
-                          {on && <Check size={8} className="text-primary-foreground" />}
-                        </div>
-                        <span className="truncate">{m.name}</span>
-                      </label>
+                      <div key={key} className="flex items-center gap-1">
+                        <label className={`flex-1 flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-xs transition-colors ${on ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:bg-muted"}`}>
+                          <input
+                            type="checkbox"
+                            className="sr-only"
+                            checked={on}
+                            onChange={() => toggleKey(key)}
+                          />
+                          <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${on ? "bg-primary border-primary" : "border-border"}`}>
+                            {on && <Check size={8} className="text-primary-foreground" />}
+                          </div>
+                          <span className="truncate">{m.name}</span>
+                        </label>
+                        {customisable && (
+                          <button
+                            type="button"
+                            onClick={() => setCustomiseKey(key)}
+                            title="Customise tabs & buttons for this plan"
+                            className={`relative flex items-center justify-center h-6 w-6 rounded-md border shrink-0 transition-colors ${withheld > 0 ? "bg-amber-100 border-amber-400/70 text-amber-700" : "bg-background border-border/70 text-muted-foreground hover:text-foreground"}`}
+                          >
+                            <SlidersHorizontal size={12} />
+                            {withheld > 0 && (
+                              <span className="absolute -top-1.5 -right-1.5 min-w-[13px] h-[13px] px-0.5 rounded-full bg-amber-500 text-white text-[8px] font-bold leading-[13px] text-center">
+                                {withheld}
+                              </span>
+                            )}
+                          </button>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -540,6 +624,31 @@ export default function PlansManagerPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Customise a module's tabs/buttons for THIS plan (default for its hospitals) ── */}
+      {customiseKey && (
+        <ModuleAccessDrawer
+          moduleKey={customiseKey}
+          moduleLabel={customiseKey === "ai_suite" ? "AI Features" : (ALL_MODULES.find((m) => (ROUTE_KEY[m.route] ?? ROUTE_KEY[m.route.split("?")[0]]) === customiseKey)?.name || customiseKey)}
+          subtitle={customiseKey === "ai_suite" ? "Default AI features for hospitals on this plan. A hospital can override these per-hospital." : "Default tabs & buttons for hospitals on this plan. A hospital can override these per-hospital."}
+          initialTabs={Object.fromEntries((MODULE_TABS[customiseKey] ?? []).map((t) => [t.key, planDetails.get(customiseKey)?.tabs?.[t.key] !== false]))}
+          initialActions={Object.fromEntries((MODULE_ACTIONS[customiseKey] ?? []).map((a) => [a.key, planDetails.get(customiseKey)?.actions?.[a.key] !== false]))}
+          saving={false}
+          onClose={() => setCustomiseKey(null)}
+          onSave={(tabs, actions) => {
+            const tabsOff = Object.fromEntries(Object.entries(tabs).filter(([, v]) => v === false));
+            const actionsOff = Object.fromEntries(Object.entries(actions).filter(([, v]) => v === false));
+            const mk = customiseKey;
+            setPlanDetails((prev) => {
+              const next = new Map(prev);
+              if (Object.keys(tabsOff).length === 0 && Object.keys(actionsOff).length === 0) next.delete(mk);
+              else next.set(mk, { tabs: tabsOff, actions: actionsOff });
+              return next;
+            });
+            setCustomiseKey(null);
+          }}
+        />
       )}
       </>
       )}

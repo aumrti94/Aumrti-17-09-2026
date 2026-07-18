@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -56,12 +57,16 @@ export default function PackagesPage() {
       <div className="flex items-center justify-between px-4 h-[52px] border-b bg-background shrink-0">
         <h1 className="text-base font-bold">📋 Health Packages & Checkups</h1>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => window.open("/packages/book", "_blank")}>
-            <ExternalLink className="h-4 w-4 mr-1" /> Patient Booking Link
-          </Button>
-          <Button size="sm" onClick={() => setShowBook(true)}>
-            <Plus className="h-4 w-4 mr-1" /> Book Package
-          </Button>
+          <GatedAction module="health_packages" action="booking_link">
+            <Button size="sm" variant="outline" onClick={() => window.open("/packages/book", "_blank")}>
+              <ExternalLink className="h-4 w-4 mr-1" /> Patient Booking Link
+            </Button>
+          </GatedAction>
+          <GatedAction module="health_packages" action="book_package">
+            <Button size="sm" onClick={() => setShowBook(true)}>
+              <Plus className="h-4 w-4 mr-1" /> Book Package
+            </Button>
+          </GatedAction>
           <Button size="sm" variant="outline" onClick={() => setShowCreate(true)}>
             <Plus className="h-4 w-4 mr-1" /> Create Package
           </Button>
@@ -86,11 +91,11 @@ export default function PackagesPage() {
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab} className="flex-1 flex flex-col overflow-hidden px-4">
         <TabsList className="shrink-0 w-fit">
-          <TabsTrigger value="catalogue">📦 Packages</TabsTrigger>
-          <TabsTrigger value="checkups">📅 Today's Checkups</TabsTrigger>
-          <TabsTrigger value="progress">📊 Progress Tracker</TabsTrigger>
-          <TabsTrigger value="corporate">🏢 Corporate</TabsTrigger>
-          <TabsTrigger value="analytics">📈 Analytics</TabsTrigger>
+          <GatedTabsTrigger module="health_packages" value="catalogue">📦 Packages</GatedTabsTrigger>
+          <GatedTabsTrigger module="health_packages" value="checkups">📅 Today's Checkups</GatedTabsTrigger>
+          <GatedTabsTrigger module="health_packages" value="progress">📊 Progress Tracker</GatedTabsTrigger>
+          <GatedTabsTrigger module="health_packages" value="corporate">🏢 Corporate</GatedTabsTrigger>
+          <GatedTabsTrigger module="health_packages" value="analytics">📈 Analytics</GatedTabsTrigger>
         </TabsList>
         <TabsContent value="catalogue" className="flex-1 overflow-auto mt-2">
           <PackageCatalogueTab onBook={() => setShowBook(true)} onCreate={() => setShowCreate(true)} />

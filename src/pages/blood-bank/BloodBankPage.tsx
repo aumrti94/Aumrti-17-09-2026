@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
@@ -118,25 +119,29 @@ const BloodBankPage: React.FC = () => {
               : <Megaphone className="w-4 h-4 mr-1" />}
             {hasLowStock ? "📣 Low Stock Campaign" : "Donor Campaign"}
           </Button>
-          <Button size="sm" variant="outline" onClick={() => { setShowDonorModal(true); setTab("donors"); }}>
-            <UserPlus className="w-4 h-4 mr-1" /> Register Donor
-          </Button>
-          <Button size="sm" onClick={() => { setShowRequestModal(true); setTab("requests"); }}>
-            <FileText className="w-4 h-4 mr-1" /> Blood Request
-          </Button>
+          <GatedAction module="blood_bank" action="register_donor">
+            <Button size="sm" variant="outline" onClick={() => { setShowDonorModal(true); setTab("donors"); }}>
+              <UserPlus className="w-4 h-4 mr-1" /> Register Donor
+            </Button>
+          </GatedAction>
+          <GatedAction module="blood_bank" action="blood_request">
+            <Button size="sm" onClick={() => { setShowRequestModal(true); setTab("requests"); }}>
+              <FileText className="w-4 h-4 mr-1" /> Blood Request
+            </Button>
+          </GatedAction>
         </div>
       </div>
 
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab} className="flex-1 flex flex-col overflow-hidden">
         <TabsList className="h-11 w-full justify-start rounded-none border-b border-border bg-muted/30 px-4 shrink-0">
-          <TabsTrigger value="inventory" className="gap-1.5"><Package className="w-4 h-4" /> Inventory</TabsTrigger>
-          <TabsTrigger value="requests" className="gap-1.5"><Droplets className="w-4 h-4" /> Requests</TabsTrigger>
-          <TabsTrigger value="crossmatch" className="gap-1.5"><Microscope className="w-4 h-4" /> Cross-Match</TabsTrigger>
-          <TabsTrigger value="donors" className="gap-1.5"><User className="w-4 h-4" /> Donors</TabsTrigger>
-          <TabsTrigger value="issuelog" className="gap-1.5"><ClipboardList className="w-4 h-4" /> Issue Log</TabsTrigger>
-          <TabsTrigger value="tti" className="gap-1.5"><FlaskConical className="w-4 h-4" /> TTI Testing</TabsTrigger>
-          <TabsTrigger value="reports" className="gap-1.5"><BarChart3 className="w-4 h-4" /> Reports</TabsTrigger>
+          <GatedTabsTrigger module="blood_bank" value="inventory" className="gap-1.5"><Package className="w-4 h-4" /> Inventory</GatedTabsTrigger>
+          <GatedTabsTrigger module="blood_bank" value="requests" className="gap-1.5"><Droplets className="w-4 h-4" /> Requests</GatedTabsTrigger>
+          <GatedTabsTrigger module="blood_bank" value="crossmatch" className="gap-1.5"><Microscope className="w-4 h-4" /> Cross-Match</GatedTabsTrigger>
+          <GatedTabsTrigger module="blood_bank" value="donors" className="gap-1.5"><User className="w-4 h-4" /> Donors</GatedTabsTrigger>
+          <GatedTabsTrigger module="blood_bank" value="issuelog" className="gap-1.5"><ClipboardList className="w-4 h-4" /> Issue Log</GatedTabsTrigger>
+          <GatedTabsTrigger module="blood_bank" value="tti" className="gap-1.5"><FlaskConical className="w-4 h-4" /> TTI Testing</GatedTabsTrigger>
+          <GatedTabsTrigger module="blood_bank" value="reports" className="gap-1.5"><BarChart3 className="w-4 h-4" /> Reports</GatedTabsTrigger>
         </TabsList>
 
         <TabsContent value="inventory" className="flex-1 overflow-hidden m-0">

@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -61,6 +62,7 @@ const Section: React.FC<{ icon: React.ReactNode; title: string; items: string[];
 };
 
 const AIRootCauseAnalysis: React.FC<Props> = ({ incident, hospitalId }) => {
+  const __aiOn = useAIFeature("ai_rca");
   const { toast } = useToast();
   const [rca, setRca] = useState<RCAOutput | null>(null);
   const [loading, setLoading] = useState(false);
@@ -128,6 +130,8 @@ Conduct a thorough RCA. Respond ONLY with this exact JSON structure:
     }
     setLoading(false);
   }, [incident, hospitalId, extraContext]);
+
+  if (!__aiOn) return null; // AI master or ai_rca feature disabled
 
   return (
     <div className="border border-border rounded-xl bg-card overflow-hidden">

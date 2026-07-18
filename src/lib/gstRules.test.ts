@@ -70,6 +70,25 @@ describe("getDefaultGSTRate — room charge ₹5,000/day threshold (boundary)", 
   });
 });
 
+describe("getDefaultGSTRate — room_charge_icu (ICU carve-out)", () => {
+  // Bed-day catalog rows are mirrored with an item_type that encodes the CBIC
+  // ICU carve-out (see ward_catalog_item_type in 20261008000136), because the
+  // billing picker derives GST from item_type alone and has no bed category to
+  // pass to getRoomChargeGSTRate. The two must agree.
+  it("is exempt at any rate, including above the ₹5,000/day threshold", () => {
+    expect(getDefaultGSTRate("room_charge_icu")).toBe(0);
+    expect(getDefaultGSTRate("room_charge_icu", 12000)).toBe(0);
+  });
+
+  it("agrees with getRoomChargeGSTRate for an ICU bed above the threshold", () => {
+    expect(getDefaultGSTRate("room_charge_icu", 12000)).toBe(getRoomChargeGSTRate("icu", 12000));
+  });
+
+  it("a non-ICU ward above the threshold is still 5% — the carve-out is not blanket", () => {
+    expect(getDefaultGSTRate("room_charge", 12000)).toBe(getRoomChargeGSTRate("general", 12000));
+  });
+});
+
 describe("getDefaultGSTRate — robustness / known gaps (pinned)", () => {
   it("unknown item type silently defaults to 0% — UNDERTAXATION RISK, flag to @girija", () => {
     // GST_RATE_RULES[itemType] ?? 0 — a typo'd or new taxable item type

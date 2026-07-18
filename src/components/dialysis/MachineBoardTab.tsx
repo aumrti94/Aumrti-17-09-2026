@@ -6,6 +6,7 @@ import { calcGST } from "@/lib/currency";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { postCharge } from "@/lib/chargePosting";
 import { supabase } from "@/integrations/supabase/client";
+import { ADMISSION_BILL_TYPES } from "@/lib/admissionBill";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -264,7 +265,11 @@ const MachineBoardTab: React.FC<Props> = ({ onRefresh }) => {
         .select("id")
         .eq("hospital_id", hospitalId)
         .eq("admission_id", admission.id)
-        .eq("bill_type", "ipd")
+        // Dialysis is itself a classic day care procedure, so this must match a daycare bill
+        // as well as an IPD one.
+        .in("bill_type", ADMISSION_BILL_TYPES as unknown as string[])
+        .order("created_at", { ascending: false })
+        .limit(1)
         .maybeSingle();
 
       if (ipdBill?.id) {

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MessageCircle, X, Send, Loader2 } from "lucide-react";
@@ -21,6 +22,7 @@ interface Message {
 const QUICK_QUESTIONS = ["My medications", "Follow-up due?", "Diet advice", "When to visit ER?"];
 
 const HealthCoachBot: React.FC<Props> = ({ patientId, hospitalId, patientName, hospitalName, hospitalPhone }) => {
+  const __aiOn = useAIFeature("voice_scribe");
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     { role: "assistant", content: `Hello ${patientName.split(" ")[0]}! 👋 How can I help you today?` },
@@ -104,6 +106,7 @@ Use simple, clear language.`,
     );
   }
 
+  if (!__aiOn) return null;
   return (
     <div
       className="fixed bottom-[72px] right-2 z-50 flex flex-col bg-white rounded-xl shadow-2xl overflow-hidden"

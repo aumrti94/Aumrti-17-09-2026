@@ -6,6 +6,7 @@ import { calcGST } from "@/lib/currency";
 import { getRate } from "@/lib/serviceRates";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { supabase } from "@/integrations/supabase/client";
+import { ADMISSION_BILL_TYPES } from "@/lib/admissionBill";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -159,7 +160,11 @@ const RequestsTab: React.FC<Props> = ({ showModal, onCloseModal, onRefresh }) =>
       .select("id, patient_id")
       .eq("hospital_id", hospitalId)
       .eq("admission_id", issue.admission_id)
-      .eq("bill_type", "ipd")
+      // Both admission bill types: a day care patient can be transfused too, and hardcoding
+      // 'ipd' meant their daycare bill was never found.
+      .in("bill_type", ADMISSION_BILL_TYPES as unknown as string[])
+      .order("created_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (!bill) return; // Bill doesn't exist yet — will be captured on auto-pull

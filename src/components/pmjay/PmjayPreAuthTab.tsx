@@ -158,7 +158,7 @@ const PmjayPreAuthTab: React.FC<Props> = ({ showNewForm, onFormClosed }) => {
     setFormBeneficiaries((bens || []).map((b: any) => ({ ...b, patient_name: p.full_name })));
 
     // Load active admissions
-    const { data: adms } = await supabase.from("admissions").select("id, admission_number, admitting_diagnosis").eq("patient_id", p.id).eq("status", "admitted");
+    const { data: adms } = await supabase.from("admissions").select("id, admission_number, admitting_diagnosis").eq("patient_id", p.id).eq("status", "active");
     setAdmissions((adms || []) as any[]);
   };
 

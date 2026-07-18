@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Sparkles, Loader2, ChevronDown, ChevronUp, AlertTriangle, TrendingUp, Clock } from "lucide-react";
@@ -35,6 +36,7 @@ const TYPE_ICON: Record<string, React.ReactNode> = {
 };
 
 const OTOptimizerPanel: React.FC<Props> = ({ schedules, hospitalId, selectedDate }) => {
+  const __aiOn = useAIFeature("ot_optimizer");
   const [loading, setLoading] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [utilizationScore, setUtilizationScore] = useState<number | null>(null);
@@ -149,6 +151,7 @@ Provide 3-6 suggestions. Be specific to the actual schedule data.`,
     setLoading(false);
   };
 
+  if (!__aiOn) return null;
   return (
     <div className="border-t border-border bg-background">
       <button

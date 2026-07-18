@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { formatINRExact } from "@/lib/currency";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { Button } from "@/components/ui/button";
@@ -26,7 +27,8 @@ interface HospitalKPIs {
   fetchedAt: number;
 }
 
-const fmt = (n: number) => `₹${(n / 100000).toFixed(1)}L`;
+// Was `₹${(n/100000).toFixed(1)}L` — which rendered a ₹23,700 day as "₹0.2L".
+const fmt = formatINRExact;
 const pct = (v: number, total: number) => total > 0 ? Math.round((v / total) * 100) : 0;
 
 const KpiBox: React.FC<{ label: string; value: string | number; sub?: string; alert?: boolean; icon: React.ReactNode }> = ({ label, value, sub, alert, icon }) => (

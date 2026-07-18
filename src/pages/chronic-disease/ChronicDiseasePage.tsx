@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { GatedTabsTrigger } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -187,9 +188,9 @@ const ChronicDiseasePage: React.FC = () => {
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden">
         <TabsList className="shrink-0 w-full justify-start rounded-none border-b bg-card h-10 px-5">
-          <TabsTrigger value="dashboard" className="text-xs">Cohort Dashboard</TabsTrigger>
-          <TabsTrigger value="plans" className="text-xs">Care Plans</TabsTrigger>
-          <TabsTrigger value="new" className="text-xs">New Care Plan</TabsTrigger>
+          <GatedTabsTrigger module="chronic_disease" value="dashboard" className="text-xs">Cohort Dashboard</GatedTabsTrigger>
+          <GatedTabsTrigger module="chronic_disease" value="plans" className="text-xs">Care Plans</GatedTabsTrigger>
+          <GatedTabsTrigger module="chronic_disease" value="new" className="text-xs">New Care Plan</GatedTabsTrigger>
         </TabsList>
 
         {/* DASHBOARD TAB */}

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Bot, Loader2, AlertTriangle, TrendingUp, TrendingDown, CheckCircle2 } from "lucide-react";
@@ -45,6 +46,7 @@ const inr = (n?: number) =>
   n != null ? `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 0 })}` : "";
 
 const CodingAccuracyAuditPanel: React.FC<Props> = ({ hospitalId }) => {
+  const __aiOn = useAIFeature("coding_accuracy_auditor");
   const [loading, setLoading] = useState(false);
   const [flags, setFlags] = useState<AuditFlag[] | null>(null);
   const [rawText, setRawText] = useState<string | null>(null);
@@ -158,6 +160,7 @@ Respond ONLY with valid JSON — no markdown, no text outside the array.`;
   const highImpact = flags?.filter((f) => f.revenue_impact === "high") ?? [];
   const totalEstimated = flags?.reduce((s, f) => s + (f.estimated_impact_inr || 0), 0) ?? 0;
 
+  if (!__aiOn) return null;
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <div className="p-4 border-b flex items-center justify-between shrink-0">

@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { GatedTabsTrigger } from "@/components/access/GatedTabsTrigger";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -284,10 +285,10 @@ const DentalPage: React.FC = () => {
 
               <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden">
                 <TabsList className="mx-4 mt-2 w-fit shrink-0">
-                  <TabsTrigger value="chart">🦷 Tooth Chart</TabsTrigger>
-                  <TabsTrigger value="perio">📊 Perio</TabsTrigger>
-                  <TabsTrigger value="treatment">📋 Treatment Plan</TabsTrigger>
-                  <TabsTrigger value="lab">🔬 Lab Orders</TabsTrigger>
+                  <GatedTabsTrigger module="dental" value="chart">🦷 Tooth Chart</GatedTabsTrigger>
+                  <GatedTabsTrigger module="dental" value="perio">📊 Perio</GatedTabsTrigger>
+                  <GatedTabsTrigger module="dental" value="treatment">📋 Treatment Plan</GatedTabsTrigger>
+                  <GatedTabsTrigger module="dental" value="lab">🔬 Lab Orders</GatedTabsTrigger>
                 </TabsList>
 
                 <div className="flex-1 overflow-hidden px-4 py-2">

@@ -8,6 +8,7 @@ import { useHospitalContext } from "@/contexts/HospitalContext";
 import { hasTabAccess } from "@/lib/tabPermissions";
 import { cn } from "@/lib/utils";
 import { autoPullAdmissionCharges as autoPullAdmissionChargesUtil } from "@/lib/ipdBilling";
+import { ADMISSION_BILL_TYPES, findOrCreateAdmissionBill } from "@/lib/admissionBill";
 import { AlertTriangle, Lock, X, Receipt } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import NABHBadge from "@/components/nabh/NABHBadge";
@@ -84,6 +85,18 @@ const BillingPage: React.FC = () => {
   const [pendingDiscountCount, setPendingDiscountCount] = useState(0);
   const [pendingRefundCount, setPendingRefundCount] = useState(0);
 
+  // Previous business day — the day that should already be closed.
+  // Derive the query key and the banner label from ONE value so they can
+  // never drift apart (e.g. across the UTC/local midnight boundary).
+  const prevDayISO = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().split("T")[0]; // matches how closure_date is stored
+  })();
+  const prevDayLabel = new Date(prevDayISO + "T00:00:00").toLocaleDateString("en-IN", {
+    day: "2-digit", month: "short",
+  });
+
   useEffect(() => {
     const loadHospital = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -98,30 +111,27 @@ const BillingPage: React.FC = () => {
     loadHospital();
   }, []);
 
-  // Check whether yesterday's cash closure is locked
+  // Check whether the previous day's cash closure is locked
   useEffect(() => {
     if (!hospitalId) return;
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yd = yesterday.toISOString().split("T")[0];
     (supabase as any)
       .from("daily_cash_closure")
       .select("status")
       .eq("hospital_id", hospitalId)
-      .eq("closure_date", yd)
+      .eq("closure_date", prevDayISO)
       .maybeSingle()
       .then(({ data }: any) => {
         setPrevDayClosed(data?.status === "locked");
       });
-  }, [hospitalId]);
+  }, [hospitalId, prevDayISO]);
 
-  // Handle discharge billing URL params: /billing?action=new&admission_id=X&type=ipd
+  // Handle discharge billing URL params: /billing?action=new&admission_id=X&type=ipd|daycare
   useEffect(() => {
     if (!hospitalId || dischargeBillCreated) return;
     const action = searchParams.get("action");
     const admissionId = searchParams.get("admission_id");
     const billType = searchParams.get("type");
-    if (action === "new" && admissionId && billType === "ipd") {
+    if (action === "new" && admissionId && ADMISSION_BILL_TYPES.includes(billType as any)) {
       createDischargeBill(admissionId);
     }
   }, [hospitalId, searchParams, dischargeBillCreated]);
@@ -130,27 +140,6 @@ const BillingPage: React.FC = () => {
     if (!hospitalId) return;
     setDischargeBillCreated(true);
 
-    // Check if bill already exists for this admission
-    const { data: existing } = await supabase
-      .from("bills")
-      .select("id")
-      .eq("hospital_id", hospitalId)
-      .eq("admission_id", admissionId)
-      .eq("bill_type", "ipd")
-      .order("created_at", { ascending: false })
-      .limit(1);
-
-    if (existing && existing.length > 0) {
-      await autoPullAdmissionCharges(existing[0].id, admissionId);
-      // Widen the date filter so bills created on previous days (multi-day stays) are visible.
-      // Changing dateFilter triggers fetchBills automatically via useCallback deps.
-      setDateFilter("month");
-      setSelectedBillId(existing[0].id);
-      setSearchParams({});
-      return;
-    }
-
-    // Get admission + patient info
     const { data: admission } = await supabase
       .from("admissions")
       .select("*, patients(id, full_name, uhid)")
@@ -159,33 +148,29 @@ const BillingPage: React.FC = () => {
 
     if (!admission) return;
 
-    const { data: { user } } = await supabase.auth.getUser();
-    const { data: userData } = await supabase.from("users").select("id")
-      .eq("auth_user_id", user?.id || "").maybeSingle();
+    // Resolve (or create) the admission's bill by its own type. Previously this hardcoded
+    // bill_type='ipd' both when looking up and when creating, so opening Billing for a day
+    // care admission ignored its existing daycare bill and made a second, IPD-typed one.
+    //
+    // paymentStatuses: [] — this is an IDENTITY lookup ("open this admission's bill"), not a
+    // "find me something to charge" lookup. Without it, a fully-paid bill is invisible here
+    // and this function mints a duplicate: exactly what happened to a prepaid day care bill,
+    // which is 'paid' from the moment of admission.
+    const { id: billId, isNew } = await findOrCreateAdmissionBill(
+      hospitalId,
+      admission.patient_id,
+      admissionId,
+      undefined,
+      { paymentStatuses: [] },
+    );
 
-    const billNumber = await generateBillNumber(hospitalId, "BILL");
+    await autoPullAdmissionCharges(billId, admissionId);
 
-    const { data: newBill, error } = await supabase.from("bills").insert({
-      hospital_id: hospitalId,
-      bill_number: billNumber,
-      patient_id: admission.patient_id,
-      admission_id: admissionId,
-      bill_type: "ipd",
-      bill_status: "draft",
-      created_by: userData?.id || null,
-    }).select("id").maybeSingle();
-
-    if (error || !newBill) {
-      toast({ title: "Error creating discharge bill", variant: "destructive" });
-      return;
-    }
-
-    // Auto-pull charges for this admission
-    await autoPullAdmissionCharges(newBill.id, admissionId);
-
-    toast({ title: `IPD Discharge Bill #${billNumber} created with auto-pulled charges` });
+    if (isNew) toast({ title: "Discharge bill created with auto-pulled charges" });
+    // Widen the date filter so bills created on previous days (multi-day stays) are visible.
+    // Changing dateFilter triggers fetchBills automatically via useCallback deps.
     setDateFilter("month");
-    setSelectedBillId(newBill.id);
+    setSelectedBillId(billId);
     setSearchParams({});
   };
 
@@ -303,7 +288,7 @@ const BillingPage: React.FC = () => {
       payer_type: (b.admission as any)?.payer_type || (b as any).payer_type || null,
     }));
 
-    // Find active admissions WITHOUT an IPD bill — surface as virtual "Pending IPD" rows
+    // Find active admissions WITHOUT a bill — surface as virtual "Pending IPD" rows
     let virtualBills: BillRecord[] = [];
     if (statusFilter === "all" || statusFilter === "unpaid") {
       const { data: activeAdms } = await supabase
@@ -312,15 +297,20 @@ const BillingPage: React.FC = () => {
         .eq("hospital_id", hospitalId)
         .eq("status", "active");
 
+      // "Has a bill" must consider BOTH admission bill types. Checking only 'ipd' meant a day
+      // care patient with a perfectly good daycare bill still showed as "Pending IPD — click
+      // to create bill", and clicking it minted a duplicate.
       const admissionsWithBills = new Set(
-        realBills.filter((b) => b.bill_type === "ipd" && b.admission_id).map((b) => b.admission_id)
+        realBills
+          .filter((b) => ADMISSION_BILL_TYPES.includes(b.bill_type as any) && b.admission_id)
+          .map((b) => b.admission_id)
       );
       // Also check bills that fall outside the date filter
       const { data: existingIpd } = await supabase
         .from("bills")
         .select("admission_id")
         .eq("hospital_id", hospitalId)
-        .eq("bill_type", "ipd")
+        .in("bill_type", ADMISSION_BILL_TYPES as unknown as string[])
         .not("admission_id", "is", null);
       (existingIpd || []).forEach((b: any) => admissionsWithBills.add(b.admission_id));
 
@@ -392,12 +382,10 @@ const BillingPage: React.FC = () => {
     .reduce((s, b) => s + b.paid_amount, 0);
   const pendingAmount = bills.reduce((s, b) => s + b.balance_due, 0);
 
-  // Show time-based day-close reminder after 22:30
-  const now = new Date();
-  const isAfterClosingTime = now.getHours() > 22 || (now.getHours() === 22 && now.getMinutes() >= 30);
-  const yesterdayStr = new Date(now.setDate(now.getDate() - 1)).toLocaleDateString("en-IN", {
-    day: "2-digit", month: "short",
-  });
+  // Show a stronger day-close reminder after 22:30
+  const nowHour = new Date().getHours();
+  const nowMin = new Date().getMinutes();
+  const isAfterClosingTime = nowHour > 22 || (nowHour === 22 && nowMin >= 30);
 
   return (
     <div className="flex flex-col h-[calc(100vh-56px)] overflow-hidden">
@@ -407,8 +395,8 @@ const BillingPage: React.FC = () => {
         <div className="flex-shrink-0 bg-destructive text-white px-4 py-1.5 flex items-center gap-3 text-[12px] font-semibold">
           <AlertTriangle size={14} className="shrink-0" />
           {isAfterClosingTime
-            ? `Day not closed! All transactions from ${yesterdayStr} require end-of-day closure before continuing.`
-            : `${yesterdayStr} is not closed. Complete cash reconciliation before end of day.`}
+            ? `Previous day (${prevDayLabel}) is not closed! Complete its end-of-day cash reconciliation before continuing.`
+            : `Previous day (${prevDayLabel}) is not closed. Complete its cash reconciliation to keep the books accurate.`}
           <button
             className="ml-2 underline hover:no-underline text-white"
             onClick={() => navigate("/billing/closure")}

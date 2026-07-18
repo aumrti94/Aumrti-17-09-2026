@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +43,7 @@ interface Props {
 }
 
 const NoShowRiskPanel: React.FC<Props> = ({ hospitalId, date, appointments }) => {
+  const __aiOn = useAIFeature("no_show_predictor");
   const { toast } = useToast();
   const [scores, setScores] = useState<Record<string, RiskScore>>({});
   const [loading, setLoading] = useState(false);
@@ -142,6 +144,7 @@ low = <25%, medium = 25-55%, high = >55%`;
   const highRisk = Object.values(scores).filter(s => s.level === "high").length;
   const hasScores = Object.keys(scores).length > 0;
 
+  if (!__aiOn) return null;
   return (
     <div className="border border-border rounded-xl bg-card overflow-hidden">
       <div className="px-4 py-3 border-b border-border bg-muted/30 flex items-center justify-between gap-2 flex-wrap">

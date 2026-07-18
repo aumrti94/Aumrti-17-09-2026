@@ -18,6 +18,7 @@ import {
   Tooltip, ResponsiveContainer, Legend, ReferenceLine,
 } from "recharts";
 import { format, subDays, addDays, parseISO } from "date-fns";
+import { formatINRExact, formatINRCompact } from "@/lib/currency";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { Loader2, TrendingUp, FlaskConical, BedDouble, IndianRupee, AlertTriangle, RefreshCw } from "lucide-react";
@@ -138,12 +139,9 @@ function mergeChartData(
   return [...hist, ...fcast];
 }
 
-const fmt = (n: number) => {
-  if (n >= 10000000) return `₹${(n / 10000000).toFixed(1)}Cr`;
-  if (n >= 100000)   return `₹${(n / 100000).toFixed(1)}L`;
-  if (n >= 1000)     return `₹${(n / 1000).toFixed(1)}K`;
-  return `₹${n.toLocaleString("en-IN")}`;
-};
+// Exact for anything read as an amount; compact (fmtAxis) only for axis ticks.
+const fmt = formatINRExact;
+const fmtAxis = formatINRCompact;
 
 const fmtDate = (d: string) => {
   try { return format(parseISO(d), "dd MMM"); } catch { return d; }
@@ -227,7 +225,7 @@ const ForecastChart: React.FC<ForecastChartProps> = ({ data, todayLabel, yLabel,
             tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
             axisLine={false}
             tickLine={false}
-            tickFormatter={v => valuePrefix ? fmt(v) : String(v)}
+            tickFormatter={v => valuePrefix ? fmtAxis(v) : String(v)}
             width={valuePrefix ? 50 : 32}
           />
           <Tooltip content={<ChartTooltip />} />

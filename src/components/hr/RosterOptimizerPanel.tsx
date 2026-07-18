@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CalendarDays, Loader2, Bot, AlertTriangle, CheckCircle2 } from "lucide-react";
@@ -28,6 +29,7 @@ interface Props {
 }
 
 const RosterOptimizerPanel: React.FC<Props> = ({ hospitalId }) => {
+  const __aiOn = useAIFeature("roster_optimizer");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<RosterOptResult | null>(null);
   const [rawText, setRawText] = useState<string | null>(null);
@@ -172,6 +174,7 @@ coverage_score: 0-100 (100 = all shifts fully covered). Return [] for critical_g
   const criticalCount = result?.critical_gaps?.length ?? 0;
   const score = result?.coverage_score ?? null;
 
+  if (!__aiOn) return null;
   return (
     <div className="border rounded-lg overflow-hidden mt-4">
       <div className="flex items-center justify-between px-4 py-2.5 bg-muted/40 border-b">

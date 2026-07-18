@@ -46,9 +46,10 @@ import type { PrescriptionData, DrugEntry, LabOrder, RadiologyOrder } from "@/co
 import VoiceDictationButton from "@/components/voice/VoiceDictationButton";
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { autoPostJournalEntry } from "@/lib/accounting";
-import { recalculateBillTotalsSafe } from "@/lib/billTotals";
 import { syncLabOrders, syncRadiologyOrders, isRadiologyKeyword } from "@/lib/investigationSync";
-import { autoPullAdmissionCharges } from "@/lib/ipdBilling";
+import { chargeLabOrders, chargeRadiologyOrders } from "@/lib/ancillaryCharges";
+import { fetchIpdAncillaryPolicy } from "@/lib/ipdAncillaryGate";
+import { initiateDischargeWorkflow, announceDischargeInitiated } from "@/lib/dischargeWorkflow";
 
 interface Props {
   bed: BedData | null;
@@ -97,6 +98,7 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
   const [deptName, setDeptName] = useState<string | null>(null);
   const [showTransfer, setShowTransfer] = useState(false);
   const [highlightDischarge, setHighlightDischarge] = useState(false);
+  const [initiatingDischarge, setInitiatingDischarge] = useState(false);
   const [latestNews2, setLatestNews2] = useState<number | null>(null);
   const [prescription, setPrescription] = useState<PrescriptionData>(emptyPrescription);
   const [savingOrders, setSavingOrders] = useState(false);
@@ -352,10 +354,23 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
     daycare: "bg-emerald-50 text-emerald-600",
   };
 
-  const handleInitiateDischarge = () => {
+  const handleInitiateDischarge = async () => {
     setActiveTab("overview");
     setHighlightDischarge(true);
     setTimeout(() => setHighlightDischarge(false), 4000);
+
+    setInitiatingDischarge(true);
+    try {
+      const { startedAt, alreadyStarted } = await initiateDischargeWorkflow(admissionId, hospitalId);
+      announceDischargeInitiated(admissionId, startedAt);
+      toast(alreadyStarted
+        ? { title: "Discharge workflow already running", description: "Complete the pending clearances below." }
+        : { title: "Discharge workflow initiated", description: "TAT clock started — Billing, Pharmacy and Nursing have been notified." });
+    } catch (e: any) {
+      toast({ title: "Could not initiate discharge", description: e?.message, variant: "destructive" });
+    } finally {
+      setInitiatingDischarge(false);
+    }
   };
 
   const handleEscalate = async () => {
@@ -540,6 +555,14 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
         if (medErr) throw medErr;
       }
 
+      // Charges are posted here, at ORDER time, rather than swept in at discharge. The
+      // hospital's per-service policy decides what that means (see lib/ipdAncillaryGate.ts):
+      // post_paid keeps today's behaviour (accrues to the admission bill, settled at
+      // discharge); pre_paid marks the charge pending_payment and the ward's gate holds the
+      // service until a cashier collects. The dedupe keys match the discharge sweep's exactly,
+      // so the sweep recognises these lines and does not add them again.
+      const policy = await fetchIpdAncillaryPolicy(hospitalId);
+
       if (hasLabs) {
         const labSync = await syncLabOrders({
           hospitalId, patientId: patient.id, orderedBy: userId, admissionId,
@@ -552,47 +575,51 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
             variant: "destructive",
           });
         }
-        // Mark as billed so orders appear in Lab Queue immediately.
-        // IPD charges are tracked on the admission bill; payment happens at discharge.
+
+        const charged = await chargeLabOrders({
+          hospitalId, patientId: patient.id, admissionId,
+          orderIds: labSync.orderIds, orderedBy: userId, policy,
+        });
+        // A swallowed charge failure would leave the gate with nothing to block on, which it
+        // reads as "no charge" and clears — i.e. a free test. Surface it instead.
+        if (!charged.ok) throw new Error(charged.error || "Lab charges could not be posted");
+
+        // Mark as billed so orders appear in Lab Queue immediately. The charge now exists on
+        // the bill from this moment, whatever the payment mode.
         await supabase.from("lab_orders")
-          .update({ billing_status: "billed" } as never)
+          .update({ billing_status: "billed", payment_status: charged.paymentStatus } as never)
           .eq("admission_id", admissionId)
           .eq("hospital_id", hospitalId)
           .eq("billing_status", "unbilled");
       }
 
       if (hasRads) {
-        await syncRadiologyOrders({
+        const radSync = await syncRadiologyOrders({
           hospitalId, patientId: patient.id, orderedBy: userId, admissionId,
           items: prescription.radiology_orders,
         });
-        // Same: mark as billed so orders appear in Radiology Queue immediately.
+
+        const charged = await chargeRadiologyOrders({
+          hospitalId, patientId: patient.id, admissionId,
+          orderIds: radSync.orderIds, orderedBy: userId, policy,
+        });
+        if (!charged.ok) throw new Error(charged.error || "Radiology charges could not be posted");
+
         await supabase.from("radiology_orders")
-          .update({ billing_status: "billed" } as never)
+          .update({ billing_status: "billed", payment_status: charged.paymentStatus } as never)
           .eq("admission_id", admissionId)
           .eq("hospital_id", hospitalId)
           .eq("billing_status", "unbilled");
       }
 
-      // After syncing investigations, pull charges into the existing IPD bill (if one exists).
-      // autoPullAdmissionCharges is idempotent — safe to call multiple times.
-      if (hasLabs || hasRads) {
-        const { data: existingIpdBill } = await supabase
-          .from("bills")
-          .select("id")
-          .eq("hospital_id", hospitalId)
-          .eq("admission_id", admissionId)
-          .eq("bill_type", "ipd")
-          .maybeSingle();
-
-        if (existingIpdBill) {
-          await autoPullAdmissionCharges(existingIpdBill.id, admissionId, hospitalId);
-          await recalculateBillTotalsSafe(existingIpdBill.id);
-        }
-        // If no IPD bill exists yet, charges will be pulled automatically when the bill is created.
-      }
-
-      toast({ title: "Orders committed", description: "Medications active in MAR. Lab/Radiology orders registered and charges added to IPD bill." });
+      const prePaid = hasLabs && policy.lab.mode === "pre_paid"
+        || hasRads && policy.radiology.mode === "pre_paid";
+      toast({
+        title: "Orders committed",
+        description: prePaid
+          ? "Medications active in MAR. Lab/Radiology orders registered — payment is due at the counter before the service is performed."
+          : "Medications active in MAR. Lab/Radiology orders registered and charges added to IPD bill.",
+      });
       setPrescription(emptyPrescription);
       onRefresh();
     } catch (err: any) {
@@ -895,9 +922,6 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
       {/* Bottom action bar */}
       <div className="flex-shrink-0 h-14 bg-card border-t border-border px-4 flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <Button size="sm" onClick={() => setActiveTab("wardround")} className="bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs h-8">
-            📝 Ward Round
-          </Button>
           <VoiceDictationButton sessionType="ipd_workspace" size="sm" />
           <ClinicalCalculatorPanel onInsertToNote={(text) => {
             window.dispatchEvent(new CustomEvent("insert-clinical-note", { detail: text }));
@@ -939,6 +963,7 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
             <Button
               size="sm"
               variant="outline"
+              disabled={initiatingDischarge}
               className="text-xs h-8 border-amber-300 text-amber-700 hover:bg-amber-50 disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={() => {
                 if (mlcCaseStatus === false) {

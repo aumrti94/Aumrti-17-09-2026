@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { FilePlus, ScrollText } from "lucide-react";
@@ -74,12 +75,16 @@ const MRDPage: React.FC = () => {
       <div className="flex items-center justify-between px-4 py-3 border-b bg-background" style={{ height: 52 }}>
         <h1 className="text-base font-bold flex items-center gap-2">🗂️ Medical Records</h1>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={handleNewRequest}>
-            <FilePlus className="h-4 w-4 mr-1" /> New Record Request
-          </Button>
-          <Button size="sm" variant="outline" onClick={handleDeathCert}>
-            <ScrollText className="h-4 w-4 mr-1" /> Death Certificate
-          </Button>
+          <GatedAction module="mrd" action="new_request">
+            <Button size="sm" variant="outline" onClick={handleNewRequest}>
+              <FilePlus className="h-4 w-4 mr-1" /> New Record Request
+            </Button>
+          </GatedAction>
+          <GatedAction module="mrd" action="death_certificate">
+            <Button size="sm" variant="outline" onClick={handleDeathCert}>
+              <ScrollText className="h-4 w-4 mr-1" /> Death Certificate
+            </Button>
+          </GatedAction>
         </div>
       </div>
 
@@ -96,14 +101,14 @@ const MRDPage: React.FC = () => {
       {/* Tabs - controlled */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden px-4">
         <TabsList className="w-fit" style={{ height: 44 }}>
-          <TabsTrigger value="records">📋 Records Index</TabsTrigger>
-          <TabsTrigger value="icd">🏷️ ICD Coding</TabsTrigger>
-          <TabsTrigger value="requests">📨 Requests</TabsTrigger>
-          <TabsTrigger value="death">📜 Death Certs</TabsTrigger>
-          <TabsTrigger value="retention">📅 Retention</TabsTrigger>
-          <TabsTrigger value="maternity">🤱 Form 8</TabsTrigger>
-          <TabsTrigger value="mlc">⚖️ MLC Register</TabsTrigger>
-          <TabsTrigger value="coding_audit">🔍 Coding Audit</TabsTrigger>
+          <GatedTabsTrigger module="mrd" value="records">📋 Records Index</GatedTabsTrigger>
+          <GatedTabsTrigger module="mrd" value="icd">🏷️ ICD Coding</GatedTabsTrigger>
+          <GatedTabsTrigger module="mrd" value="requests">📨 Requests</GatedTabsTrigger>
+          <GatedTabsTrigger module="mrd" value="death">📜 Death Certs</GatedTabsTrigger>
+          <GatedTabsTrigger module="mrd" value="retention">📅 Retention</GatedTabsTrigger>
+          <GatedTabsTrigger module="mrd" value="maternity">🤱 Form 8</GatedTabsTrigger>
+          <GatedTabsTrigger module="mrd" value="mlc">⚖️ MLC Register</GatedTabsTrigger>
+          <GatedTabsTrigger module="mrd" value="coding_audit">🔍 Coding Audit</GatedTabsTrigger>
         </TabsList>
 
         <TabsContent value="records" className="flex-1 overflow-hidden mt-2">

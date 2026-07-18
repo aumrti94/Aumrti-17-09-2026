@@ -5,6 +5,9 @@ import { X, Search, ArrowLeft, CheckCircle2, Printer, IndianRupee, Loader2 } fro
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { autoPostJournalEntry } from "@/lib/accounting";
 import { recordServiceCharge } from "@/lib/serviceBilling";
+import { postAncillaryOrderCharges } from "@/lib/ancillaryCharges";
+import { fetchIpdAncillaryPolicy, resolveChargePaymentStatus } from "@/lib/ipdAncillaryGate";
+import AdmissionLinker from "@/components/shared/AdmissionLinker";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { printDocument } from "@/lib/printUtils";
 import { cn } from "@/lib/utils";
@@ -124,6 +127,9 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
   // Success step
   const [createdBillNumber, setCreatedBillNumber] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  // The hospital's radiology payment mode, held in state so the button label and the flow
+  // branch can be decided synchronously. Defaults to post_paid until the policy loads.
+  const [radMode, setRadMode] = useState<"post_paid" | "pre_paid">("post_paid");
   const [hospitalInfo, setHospitalInfo] = useState<{ name: string; logo_url: string | null; address: string | null; phone: string | null; gstin: string | null } | null>(null);
 
   useEffect(() => {
@@ -144,6 +150,16 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
       if (data) setCurrentUserId(data.id);
     })();
   }, []);
+
+  // Resolve the hospital's radiology payment mode once, for the button label + branch.
+  useEffect(() => {
+    if (!hospitalId) return;
+    fetchIpdAncillaryPolicy(hospitalId).then((p) => setRadMode(p.radiology.mode));
+  }, [hospitalId]);
+
+  // Pre-paid means "collect before the scan", so an admitted patient's order goes through the
+  // same in-modal payment step OPD uses — not the charge-to-advance shortcut.
+  const ipdPrePaid = !!linkedAdmission && !linkedEncounterId && radMode === "pre_paid";
 
   // Fetch study master from DB, grouped by modality
   useEffect(() => {
@@ -261,14 +277,9 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
         }
       });
 
-    supabase.from("admissions").select("id")
-      .eq("hospital_id", hospitalId).eq("patient_id", selectedPatient.id).eq("status", "active").limit(1)
-      .then(({ data }) => {
-        if (data?.[0]) {
-          setLinkedAdmission(data[0].id);
-          setLinkInfo(prev => prev ? prev + " & IPD admission" : "🔗 Linked to active IPD admission");
-        }
-      });
+    // Admission linking is handled by <AdmissionLinker> below — it resolves ALL active
+    // admissions and lets the user pick when there is more than one, instead of grabbing an
+    // arbitrary one here (which silently billed charges to the wrong stay).
   }, [selectedPatient, hospitalId, linkedEncounterId]);
 
   const toggleStudy = useCallback((study: StudyMaster) => {
@@ -292,8 +303,9 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
     if (!selectedPatient) { toast({ title: "Please select a patient", variant: "destructive" }); return; }
     if (selectedStudies.length === 0) { toast({ title: "Please select at least one study", variant: "destructive" }); return; }
 
-    // Skip payment only when ordering from IPD context (no OPD encounter link)
-    if (linkedAdmission && !linkedEncounterId) { await createOrdersIPD(); return; }
+    // IPD + post_paid: accrue to the admission bill, no cash step (charge to advance).
+    // IPD + pre_paid, and OPD: fall through to the in-modal payment step below.
+    if (linkedAdmission && !linkedEncounterId && !ipdPrePaid) { await createOrdersIPD(); return; }
 
     setLoadingRates(true);
     const rates = await buildStudyRates(hospitalId, selectedStudies);
@@ -302,6 +314,16 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
     setStep("payment");
   };
 
+  /**
+   * IPD path: create the orders, then post their charges at order time.
+   *
+   * This used to mint a standalone bill_type:'radiology' bill whose lines carried no
+   * source_dedupe_key. The discharge sweep then both COPIED those lines onto the IPD bill
+   * (keyed bill-line:{id}) and pulled the same orders itself (keyed radiology:{order.id}) —
+   * two lines per scan, i.e. every IPD radiology order was billed twice. Charges now go
+   * through postAncillaryOrderCharges using the sweep's own key, so it recognises and skips
+   * them.
+   */
   const createOrdersIPD = async () => {
     if (!currentUserId || !selectedPatient) return;
     setSubmitting(true);
@@ -309,76 +331,50 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
-      // 1. Create orders
-      await batchCreateRadiologyOrders(currentUserId, "advance_covered");
+      const policy = await fetchIpdAncillaryPolicy(hospitalId);
+      const paymentStatus = resolveChargePaymentStatus({ isIPD: true, mode: policy.radiology.mode });
 
-      // 2. Create bill for IPD charge-to-advance
+      const createdOrders = await batchCreateRadiologyOrders(currentUserId, paymentStatus);
+      if (createdOrders.length === 0) throw new Error("No radiology orders could be created");
+
+      // Rates resolved ONCE and handed to the charge posting: in pre_paid mode the cashier
+      // collects this exact number, so it must be the number that lands on the bill.
       const rates = await buildStudyRates(hospitalId, selectedStudies);
-      const subtotalAmount = rates.reduce((s, r) => s + r.rate, 0);
-      const gstTotal = rates.reduce((s, r) => s + r.gstAmt, 0);
-      const totalAmount = rates.reduce((s, r) => s + r.total, 0);
+      const rateByName = new Map(rates.map(r => [r.name, r]));
 
-      if (totalAmount > 0) {
-        const billNumber = await generateBillNumber(hospitalId, "RAD");
-        const { data: bill } = await (supabase as any).from("bills").insert({
-          hospital_id: hospitalId,
-          patient_id: selectedPatient.id,
-          admission_id: linkedAdmission,
-          bill_number: billNumber,
-          bill_type: "radiology",
-          bill_status: "final",
-          bill_date: new Date().toISOString().split("T")[0],
-          total_amount: totalAmount,
-          subtotal: subtotalAmount,
-          gst_amount: gstTotal,
-          paid_amount: 0,
-          balance_due: totalAmount,
-          payment_status: "unpaid",
-          created_by: currentUserId,
-        }).select("id").maybeSingle();
+      const charged = await postAncillaryOrderCharges({
+        hospitalId,
+        patientId: selectedPatient.id,
+        admissionId: linkedAdmission,
+        service: "radiology",
+        orderedBy: currentUserId,
+        policy,
+        items: createdOrders.map(({ orderId, studyName }) => {
+          const r = rateByName.get(studyName);
+          return {
+            sourceId: orderId,
+            dedupeKey: `radiology:${orderId}`,
+            description: `Radiology: ${studyName}`,
+            unitPrice: r?.rate ?? 0,
+            gstPercent: r?.gstPct ?? 0,
+          };
+        }),
+      });
 
-        if (bill) {
-          await (supabase as any).from("bill_line_items").insert(
-            rates.map(r => ({
-              hospital_id: hospitalId,
-              bill_id: bill.id,
-              description: `Radiology: ${r.name}`,
-              item_type: "radiology",
-              quantity: 1,
-              unit_rate: r.rate,
-              taxable_amount: r.rate,
-              gst_percent: r.gstPct,
-              gst_amount: r.gstAmt,
-              total_amount: r.total,
-              service_date: new Date().toISOString().split("T")[0],
-              source_module: "radiology",
-              ordered_by: currentUserId,
-            }))
-          );
-
-          for (const r of rates) {
-            recordServiceCharge({
-              hospitalId, patientId: selectedPatient.id, admissionId: linkedAdmission,
-              serviceModule: "radiology",
-              serviceName: `Radiology: ${r.name}`,
-              unitRate: r.rate, gstPercent: r.gstPct, gstAmount: r.gstAmt, totalAmount: r.total,
-              billId: bill.id, performedBy: currentUserId,
-            });
-          }
-
-          await autoPostJournalEntry({
-            triggerEvent: "bill_finalized_radiology",
-            sourceModule: "radiology",
-            sourceId: bill.id,
-            amount: totalAmount,
-            description: `Radiology Revenue (IPD) - Bill ${billNumber}`,
-            hospitalId,
-            postedBy: user.id,
-          });
-        }
+      if (!charged.ok) {
+        // An uncharged order would clear the gate as "no charge found" — a free scan.
+        await supabase.from("radiology_orders").delete().in("id", createdOrders.map(o => o.orderId));
+        throw new Error(charged.error || "Radiology charges could not be posted — orders cancelled");
       }
 
-      toast({ title: `✓ ${selectedStudies.length} radiology order(s) created — Bill generated & charged to IPD` });
+      toast(
+        paymentStatus === "pending_payment"
+          ? {
+              title: `✓ ${createdOrders.length} radiology order(s) created — payment pending`,
+              description: "The study cannot be started until the amount is paid at the billing counter.",
+            }
+          : { title: `✓ ${createdOrders.length} radiology order(s) created — charged to the IPD bill` }
+      );
       onCreated();
       onClose();
     } catch (err: any) {
@@ -386,8 +382,20 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
     } finally { setSubmitting(false); }
   };
 
-  const batchCreateRadiologyOrders = async (userId: string, paymentStatus: "paid" | "advance_covered") => {
-    if (!selectedPatient) return;
+  /**
+   * Creates the radiology_orders rows and returns their ids, so the caller can post a charge
+   * keyed radiology:{order.id} — the exact key the discharge sweep uses.
+   *
+   * paymentStatus is passed in rather than hardcoded: an IPD order is only 'advance_covered'
+   * when the hospital accrues radiology to the discharge bill. If it takes payment up front,
+   * the order is 'pending_payment' until a cashier collects.
+   */
+  const batchCreateRadiologyOrders = async (
+    userId: string,
+    paymentStatus: "paid" | "advance_covered" | "pending_payment",
+  ): Promise<{ orderId: string; studyName: string }[]> => {
+    if (!selectedPatient) return [];
+    const created: { orderId: string; studyName: string }[] = [];
     const today = new Date().toISOString().split("T")[0];
     const todayCompact = today.replace(/-/g, "");
 
@@ -460,7 +468,11 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
         `Radiology order created and billed: ${study.name} (${study.modalityType}) for patient ${selectedPatient.full_name}`,
         "compliant"
       );
+
+      created.push({ orderId: orderData.id, studyName: study.name });
     }
+
+    return created;
   };
 
   const handleCollectAndCreate = async () => {
@@ -476,9 +488,18 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
       const today = new Date().toISOString().split("T")[0];
       const pmodeMap: Record<string, string> = { cash: "cash", upi: "upi", card: "card", neft: "net_banking" };
 
+      // Orders are created BEFORE the line items so each paid line can carry the dedupe key
+      // radiology:{order.id}. For an admitted patient that key is what the discharge sweep
+      // recognises — without it, this paid receipt AND the sweep would both bill the scan.
+      const createdOrders = await batchCreateRadiologyOrders(currentUserId, "paid");
+      const rateByName = new Map(studyRates.map((r) => [r.name, r]));
+
       const billNumber = await generateBillNumber(hospitalId, "RAD");
       const { data: bill, error: billErr } = await (supabase as any).from("bills").insert({
         hospital_id: hospitalId, patient_id: selectedPatient.id,
+        // An admitted patient's paid receipt is tied to the admission but kept as its own
+        // paid bill; only OPD orders carry an encounter link.
+        admission_id: ipdPrePaid ? linkedAdmission : null,
         encounter_id: linkedEncounter || null, bill_number: billNumber,
         bill_type: "radiology", bill_date: today, bill_status: "final", payment_status: "paid",
         notes: paymentRef ? `Payment ref: ${paymentRef}` : null,
@@ -499,21 +520,31 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
       }
 
       await (supabase as any).from("bill_line_items").insert(
-        studyRates.map(r => ({
-          hospital_id: hospitalId, bill_id: bill.id,
-          description: `Radiology: ${r.name}`, item_type: "radiology",
-          quantity: 1, unit_rate: r.rate, taxable_amount: r.rate,
-          gst_percent: r.gstPct, gst_amount: r.gstAmt, total_amount: r.total,
-          service_date: today, source_module: "radiology", ordered_by: currentUserId,
-        }))
+        createdOrders.map(({ orderId, studyName }) => {
+          const r = rateByName.get(studyName);
+          return {
+            hospital_id: hospitalId, bill_id: bill.id,
+            description: `Radiology: ${studyName}`, item_type: "radiology",
+            quantity: 1, unit_rate: r?.rate ?? 0, taxable_amount: r?.rate ?? 0,
+            gst_percent: r?.gstPct ?? 0, gst_amount: r?.gstAmt ?? 0, total_amount: r?.total ?? 0,
+            service_date: today, source_module: "radiology", ordered_by: currentUserId,
+            // Paid up front, so it is settled — and keyed so the discharge sweep skips it.
+            payment_status: "paid",
+            source_record_id: orderId,
+            source_dedupe_key: `radiology:${orderId}`,
+          };
+        })
       );
 
-      for (const r of studyRates) {
+      for (const { orderId, studyName } of createdOrders) {
+        const r = rateByName.get(studyName);
         recordServiceCharge({
-          hospitalId, patientId: selectedPatient.id, encounterId: linkedEncounter || null,
-          serviceModule: "radiology",
-          serviceName: `Radiology: ${r.name}`,
-          unitRate: r.rate, gstPercent: r.gstPct, gstAmount: r.gstAmt, totalAmount: r.total,
+          hospitalId, patientId: selectedPatient.id,
+          admissionId: ipdPrePaid ? linkedAdmission : null,
+          encounterId: linkedEncounter || null,
+          serviceModule: "radiology", serviceRefId: orderId,
+          serviceName: `Radiology: ${studyName}`,
+          unitRate: r?.rate ?? 0, gstPercent: r?.gstPct ?? 0, gstAmount: r?.gstAmt ?? 0, totalAmount: r?.total ?? 0,
           billId: bill.id, performedBy: currentUserId,
         });
       }
@@ -526,8 +557,6 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
           hospitalId, postedBy: currentUserId,
         });
       } catch { /* non-blocking */ }
-
-      await batchCreateRadiologyOrders(currentUserId, "paid");
 
       setCreatedBillNumber(billNumber);
       setStep("success");
@@ -587,6 +616,12 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
                   </div>
                 )}
                 {linkInfo && <div className="mt-2 text-xs bg-blue-50 border-l-[3px] border-blue-500 text-blue-700 px-3 py-2 rounded-r">{linkInfo}</div>}
+                <AdmissionLinker
+                  hospitalId={hospitalId}
+                  patientId={selectedPatient?.id ?? null}
+                  preferredAdmissionId={linkedAdmissionId}
+                  onChange={setLinkedAdmission}
+                />
               </div>
 
               {/* Priority */}
@@ -689,7 +724,7 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
                 >
                   {loadingRates || submitting
                     ? <><Loader2 className="h-4 w-4 animate-spin" /> Processing...</>
-                    : linkedAdmission ? "📋 Create Orders (Charge to Advance) →" : "📋 Proceed to Payment →"}
+                    : (linkedAdmission && !ipdPrePaid) ? "📋 Create Orders (Charge to Advance) →" : "📋 Proceed to Payment →"}
                 </button>
               </div>
             </div>

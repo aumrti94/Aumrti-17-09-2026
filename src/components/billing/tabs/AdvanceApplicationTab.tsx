@@ -94,12 +94,14 @@ const AdvanceApplicationTab: React.FC<Props> = ({
         .eq("hospital_id", hospitalId)
         .order("created_at", { ascending: false })
         .limit(20),
-      // Legacy deposits that live only in advance_receipts (before dual-write fix)
+      // Legacy deposits that live only in advance_receipts (before dual-write fix).
+      // Scoped to THIS admission — filtering by patient counted advances from the
+      // patient's other stays into this admission's balance (double-counting them).
       (supabase as any)
         .from("advance_receipts")
         .select("id, amount, payment_mode, receipt_number, notes, created_at")
         .eq("hospital_id", hospitalId)
-        .eq("patient_id", patientId)
+        .eq("admission_id", admissionId)
         .order("created_at", { ascending: false }),
       // reference_nos already mirrored into ipd_advances (to avoid double-count)
       (supabase as any)

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
+import { useAIFeature } from "@/hooks/useAIFeature";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -43,6 +44,7 @@ const thirtyDaysAgo = subDays(new Date(), 30).toISOString().split("T")[0];
 const monthStart = startOfMonth(new Date()).toISOString().split("T")[0];
 
 const BurnoutRiskTab: React.FC<{ hospitalId: string }> = ({ hospitalId }) => {
+  const __aiOn = useAIFeature("staff_burnout");
   const { toast } = useToast();
   const [scores, setScores] = useState<BurnoutScore[]>([]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
@@ -192,6 +194,7 @@ Respond with a single paragraph of 2-3 sentences.`,
   const atRiskCount = scores.filter(s => s.risk_level === "high" || s.risk_level === "critical").length;
   const criticalCount = scores.filter(s => s.risk_level === "critical").length;
 
+  if (!__aiOn) return null;
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}

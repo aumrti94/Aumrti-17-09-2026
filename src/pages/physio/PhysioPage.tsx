@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -480,12 +481,16 @@ const PhysioPage: React.FC = () => {
       <div className="flex items-center justify-between px-4 h-[52px] border-b border-border shrink-0">
         <h1 className="text-base font-bold text-foreground">🦿 Physiotherapy & Rehabilitation</h1>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => { loadReferrals(); setTab("referrals"); }}>
-            <ClipboardList size={14} className="mr-1" />Accept Referral
-          </Button>
-          <Button size="sm" onClick={() => { loadReferrals(); setSessionModal(true); }}>
-            <Plus size={14} className="mr-1" />Book Session
-          </Button>
+          <GatedAction module="physio" action="accept_referral">
+            <Button size="sm" variant="outline" onClick={() => { loadReferrals(); setTab("referrals"); }}>
+              <ClipboardList size={14} className="mr-1" />Accept Referral
+            </Button>
+          </GatedAction>
+          <GatedAction module="physio" action="book_session">
+            <Button size="sm" onClick={() => { loadReferrals(); setSessionModal(true); }}>
+              <Plus size={14} className="mr-1" />Book Session
+            </Button>
+          </GatedAction>
         </div>
       </div>
 
@@ -510,11 +515,11 @@ const PhysioPage: React.FC = () => {
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab} className="flex-1 flex flex-col overflow-hidden px-4">
         <TabsList className="shrink-0 w-fit">
-          <TabsTrigger value="referrals">📋 Referrals</TabsTrigger>
-          <TabsTrigger value="sessions">📅 Sessions</TabsTrigger>
-          <TabsTrigger value="outcomes">📊 Outcomes</TabsTrigger>
-          <TabsTrigger value="equipment">🏋️ Equipment</TabsTrigger>
-          <TabsTrigger value="hep">📄 HEP</TabsTrigger>
+          <GatedTabsTrigger module="physio" value="referrals">📋 Referrals</GatedTabsTrigger>
+          <GatedTabsTrigger module="physio" value="sessions">📅 Sessions</GatedTabsTrigger>
+          <GatedTabsTrigger module="physio" value="outcomes">📊 Outcomes</GatedTabsTrigger>
+          <GatedTabsTrigger module="physio" value="equipment">🏋️ Equipment</GatedTabsTrigger>
+          <GatedTabsTrigger module="physio" value="hep">📄 HEP</GatedTabsTrigger>
         </TabsList>
 
         {/* TAB 1 — Referrals */}

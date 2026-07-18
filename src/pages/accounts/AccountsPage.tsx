@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { GatedTabsTrigger } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BarChart3, BookOpen, Receipt, ArrowLeftRight, Landmark, FileText, Plus, Download, Target } from "lucide-react";
@@ -93,12 +94,12 @@ const AccountsPage: React.FC = () => {
       {/* Tabs */}
       <Tabs defaultValue="dashboard" className="flex-1 flex flex-col overflow-hidden">
         <TabsList className="h-11 flex-shrink-0 rounded-none border-b border-border bg-card px-5 justify-start gap-1">
-          <TabsTrigger value="dashboard" className="text-xs gap-1.5"><BarChart3 size={14} /> Dashboard</TabsTrigger>
-          <TabsTrigger value="ledger" className="text-xs gap-1.5"><BookOpen size={14} /> Ledger</TabsTrigger>
-          <TabsTrigger value="expenses" className="text-xs gap-1.5"><Receipt size={14} /> Expenses</TabsTrigger>
-          <TabsTrigger value="journal" className="text-xs gap-1.5"><ArrowLeftRight size={14} /> Journal</TabsTrigger>
-          <TabsTrigger value="bank" className="text-xs gap-1.5"><Landmark size={14} /> Bank</TabsTrigger>
-          <TabsTrigger value="reports" className="text-xs gap-1.5"><FileText size={14} /> Reports</TabsTrigger>
+          <GatedTabsTrigger module="accounts" value="dashboard" className="text-xs gap-1.5"><BarChart3 size={14} /> Dashboard</GatedTabsTrigger>
+          <GatedTabsTrigger module="accounts" value="ledger" className="text-xs gap-1.5"><BookOpen size={14} /> Ledger</GatedTabsTrigger>
+          <GatedTabsTrigger module="accounts" value="expenses" className="text-xs gap-1.5"><Receipt size={14} /> Expenses</GatedTabsTrigger>
+          <GatedTabsTrigger module="accounts" value="journal" className="text-xs gap-1.5"><ArrowLeftRight size={14} /> Journal</GatedTabsTrigger>
+          <GatedTabsTrigger module="accounts" value="bank" className="text-xs gap-1.5"><Landmark size={14} /> Bank</GatedTabsTrigger>
+          <GatedTabsTrigger module="accounts" value="reports" className="text-xs gap-1.5"><FileText size={14} /> Reports</GatedTabsTrigger>
         </TabsList>
 
         <div className="flex-1 overflow-auto">
