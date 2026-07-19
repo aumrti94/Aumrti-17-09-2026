@@ -1,8 +1,15 @@
 // @ts-nocheck
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { resolveAiConfig, resolveAiConfigFromEnv } from "../_shared/ai-config.ts";
+import {
+  resolveAiConfig,
+  resolveAiConfigFromEnv,
+  resolveAzureSurface,
+  buildAzureUrl,
+  azureHeaders,
+} from "../_shared/ai-config.ts";
 import { sanitizeForLog } from "../_shared/phi-redactor.ts";
+import { checkAIAllowed } from "../_shared/ai-entitlement.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -53,6 +60,21 @@ const COST_PER_1K: Record<string, { input: number; output: number; cache_write: 
   "gemini-2.0-flash":             { input: 0.0001,  output: 0.0004, cache_write: 0,       cache_read: 0 },
 };
 
+// Azure Foundry deployment names are arbitrary (e.g. "claude-sonnet-5", "gpt-4o",
+// "DeepSeek-V3.2"), so fall back to a family prefix when there's no exact match.
+const pricingForModel = (model: string) => {
+  if (COST_PER_1K[model]) return COST_PER_1K[model];
+  const m = (model || "").toLowerCase();
+  const SONNET = { input: 0.003, output: 0.015, cache_write: 0.00375, cache_read: 0.0003 };
+  if (m.includes("haiku")) return { input: 0.0008, output: 0.004, cache_write: 0.001, cache_read: 0.00008 };
+  if (m.includes("opus")) return { input: 0.015, output: 0.075, cache_write: 0.01875, cache_read: 0.0015 };
+  if (m.startsWith("claude") || m.includes("sonnet")) return SONNET;
+  if (m.startsWith("gpt-4o-mini") || m.includes("mini")) return COST_PER_1K["gpt-4o-mini"];
+  if (m.startsWith("gpt") || m.startsWith("o1") || m.startsWith("o3")) return COST_PER_1K["gpt-4o"];
+  if (m.startsWith("gemini")) return COST_PER_1K["gemini-2.0-flash"];
+  return SONNET;
+};
+
 const estimateCost = (
   model: string,
   tokensInput: number,
@@ -60,7 +82,7 @@ const estimateCost = (
   cacheCreationTokens: number,
   cacheReadTokens: number,
 ): number => {
-  const pricing = COST_PER_1K[model] ?? { input: 0.003, output: 0.015, cache_write: 0.00375, cache_read: 0.0003 };
+  const pricing = pricingForModel(model);
   return (
     (tokensInput / 1000) * pricing.input +
     (tokensOutput / 1000) * pricing.output +
@@ -109,6 +131,7 @@ serve(async (req: Request) => {
     const {
       provider, model, prompt, systemPrompt: incomingSystemPrompt, maxTokens, temperature,
       hospitalId, featureKey, patientId, encounterId, attachments: rawAttachments,
+      azureConfig, probe, azureAction,
     } = await req.json() as {
       provider: string;
       model: string;
@@ -121,7 +144,42 @@ serve(async (req: Request) => {
       patientId?: string;
       encounterId?: string;
       attachments?: { kind: "image" | "pdf"; mediaType: string; data: string }[];
+      // Admin connection-test only: test UNSAVED Azure drawer values without a DB round-trip.
+      // Browser cannot call Azure directly (no CORS), so the platform Test button routes here.
+      azureConfig?: { endpoint?: string; apiKey?: string; deployment?: string; apiVersion?: string; apiStyle?: string; surface?: string };
+      probe?: boolean; // skip usage logging for a throwaway test call
+      azureAction?: string; // "list-deployments" — server-side deployment listing (browser is CORS-blocked)
     };
+
+    // Server-side Azure deployment listing. The browser cannot call Azure directly (no CORS),
+    // so the drawer's "Fetch" button routes here. Tries the OpenAI-compatible, Foundry Models,
+    // and classic Azure OpenAI listing surfaces and returns the union of deployment names.
+    if (azureAction === "list-deployments") {
+      const ep = (azureConfig?.endpoint || "").replace(/\/$/, "");
+      const key = azureConfig?.apiKey || Deno.env.get("AZURE_OPENAI_API_KEY") || "";
+      if (!ep || !key) return json({ error: "Endpoint URL and API Key are required to list deployments." }, 400);
+      const listFrom = async (url: string): Promise<string[] | null> => {
+        try {
+          const r = await fetch(url, { headers: { "api-key": key } });
+          if (!r.ok) return null;
+          const d = await r.json();
+          const arr = Array.isArray(d?.data) ? d.data : Array.isArray(d) ? d : [];
+          return arr.map((m: Record<string, string>) => m.id || m.name || m.model).filter(Boolean);
+        } catch {
+          return null;
+        }
+      };
+      const names = new Set<string>();
+      for (const url of [
+        `${ep}/openai/v1/models`,
+        `${ep}/models?api-version=2024-05-01-preview`,
+        `${ep}/openai/deployments?api-version=2023-03-15-preview`,
+      ]) {
+        const got = await listFrom(url);
+        if (got) got.forEach((n) => names.add(n));
+      }
+      return json({ deployments: [...names].sort() });
+    }
 
     // Sanitise attachments: only image/pdf base64 blobs, cap count + size so a
     // malformed payload can't blow past provider limits. Purely additive —
@@ -137,6 +195,13 @@ serve(async (req: Request) => {
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
+
+    // AI entitlement floor — enforce the platform/hospital "AI Features" master switch
+    // (and per-feature toggles) HERE, server-side, before any provider call. The browser
+    // callAI() gate can be bypassed by invoking edge functions directly, so this is the
+    // authoritative check. Fail-open inside checkAIAllowed keeps DB blips non-blocking.
+    const gate = await checkAIAllowed(adminClient, hospitalId, featureKey);
+    if (!gate.allowed) return json({ error: gate.reason }, 403);
 
     // Resolve system prompt: registry takes precedence over inline when featureKey matches
     let systemPrompt = incomingSystemPrompt;
@@ -190,6 +255,10 @@ serve(async (req: Request) => {
 
       if (!apiKey) {
         apiKey = Deno.env.get(ENV_KEY_NAMES[provider] || "") || undefined;
+      }
+      // Admin Azure connection test with unsaved drawer values → use the inline key.
+      if (!apiKey && provider === "azure_openai" && azureConfig?.apiKey) {
+        apiKey = azureConfig.apiKey;
       }
     }
 
@@ -366,73 +435,156 @@ serve(async (req: Request) => {
       tokensOutput = data.usage?.completion_tokens || 0;
 
     } else if (resolvedProvider === "azure_openai") {
-      // Endpoint / deployment / version / style live in the global platform_ai_keys config.
-      const { data: azData } = await adminClient
-        .from("platform_ai_keys")
-        .select("config")
-        .eq("service_key", "azure_openai")
-        .eq("is_active", true)
-        .maybeSingle();
-      const ac = (azData?.config as Record<string, string>) || {};
+      // Endpoint / deployment / version / style live in the global platform_ai_keys config —
+      // UNLESS this is an admin connection test carrying unsaved inline values.
+      let ac: Record<string, string>;
+      if (azureConfig?.endpoint || azureConfig?.deployment) {
+        ac = {
+          endpoint: azureConfig.endpoint || "",
+          deployment: azureConfig.deployment || "",
+          api_version: azureConfig.apiVersion || "",
+          api_style: azureConfig.apiStyle || "",
+          azure_surface: azureConfig.surface || "",
+        };
+      } else {
+        const { data: azData } = await adminClient
+          .from("platform_ai_keys")
+          .select("config")
+          .eq("service_key", "azure_openai")
+          .eq("is_active", true)
+          .maybeSingle();
+        ac = (azData?.config as Record<string, string>) || {};
+      }
       const endpoint = (ac.endpoint || "").replace(/\/$/, "");
       const deployment = ac.deployment || resolvedModel;
       if (!endpoint || !deployment) {
         return json({ error: "Azure OpenAI: set Endpoint URL and Deployment Name at /platform → API Hub." }, 400);
       }
-      const useV1 = !ac.api_version;
-      const useResponses = useV1 && ac.api_style === "responses";
-      const url = useResponses
-        ? `${endpoint}/openai/v1/responses`
-        : useV1
-        ? `${endpoint}/openai/v1/chat/completions`
-        : `${endpoint}/openai/deployments/${deployment}/chat/completions?api-version=${ac.api_version}`;
-      // Azure OpenAI reads images via image_url content blocks (chat completions) or
-      // input_image parts (responses API). PDFs aren't supported on either surface.
+      // Route to the correct Foundry surface: openai (GPT + open models), anthropic
+      // (Claude — Messages API), or foundry_models (serverless /models). "auto" picks
+      // anthropic for claude* deployments, else openai.
+      const { url, surface, useResponses } = buildAzureUrl({
+        endpoint, model: deployment, apiVersion: ac.api_version, apiStyle: ac.api_style, surface: ac.azure_surface,
+      });
+      const headers = azureHeaders(surface, apiKey);
+      // GPT-5 / o-series reasoning models reject the `temperature` sampling param on Azure,
+      // so omit it for them (Azure uses the model default).
+      const azReasoning = /^(o[0-9]|gpt-5)/i.test(deployment);
+      // Images: OpenAI/Foundry read image_url content blocks (chat) or input_image parts
+      // (responses); Anthropic reads image source blocks. PDFs aren't supported on Azure.
       const azImages = attachments.filter((a) => a.kind === "image");
-      const azChatContent = azImages.length
-        ? [
-            { type: "text", text: prompt },
-            ...azImages.map((a) => ({ type: "image_url", image_url: { url: `data:${a.mediaType};base64,${a.data}` } })),
-          ]
-        : prompt;
-      const azResponsesInput = azImages.length
-        ? [
-            {
+      let body: Record<string, unknown>;
+      if (surface === "anthropic") {
+        const anthContent = azImages.length
+          ? [
+              { type: "text", text: prompt },
+              ...azImages.map((a) => ({ type: "image", source: { type: "base64", media_type: a.mediaType, data: a.data } })),
+            ]
+          : prompt;
+        body = {
+          model: deployment,
+          max_tokens: maxTok,
+          temperature: temp,
+          ...(systemPrompt ? { system: systemPrompt } : {}),
+          messages: [{ role: "user", content: anthContent }],
+        };
+      } else if (useResponses) {
+        const azResponsesInput = azImages.length
+          ? [
+              {
+                role: "user",
+                content: [
+                  { type: "input_text", text: prompt },
+                  ...azImages.map((a) => ({ type: "input_image", image_url: `data:${a.mediaType};base64,${a.data}` })),
+                ],
+              },
+            ]
+          : prompt;
+        body = {
+          model: deployment,
+          input: azResponsesInput,
+          ...(systemPrompt ? { instructions: systemPrompt } : {}),
+          max_output_tokens: maxTok,
+          ...(azReasoning ? {} : { temperature: temp }),
+        };
+      } else {
+        // openai chat (/openai/v1 or classic deployment) or foundry_models (/models) — OpenAI-shaped.
+        const azChatContent = azImages.length
+          ? [
+              { type: "text", text: prompt },
+              ...azImages.map((a) => ({ type: "image_url", image_url: { url: `data:${a.mediaType};base64,${a.data}` } })),
+            ]
+          : prompt;
+        const includeModel = surface === "foundry_models" || !ac.api_version; // classic deployment carries model in URL
+        body = {
+          ...(includeModel ? { model: deployment } : {}),
+          messages: [
+            ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
+            { role: "user", content: azChatContent },
+          ],
+          max_tokens: maxTok,
+          ...(azReasoning ? {} : { temperature: temp }),
+        };
+      }
+      let sentUrl = url;
+      let sentBody = body;
+      let res = await fetch(sentUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(sentBody),
+      });
+      let data = await safeParseJson(res, "Azure OpenAI");
+      // Safety net: a GPT-5 / o-series reasoning deployment 404s on chat completions ("Resource
+      // not found") because it's only served via the Responses API. When the openai chat path
+      // 404s (blank api-version), retry once via /openai/v1/responses so unknown-named reasoning
+      // models work without the user flipping API Style. The smart-Auto heuristic covers the
+      // common gpt-5*/o-series cases up front; this catches the rest.
+      let effUseResponses = useResponses;
+      if (res.status === 404 && surface === "openai" && !useResponses && !ac.api_version) {
+        effUseResponses = true;
+        const azImages2 = attachments.filter((a) => a.kind === "image");
+        const respInput = azImages2.length
+          ? [{
               role: "user",
               content: [
                 { type: "input_text", text: prompt },
-                ...azImages.map((a) => ({ type: "input_image", image_url: `data:${a.mediaType};base64,${a.data}` })),
+                ...azImages2.map((a) => ({ type: "input_image", image_url: `data:${a.mediaType};base64,${a.data}` })),
               ],
-            },
-          ]
-        : prompt;
-      const body = useResponses
-        ? {
-            model: deployment,
-            input: azResponsesInput,
-            ...(systemPrompt ? { instructions: systemPrompt } : {}),
-            max_output_tokens: maxTok,
-            temperature: temp,
-          }
-        : {
-            ...(useV1 ? { model: deployment } : {}),
-            messages: [
-              ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
-              { role: "user", content: azChatContent },
-            ],
-            max_tokens: maxTok,
-            temperature: temp,
-          };
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "api-key": apiKey },
-        body: JSON.stringify(body),
-      });
-      const data = await safeParseJson(res, "Azure OpenAI");
+            }]
+          : prompt;
+        const respBody = {
+          model: deployment,
+          input: respInput,
+          ...(systemPrompt ? { instructions: systemPrompt } : {}),
+          max_output_tokens: maxTok,
+          ...(azReasoning ? {} : { temperature: temp }),
+        };
+        sentUrl = `${endpoint}/openai/v1/responses`;
+        sentBody = respBody;
+        res = await fetch(sentUrl, { method: "POST", headers, body: JSON.stringify(sentBody) });
+        data = await safeParseJson(res, "Azure OpenAI");
+      }
+      // Safety net for unsupported sampling params: some models reject `temperature` (reasoning
+      // models do). If that's the error and we still sent it, strip temperature and retry once.
+      if (data.error && (sentBody as any).temperature !== undefined &&
+          /unsupported parameter|not supported with this model|'temperature'/i.test(JSON.stringify(data.error))) {
+        delete (sentBody as any).temperature;
+        res = await fetch(sentUrl, { method: "POST", headers, body: JSON.stringify(sentBody) });
+        data = await safeParseJson(res, "Azure OpenAI");
+      }
       if (data.error) return json({ error: data.error.message || data.error }, 400);
-      text = useResponses ? extractResponsesOutputText(data) : (data.choices?.[0]?.message?.content || "");
-      tokensInput = data.usage?.prompt_tokens ?? data.usage?.input_tokens ?? 0;
-      tokensOutput = data.usage?.completion_tokens ?? data.usage?.output_tokens ?? 0;
+      if (surface === "anthropic") {
+        const blocks = Array.isArray(data.content) ? data.content : [];
+        text = blocks.filter((c: any) => c?.type === "text").map((c: any) => c.text).join("");
+        tokensInput = data.usage?.input_tokens ?? 0;
+        tokensOutput = data.usage?.output_tokens ?? 0;
+        cacheReadTokens = data.usage?.cache_read_input_tokens ?? 0;
+        cacheCreationTokens = data.usage?.cache_creation_input_tokens ?? 0;
+      } else {
+        text = effUseResponses ? extractResponsesOutputText(data) : (data.choices?.[0]?.message?.content || "");
+        tokensInput = data.usage?.prompt_tokens ?? data.usage?.input_tokens ?? 0;
+        tokensOutput = data.usage?.completion_tokens ?? data.usage?.output_tokens ?? 0;
+      }
 
     } else {
       return json({ error: `Unknown provider: ${resolvedProvider}` }, 400);
@@ -442,8 +594,9 @@ serve(async (req: Request) => {
     const costUsd = estimateCost(resolvedModel, tokensInput, tokensOutput, cacheCreationTokens, cacheReadTokens);
     const fKey = featureKey || "global_default";
 
-    // Fire-and-forget: log to ai_usage_logs and roll up ai_cost_daily
-    (async () => {
+    // Fire-and-forget: log to ai_usage_logs and roll up ai_cost_daily.
+    // Skip for a throwaway admin connection test (probe) — no real usage to bill.
+    if (!probe) (async () => {
       try {
         await adminClient.from("ai_usage_logs").insert({
           hospital_id: hospitalId,

@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveAiConfig, resolveAiConfigFromEnv, callAiChatWithUsage, estimateAiCostUsd } from "../_shared/ai-config.ts";
 import { sanitizeForLog } from "../_shared/phi-redactor.ts";
+import { checkAIAllowed } from "../_shared/ai-entitlement.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -171,6 +172,16 @@ serve(async (req) => {
     const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const { data: userData } = await sb.from("users").select("hospital_id").eq("auth_user_id", user.id).maybeSingle();
     const hospitalId = userData?.hospital_id as string | null;
+
+    // AI entitlement floor — enforce the hospital's "AI Features" master switch (and the
+    // per-feature voice_scribe toggle) server-side, before any provider call. Mirrors the
+    // browser callAI() gate, which a direct invoke of this function would otherwise bypass.
+    const gate = await checkAIAllowed(sb, hospitalId, "voice_scribe");
+    if (!gate.allowed) {
+      return new Response(JSON.stringify({ error: gate.reason }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const { transcript, context_type, existing_data, language_code, patient_id } = await req.json();
 

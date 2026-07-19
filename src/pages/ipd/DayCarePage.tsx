@@ -7,12 +7,14 @@ import DayCareFinancialPanel from "@/components/ipd/DayCareFinancialPanel";
 import DayCareCancelModal from "@/components/ipd/DayCareCancelModal";
 import DayCareRescheduleModal from "@/components/ipd/DayCareRescheduleModal";
 import AdmitPatientModal from "@/components/ipd/AdmitPatientModal";
+import AdvanceReceiptModal from "@/components/billing/AdvanceReceiptModal";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Plus, Search, Clock, User, Stethoscope, LogOut, RefreshCw, CalendarClock, IndianRupee, LogIn, XCircle, UserX } from "lucide-react";
+import { formatINRExact } from "@/lib/currency";
+import { Plus, Search, Clock, User, Stethoscope, LogOut, RefreshCw, CalendarClock, IndianRupee, LogIn, XCircle, UserX, CheckCircle2 } from "lucide-react";
 import { formatDateIST } from "@/lib/dateUtils";
 import { DayCareTab, dayCareDateColumn, dayCareStatusFilter, dayCareSortAscending } from "@/lib/dayCareBoard";
 import {
@@ -78,6 +80,10 @@ const DayCarePage: React.FC = () => {
   const [admitting, setAdmitting] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<{ admission: DayCareAdmission; mode: CancelStatus } | null>(null);
   const [rescheduleFor, setRescheduleFor] = useState<DayCareAdmission | null>(null);
+  /** Deposit progress for the selected scheduled booking — drives Estimate & Deposit vs Pay Remaining. */
+  const [selectedClearance, setSelectedClearance] = useState<DayCareClearance | null>(null);
+  /** Collect only the remaining deposit for an already-estimated booking (no new estimate row). */
+  const [topUpFor, setTopUpFor] = useState<DayCareAdmission | null>(null);
 
   const fetchData = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -147,6 +153,25 @@ const DayCarePage: React.FC = () => {
 
   const selected = admissions.find(a => a.id === selectedId) || null;
   const reasonLabels = useConfigLabelMap("cancellation_reasons");
+
+  // How much of the required deposit is already collected for the selected booking.
+  // Only meaningful in the Scheduled view (that's where Estimate & Deposit lives). Re-runs
+  // on `admissions` refresh so collecting a deposit immediately updates the button.
+  useEffect(() => {
+    setSelectedClearance(null);
+    if (!hospitalId || !selectedId || view !== "scheduled") return;
+    let cancelled = false;
+    checkDayCareClearance(hospitalId, selectedId).then(c => { if (!cancelled) setSelectedClearance(c); });
+    return () => { cancelled = true; };
+  }, [hospitalId, selectedId, view, admissions]);
+
+  const depositPaid = selectedClearance?.advanceBalance ?? 0;
+  const depositRequired = selectedClearance?.requiredDeposit ?? null;
+  const depositRemaining = selectedClearance?.shortfall ?? 0;
+  // "Full deposit collected" — a real bar exists (required > 0) and it is met.
+  const fullyDeposited = depositRequired != null && depositRequired > 0 && depositPaid >= depositRequired;
+  // Something paid but still short — offer to collect only the balance.
+  const partiallyDeposited = depositPaid > 0 && depositRequired != null && depositPaid < depositRequired;
 
   /** Gate check first — only admit if financially cleared, else explain why not. */
   const requestAdmit = async (a: DayCareAdmission) => {
@@ -398,10 +423,25 @@ const DayCarePage: React.FC = () => {
                         <CalendarClock size={13} />
                         Reschedule
                       </Button>
-                      <Button variant="outline" size="sm" className="gap-1" onClick={() => setEstimateFor(selected)}>
-                        <IndianRupee size={13} />
-                        Estimate &amp; Deposit
-                      </Button>
+                      {fullyDeposited ? (
+                        <Button variant="outline" size="sm" className="gap-1 text-emerald-700 border-emerald-200" disabled
+                          title={`Deposit of ${formatINRExact(depositRequired || 0)} fully collected`}>
+                          <CheckCircle2 size={13} />
+                          Deposit Paid
+                        </Button>
+                      ) : partiallyDeposited ? (
+                        <Button variant="outline" size="sm" className="gap-1 border-amber-300 text-amber-700"
+                          onClick={() => setTopUpFor(selected)}
+                          title={`${formatINRExact(depositPaid)} collected of ${formatINRExact(depositRequired || 0)}`}>
+                          <IndianRupee size={13} />
+                          Pay Remaining ({formatINRExact(depositRemaining)})
+                        </Button>
+                      ) : (
+                        <Button variant="outline" size="sm" className="gap-1" onClick={() => setEstimateFor(selected)}>
+                          <IndianRupee size={13} />
+                          Estimate &amp; Deposit
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         className="bg-teal-600 hover:bg-teal-700 gap-1"
@@ -450,6 +490,15 @@ const DayCarePage: React.FC = () => {
                   <p className="text-xs text-sky-700 mt-0.5">
                     Give the estimate and collect the deposit, then admit when the patient reports.
                   </p>
+                  {depositRequired != null && depositRequired > 0 && (
+                    <p className={cn(
+                      "text-xs font-medium mt-1.5",
+                      fullyDeposited ? "text-emerald-700" : "text-amber-700"
+                    )}>
+                      Deposit: {formatINRExact(depositPaid)} of {formatINRExact(depositRequired)} collected
+                      {!fullyDeposited && depositRemaining > 0 && ` · ${formatINRExact(depositRemaining)} remaining`}
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -523,6 +572,20 @@ const DayCarePage: React.FC = () => {
             pendingEstimate?.standardRate ?? estimateFor?.standard_rate ?? 0,
             policy,
           )}
+        />
+      )}
+
+      {/* Pay Remaining — collect only the outstanding deposit against the existing estimate.
+          Goes straight to the advance receipt (no new estimate row) so the required-deposit
+          bar the admit gate checks against stays intact. */}
+      {hospitalId && topUpFor && (
+        <AdvanceReceiptModal
+          hospitalId={hospitalId}
+          admissionId={topUpFor.id}
+          prefilledPatient={{ id: topUpFor.patient_id, full_name: topUpFor.patient_name, uhid: topUpFor.uhid }}
+          prefilledAmount={depositRemaining > 0 ? depositRemaining : undefined}
+          onClose={() => setTopUpFor(null)}
+          onCreated={() => { setTopUpFor(null); fetchData(); }}
         />
       )}
 

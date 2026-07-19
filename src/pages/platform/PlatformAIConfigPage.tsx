@@ -22,7 +22,6 @@ import {
   getMergedModels,
   getCustomModels,
   saveCustomModels,
-  extractResponsesOutputText,
 } from "@/lib/aiProvider";
 import {
   Loader2, Check, X, Play, Eye, EyeOff, ExternalLink, FlaskConical, Save, Plus, Trash2, RefreshCw,
@@ -41,6 +40,44 @@ const PROVIDERS = [
 // This platform page only manages GLOBAL AI + voice provider keys. Per-hospital
 // integration keys (razorpay, wati, abdm, nic_irp, pmjay) stay in hospital Settings.
 const AI_VOICE_SERVICE_KEYS = ["anthropic", "openai", "azure_openai", "gemini", "perplexity", "openrouter", "sarvam", "bhashini"];
+
+// Azure Foundry model-surface picker options + auto-resolution (Claude → Anthropic surface).
+const AZURE_SURFACES = [
+  { value: "auto",           label: "Auto (detect from deployment)" },
+  { value: "openai",         label: "OpenAI-compatible (GPT, Llama, DeepSeek, Mistral, Grok, Cohere)" },
+  { value: "anthropic",      label: "Anthropic Messages (Claude)" },
+  { value: "foundry_models", label: "Foundry Models (/models serverless)" },
+];
+const resolveAzureSurfaceUI = (surface: string | undefined, model: string): "openai" | "anthropic" | "foundry_models" => {
+  if (surface === "openai" || surface === "anthropic" || surface === "foundry_models") return surface;
+  return /^claude/i.test(model || "") ? "anthropic" : "openai";
+};
+// GPT-5 / o-series are reasoning models — on Azure Foundry they're served ONLY via the
+// Responses API (chat completions 404s). Detect by deployment name to auto-pick the style.
+const isAzureReasoningModel = (deployment: string): boolean => /^(o[0-9]|gpt-5)/i.test(deployment || "");
+
+// supabase.functions.invoke() wraps a non-2xx response as FunctionsHttpError whose
+// message is the opaque "…non-2xx status code" — the REAL error JSON lives in
+// error.context (a Response). Unwrap it so we surface the actual provider/edge error.
+// Only a genuine network failure (FunctionsFetchError) means "not reachable / not deployed".
+async function unwrapInvokeError(error: unknown): Promise<string> {
+  const err = error as { message?: string; context?: Response };
+  const rawMsg = err?.message || "Edge function error";
+  if (/failed to send|fetch failed|networkerror|failed to fetch/i.test(rawMsg)) {
+    return "ai-proxy not reachable — is it deployed and are you signed in? (supabase functions deploy ai-proxy)";
+  }
+  const ctx = err?.context;
+  if (ctx && typeof ctx.text === "function") {
+    try {
+      const raw = await ctx.text();
+      if (raw) {
+        try { const j = JSON.parse(raw); return j.error || j.message || raw; }
+        catch { return raw; }
+      }
+    } catch { /* fall through */ }
+  }
+  return rawMsg;
+}
 
 interface AIConfig {
   id: string;
@@ -76,7 +113,7 @@ const PlatformAIConfigPage: React.FC = () => {
 
   // API Key drawer
   const [editingKey, setEditingKey] = useState<typeof KNOWN_SERVICES[0] | null>(null);
-  const [keyForm, setKeyForm] = useState({ api_key: "", endpoint: "", mode: "production", deployment: "", api_version: "", api_style: "chat_completions" });
+  const [keyForm, setKeyForm] = useState({ api_key: "", endpoint: "", mode: "production", deployment: "", api_version: "", api_style: "chat_completions", azure_surface: "auto" });
   const [showSecret, setShowSecret] = useState(false);
   const [customModelInput, setCustomModelInput] = useState("");
   const [modelRefreshKey, setModelRefreshKey] = useState(0);
@@ -215,6 +252,7 @@ const PlatformAIConfigPage: React.FC = () => {
       config.deployment = keyForm.deployment;
       config.api_version = keyForm.api_version; // optional — blank uses the newer /openai/v1 surface
       config.api_style = keyForm.api_style; // "chat_completions" (default, works for any model) or "responses"
+      config.azure_surface = keyForm.azure_surface; // "auto"|"openai"|"anthropic"|"foundry_models"
     }
     const payload = {
       service_name: editingKey.service_name,
@@ -285,30 +323,62 @@ const PlatformAIConfigPage: React.FC = () => {
         success = res.ok;
         if (!success) { const d = await res.json(); message = d.error?.message || `HTTP ${res.status}`; }
       } else if (serviceKey === "azure_openai") {
+        // Azure Foundry blocks direct browser calls (no CORS), so route the test through the
+        // ai-proxy edge function. Different Foundry model families live on DIFFERENT surfaces —
+        // GPT → chat completions, GPT-5/o-series → responses, Claude → anthropic, and serverless
+        // partner models (grok/llama/deepseek/mistral) → /models. Rather than guess per model,
+        // PROBE the plausible surfaces in order and lock onto whichever Azure accepts, then
+        // persist it to the drawer so Save keeps the working surface for real feature calls.
         const endpoint = cfg.endpoint?.replace(/\/$/, "");
         const deployment = cfg.deployment;
-        const apiVersion = cfg.api_version || undefined;
         if (!endpoint || !deployment) {
           success = false;
           message = !endpoint ? "Endpoint URL is required" : "Deployment Name is required";
         } else {
-          const useV1 = !apiVersion;
-          const useResponses = useV1 && cfg.api_style === "responses";
-          const url = useResponses
-            ? `${endpoint}/openai/v1/responses`
-            : useV1
-            ? `${endpoint}/openai/v1/chat/completions`
-            : `${endpoint}/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`;
-          const body = useResponses
-            ? { model: deployment, input: "Hi", max_output_tokens: 1 }
-            : { ...(useV1 ? { model: deployment } : {}), messages: [{ role: "user", content: "Hi" }], max_tokens: 1 };
-          const res = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "api-key": apiKey },
-            body: JSON.stringify(body),
-          });
-          success = res.ok;
-          if (!success) { const d = await res.json(); message = d.error?.message || `HTTP ${res.status}`; }
+          const hasVersion = !!(cfg.api_version && cfg.api_version.trim());
+          type Cand = { surface: string; apiStyle: string };
+          let candidates: Cand[];
+          if (/^claude/i.test(deployment)) {
+            candidates = [{ surface: "anthropic", apiStyle: "" }];
+          } else if (hasVersion) {
+            // Explicit classic GA deployment → only the versioned chat path is valid.
+            candidates = [{ surface: "openai", apiStyle: "chat_completions" }];
+          } else {
+            const reasoning = isAzureReasoningModel(deployment);
+            candidates = [
+              { surface: "openai", apiStyle: reasoning ? "responses" : "chat_completions" },
+              { surface: "openai", apiStyle: reasoning ? "chat_completions" : "responses" },
+              { surface: "foundry_models", apiStyle: "" },
+            ];
+          }
+          let lastMsg = "";
+          let winner: Cand | null = null;
+          for (const c of candidates) {
+            const { data, error } = await supabase.functions.invoke("ai-proxy", {
+              body: {
+                provider: "azure_openai",
+                prompt: "Reply with exactly: OK",
+                maxTokens: 256, // GPT-5 / reasoning enforce >=16 and spend tokens on reasoning
+                probe: true,
+                azureConfig: { endpoint, apiKey, deployment, apiVersion: cfg.api_version || "", apiStyle: c.apiStyle, surface: c.surface },
+              },
+            });
+            if (!error && !data?.error) { winner = c; break; }
+            lastMsg = error ? await unwrapInvokeError(error) : (typeof data.error === "string" ? data.error : JSON.stringify(data.error));
+            // 404 = "wrong surface for this deployment" → keep probing. Any other error
+            // (auth / quota / bad key / not-deployed) is terminal — stop and report it.
+            if (!/resource not found|not found|404/i.test(lastMsg)) break;
+          }
+          if (winner) {
+            success = true;
+            // Persist the surface/style that worked so Save + real feature calls use it.
+            setKeyForm(p => ({ ...p, azure_surface: winner!.surface, api_style: winner!.apiStyle || p.api_style }));
+          } else {
+            success = false;
+            message = /resource not found|not found|404/i.test(lastMsg)
+              ? `${lastMsg} — tried chat, responses${/^claude/i.test(deployment) ? "" : " and /models"} surfaces; none matched this deployment. Verify the deployment name exists and is running in Foundry (Models + endpoints), and that the latest ai-proxy is deployed (supabase functions deploy ai-proxy).`
+              : lastMsg;
+          }
         }
       } else if (serviceKey === "perplexity") {
         const res = await fetch("https://api.perplexity.ai/chat/completions", {
@@ -364,23 +434,28 @@ const PlatformAIConfigPage: React.FC = () => {
     setFetchingAzureModels(true);
     setAzureModelsError(null);
     try {
-      const res = await fetch(`${endpoint}/openai/v1/models`, {
-        headers: { "api-key": apiKey },
+      // Azure blocks direct browser calls (no CORS), so list deployments server-side via ai-proxy.
+      const { data, error } = await supabase.functions.invoke("ai-proxy", {
+        body: { azureAction: "list-deployments", azureConfig: { endpoint, apiKey } },
       });
-      if (!res.ok) {
+      if (error) {
         setAzureModels([]);
-        setAzureModelsError("Couldn't list models automatically (this endpoint may not support model listing). Enter the deployment name manually.");
+        setAzureModelsError(await unwrapInvokeError(error));
         return;
       }
-      const data = await res.json();
-      const ids: string[] = Array.isArray(data?.data) ? data.data.map((m: { id: string }) => m.id).filter(Boolean) : [];
+      if (data?.error) {
+        setAzureModels([]);
+        setAzureModelsError(typeof data.error === "string" ? data.error : JSON.stringify(data.error));
+        return;
+      }
+      const ids: string[] = Array.isArray(data?.deployments) ? data.deployments : [];
       setAzureModels(ids);
       if (ids.length === 0) {
-        setAzureModelsError("No deployments found at this endpoint — type the deployment name manually.");
+        setAzureModelsError("No deployments found at this endpoint — deploy a model in Azure Foundry first, or type the name manually.");
       }
-    } catch {
+    } catch (e) {
       setAzureModels([]);
-      setAzureModelsError("Couldn't list models automatically (this endpoint may not support model listing). Enter the deployment name manually.");
+      setAzureModelsError(e instanceof Error ? e.message : "Couldn't list deployments — type the name manually.");
     } finally {
       setFetchingAzureModels(false);
     }
@@ -485,35 +560,22 @@ const PlatformAIConfigPage: React.FC = () => {
         tokens_used = data.usage?.total_tokens;
 
       } else if (provider === "azure_openai") {
+        // Azure Foundry blocks direct browser calls (no CORS) — route through the ai-proxy
+        // edge function (server-side), reading the SAVED Azure config. Requires ai-proxy deployed.
         const azureCfg = (await supabase
           .from("platform_ai_keys").select("config")
           .eq("service_key", "azure_openai").eq("is_active", true).maybeSingle()).data;
         const ac = azureCfg?.config as Record<string, string> | undefined;
         if (!ac?.endpoint || !ac?.deployment) {
-          text = "Azure OpenAI: set Endpoint URL and Deployment Name in API Hub first.";
+          text = "Azure OpenAI: set Endpoint URL and Deployment Name in API Hub first, then Save.";
         } else {
-          const azureEndpoint = ac.endpoint.replace(/\/$/, "");
-          const useV1 = !ac.api_version;
-          const useResponses = useV1 && ac.api_style === "responses";
-          const azureUrl = useResponses
-            ? `${azureEndpoint}/openai/v1/responses`
-            : useV1
-            ? `${azureEndpoint}/openai/v1/chat/completions`
-            : `${azureEndpoint}/openai/deployments/${ac.deployment}/chat/completions?api-version=${ac.api_version}`;
-          const azureBody = useResponses
-            ? { model: ac.deployment, input: playPrompt, max_output_tokens: maxTok, temperature: temp }
-            : { ...(useV1 ? { model: ac.deployment } : {}), messages: [{ role: "user", content: playPrompt }], max_tokens: maxTok, temperature: temp };
-          const res = await fetch(azureUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "api-key": apiKey },
-            body: JSON.stringify(azureBody),
+          const { data, error } = await supabase.functions.invoke("ai-proxy", {
+            body: { provider: "azure_openai", prompt: playPrompt, maxTokens: maxTok, temperature: temp, probe: true },
           });
-          const data = await res.json();
-          if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-          text = useResponses ? extractResponsesOutputText(data) : (data.choices?.[0]?.message?.content || "");
-          tokens_used = useResponses
-            ? (data.usage?.total_tokens ?? (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0))
-            : data.usage?.total_tokens;
+          if (error) throw new Error(await unwrapInvokeError(error));
+          if (data?.error) throw new Error(typeof data.error === "string" ? data.error : JSON.stringify(data.error));
+          text = data?.text || "";
+          tokens_used = data?.tokens_used;
         }
       } else {
         text = `Direct browser calls not supported for provider: ${provider}. Deploy the ai-proxy edge function.`;
@@ -938,7 +1000,10 @@ const PlatformAIConfigPage: React.FC = () => {
                               mode: cfg.mode || "production",
                               deployment: cfg.deployment || "",
                               api_version: cfg.api_version || "",
-                              api_style: cfg.api_style || "chat_completions",
+                              // Default GPT-5 / o-series to the Responses API (their only surface)
+                              // when no explicit style was saved.
+                              api_style: cfg.api_style || (isAzureReasoningModel(cfg.deployment || "") ? "responses" : "chat_completions"),
+                              azure_surface: cfg.azure_surface || "auto",
                             });
                             setShowSecret(false);
                             setAzureModels([]);
@@ -1019,14 +1084,14 @@ const PlatformAIConfigPage: React.FC = () => {
 
       {/* ── API KEY DRAWER ── */}
       <Sheet open={!!editingKey} onOpenChange={() => setEditingKey(null)}>
-        <SheetContent className="w-[400px]">
+        <SheetContent className="w-[400px] flex flex-col">
           <SheetHeader>
             <SheetTitle className="flex items-center gap-2">
               {editingKey && <span>{editingKey.emoji}</span>}
               {editingKey?.service_name}
             </SheetTitle>
           </SheetHeader>
-          <div className="space-y-4 mt-6">
+          <div className="space-y-4 mt-6 flex-1 overflow-y-auto pr-2 -mr-2 min-h-0">
             <div>
               <Label>API Key</Label>
               <div className="relative mt-1">
@@ -1059,14 +1124,36 @@ const PlatformAIConfigPage: React.FC = () => {
             {editingKey?.service_key === "azure_openai" && (
               <>
                 <div>
+                  <Label>Model surface</Label>
+                  <select
+                    className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={keyForm.azure_surface}
+                    onChange={e => setKeyForm(p => ({ ...p, azure_surface: e.target.value }))}
+                  >
+                    {AZURE_SURFACES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                  </select>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    How this deployment is served on Foundry. <b>Auto</b> routes Claude deployments to the Anthropic Messages API and everything else to the OpenAI-compatible surface. Pick <b>Anthropic</b> for Claude, or <b>Foundry Models</b> for serverless (/models) deployments.
+                  </p>
+                </div>
+                <div>
                   <Label>Deployment Name</Label>
                   <div className="flex gap-2 mt-1">
                     <Input
                       className="flex-1"
                       list="azure-deployment-models"
                       value={keyForm.deployment}
-                      onChange={e => setKeyForm(p => ({ ...p, deployment: e.target.value }))}
-                      placeholder="e.g. gpt-4o, Llama-3.3-70B-Instruct, Mistral-Large-2411"
+                      onChange={e => {
+                        const v = e.target.value;
+                        setKeyForm(p => {
+                          // Auto-pick Responses API for GPT-5 / o-series (chat completions 404s
+                          // for them) when the surface is auto/openai-compatible.
+                          const openaiSurface = p.azure_surface === "auto" || p.azure_surface === "openai" || !p.azure_surface;
+                          const forceResponses = openaiSurface && isAzureReasoningModel(v) && !p.api_version;
+                          return { ...p, deployment: v, ...(forceResponses ? { api_style: "responses" } : {}) };
+                        });
+                      }}
+                      placeholder="e.g. gpt-4o, gpt-5.1, Llama-3.3-70B-Instruct, Mistral-Large-2411"
                     />
                     <Button
                       type="button"
@@ -1112,6 +1199,7 @@ const PlatformAIConfigPage: React.FC = () => {
                     Leave blank to call the new /openai/v1 surface (no version pinning needed). Set a version only if you need the classic dated GA/preview API.
                   </p>
                 </div>
+                {resolveAzureSurfaceUI(keyForm.azure_surface, keyForm.deployment) === "openai" && (
                 <div>
                   <Label>API Style <span className="text-muted-foreground font-normal">(advanced)</span></Label>
                   <div className="flex gap-3 mt-1">
@@ -1133,6 +1221,7 @@ const PlatformAIConfigPage: React.FC = () => {
                     Chat Completions works with every model in the catalog (GPT, Llama, Mistral, DeepSeek, Cohere). Responses API is OpenAI-only (GPT/o-series) and requires API Version to be blank.
                   </p>
                 </div>
+                )}
               </>
             )}
             <div>
@@ -1270,26 +1359,25 @@ const PlatformAIConfigPage: React.FC = () => {
                 </div>
               );
             })()}
-
-            <div className="flex gap-2 pt-2">
-              <Button
-                variant="outline"
-                className="gap-1"
-                disabled={!keyForm.api_key || testing === editingKey?.service_key}
-                onClick={() => editingKey && testApiKey(editingKey.service_key, keyForm)}
-              >
-                {testing === editingKey?.service_key ? <Loader2 size={14} className="animate-spin" /> : <FlaskConical size={14} />}
-                Test Connection
-              </Button>
-              <Button
-                className="gap-1 flex-1"
-                disabled={!keyForm.api_key || saving === editingKey?.service_key}
-                onClick={saveApiKey}
-              >
-                {saving === editingKey?.service_key ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                Save
-              </Button>
-            </div>
+          </div>
+          <div className="flex gap-2 pt-3 border-t shrink-0">
+            <Button
+              variant="outline"
+              className="gap-1"
+              disabled={!keyForm.api_key || testing === editingKey?.service_key}
+              onClick={() => editingKey && testApiKey(editingKey.service_key, keyForm)}
+            >
+              {testing === editingKey?.service_key ? <Loader2 size={14} className="animate-spin" /> : <FlaskConical size={14} />}
+              Test Connection
+            </Button>
+            <Button
+              className="gap-1 flex-1"
+              disabled={!keyForm.api_key || saving === editingKey?.service_key}
+              onClick={saveApiKey}
+            >
+              {saving === editingKey?.service_key ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+              Save
+            </Button>
           </div>
         </SheetContent>
       </Sheet>

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { formatINRExact } from "@/lib/currency";
+import { getInvokeError } from "@/lib/errorMessage";
 
 async function getHospitalId(): Promise<string | null> {
   const { data: { user } } = await supabase.auth.getUser();
@@ -147,7 +148,12 @@ const AIDigestTab: React.FC = () => {
         },
       });
 
-      if (fnError) throw fnError;
+      // Surface the edge function's real message (e.g. "AI features are disabled for
+      // this hospital's plan" / "No AI provider is configured") instead of the opaque
+      // "Edge Function returned a non-2xx status code" toast — the detail is buried in
+      // error.context, which getInvokeError unwraps.
+      const invokeErr = await getInvokeError({ error: fnError, data: fnData });
+      if (invokeErr) throw new Error(invokeErr);
       const digestText = fnData?.digest_text;
       if (!digestText) throw new Error("No digest generated");
 

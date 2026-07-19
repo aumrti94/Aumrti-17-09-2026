@@ -1,5 +1,17 @@
 // @ts-nocheck
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { checkAIAllowed } from "./ai-entitlement.ts";
+
+// Thrown by resolveAiConfig when a hospital's "AI Features" master switch (or the
+// per-feature toggle) withholds this call. Distinct from the "no config → null →
+// env fallback" path: a disabled hospital must be BLOCKED, never fall through to a
+// platform env key. Callers that don't catch it fail safe (500, no provider spend).
+export class AIDisabledError extends Error {
+  constructor(message = "AI features are disabled for this hospital.") {
+    super(message);
+    this.name = "AIDisabledError";
+  }
+}
 
 const PROVIDER_SERVICE_KEYS: Record<string, string> = {
   claude: "anthropic",
@@ -37,6 +49,59 @@ export interface AiConfig {
   endpoint?: string;   // Azure: base URL (e.g. https://xxx.openai.azure.com)
   apiVersion?: string; // Azure: API version (e.g. 2024-02-01); blank uses the newer /openai/v1 surface
   apiStyle?: "chat_completions" | "responses"; // Azure: "responses" only valid when apiVersion is blank
+  azureSurface?: string; // Azure: which Foundry surface — "auto"|"openai"|"anthropic"|"foundry_models"
+}
+
+// Azure AI Foundry serves different model families through different API surfaces:
+//   • openai         → OpenAI-compatible /openai/v1 (GPT, and open models: Llama, DeepSeek, Mistral, Grok, Cohere…)
+//   • anthropic      → /anthropic/v1/messages (Claude — Anthropic Messages shape, NOT OpenAI)
+//   • foundry_models → /models/chat/completions?api-version= (serverless/partner deployments, OpenAI-shaped)
+export type AzureSurface = "openai" | "anthropic" | "foundry_models";
+
+// Resolve "auto"/blank to a concrete surface: Claude deployments speak the Anthropic
+// surface; everything else defaults to the OpenAI-compatible surface.
+export function resolveAzureSurface(surface: string | undefined, model: string): AzureSurface {
+  if (surface === "openai" || surface === "anthropic" || surface === "foundry_models") return surface;
+  return /^claude/i.test(model || "") ? "anthropic" : "openai";
+}
+
+export function buildAzureUrl(cfg: {
+  endpoint?: string; model: string; apiVersion?: string; apiStyle?: string; surface?: string;
+}): { url: string; surface: AzureSurface; useV1: boolean; useResponses: boolean } {
+  const endpoint = (cfg.endpoint || "").replace(/\/$/, "");
+  if (!endpoint) throw new Error("Azure OpenAI endpoint not configured");
+  const surface = resolveAzureSurface(cfg.surface, cfg.model);
+  if (surface === "anthropic") {
+    return { url: `${endpoint}/anthropic/v1/messages`, surface, useV1: false, useResponses: false };
+  }
+  if (surface === "foundry_models") {
+    const apiVersion = cfg.apiVersion || "2025-03-01-preview";
+    return { url: `${endpoint}/models/chat/completions?api-version=${apiVersion}`, surface, useV1: false, useResponses: false };
+  }
+  // openai surface. With an API version → classic GA (deployment in URL). Responses API
+  // only exists on the newer /openai/v1 surface, so it requires apiVersion to be blank.
+  // Smart Auto: GPT-5 / o-series reasoning models are served ONLY via the Responses API on
+  // Foundry (chat-completions 404s), so when the user left surface on "auto" we route them
+  // there automatically. Explicit surface/apiStyle choices are always respected.
+  const useV1 = !cfg.apiVersion;
+  const auto = !cfg.surface || cfg.surface === "auto";
+  const reasoning = /^(o[0-9]|gpt-5)/i.test(cfg.model || "");
+  const useResponses = useV1 && (cfg.apiStyle === "responses" || (auto && reasoning));
+  const url = useResponses
+    ? `${endpoint}/openai/v1/responses`
+    : useV1
+    ? `${endpoint}/openai/v1/chat/completions`
+    : `${endpoint}/openai/deployments/${cfg.model}/chat/completions?api-version=${cfg.apiVersion}`;
+  return { url, surface, useV1, useResponses };
+}
+
+export function azureHeaders(surface: AzureSurface, apiKey: string): Record<string, string> {
+  const h: Record<string, string> = { "Content-Type": "application/json", "api-key": apiKey };
+  if (surface === "anthropic") {
+    h["x-api-key"] = apiKey;
+    h["anthropic-version"] = "2023-06-01";
+  }
+  return h;
 }
 
 // Azure Responses API returns output as a list of typed items rather than choices[0].message.content.
@@ -70,7 +135,7 @@ export interface ChatMessage {
  * Returns null if no config or API key is available.
  */
 export async function resolveAiConfig(
-  _hospitalId: string,
+  hospitalId: string,
   featureKey: string,
   defaultMaxTokens = 1000,
 ): Promise<AiConfig | null> {
@@ -78,6 +143,14 @@ export async function resolveAiConfig(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
+
+  // AI entitlement floor — the single server-side choke every ai-config-based edge
+  // function funnels through. THROW (don't return null) when the hospital's AI switch
+  // withholds this: null would let callers fall through to `?? resolveAiConfigFromEnv()`
+  // and spend on a platform key anyway. checkAIAllowed fails open, so this only throws
+  // on a definite disabled decision — never on a transient DB error.
+  const gate = await checkAIAllowed(sb, hospitalId, featureKey);
+  if (!gate.allowed) throw new AIDisabledError(gate.reason);
 
   // Feature-specific config first, then global_default — global tables, no hospital_id
   let cfg: Record<string, unknown> | null = null;
@@ -127,6 +200,7 @@ export async function resolveAiConfig(
       endpoint: keyCfgData?.endpoint || Deno.env.get("AZURE_OPENAI_ENDPOINT") || undefined,
       apiVersion: keyCfgData?.api_version || Deno.env.get("AZURE_OPENAI_API_VERSION") || undefined,
       apiStyle: (keyCfgData?.api_style as AiConfig["apiStyle"]) || undefined,
+      azureSurface: keyCfgData?.azure_surface || undefined,
       temperature: Number(cfg.temperature) || 0.3,
       maxTokens: Number(cfg.max_tokens) || defaultMaxTokens,
     };
@@ -190,8 +264,23 @@ const COST_PER_1K: Record<string, { input: number; output: number; cacheWrite: n
   "gemini-2.0-flash":           { input: 0.0001,  output: 0.0004, cacheWrite: 0,       cacheRead: 0 },
 };
 
+// Azure Foundry deployment names are arbitrary (e.g. "claude-sonnet-5", "gpt-4o",
+// "DeepSeek-V3.2"), so fall back to a family prefix when there's no exact match.
+function pricingForModel(model: string) {
+  if (COST_PER_1K[model]) return COST_PER_1K[model];
+  const m = (model || "").toLowerCase();
+  const SONNET = { input: 0.003, output: 0.015, cacheWrite: 0.00375, cacheRead: 0.0003 };
+  if (m.includes("haiku")) return { input: 0.0008, output: 0.004, cacheWrite: 0.001, cacheRead: 0.00008 };
+  if (m.includes("opus")) return { input: 0.015, output: 0.075, cacheWrite: 0.01875, cacheRead: 0.0015 };
+  if (m.startsWith("claude") || m.includes("sonnet")) return SONNET;
+  if (m.startsWith("gpt-4o-mini") || m.includes("mini")) return COST_PER_1K["gpt-4o-mini"];
+  if (m.startsWith("gpt") || m.startsWith("o1") || m.startsWith("o3")) return COST_PER_1K["gpt-4o"];
+  if (m.startsWith("gemini")) return COST_PER_1K["gemini-2.0-flash"];
+  return SONNET;
+}
+
 export function estimateAiCostUsd(model: string, usage: ChatUsage): number {
-  const pricing = COST_PER_1K[model] ?? { input: 0.003, output: 0.015, cacheWrite: 0.00375, cacheRead: 0.0003 };
+  const pricing = pricingForModel(model);
   return (
     (usage.tokensInput / 1000) * pricing.input +
     (usage.tokensOutput / 1000) * pricing.output +
@@ -238,6 +327,80 @@ function extractUsage(data: Record<string, unknown>, provider: string): ChatUsag
   };
 }
 
+// Build the full Azure request (url + headers + body) for a text chat across all
+// three Foundry surfaces. Callers with image attachments (ai-proxy) resolve the
+// surface via resolveAzureSurface()/buildAzureUrl() and shape content themselves.
+export function buildAzureRequest(
+  cfg: { endpoint?: string; model: string; apiKey: string; apiVersion?: string; apiStyle?: string; surface?: string },
+  messages: ChatMessage[],
+  opts: { maxTokens: number; temperature: number },
+): { url: string; headers: Record<string, string>; body: Record<string, unknown>; surface: AzureSurface; useResponses: boolean } {
+  const { url, surface, useV1, useResponses } = buildAzureUrl(cfg);
+  const headers = azureHeaders(surface, cfg.apiKey);
+  const systemMsg = messages.find((m) => m.role === "system");
+  const chatMsgs = messages.filter((m) => m.role !== "system");
+  // GPT-5 / o-series reasoning models reject the `temperature` sampling param on Azure.
+  const reasoning = /^(o[0-9]|gpt-5)/i.test(cfg.model || "");
+  let body: Record<string, unknown>;
+  if (surface === "anthropic") {
+    body = {
+      model: cfg.model,
+      max_tokens: opts.maxTokens,
+      temperature: opts.temperature,
+      ...(systemMsg ? { system: systemMsg.content } : {}),
+      messages: chatMsgs.map((m) => ({ role: m.role, content: m.content })),
+    };
+  } else if (surface === "foundry_models") {
+    body = {
+      model: cfg.model,
+      max_tokens: opts.maxTokens,
+      temperature: opts.temperature,
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+    };
+  } else if (useResponses) {
+    body = {
+      model: cfg.model,
+      input: chatMsgs.map((m) => ({ role: m.role, content: m.content })),
+      ...(systemMsg ? { instructions: systemMsg.content } : {}),
+      max_output_tokens: opts.maxTokens,
+      ...(reasoning ? {} : { temperature: opts.temperature }),
+    };
+  } else {
+    body = {
+      ...(useV1 ? { model: cfg.model } : {}),
+      max_tokens: opts.maxTokens,
+      ...(reasoning ? {} : { temperature: opts.temperature }),
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+    };
+  }
+  return { url, headers, body, surface, useResponses };
+}
+
+// Parse an Azure response into text + normalized usage, per surface.
+export function parseAzureResponse(
+  surface: AzureSurface,
+  useResponses: boolean,
+  data: Record<string, unknown>,
+): { content: string; usage: ChatUsage } {
+  if (surface === "anthropic") {
+    const blocks = Array.isArray((data as any).content) ? (data as any).content : [];
+    const content = blocks.filter((c: any) => c?.type === "text").map((c: any) => c.text).join("");
+    const u = ((data as any).usage ?? {}) as Record<string, unknown>;
+    const n = (v: unknown) => (typeof v === "number" ? v : 0);
+    return {
+      content,
+      usage: {
+        tokensInput: n(u.input_tokens),
+        tokensOutput: n(u.output_tokens),
+        cacheCreationTokens: n(u.cache_creation_input_tokens),
+        cacheReadTokens: n(u.cache_read_input_tokens),
+      },
+    };
+  }
+  const content = useResponses ? extractResponsesOutputText(data) : ((data as any).choices?.[0]?.message?.content || "");
+  return { content, usage: extractUsage(data, "azure") };
+}
+
 /**
  * Call the configured AI provider with chat messages. Returns the response
  * text AND token/cache usage, normalized across providers — use this over
@@ -253,43 +416,23 @@ export async function callAiChatWithUsage(
   const temp = temperature ?? config.temperature;
 
   if (config.provider === "azure") {
-    const endpoint = config.endpoint?.replace(/\/$/, "");
-    if (!endpoint) throw new Error("Azure OpenAI endpoint not configured");
-    // With an API version: classic GA surface (deployment in the URL). Responses API only
-    // exists on the newer /openai/v1 surface, so it requires apiVersion to be blank.
-    const useV1 = !config.apiVersion;
-    const useResponses = useV1 && config.apiStyle === "responses";
-    const url = useResponses
-      ? `${endpoint}/openai/v1/responses`
-      : useV1
-      ? `${endpoint}/openai/v1/chat/completions`
-      : `${endpoint}/openai/deployments/${config.model}/chat/completions?api-version=${config.apiVersion}`;
-    const systemMsg = messages.find((m) => m.role === "system");
-    const chatMsgs = messages.filter((m) => m.role !== "system");
-    const body = useResponses
-      ? {
-          model: config.model,
-          input: chatMsgs.map((m) => ({ role: m.role, content: m.content })),
-          ...(systemMsg ? { instructions: systemMsg.content } : {}),
-          max_output_tokens: maxTok,
-          temperature: temp,
-        }
-      : {
-          ...(useV1 ? { model: config.model } : {}),
-          max_tokens: maxTok,
-          temperature: temp,
-          messages: messages.map((m) => ({ role: m.role, content: m.content })),
-        };
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "api-key": config.apiKey, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) throw new Error(`Azure OpenAI error ${res.status}: ${await res.text()}`);
+    const { url, headers, body, surface, useResponses } = buildAzureRequest(
+      {
+        endpoint: config.endpoint,
+        model: config.model,
+        apiKey: config.apiKey,
+        apiVersion: config.apiVersion,
+        apiStyle: config.apiStyle,
+        surface: config.azureSurface,
+      },
+      messages,
+      { maxTokens: maxTok, temperature: temp },
+    );
+    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(`Azure error ${res.status}: ${await res.text()}`);
     const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
-    const content = useResponses ? extractResponsesOutputText(data) : (data.choices?.[0]?.message?.content || "");
-    return { content, usage: extractUsage(data, "azure") };
+    if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+    return parseAzureResponse(surface, useResponses, data);
   }
 
   if (config.provider === "claude") {
@@ -415,7 +558,7 @@ export async function callAiChat(
 
 /**
  * Call the configured AI provider with a vision (image + text) input.
- * Supports openai, gemini, and claude providers.
+ * Supports openai, gemini, claude, and azure (all Foundry surfaces) providers.
  */
 export async function callAiVision(
   config: AiConfig,
@@ -490,6 +633,61 @@ export async function callAiVision(
     if (!res.ok) throw new Error(`Claude vision error ${res.status}`);
     const data = await res.json();
     return data.content?.[0]?.text || "";
+  }
+
+  if (config.provider === "azure") {
+    const { url, surface, useResponses } = buildAzureUrl({
+      endpoint: config.endpoint,
+      model: config.model,
+      apiVersion: config.apiVersion,
+      apiStyle: config.apiStyle,
+      surface: config.azureSurface,
+    });
+    const headers = azureHeaders(surface, config.apiKey);
+    let body: Record<string, unknown>;
+    if (surface === "anthropic") {
+      body = {
+        model: config.model,
+        max_tokens: maxTok,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: mediaType, data: base64Image } },
+            { type: "text", text: textPrompt },
+          ],
+        }],
+      };
+    } else if (useResponses) {
+      body = {
+        model: config.model,
+        max_output_tokens: maxTok,
+        input: [{
+          role: "user",
+          content: [
+            { type: "input_text", text: textPrompt },
+            { type: "input_image", image_url: `data:${mediaType};base64,${base64Image}` },
+          ],
+        }],
+      };
+    } else {
+      // openai chat (/openai/v1 or classic deployment) or foundry_models — both OpenAI-shaped.
+      body = {
+        ...(surface === "foundry_models" || !config.apiVersion ? { model: config.model } : {}),
+        max_tokens: maxTok,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image_url", image_url: { url: `data:${mediaType};base64,${base64Image}` } },
+            { type: "text", text: textPrompt },
+          ],
+        }],
+      };
+    }
+    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(`Azure vision error ${res.status}: ${await res.text()}`);
+    const data = await res.json();
+    if (surface === "anthropic") return data.content?.[0]?.text || "";
+    return useResponses ? extractResponsesOutputText(data) : (data.choices?.[0]?.message?.content || "");
   }
 
   throw new Error(`Provider ${config.provider} does not support vision input`);

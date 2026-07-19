@@ -1,5 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { checkAIAllowed, resolveHospitalIdForUser } from "../_shared/ai-entitlement.ts";
+import { resolveAiConfig, callAiChatWithUsage } from "../_shared/ai-config.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,11 +27,19 @@ serve(async (req) => {
       });
     }
 
+    // AI entitlement floor — enforce the hospital's "AI Features" master switch (and the
+    // per-feature ai_digest toggle) server-side, before spending any provider credit. The
+    // request body carries only hospital_name, so resolve the hospital from the authed user.
+    const adminClient = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const hospitalId = await resolveHospitalIdForUser(adminClient, user.id);
+    const gate = await checkAIAllowed(adminClient, hospitalId, "ai_digest");
+    if (!gate.allowed) {
+      return new Response(JSON.stringify({ error: gate.reason }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const { hospital_name, date, snapshot, anomalies } = await req.json();
-    // WARNING: Hospital operational data is sent to ai.gateway.lovable.dev.
-    // Ensure a Data Processing Agreement (DPA) covering PHI is in place with Lovable before production use.
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
 
     const prompt = `You are the AI analytics engine for ${hospital_name || "a hospital"}, a hospital in India. Write a concise daily executive digest for the CEO/Medical Director based on today's operational data.
 
@@ -59,38 +69,28 @@ Rules:
 Do NOT include a title or introduction.
 Start directly with "1. 📊"`;
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        messages: [
-          { role: "system", content: "You are a hospital analytics AI that writes concise executive digests." },
-          { role: "user", content: prompt },
-        ],
-      }),
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("AI gateway error:", response.status, errText);
-      if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limited, please try again later." }), {
-          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "Credits exhausted. Add funds at Settings > Workspace > Usage." }), {
-          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      throw new Error(`AI gateway error: ${response.status}`);
+    // Route through the platform AI provider (configured in Platform → API Hub /
+    // platform_ai_keys) — the same path every other AI feature uses. This replaces the
+    // old hardcoded ai.gateway.lovable.dev call, which depended on a LOVABLE_API_KEY that
+    // only exists on Lovable's own hosting (so the digest failed with a 500 on any other
+    // Supabase project). resolveAiConfig also re-checks the AI entitlement server-side.
+    const config = await resolveAiConfig(hospitalId || "", "ai_digest", 800);
+    if (!config) {
+      return new Response(
+        JSON.stringify({ error: "No AI provider is configured. Add one in Platform → API Hub." }),
+        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
-    const data = await response.json();
-    const digestText = data.choices?.[0]?.message?.content || "";
+    const { content: digestText } = await callAiChatWithUsage(
+      config,
+      [
+        { role: "system", content: "You are a hospital analytics AI that writes concise executive digests." },
+        { role: "user", content: prompt },
+      ],
+      800,
+      0.4,
+    );
 
     return new Response(JSON.stringify({ digest_text: digestText }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

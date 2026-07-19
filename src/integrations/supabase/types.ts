@@ -32631,7 +32631,7 @@ export type Database = {
         Args: { p_key: string; p_window_start: string }
         Returns: number
       }
-      check_bed_capacity: { Args: { p_hospital_id: string }; Returns: Json }
+      check_bed_capacity: { Args: { p_hospital_id: string; p_adding?: number }; Returns: Json }
       check_intimation_deadlines: { Args: never; Returns: undefined }
       check_staff_capacity: { Args: { p_hospital_id: string }; Returns: Json }
       cleanup_expired_trusted_devices: { Args: never; Returns: undefined }

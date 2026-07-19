@@ -1,22 +1,19 @@
 // ============================================================
-// DELETE HOSPITAL — Complete data purge edge function
+// DELETE HOSPITAL — two-phase soft-delete + streaming purge
 //
-// What this does (in safe order):
-//   1. Verify caller is an active aumrti_admin
-//   2. Collect all auth_user_ids for the hospital BEFORE any deletes
-//   3. Clean up storage files (hospital logos, assets)
-//   4. Call purge_hospital(p_id) — a stored function that explicitly
-//      deletes every table in dependency order (grandchildren first,
-//      then direct hospital_id children, then the hospital row itself).
-//      This bypasses FK constraint issues entirely.
-//   5. Delete auth.users for each staff member — done LAST so that
-//      any residual FKs from nursing_mar / teleconsult_sessions
-//      (which reference auth.users) are already gone by step 4
+// Phase 1 (deleted_at null): mark for deletion, start 7-day grace window.
+//   Returns plain JSON immediately.
+// Restore: clear deleted_at within the grace window. Plain JSON.
+// Grace gate: deleted_at set but < 7 days old -> 409 JSON (not a failure,
+//   the caller must wait or restore).
+// Phase 2 (grace elapsed): irreversible purge. Streams Server-Sent Events so
+//   the UI can show a real progress bar (row counts + phase labels). The purge
+//   is orchestrated step-by-step via the purge_hospital_* RPCs
+//   (migration 20261008000148) instead of one opaque purge_hospital() call.
 //
 // Why NOT direct delete from frontend:
-//   auth.users lives in Supabase's auth schema and can only be
-//   purged with the Admin API (service-role key). The anon/user
-//   JWT cannot do this.
+//   auth.users lives in Supabase's auth schema and can only be purged with the
+//   Admin API (service-role key); the anon/user JWT cannot do this.
 // ============================================================
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
@@ -33,18 +30,59 @@ const json = (body: unknown, status = 200) =>
     headers: { ...CORS, "Content-Type": "application/json" },
   });
 
+const GRACE_PERIOD_DAYS = 7;
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
   try {
     // ── Admin client (service role — bypasses RLS, can touch auth.users) ──
-    const admin = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    );
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    const admin = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey);
+
+    const authHeader = req.headers.get("Authorization");
+
+    // Parse the body up front so we can branch on `action` before the hard
+    // auth returns (the non-destructive preflight must be able to REPORT an
+    // auth/secret failure rather than just 401 out).
+    const { hospital_id, action } =
+      await req.json().catch(() => ({ hospital_id: undefined, action: undefined }));
+
+    // ── Preflight: non-destructive prerequisite check. Never throws; 200. ──
+    // Confirms the three deploy prerequisites for the frontend:
+    //   deployed         — reaching this code proves the function is deployed
+    //   service_role_key — the SUPABASE_SERVICE_ROLE_KEY secret is present
+    //   authenticated    — the caller's JWT resolves to a user
+    //   admin            — that user is an active aumrti_admin
+    if (action === "preflight") {
+      const hasKey = !!serviceKey;
+      let authenticated = false;
+      let isAdmin = false;
+      if (authHeader && hasKey) {
+        try {
+          const { data: { user }, error } =
+            await admin.auth.getUser(authHeader.replace("Bearer ", ""));
+          authenticated = !!user && !error;
+          if (authenticated && user) {
+            const { data: row } = await admin
+              .from("aumrti_admins")
+              .select("id")
+              .eq("auth_user_id", user.id)
+              .eq("is_active", true)
+              .maybeSingle();
+            isAdmin = !!row;
+          }
+        } catch {
+          /* leave as false — the check itself is the diagnostic */
+        }
+      }
+      return json({
+        ok: hasKey && authenticated && isAdmin,
+        checks: { deployed: true, service_role_key: hasKey, authenticated, admin: isAdmin },
+      });
+    }
 
     // ── 1. Verify caller is an active aumrti_admin ──────────────────────
-    const authHeader = req.headers.get("Authorization");
     if (!authHeader) return json({ error: "Unauthorized" }, 401);
 
     const { data: { user: caller }, error: authErr } =
@@ -61,11 +99,9 @@ serve(async (req) => {
 
     if (!adminRow) return json({ error: "Forbidden: aumrti_admin role required" }, 403);
 
-    // ── 2. Parse and validate request body ─────────────────────────────
-    const { hospital_id, action } = await req.json();
+    // ── 2. Validate request body ───────────────────────────────────────
     if (!hospital_id) return json({ error: "hospital_id is required" }, 400);
 
-    // Verify the hospital actually exists
     const { data: hospital } = await admin
       .from("hospitals")
       .select("id, name, deleted_at")
@@ -75,7 +111,6 @@ serve(async (req) => {
     if (!hospital) return json({ error: "Hospital not found" }, 404);
 
     const hospitalName = hospital.name;
-    const GRACE_PERIOD_DAYS = 7;
 
     // ── 2b. Restore: clear a pending soft-delete within the grace window ──
     if (action === "restore") {
@@ -90,10 +125,7 @@ serve(async (req) => {
       return json({ success: true, restored: true, hospital_name: hospitalName });
     }
 
-    // ── 2c. Two-phase soft-delete gate ───────────────────────────────────
-    // Phase 1 (deleted_at is null): mark for deletion, do NOT purge yet.
-    // Phase 2 (deleted_at set, grace period elapsed): proceed to the
-    // irreversible purge_hospital() cascade below.
+    // ── 2c. Phase 1 — mark for deletion (do NOT purge yet) ───────────────
     if (!hospital.deleted_at) {
       const { error: markErr } = await admin
         .from("hospitals")
@@ -111,6 +143,7 @@ serve(async (req) => {
       });
     }
 
+    // ── 2d. Grace gate — deleted_at set but window not yet elapsed ────────
     const deletedAt = new Date(hospital.deleted_at as string).getTime();
     const graceElapsedMs = Date.now() - deletedAt;
     if (graceElapsedMs < GRACE_PERIOD_DAYS * 86400000) {
@@ -122,90 +155,120 @@ serve(async (req) => {
       }, 409);
     }
 
-    // Grace period has elapsed — proceed with the irreversible purge below.
-    const warnings: string[] = [];
-    let deletedAuthUsers = 0;
+    // ══════════════════════════════════════════════════════════════════════
+    // Phase 2 — irreversible purge, STREAMED as Server-Sent Events.
+    // ══════════════════════════════════════════════════════════════════════
+    const encoder = new TextEncoder();
 
-    // ── 3. Collect auth_user_ids BEFORE we delete anything ─────────────
-    // We read this now because the hospital delete (step 5) will
-    // cascade-delete public.users, making them unreachable afterwards.
-    const { data: staffRows } = await admin
-      .from("users")
-      .select("auth_user_id")
-      .eq("hospital_id", hospital_id)
-      .not("auth_user_id", "is", null);
+    const stream = new ReadableStream({
+      async start(controller) {
+        const send = (event: string, data: unknown) =>
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
 
-    const authUserIds: string[] = (staffRows ?? [])
-      .map((r: { auth_user_id: string | null }) => r.auth_user_id)
-      .filter((id): id is string => !!id);
+        const warnings: string[] = [];
+        let cumulative = 0;
 
-    // ── 4. Delete storage files ─────────────────────────────────────────
-    // Hospitals typically upload to paths prefixed by their hospital_id.
-    // We try both common bucket names; any failure is logged as a warning.
-    const storageBuckets = ["hospital-logos", "hospital-assets", "hospital-documents"];
+        try {
+          // Collect staff auth_user_ids BEFORE any deletes (cascade removes them).
+          const { data: staffRows } = await admin
+            .from("users")
+            .select("auth_user_id")
+            .eq("hospital_id", hospital_id)
+            .not("auth_user_id", "is", null);
+          const authUserIds: string[] = (staffRows ?? [])
+            .map((r: { auth_user_id: string | null }) => r.auth_user_id)
+            .filter((id): id is string => !!id);
 
-    for (const bucket of storageBuckets) {
-      try {
-        const { data: files, error: listErr } = await admin.storage
-          .from(bucket)
-          .list(hospital_id, { limit: 500 });
+          // ── total (denominator for the progress bar) ──
+          const { data: estData } = await admin.rpc("purge_hospital_estimate", { p_id: hospital_id });
+          const total = Number(estData ?? 0);
+          send("total", { rows: total });
 
-        if (listErr) {
-          // Bucket might not exist — silently skip
-          continue;
-        }
+          // ── grandchildren (join-only child tables) ──
+          send("phase", { label: "Removing linked records", cumulative });
+          const { data: gcData, error: gcErr } = await admin.rpc("purge_hospital_grandchildren", { p_id: hospital_id });
+          if (gcErr) warnings.push(`Grandchild cleanup warning: ${gcErr.message}`);
+          cumulative += Number(gcData ?? 0);
+          send("phase", { label: "Removing linked records", cumulative });
 
-        if (files && files.length > 0) {
-          const paths = files.map((f) => `${hospital_id}/${f.name}`);
-          const { error: removeErr } = await admin.storage
-            .from(bucket)
-            .remove(paths);
-          if (removeErr) {
-            warnings.push(`Storage cleanup warning (${bucket}): ${removeErr.message}`);
+          // ── direct hospital_id tables, one at a time ──
+          const { data: planData, error: planErr } = await admin.rpc("purge_hospital_plan", { p_id: hospital_id });
+          if (planErr) throw new Error(`Could not build purge plan: ${planErr.message}`);
+          const tables: string[] = (planData ?? []).map((r: { table_name: string }) => r.table_name);
+
+          const failed: string[] = [];
+          for (let i = 0; i < tables.length; i++) {
+            const t = tables[i];
+            const { data: rc, error: tErr } = await admin.rpc("purge_hospital_table", { p_id: hospital_id, p_table: t });
+            if (tErr) { failed.push(t); continue; }
+            const deleted = Number(rc ?? 0);
+            cumulative += deleted;
+            send("progress", { table: t, i: i + 1, n: tables.length, deleted, cumulative });
           }
-        }
-      } catch (e) {
-        warnings.push(`Storage bucket ${bucket} skipped: ${(e as Error).message}`);
-      }
-    }
 
-    // ── 5. Call purge_hospital() — explicit ordered DELETE ──────────────
-    // This stored function (created in migration 20260602) deletes every
-    // table in the correct dependency order, bypassing FK constraint
-    // issues entirely. It handles transitive grandchild tables
-    // (ot_team_members, pharmacy_dispensing_items, etc.) before removing
-    // parent rows, then finally deletes the hospital record itself.
-    const { error: purgeErr } = await admin.rpc("purge_hospital", {
-      p_id: hospital_id,
+          // ── retry sweep for FK-ordering failures (2-pass equivalent) ──
+          if (failed.length > 0) {
+            send("phase", { label: "Resolving remaining records", cumulative });
+            for (const t of failed) {
+              const { data: rc, error: tErr } = await admin.rpc("purge_hospital_table", { p_id: hospital_id, p_table: t });
+              if (tErr) { warnings.push(`Table ${t}: ${tErr.message}`); continue; }
+              cumulative += Number(rc ?? 0);
+              send("progress", { table: t, i: tables.length, n: tables.length, deleted: Number(rc ?? 0), cumulative });
+            }
+          }
+
+          // ── storage cleanup ──
+          send("phase", { label: "Cleaning up files", cumulative });
+          for (const bucket of ["hospital-logos", "hospital-assets", "hospital-documents"]) {
+            try {
+              const { data: files, error: listErr } = await admin.storage.from(bucket).list(hospital_id, { limit: 500 });
+              if (listErr) continue;
+              if (files && files.length > 0) {
+                const paths = files.map((f) => `${hospital_id}/${f.name}`);
+                const { error: removeErr } = await admin.storage.from(bucket).remove(paths);
+                if (removeErr) warnings.push(`Storage cleanup warning (${bucket}): ${removeErr.message}`);
+              }
+            } catch (e) {
+              warnings.push(`Storage bucket ${bucket} skipped: ${(e as Error).message}`);
+            }
+          }
+
+          // ── finalize: delete the hospital row itself (must succeed) ──
+          send("phase", { label: "Finalizing", cumulative });
+          const { error: finErr } = await admin.rpc("purge_hospital_finalize", { p_id: hospital_id });
+          if (finErr) throw new Error(`Final hospital delete failed: ${finErr.message}`);
+
+          // ── delete auth.users for staff (now safe) ──
+          send("phase", { label: "Removing staff accounts", cumulative });
+          let deletedAuthUsers = 0;
+          for (const authUserId of authUserIds) {
+            const { error: delAuthErr } = await admin.auth.admin.deleteUser(authUserId);
+            if (delAuthErr) warnings.push(`Auth user ${authUserId} not deleted: ${delAuthErr.message}`);
+            else deletedAuthUsers++;
+          }
+
+          send("done", {
+            hospital_name: hospitalName,
+            deleted_auth_users: deletedAuthUsers,
+            total_staff_accounts: authUserIds.length,
+            cumulative,
+            warnings: warnings.length > 0 ? warnings : undefined,
+          });
+        } catch (err) {
+          send("error", { error: (err as Error).message });
+        } finally {
+          controller.close();
+        }
+      },
     });
 
-    if (purgeErr) {
-      return json({
-        error: `Hospital purge failed: ${purgeErr.message}`,
-        hint: "Ensure migration 20260602_hospital_delete_complete.sql has been applied.",
-      }, 500);
-    }
-
-    // ── 6. Delete auth.users for hospital staff ─────────────────────────
-    // Now safe: public.users (and nursing_mar / teleconsult_sessions that
-    // referenced these auth IDs) were all removed in step 5's cascade.
-    for (const authUserId of authUserIds) {
-      const { error: delAuthErr } = await admin.auth.admin.deleteUser(authUserId);
-      if (delAuthErr) {
-        // Don't abort — the hospital data is already gone. Log it.
-        warnings.push(`Auth user ${authUserId} not deleted: ${delAuthErr.message}`);
-      } else {
-        deletedAuthUsers++;
-      }
-    }
-
-    // ── 7. Return summary ───────────────────────────────────────────────
-    return json({
-      success: true,
-      hospital_name: hospitalName,
-      deleted_auth_users: deletedAuthUsers,
-      total_staff_accounts: authUserIds.length,
-      warnings: warnings.length > 0 ? warnings : undefined,
+    return new Response(stream, {
+      headers: {
+        ...CORS,
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+      },
     });
 
   } catch (err) {

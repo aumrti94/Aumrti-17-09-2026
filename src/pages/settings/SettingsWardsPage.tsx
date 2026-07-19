@@ -103,10 +103,10 @@ const SettingsWardsPage: React.FC = () => {
       const rate = parseFloat(form.rate_per_day) || 0;
       // Check bed capacity before creating new ward with beds
       if (!editingId) {
-        const capacity = await checkBedCapacity();
+        const capacity = await checkBedCapacity(beds);
         if (!capacity.allowed) {
           throw new Error(
-            `Bed limit reached (${capacity.current}/${capacity.max} on ${capacity.plan_slug} plan). Upgrade at Settings → Plan & Billing to add more beds.`
+            `Adding ${beds} beds would exceed your plan limit (${capacity.current}/${capacity.max} beds on ${capacity.plan_slug} plan). Upgrade at Settings → Plan & Billing to add more beds.`
           );
         }
       }
@@ -131,11 +131,20 @@ const SettingsWardsPage: React.FC = () => {
     mutationFn: async () => {
       const hid = await getHospitalId();
       const selectedIdx = Array.from(selectedTemplates);
-      for (const i of selectedIdx) {
-        const t = TEMPLATES[i];
+      const bedsPerTemplate = selectedIdx.map((i) => {
         const n = parseInt(templateBeds[i] ?? "", 10);
-        const count = !n || n < 1 ? t.beds : n;
-        await createWardWithBeds(hid, t.label, t.type, count);
+        return !n || n < 1 ? TEMPLATES[i].beds : n;
+      });
+      const totalBedsToAdd = bedsPerTemplate.reduce((sum, n) => sum + n, 0);
+      const capacity = await checkBedCapacity(totalBedsToAdd);
+      if (!capacity.allowed) {
+        throw new Error(
+          `Creating these wards adds ${totalBedsToAdd} beds, exceeding your plan limit (${capacity.current}/${capacity.max} beds on ${capacity.plan_slug} plan). Upgrade at Settings → Plan & Billing to add more beds.`
+        );
+      }
+      for (let j = 0; j < selectedIdx.length; j++) {
+        const t = TEMPLATES[selectedIdx[j]];
+        await createWardWithBeds(hid, t.label, t.type, bedsPerTemplate[j]);
       }
       return selectedIdx.length;
     },
@@ -162,10 +171,10 @@ const SettingsWardsPage: React.FC = () => {
   const addMoreBeds = useMutation({
     mutationFn: async (count: number) => {
       if (!managingWard) return;
-      const capacity = await checkBedCapacity();
+      const capacity = await checkBedCapacity(count);
       if (!capacity.allowed) {
         throw new Error(
-          `Bed limit reached (${capacity.current}/${capacity.max} on ${capacity.plan_slug} plan). Upgrade at Settings → Plan & Billing to add more beds.`
+          `Adding ${count} beds would exceed your plan limit (${capacity.current}/${capacity.max} beds on ${capacity.plan_slug} plan). Upgrade at Settings → Plan & Billing to add more beds.`
         );
       }
       const hid = await getHospitalId();

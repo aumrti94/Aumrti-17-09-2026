@@ -44,6 +44,50 @@ export async function recordBillPayment(opts: RecordBillPaymentOpts): Promise<Re
     return { ok: false, totalCollected: 0, error: "Nothing to collect" };
   }
 
+  // ── Pre-flight guards (run BEFORE inserting any payment row) ──
+  // Historically the payment row was inserted first and the bills update second,
+  // so a rejected/blocked update left an orphan payment behind — and nothing
+  // stopped collecting more than the balance due. Both are checked up front now
+  // against the authoritative DB state so no orphan row can be created.
+  const { data: bill, error: billErr } = await supabase
+    .from("bills")
+    .select("bill_date, balance_due, payment_status")
+    .eq("id", opts.billId)
+    .maybeSingle();
+  if (billErr) return { ok: false, totalCollected, error: billErr.message };
+  if (!bill) return { ok: false, totalCollected, error: "Bill not found" };
+
+  const currentBalance = Number((bill as any).balance_due) || 0;
+  if (currentBalance <= 0) {
+    return { ok: false, totalCollected, error: "This bill is already fully paid — nothing left to collect." };
+  }
+  if (totalCollected > currentBalance + 0.01) {
+    return {
+      ok: false,
+      totalCollected,
+      error: `Amount exceeds the balance due (₹${currentBalance.toLocaleString("en-IN")}).`,
+    };
+  }
+
+  // Bills dated on a locked cash-closure day are frozen: collecting against them
+  // is refused until the day is reopened (Billing → Day Closure → Reopen Day).
+  const billDate = (bill as any).bill_date as string | null;
+  if (billDate) {
+    const { data: closure } = await supabase
+      .from("daily_cash_closure")
+      .select("status")
+      .eq("hospital_id", opts.hospitalId)
+      .eq("closure_date", billDate)
+      .maybeSingle();
+    if ((closure as any)?.status === "locked") {
+      return {
+        ok: false,
+        totalCollected,
+        error: `Day ${billDate} is locked (cash closure). Reopen the day before collecting against this bill.`,
+      };
+    }
+  }
+
   for (const row of rows) {
     const { error } = await supabase.from("bill_payments").insert({
       hospital_id: opts.hospitalId,

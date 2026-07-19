@@ -55,18 +55,28 @@ const BILL_ID = "bill-uuid";
 let billPaymentInserts: any[];
 let billsUpdates: any[];
 let admissionsUpdates: any[];
+// Authoritative bill/closure state the pre-flight guards read. Defaults: plenty
+// of balance, no bill_date (so the locked-day lookup is skipped) → open path.
+let billRow: any;
+let closureRow: any;
 
 function setupMocks(patientPhone: string | null = null) {
   billPaymentInserts = [];
   billsUpdates = [];
   admissionsUpdates = [];
+  billRow = { bill_date: null, balance_due: 1_000_000, payment_status: "partial" };
+  closureRow = null;
 
   mockFrom.mockImplementation((table: string) => {
     if (table === "bill_payments") {
       return makeChain({ error: null }, (_m, payload) => billPaymentInserts.push(payload));
     }
     if (table === "bills") {
-      return makeChain({ error: null }, (_m, payload) => billsUpdates.push(payload));
+      // maybeSingle() → the guard read; update() → recorded for assertions.
+      return makeChain({ data: billRow, error: null }, (_m, payload) => billsUpdates.push(payload));
+    }
+    if (table === "daily_cash_closure") {
+      return makeChain({ data: closureRow, error: null });
     }
     if (table === "admissions") {
       return makeChain({ error: null }, (_m, payload) => admissionsUpdates.push(payload));
@@ -161,6 +171,90 @@ describe("recordBillPayment — writes", () => {
     expect(billPaymentInserts).toHaveLength(0);
     expect(billsUpdates).toHaveLength(0);
     expect(mockAutoPost).not.toHaveBeenCalled();
+  });
+});
+
+describe("recordBillPayment — pre-flight guards", () => {
+  it("rejects and writes nothing when the bill is already fully paid (balance 0)", async () => {
+    billRow = { bill_date: null, balance_due: 0, payment_status: "paid" };
+
+    const result = await recordBillPayment({
+      hospitalId: H_ID,
+      billId: BILL_ID,
+      billNumber: "BILL-PAID",
+      rows: [{ mode: "cash", amount: 500 }],
+      collectedBy: "user-1",
+      newPaidAmount: 500,
+      newBalanceDue: 0,
+      newPaymentStatus: "paid",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/already fully paid/i);
+    expect(billPaymentInserts).toHaveLength(0);
+    expect(billsUpdates).toHaveLength(0);
+    expect(mockAutoPost).not.toHaveBeenCalled();
+  });
+
+  it("rejects and writes nothing when the amount exceeds the balance due", async () => {
+    billRow = { bill_date: null, balance_due: 500, payment_status: "partial" };
+
+    const result = await recordBillPayment({
+      hospitalId: H_ID,
+      billId: BILL_ID,
+      billNumber: "BILL-OVER",
+      rows: [{ mode: "cash", amount: 5000 }],
+      collectedBy: "user-1",
+      newPaidAmount: 5000,
+      newBalanceDue: 0,
+      newPaymentStatus: "paid",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/exceeds the balance/i);
+    expect(billPaymentInserts).toHaveLength(0);
+    expect(billsUpdates).toHaveLength(0);
+  });
+
+  it("rejects and writes nothing when the bill's day is locked (cash closure)", async () => {
+    billRow = { bill_date: "2026-07-16", balance_due: 500, payment_status: "partial" };
+    closureRow = { status: "locked" };
+
+    const result = await recordBillPayment({
+      hospitalId: H_ID,
+      billId: BILL_ID,
+      billNumber: "BILL-LOCKED",
+      rows: [{ mode: "cash", amount: 500 }],
+      collectedBy: "user-1",
+      newPaidAmount: 500,
+      newBalanceDue: 0,
+      newPaymentStatus: "paid",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/locked/i);
+    expect(billPaymentInserts).toHaveLength(0);
+    expect(billsUpdates).toHaveLength(0);
+  });
+
+  it("allows collection when the bill's day is reconciled (reopened), not locked", async () => {
+    billRow = { bill_date: "2026-07-16", balance_due: 500, payment_status: "partial" };
+    closureRow = { status: "reconciled" };
+
+    const result = await recordBillPayment({
+      hospitalId: H_ID,
+      billId: BILL_ID,
+      billNumber: "BILL-REOPENED",
+      rows: [{ mode: "cash", amount: 500 }],
+      collectedBy: "user-1",
+      newPaidAmount: 500,
+      newBalanceDue: 0,
+      newPaymentStatus: "paid",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(billPaymentInserts).toHaveLength(1);
+    expect(billsUpdates).toHaveLength(1);
   });
 });
 

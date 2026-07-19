@@ -2,6 +2,11 @@ import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { syncAdvanceToBill } from "@/lib/advanceBillSync";
 import { resolveRoomRateFallback } from "@/lib/ipdBilling";
+import {
+  addManualConsultationCharge,
+  fetchConsultationDoctors,
+  type DoctorConsultOption,
+} from "@/lib/ipdConsultationCharge";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -9,7 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { Loader2, Plus, RefreshCw, ArrowUpCircle, ArrowDownCircle, Wallet } from "lucide-react";
+import { Loader2, Plus, RefreshCw, ArrowUpCircle, ArrowDownCircle, Wallet, Stethoscope } from "lucide-react";
 
 interface Props {
   admissionId: string;
@@ -82,6 +87,19 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
   const [referenceNo, setReferenceNo] = useState("");
   const [depositNote, setDepositNote] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // Add-consultation ("doctor round") form — for hospitals that don't record ward-round
+  // notes, so the consultation charge is never auto-captured.
+  const [showConsult, setShowConsult] = useState(false);
+  const [consultDoctors, setConsultDoctors] = useState<DoctorConsultOption[]>([]);
+  const [consultDoctorId, setConsultDoctorId] = useState("");
+  const [consultDate, setConsultDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [consultVisits, setConsultVisits] = useState("1");
+  const [consultFee, setConsultFee] = useState("");
+  const [consultGst, setConsultGst] = useState(0);
+  const [consultHsn, setConsultHsn] = useState("999312");
+  const [consultLoadingDocs, setConsultLoadingDocs] = useState(false);
+  const [savingConsult, setSavingConsult] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -344,6 +362,69 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
     }
   };
 
+  const openConsult = async () => {
+    setShowConsult(true);
+    setConsultLoadingDocs(true);
+    try {
+      const docs = await fetchConsultationDoctors(hospitalId, admissionId);
+      setConsultDoctors(docs);
+      if (docs.length > 0) {
+        const first = docs[0];
+        setConsultDoctorId(first.doctorId);
+        setConsultFee(first.fee ? String(first.fee) : "");
+        setConsultGst(first.gstPercent);
+        setConsultHsn(first.hsnCode);
+      }
+    } catch (e: any) {
+      toast.error(e?.message || "Could not load doctors");
+    } finally {
+      setConsultLoadingDocs(false);
+    }
+  };
+
+  const handleConsultDoctorChange = (id: string) => {
+    setConsultDoctorId(id);
+    const d = consultDoctors.find((x) => x.doctorId === id);
+    if (d) {
+      setConsultFee(d.fee ? String(d.fee) : "");
+      setConsultGst(d.gstPercent);
+      setConsultHsn(d.hsnCode);
+    }
+  };
+
+  const handleAddConsult = async () => {
+    const doc = consultDoctors.find((x) => x.doctorId === consultDoctorId);
+    const fee = parseFloat(consultFee);
+    const visits = parseInt(consultVisits, 10);
+    if (!doc) { toast.error("Select a doctor"); return; }
+    if (!fee || fee <= 0) { toast.error("Enter a valid consultation fee"); return; }
+    setSavingConsult(true);
+    try {
+      const res = await addManualConsultationCharge({
+        hospitalId,
+        patientId,
+        admissionId,
+        doctorId: doc.doctorId,
+        doctorName: doc.doctorName,
+        date: consultDate,
+        visits: Number.isFinite(visits) ? visits : 1,
+        fee,
+        gstPercent: consultGst,
+        hsnCode: consultHsn,
+        orderedBy: userId,
+      });
+      if (!res.ok) { toast.error(res.error || "Failed to add consultation"); return; }
+      toast.success(`Consultation charged: ₹${(res.amount || 0).toLocaleString("en-IN")}`);
+      setShowConsult(false);
+      setConsultVisits("1");
+      load();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to add consultation");
+    } finally {
+      setSavingConsult(false);
+    }
+  };
+
   const totalCharges   = chargeLines.reduce((s, l) => s + l.amount, 0);
   const effectiveCharges = Math.max(0, totalCharges - discountAmount);
   const netAdvance     = totalDeposited - totalRefunded;
@@ -412,6 +493,16 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
                   From IPD bill
                 </span>
               )}
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 px-2 text-xs ml-auto"
+                onClick={openConsult}
+                disabled={loading}
+                title="Charge a doctor's consultation / round even when no ward-round note was recorded"
+              >
+                <Stethoscope className="h-3 w-3 mr-1" /> Add Consultation
+              </Button>
             </div>
             {!loading && noDiagnosis && (
               <p className="text-[10px] text-amber-700">
@@ -598,6 +689,80 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
             <Button onClick={handleDeposit} disabled={saving}>
               {saving && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
               Collect ₹{parseFloat(depositAmount || "0").toLocaleString("en-IN")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Doctor Consultation modal — manual "doctor round" charge */}
+      <Dialog open={showConsult} onOpenChange={setShowConsult}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Add Doctor Consultation</DialogTitle>
+          </DialogHeader>
+          <p className="text-[11px] text-muted-foreground -mt-1">
+            Charges a doctor's consultation / round for a day when no ward-round note was
+            recorded. One line per doctor per date — re-adding replaces it.
+          </p>
+          {consultLoadingDocs ? (
+            <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading doctors…
+            </div>
+          ) : consultDoctors.length === 0 ? (
+            <div className="py-6 text-center text-sm text-muted-foreground">
+              No doctors with a consultation fee configured.
+              <span className="block text-[11px] mt-1">Set one up in Settings → Services.</span>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div>
+                <Label className="text-xs">Doctor *</Label>
+                <Select value={consultDoctorId} onValueChange={handleConsultDoctorChange}>
+                  <SelectTrigger className="mt-1"><SelectValue placeholder="Select doctor" /></SelectTrigger>
+                  <SelectContent>
+                    {consultDoctors.map((d) => (
+                      <SelectItem key={d.doctorId} value={d.doctorId}>
+                        Dr. {d.doctorName}{d.fee ? ` — ₹${d.fee.toLocaleString("en-IN")}` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs">Date *</Label>
+                  <Input type="date" value={consultDate} onChange={(e) => setConsultDate(e.target.value)} className="mt-1" />
+                </div>
+                <div>
+                  <Label className="text-xs">Visits</Label>
+                  <Input type="number" min="1" value={consultVisits} onChange={(e) => setConsultVisits(e.target.value)} className="mt-1" />
+                </div>
+              </div>
+              <div>
+                <Label className="text-xs">Fee per visit (₹) *</Label>
+                <Input type="number" min="0" value={consultFee} onChange={(e) => setConsultFee(e.target.value)} placeholder="0" className="mt-1" />
+                {consultGst > 0 && (
+                  <p className="text-[10px] text-muted-foreground mt-1">+{consultGst}% GST applies</p>
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground flex justify-between border-t border-border/60 pt-2">
+                <span>Total (incl. GST)</span>
+                <span className="font-semibold text-foreground">
+                  {(() => {
+                    const f = parseFloat(consultFee) || 0;
+                    const v = Math.max(1, parseInt(consultVisits, 10) || 1);
+                    const taxable = f * v;
+                    return fmt(taxable + (taxable * consultGst) / 100);
+                  })()}
+                </span>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowConsult(false)}>Cancel</Button>
+            <Button onClick={handleAddConsult} disabled={savingConsult || consultLoadingDocs || consultDoctors.length === 0}>
+              {savingConsult && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
+              Add Consultation
             </Button>
           </DialogFooter>
         </DialogContent>

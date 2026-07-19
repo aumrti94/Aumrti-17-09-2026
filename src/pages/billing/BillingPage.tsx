@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import CollapsiblePanel from "@/components/layout/CollapsiblePanel";
 import { useHospitalContext } from "@/contexts/HospitalContext";
-import { hasTabAccess } from "@/lib/tabPermissions";
+import { hasTabAccess, hasActionAccess } from "@/lib/tabPermissions";
 import { cn } from "@/lib/utils";
 import { autoPullAdmissionCharges as autoPullAdmissionChargesUtil } from "@/lib/ipdBilling";
 import { ADMISSION_BILL_TYPES, findOrCreateAdmissionBill } from "@/lib/admissionBill";
@@ -397,12 +397,14 @@ const BillingPage: React.FC = () => {
           {isAfterClosingTime
             ? `Previous day (${prevDayLabel}) is not closed! Complete its end-of-day cash reconciliation before continuing.`
             : `Previous day (${prevDayLabel}) is not closed. Complete its cash reconciliation to keep the books accurate.`}
-          <button
-            className="ml-2 underline hover:no-underline text-white"
-            onClick={() => navigate("/billing/closure")}
-          >
-            Close Day Now →
-          </button>
+          {hasActionAccess("billing", "day_closure", permissions, role) && (
+            <button
+              className="ml-2 underline hover:no-underline text-white"
+              onClick={() => navigate("/billing/closure")}
+            >
+              Close Day Now →
+            </button>
+          )}
         </div>
       )}
 
@@ -440,17 +442,19 @@ const BillingPage: React.FC = () => {
         ))}
         <div className="flex-1" />
         <NABHBadge standardCodes={["ROM.2", "IMS.1", "IMS.3"]} />
-        <button
-          className={cn(
-            "px-3 py-1.5 text-xs font-bold rounded-md transition-colors flex items-center gap-1",
-            prevDayClosed === false
-              ? "bg-destructive text-white animate-pulse"
-              : "text-muted-foreground hover:text-foreground border border-border"
-          )}
-          onClick={() => navigate("/billing/closure")}
-        >
-          <Lock size={11} /> Day Closure
-        </button>
+        {hasActionAccess("billing", "day_closure", permissions, role) && (
+          <button
+            className={cn(
+              "px-3 py-1.5 text-xs font-bold rounded-md transition-colors flex items-center gap-1",
+              prevDayClosed === false
+                ? "bg-destructive text-white animate-pulse"
+                : "text-muted-foreground hover:text-foreground border border-border"
+            )}
+            onClick={() => navigate("/billing/closure")}
+          >
+            <Lock size={11} /> Day Closure
+          </button>
+        )}
       </div>
 
       {activeTab === "bills" ? (

@@ -7,6 +7,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.103.0";
+import { checkAIAllowed } from "../_shared/ai-entitlement.ts";
 
 const supabaseAdmin = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -175,7 +176,11 @@ Reply HELP to speak with our staff.`;
 
       const systemPrompt = (promptRow?.system_prompt || "").replace("{{hospital_name}}", hospitalName);
       const aiProvider = Deno.env.get("OPENAI_API_KEY") ? "openai" : null;
-      if (!aiProvider) {
+      // AI entitlement floor — if this hospital's "AI Features" switch is off, skip the
+      // AI generation and fall back to the canned reply (never a hard error: a patient is
+      // waiting on WhatsApp). Gated on the whatsapp_bot_intent feature key.
+      const gate = await checkAIAllowed(supabaseAdmin, hospitalId, "whatsapp_bot_intent");
+      if (!aiProvider || !gate.allowed) {
         return `I'm not sure I understood that. You can ask me about appointments, bills, reports, or hospital information. Reply HELP to speak with our staff.`;
       }
 

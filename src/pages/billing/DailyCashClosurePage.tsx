@@ -7,8 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Lock, CheckCircle2, AlertTriangle, Clock, ChevronDown, Printer } from "lucide-react";
+import { Lock, Unlock, CheckCircle2, AlertTriangle, Clock, ChevronDown, Printer, ShieldAlert } from "lucide-react";
 import { computeDayClosureTotals, EMPTY_TOTALS, type SystemTotals } from "@/lib/dayClosureTotals";
+import { useModuleAccess } from "@/components/access/useModuleAccess";
+import { useHospitalContext } from "@/contexts/HospitalContext";
+import { logConfigChange } from "@/lib/ims";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -57,6 +60,11 @@ const LINE_ITEM_GROUP: Record<string, string> = {
 
 const DailyCashClosurePage: React.FC = () => {
   const { toast } = useToast();
+  const { actionAllowed } = useModuleAccess();
+  const { role } = useHospitalContext();
+  const canCloseDay = actionAllowed("billing", "day_closure");
+  // Reopening a locked (finalised) day is a sensitive, finance-authority action.
+  const canReopen = ["super_admin", "hospital_admin", "cfo"].includes(role ?? "");
   const [hospitalId, setHospitalId] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [hospitalName, setHospitalName] = useState<string>("Hospital");
@@ -67,6 +75,9 @@ const DailyCashClosurePage: React.FC = () => {
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [locking, setLocking] = useState(false);
+  const [reopening, setReopening] = useState(false);
+  const [reopenOpen, setReopenOpen] = useState(false);
+  const [reopenReason, setReopenReason] = useState("");
 
   // Existing closure for today (if already closed)
   const [existing, setExisting] = useState<{ status: string; closed_at: string | null } | null>(null);
@@ -289,6 +300,48 @@ const DailyCashClosurePage: React.FC = () => {
     }
   };
 
+  // ── Reopen (unlock) a locked day ──────────────────────────────────────────
+  // Sets a locked day back to 'reconciled' so bills/payments for that date can
+  // be corrected, then it can be re-locked. Restricted to finance authority and
+  // always audit-logged with a mandatory reason.
+
+  const reopenDay = async () => {
+    if (!hospitalId || !canReopen) return;
+    const reason = reopenReason.trim();
+    if (!reason) {
+      toast({ title: "Reason required", description: "Enter why this day is being reopened.", variant: "destructive" });
+      return;
+    }
+    setReopening(true);
+    try {
+      const { error } = await (supabase as any)
+        .from("daily_cash_closure")
+        .update({ status: "reconciled", closed_by: null, closed_at: null })
+        .eq("hospital_id", hospitalId)
+        .eq("closure_date", closureDate);
+      if (error) throw error;
+
+      logConfigChange({
+        hospitalId,
+        configArea: "daily_cash_closure",
+        itemId: closureDate,
+        oldValue: { status: "locked" },
+        newValue: { status: "reconciled" },
+        reason,
+        userId,
+      });
+
+      toast({ title: `Day ${new Date(closureDate + "T00:00:00").toLocaleDateString("en-IN")} reopened` });
+      setReopenOpen(false);
+      setReopenReason("");
+      loadDay();
+    } catch (err: any) {
+      toast({ title: "Reopen failed", description: err.message, variant: "destructive" });
+    } finally {
+      setReopening(false);
+    }
+  };
+
   // ── Tally Day Summary print ───────────────────────────────────────────────
 
   const dateLabel = new Date(closureDate + "T00:00:00").toLocaleDateString("en-IN", {
@@ -428,6 +481,19 @@ const DailyCashClosurePage: React.FC = () => {
 
   // ─────────────────────────────────────────────────────────────────────────
 
+  if (!canCloseDay) {
+    return (
+      <div className="flex h-[calc(100vh-56px)] flex-col items-center justify-center gap-2 text-center px-6">
+        <ShieldAlert size={28} className="text-amber-600" />
+        <p className="text-sm font-semibold text-foreground">Cash Closure is restricted for your role.</p>
+        <p className="text-xs text-muted-foreground max-w-sm">
+          Ask an administrator to enable the “Day Closure” action for your role under
+          Settings → Roles → Billing → Action Controls.
+        </p>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="flex h-[calc(100vh-56px)] items-center justify-center">
@@ -438,6 +504,42 @@ const DailyCashClosurePage: React.FC = () => {
 
   return (
     <div className="flex flex-col h-[calc(100vh-56px)] overflow-hidden bg-muted/20">
+
+      {/* ── Reopen (unlock) confirmation modal ── */}
+      {reopenOpen && (
+        <div className="fixed inset-0 z-[120] bg-black/50 flex items-center justify-center p-4" onClick={() => setReopenOpen(false)}>
+          <div className="bg-card border border-border rounded-xl p-6 w-full max-w-md shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-1">
+              <Unlock size={16} className="text-amber-600" />
+              <h3 className="text-base font-bold text-foreground">
+                Reopen {new Date(closureDate + "T00:00:00").toLocaleDateString("en-IN")}
+              </h3>
+            </div>
+            <p className="text-xs text-muted-foreground mb-4">
+              This unlocks the day so bills, payments, and refunds for this date can be corrected.
+              The action is logged. Re-lock the day once corrections are complete.
+            </p>
+            <label className="text-xs font-medium text-foreground block mb-1">Reason (required)</label>
+            <Textarea
+              value={reopenReason}
+              onChange={(e) => setReopenReason(e.target.value)}
+              placeholder="e.g. Missed a cash receipt that must be added to 16 Jul"
+              className="mb-4 min-h-[72px] text-sm"
+            />
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="outline" onClick={() => setReopenOpen(false)} disabled={reopening}>Cancel</Button>
+              <Button
+                size="sm"
+                className="bg-amber-600 hover:bg-amber-700 text-white"
+                onClick={reopenDay}
+                disabled={reopening || !reopenReason.trim()}
+              >
+                {reopening ? "Reopening…" : "Reopen Day"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Header ── */}
       <div className="h-12 flex-shrink-0 bg-card border-b border-border px-5 flex items-center gap-3">
@@ -454,6 +556,16 @@ const DailyCashClosurePage: React.FC = () => {
           <Badge className="bg-green-100 text-green-700 text-[11px]">
             <CheckCircle2 size={11} className="mr-1" /> Locked
           </Badge>
+        )}
+        {isLocked && canReopen && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 px-3 text-[11px] gap-1.5 border-amber-300 text-amber-700 hover:bg-amber-50"
+            onClick={() => setReopenOpen(true)}
+          >
+            <Unlock size={12} /> Reopen Day
+          </Button>
         )}
         {!isLocked && (
           <Badge className="bg-amber-100 text-amber-700 text-[11px]">

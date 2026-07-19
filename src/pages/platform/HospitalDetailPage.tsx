@@ -6,7 +6,9 @@ import { ChevronLeft, Save, Loader2, Trash2, AlertTriangle, X, Activity, Eye, Sl
 import { MODULE_TABS, MODULE_ACTIONS } from "@/lib/tabPermissions";
 import { ModuleAccessDrawer } from "@/components/access/ModuleAccessDrawer";
 import { toast } from "sonner";
-import { getErrorMessage } from "@/lib/errorMessage";
+import { getErrorMessage, getInvokeError } from "@/lib/errorMessage";
+import { deleteHospitalStream, checkDeletePrerequisites, type DeletePreflightResult } from "@/lib/deleteHospitalStream";
+import { Progress } from "@/components/ui/progress";
 import { FormError } from "@/components/ui/FormError";
 import { PLATFORM_STATUS_PILL } from "@/lib/platform-utils";
 import { logAdminAction } from "@/lib/adminAudit";
@@ -331,61 +333,108 @@ export default function HospitalDetailPage() {
   const [deleteStep, setDeleteStep] = useState<0 | 1 | 2>(0);
   const [deleteNameInput, setDeleteNameInput] = useState("");
 
+  // Phase-2 streaming purge progress (real row counts from the edge function)
+  const [isPurging, setIsPurging] = useState(false);
+  const [purgeTotal, setPurgeTotal] = useState(0);
+  const [purgeDone, setPurgeDone] = useState(0);
+  const [purgeLabel, setPurgeLabel] = useState("");
+  const [purgeError, setPurgeError] = useState<string | null>(null);
+
+  // Non-destructive delete prerequisite check (deploy / secret / admin)
+  const [preflight, setPreflight] = useState<DeletePreflightResult | null>(null);
+
   const deleteHospital = useMutation({
     mutationFn: async () => {
-      // Calls the delete-hospital edge function (service-role key).
-      // It handles: auth.users deletion, storage cleanup, then
-      // hospital row delete (which CASCADE-removes all clinical/financial/
-      // operational data via ON DELETE CASCADE on all 79+ hospital tables).
-      const { data: result, error } = await (supabase as any).functions.invoke(
-        "delete-hospital",
-        { body: { hospital_id: id } },
-      );
-      if (error) throw error;
-      if (result?.error) throw new Error(result.error);
-      // Surface any non-fatal warnings (e.g. storage bucket missing)
+      // delete-hospital is a two-phase soft-delete. Phase 1 (deleted_at null)
+      // just marks the hospital and returns instantly. Phase 2 (grace elapsed)
+      // streams a real progress bar via deleteHospitalStream. The helper always
+      // surfaces the server's real error message.
+      const isPurge = !!hospital?.deleted_at;
+      if (isPurge) {
+        // Open the progress modal and reset counters before the stream starts.
+        setPurgeError(null);
+        setPurgeTotal(0);
+        setPurgeDone(0);
+        setPurgeLabel("Preparing…");
+        setIsPurging(true);
+        setDeleteStep(0);
+      }
+      const result = await deleteHospitalStream(id!, {
+        onTotal: (rows) => setPurgeTotal(rows),
+        onPhase: (label, cumulative) => {
+          setPurgeLabel(label);
+          if (typeof cumulative === "number") setPurgeDone(cumulative);
+        },
+        onProgress: (p) => {
+          setPurgeLabel(`Removing ${p.table}`);
+          setPurgeDone(p.cumulative);
+        },
+      });
       if (result?.warnings?.length) {
         console.warn("Hospital delete warnings:", result.warnings);
       }
       return result;
     },
-    onSuccess: (result: any) => {
-      setDeleteStep(0);
+    onSuccess: (result) => {
       setDeleteNameInput("");
       if (result?.soft_deleted) {
         // Phase 1: marked for deletion, nothing purged yet.
+        setDeleteStep(0);
         logAdminAction("hospital_delete_requested", { hospitalId: id, hospitalName: hospital?.name });
         toast.success(result.message || `${hospital?.name ?? "Hospital"} marked for deletion — 7-day grace period started.`);
         qc.invalidateQueries({ queryKey: ["platform-hospital", id] });
         return;
       }
-      // Phase 2: grace period had already elapsed — this call actually purged everything.
+      // Phase 2: the purge stream completed.
+      setPurgeLabel("Done");
+      setPurgeDone(result?.cumulative ?? purgeTotal);
       logAdminAction("hospital_purged", { hospitalId: id, hospitalName: hospital?.name, details: { deleted_auth_users: result?.deleted_auth_users } });
-      const staffMsg = result?.deleted_auth_users > 0
-        ? ` · ${result.deleted_auth_users} staff account${result.deleted_auth_users > 1 ? "s" : ""} removed`
+      const staffMsg = (result?.deleted_auth_users ?? 0) > 0
+        ? ` · ${result!.deleted_auth_users} staff account${result!.deleted_auth_users! > 1 ? "s" : ""} removed`
         : "";
       toast.success(`${hospital?.name ?? "Hospital"} permanently deleted${staffMsg}`);
       qc.invalidateQueries({ queryKey: ["platform-hospitals"] });
       qc.invalidateQueries({ queryKey: ["platform-dash"] });
       qc.invalidateQueries({ queryKey: ["platform-churn-radar"] });
       qc.invalidateQueries({ queryKey: ["platform-briefing"] });
+      setIsPurging(false);
       navigate("/platform/hospitals", { replace: true });
     },
     onError: (e: any) => {
-      toast.error(getErrorMessage(e) || "Delete failed — see console for details.");
-      setDeleteStep(0);
+      const msg = getErrorMessage(e) || "Delete failed — see console for details.";
+      if (hospital?.deleted_at) {
+        // A purge was in progress — keep the modal open and show the real error
+        // inline so it's actually readable (no more opaque "non-2xx" toast).
+        setPurgeError(msg);
+      } else {
+        toast.error(msg);
+        setDeleteStep(0);
+      }
     },
+  });
+
+  const preflightCheck = useMutation({
+    mutationFn: () => checkDeletePrerequisites(id!),
+    onSuccess: (result) => setPreflight(result),
+    onError: (e: any) =>
+      setPreflight({
+        ok: false,
+        checks: { deployed: false, service_role_key: false, authenticated: false, admin: false },
+        error: getErrorMessage(e),
+      }),
   });
 
   const restoreHospital = useMutation({
     mutationFn: async () => {
-      const { data: result, error } = await (supabase as any).functions.invoke(
+      const res = await (supabase as any).functions.invoke(
         "delete-hospital",
         { body: { hospital_id: id, action: "restore" } },
       );
-      if (error) throw error;
-      if (result?.error) throw new Error(result.error);
-      return result;
+      // getInvokeError unwraps the real message hidden in error.context, instead
+      // of the generic "Edge Function returned a non-2xx status code".
+      const msg = await getInvokeError(res);
+      if (msg) throw new Error(msg);
+      return res.data;
     },
     onSuccess: () => {
       logAdminAction("hospital_restored", { hospitalId: id, hospitalName: hospital?.name });
@@ -544,6 +593,49 @@ export default function HospitalDetailPage() {
             {/* Danger zone */}
             <div className="border border-red-300 rounded-xl p-5 space-y-3 bg-red-50">
               <p className="text-xs font-bold uppercase tracking-wider text-red-600">Danger Zone</p>
+
+              {/* Non-destructive prerequisite check — confirms delete will work */}
+              <div className="space-y-2">
+                <button
+                  onClick={() => preflightCheck.mutate()}
+                  disabled={preflightCheck.isPending}
+                  className="flex items-center gap-2 px-3 py-1.5 border border-red-300 text-red-700 hover:bg-red-100 text-xs font-medium rounded-lg transition-colors disabled:opacity-40"
+                >
+                  {preflightCheck.isPending
+                    ? <Loader2 size={12} className="animate-spin" />
+                    : <Activity size={12} />}
+                  Check delete prerequisites
+                </button>
+                {preflight && (
+                  <div className="bg-white/70 border border-red-200 rounded-lg p-3 space-y-1.5">
+                    {([
+                      ["deployed", "Edge function deployed", "Run: supabase functions deploy delete-hospital"],
+                      ["service_role_key", "Service-role secret set", "Set the SUPABASE_SERVICE_ROLE_KEY secret on the function"],
+                      ["authenticated", "Your session is valid", "Sign out and sign back in"],
+                      ["admin", "You are an active platform admin", "Add an active row in aumrti_admins for your account"],
+                    ] as const).map(([key, label, fix]) => {
+                      const pass = preflight.checks[key];
+                      return (
+                        <div key={key} className="flex items-start gap-2 text-xs">
+                          <span className={pass ? "text-green-600 font-bold" : "text-red-600 font-bold"}>
+                            {pass ? "✓" : "✕"}
+                          </span>
+                          <div className="leading-tight">
+                            <span className={pass ? "text-foreground" : "text-red-700 font-medium"}>{label}</span>
+                            {!pass && <span className="block text-[11px] text-muted-foreground">{fix}</span>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <p className={`text-xs font-semibold pt-1 ${preflight.ok ? "text-green-600" : "text-red-600"}`}>
+                      {preflight.ok
+                        ? "All prerequisites met — delete will work."
+                        : (preflight.error || "One or more prerequisites failed — fix the items marked ✕.")}
+                    </p>
+                  </div>
+                )}
+              </div>
+
               {hospital.deleted_at ? (
                 <>
                   <p className="text-xs text-muted-foreground leading-relaxed">
@@ -1126,6 +1218,89 @@ export default function HospitalDetailPage() {
                 )}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════
+          DELETE — PHASE 2: Streaming purge progress
+      ════════════════════════════════════════════════════════ */}
+      {isPurging && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85">
+          <div className="bg-card border border-red-300 rounded-2xl w-[480px] shadow-2xl">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center">
+                  {purgeError
+                    ? <AlertTriangle size={16} className="text-red-600" />
+                    : <Trash2 size={15} className="text-red-600" />}
+                </div>
+                <p className="text-sm font-bold text-foreground">
+                  {purgeError ? "Purge failed" : `Purging ${hospital?.name ?? "hospital"}…`}
+                </p>
+              </div>
+              {purgeError && (
+                <button
+                  onClick={() => { setIsPurging(false); setPurgeError(null); }}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <X size={15} />
+                </button>
+              )}
+            </div>
+
+            {/* Body */}
+            <div className="px-6 py-5 space-y-4">
+              {purgeError ? (
+                <>
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                    <p className="text-xs font-semibold text-red-600 uppercase tracking-wider mb-1">Error</p>
+                    <p className="text-sm text-red-700 break-words">{purgeError}</p>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Some data may already have been removed. Re-run the purge to finish it, or check the edge-function logs.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <Progress
+                    value={purgeLabel === "Done"
+                      ? 100
+                      : purgeTotal > 0
+                        ? Math.min(99, Math.round((purgeDone / purgeTotal) * 100))
+                        : 6}
+                    className="h-3"
+                  />
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground flex items-center gap-2">
+                      <Loader2 size={12} className="animate-spin" />
+                      {purgeLabel || "Working…"}
+                    </span>
+                    <span className="font-mono text-foreground">
+                      {purgeTotal > 0
+                        ? `${purgeDone.toLocaleString("en-IN")} / ${purgeTotal.toLocaleString("en-IN")} records`
+                        : `${purgeDone.toLocaleString("en-IN")} records`}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Do not close this window. This permanently removes all data for this hospital.
+                  </p>
+                </>
+              )}
+            </div>
+
+            {/* Footer — only on error */}
+            {purgeError && (
+              <div className="px-6 pb-5">
+                <button
+                  onClick={() => { setIsPurging(false); setPurgeError(null); }}
+                  className="w-full py-2.5 border border-border text-muted-foreground hover:text-foreground text-sm font-medium rounded-lg transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -1,5 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { isAIFeatureAllowed } from "./aiEntitlement";
+import { resolveAzureSurface, buildAzureEndpointUrl, azureRequestHeaders } from "./azureFoundry";
 
 /**
  * Safely parses a Fetch response as JSON, handling cases where the body might be empty, 
@@ -87,6 +88,7 @@ interface ProviderCallParams {
 const PROVIDER_LABELS: Record<string, string> = {
   claude: "Anthropic (Claude)",
   openai: "OpenAI",
+  azure_openai: "Azure (India Central)",
   gemini: "Google Gemini",
   perplexity: "Perplexity AI",
   openrouter: "OpenRouter (multi-model)",
@@ -354,6 +356,7 @@ interface AzureConfig {
   apiKey: string;
   apiVersion?: string; // optional — blank uses the newer /openai/v1 surface (no api-version needed)
   apiStyle?: "chat_completions" | "responses"; // optional — "responses" only valid when apiVersion is blank
+  surface?: string; // optional — "auto"|"openai"|"anthropic"|"foundry_models" (which Foundry surface)
 }
 
 // Azure Responses API returns output as a list of typed items rather than choices[0].message.content.
@@ -385,54 +388,74 @@ const callAzureOpenAI = async (
   request: AIRequest,
   temperature = 0.3,
 ): Promise<AIResponse> => {
-  // With an API version: classic GA surface (deployment in the URL). Responses API only
-  // exists on the newer /openai/v1 surface, so it requires apiVersion to be blank.
-  const useV1 = !cfg.apiVersion;
-  const useResponses = useV1 && cfg.apiStyle === "responses";
-  const url = useResponses
-    ? `${cfg.endpoint}/openai/v1/responses`
-    : useV1
-    ? `${cfg.endpoint}/openai/v1/chat/completions`
-    : `${cfg.endpoint}/openai/deployments/${cfg.deployment}/chat/completions?api-version=${cfg.apiVersion}`;
-  // Azure reads images via image_url (chat completions) / input_image (responses).
+  const { url, surface, useV1, useResponses } = buildAzureEndpointUrl({
+    endpoint: cfg.endpoint,
+    deployment: cfg.deployment,
+    apiVersion: cfg.apiVersion,
+    apiStyle: cfg.apiStyle,
+    surface: cfg.surface,
+  });
+  const headers = azureRequestHeaders(surface, cfg.apiKey);
+  // GPT-5 / o-series reasoning models reject the `temperature` sampling param on Azure.
+  const reasoning = /^(o[0-9]|gpt-5)/i.test(cfg.deployment || "");
   const azImages = (request.attachments || []).filter((a) => a.kind === "image");
-  const chatContent = azImages.length
-    ? [
-        { type: "text", text: request.prompt },
-        ...azImages.map((a) => ({ type: "image_url", image_url: { url: `data:${a.mediaType};base64,${a.data}` } })),
-      ]
-    : request.prompt;
-  const responsesInput = azImages.length
-    ? [
-        {
-          role: "user",
-          content: [
-            { type: "input_text", text: request.prompt },
-            ...azImages.map((a) => ({ type: "input_image", image_url: `data:${a.mediaType};base64,${a.data}` })),
-          ],
-        },
-      ]
-    : request.prompt;
-  const body = useResponses
-    ? {
-        model: cfg.deployment,
-        input: responsesInput,
-        ...(request.systemPrompt ? { instructions: request.systemPrompt } : {}),
-        max_output_tokens: request.maxTokens || 500,
-        temperature,
-      }
-    : {
-        ...(useV1 ? { model: cfg.deployment } : {}),
-        messages: [
-          ...(request.systemPrompt ? [{ role: "system", content: request.systemPrompt }] : []),
-          { role: "user", content: chatContent },
-        ],
-        max_tokens: request.maxTokens || 500,
-        temperature,
-      };
+  let body: Record<string, unknown>;
+  if (surface === "anthropic") {
+    // Claude on Foundry: Anthropic Messages API (image source blocks).
+    const anthContent = azImages.length
+      ? [
+          { type: "text", text: request.prompt },
+          ...azImages.map((a) => ({ type: "image", source: { type: "base64", media_type: a.mediaType, data: a.data } })),
+        ]
+      : request.prompt;
+    body = {
+      model: cfg.deployment,
+      max_tokens: request.maxTokens || 500,
+      temperature,
+      ...(request.systemPrompt ? { system: request.systemPrompt } : {}),
+      messages: [{ role: "user", content: anthContent }],
+    };
+  } else if (useResponses) {
+    const responsesInput = azImages.length
+      ? [
+          {
+            role: "user",
+            content: [
+              { type: "input_text", text: request.prompt },
+              ...azImages.map((a) => ({ type: "input_image", image_url: `data:${a.mediaType};base64,${a.data}` })),
+            ],
+          },
+        ]
+      : request.prompt;
+    body = {
+      model: cfg.deployment,
+      input: responsesInput,
+      ...(request.systemPrompt ? { instructions: request.systemPrompt } : {}),
+      max_output_tokens: request.maxTokens || 500,
+      ...(reasoning ? {} : { temperature }),
+    };
+  } else {
+    // OpenAI-compatible (chat) or foundry_models (/models) — both use image_url blocks.
+    const chatContent = azImages.length
+      ? [
+          { type: "text", text: request.prompt },
+          ...azImages.map((a) => ({ type: "image_url", image_url: { url: `data:${a.mediaType};base64,${a.data}` } })),
+        ]
+      : request.prompt;
+    const includeModel = surface === "foundry_models" || useV1; // classic deployment carries model in URL
+    body = {
+      ...(includeModel ? { model: cfg.deployment } : {}),
+      messages: [
+        ...(request.systemPrompt ? [{ role: "system", content: request.systemPrompt }] : []),
+        { role: "user", content: chatContent },
+      ],
+      max_tokens: request.maxTokens || 500,
+      ...(reasoning ? {} : { temperature }),
+    };
+  }
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "api-key": cfg.apiKey },
+    headers,
     body: JSON.stringify(body),
   });
   const data = await safeParseJson(res, "Azure OpenAI");
@@ -442,6 +465,15 @@ const callAzureOpenAI = async (
       provider: "azure_openai",
       model: cfg.deployment,
       error: data?.error?.message || "Azure OpenAI error",
+    };
+  }
+  if (surface === "anthropic") {
+    const blocks = Array.isArray(data.content) ? data.content : [];
+    return {
+      text: blocks.filter((c: any) => c?.type === "text").map((c: any) => c.text).join(""),
+      provider: "azure_openai",
+      model: cfg.deployment,
+      tokens_used: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
     };
   }
   return {

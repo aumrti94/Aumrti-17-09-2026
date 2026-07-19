@@ -162,6 +162,55 @@ const serializePermissions = (
   return result;
 };
 
+/* ───── Feature-access helpers (Cash / Day Closure) ─────
+   Roles that can ALWAYS close the day, regardless of config. Mirrors
+   BYPASS_ROLES in src/lib/tabPermissions.ts. */
+const CLOSURE_BYPASS_ROLES = ["super_admin", "hospital_admin"];
+
+/* Does this role currently have Cash Closure access? Mirrors
+   hasActionAccess("billing","day_closure") — default-allow. */
+const isClosureAllowed = (role: RolePermission): boolean => {
+  if (CLOSURE_BYPASS_ROLES.includes(role.role_name)) return true;
+  const p = role.permissions as Record<string, any>;
+  if (p?.all === true) return true;
+  const billing = p?.billing;
+  if (!billing || typeof billing === "string") return true;
+  const actions = billing.actions;
+  if (!actions || actions.day_closure === undefined) return true;
+  return !!actions.day_closure;
+};
+
+/* Return a new permissions blob with billing.actions.day_closure set for the
+   given role, preserving the existing billing shape. `allowed` true clears the
+   explicit toggle (back to default-allow); false persists an explicit block. */
+const withClosureAccess = (
+  perms: Record<string, unknown>,
+  allowed: boolean
+): Record<string, unknown> => {
+  const next: Record<string, any> = { ...(perms ?? {}) };
+  let billing = next.billing;
+  if (typeof billing === "string") {
+    const s = billing;
+    const hasRead = s === "r" || s === "rw";
+    const hasWrite = s === "rw";
+    billing = { view: hasRead, create: hasWrite, edit: hasWrite, delete: hasWrite, approve: false, export: hasRead };
+  } else if (billing && typeof billing === "object") {
+    billing = { ...billing };
+  } else {
+    billing = {};
+  }
+  const actions = { ...(billing.actions ?? {}) };
+  if (allowed) {
+    delete actions.day_closure;
+  } else {
+    actions.day_closure = false;
+  }
+  if (Object.keys(actions).length > 0) billing.actions = actions;
+  else delete billing.actions;
+  next.billing = billing;
+  return next;
+};
+
 /* ───── Main Component ───── */
 const SettingsRolesPage: React.FC = () => {
   const navigate = useNavigate();
@@ -180,6 +229,7 @@ const SettingsRolesPage: React.FC = () => {
   const [pickerRole, setPickerRole] = useState<string>("");
   const [pickerLabel, setPickerLabel] = useState<string>("");
   const [changeReason, setChangeReason] = useState("");
+  const [closureDropdownOpen, setClosureDropdownOpen] = useState(false);
 
   /* ── Fetch roles ── */
   const { data: roles = [] } = useQuery({
@@ -261,6 +311,26 @@ const SettingsRolesPage: React.FC = () => {
       toast({ title: "Permissions saved" });
     },
     onError: () => toast({ title: "Failed to save", variant: "destructive" }),
+  });
+
+  /* ── Feature access: toggle Cash / Day Closure for a single role ── */
+  const closureMutation = useMutation({
+    mutationFn: async ({ role, allowed }: { role: RolePermission; allowed: boolean }) => {
+      const oldPerms = role.permissions;
+      const newPerms = withClosureAccess(oldPerms, allowed);
+      const { error } = await supabase
+        .from("role_permissions")
+        .update({ permissions: newPerms as any } as any)
+        .eq("id", role.id);
+      if (error) throw error;
+      logConfigChange({ hospitalId, configArea: "role_permissions", itemId: role.id, oldValue: oldPerms, newValue: newPerms, reason: `Cash Closure access ${allowed ? "granted" : "revoked"}` });
+    },
+    onSuccess: (_d, { allowed }) => {
+      queryClient.invalidateQueries({ queryKey: ["role-permissions"] });
+      queryClient.invalidateQueries({ queryKey: ["settings-custom-roles"] });
+      toast({ title: `Cash Closure ${allowed ? "enabled" : "disabled"} for role` });
+    },
+    onError: () => toast({ title: "Failed to update access", variant: "destructive" }),
   });
 
   /* ── Create role: pick from valid app_role enum so users.role stays compatible ── */
@@ -580,8 +650,86 @@ const SettingsRolesPage: React.FC = () => {
 
       {/* ── RIGHT PANEL ── */}
       <div className="flex-1 overflow-y-auto bg-muted/30 p-6">
+        {/* ── Feature Access: pick which roles can perform sensitive actions ── */}
+        <div className="bg-card border border-border rounded-xl p-4 mb-6">
+          <div className="flex items-center gap-2 mb-3">
+            <ShieldCheck size={16} className="text-primary" />
+            <h3 className="text-sm font-bold text-foreground">Feature Access</h3>
+            <span className="text-[11px] text-muted-foreground">— pick which roles can perform a sensitive action</span>
+          </div>
+          <div className="flex items-start justify-between gap-4 rounded-lg border border-border bg-muted/30 p-3">
+            <div className="min-w-0">
+              <p className="text-[13px] font-semibold text-foreground flex items-center gap-1.5">
+                <Lock size={12} className="text-amber-600" /> Cash / Day Closure
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Who can lock the end-of-day cash reconciliation.
+              </p>
+              <div className="flex flex-wrap gap-1 mt-2">
+                {roles.filter(isClosureAllowed).map((r) => (
+                  <span key={r.id} className="inline-flex items-center gap-1 text-[10px] rounded-full border border-border bg-background px-2 py-0.5 text-foreground">
+                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: roleColor(r.role_name) }} />
+                    {r.role_label}
+                  </span>
+                ))}
+                {roles.filter(isClosureAllowed).length === 0 && (
+                  <span className="text-[11px] text-destructive">No roles can close the day.</span>
+                )}
+              </div>
+            </div>
+            <div className="relative flex-shrink-0">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 text-xs gap-1"
+                onClick={() => setClosureDropdownOpen((o) => !o)}
+              >
+                {roles.filter(isClosureAllowed).length} of {roles.length} roles
+                <ChevronDown size={13} />
+              </Button>
+              {closureDropdownOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setClosureDropdownOpen(false)} />
+                  <div className="absolute right-0 mt-1 z-50 w-64 bg-card border border-border rounded-lg shadow-xl p-1 max-h-72 overflow-y-auto">
+                    <p className="px-2 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Allowed roles
+                    </p>
+                    {roles.map((role) => {
+                      const bypass = CLOSURE_BYPASS_ROLES.includes(role.role_name);
+                      const checked = isClosureAllowed(role);
+                      return (
+                        <label
+                          key={role.id}
+                          className={cn(
+                            "flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px]",
+                            bypass ? "opacity-60 cursor-not-allowed" : "hover:bg-muted cursor-pointer"
+                          )}
+                        >
+                          <input
+                            type="checkbox"
+                            className="accent-primary"
+                            checked={checked}
+                            disabled={bypass || closureMutation.isPending}
+                            onChange={(e) => closureMutation.mutate({ role, allowed: e.target.checked })}
+                          />
+                          <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: roleColor(role.role_name) }} />
+                          <span className="truncate text-foreground">{role.role_label}</span>
+                          {bypass && <span className="ml-auto text-[10px] text-muted-foreground">Always</span>}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+          <p className="text-[10px] text-muted-foreground mt-2">
+            Unchecked roles are blocked from Cash Closure in the app and at the database. Admins always have access.
+          </p>
+        </div>
+
         {!selectedRole || !matrix ? (
-          <div className="h-full flex items-center justify-center">
+          <div className="flex items-center justify-center py-16">
             <div className="text-center">
               <ShieldCheck size={48} className="mx-auto text-muted-foreground/30 mb-3" />
               <p className="text-sm text-muted-foreground">Select a role to configure permissions</p>
