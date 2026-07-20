@@ -17,6 +17,7 @@ import { QRCodeSVG } from "qrcode.react";
 import CollectionCampaignModal from "@/components/billing/CollectionCampaignModal";
 import { recordBillPayment } from "@/lib/billPayments";
 import { generatePaymentLink } from "@/lib/paymentLinks";
+import { getCurrentUserRowId } from "@/lib/currentUser";
 
 interface OutstandingBill {
   id: string;
@@ -226,7 +227,7 @@ const CollectionsTab: React.FC<CollectionsTabProps> = ({ hospitalId }) => {
   const generatePayLink = async () => {
     if (!payLinkModal) return;
     setPayLinkGenerating(true);
-    const { data: userData } = await supabase.from("users").select("id").limit(1).maybeSingle();
+    const collectorId = await getCurrentUserRowId();
     try {
       const result = await generatePaymentLink({
         hospitalId,
@@ -235,7 +236,7 @@ const CollectionsTab: React.FC<CollectionsTabProps> = ({ hospitalId }) => {
         patientName: payLinkModal.patient_name,
         amount: payLinkAmount,
         expiryDays: payLinkExpiry,
-        createdBy: userData?.id ?? null,
+        createdBy: collectorId,
       });
       setGeneratedPayUrl(result.url);
       setGeneratedPayToken(result.linkToken);
@@ -362,7 +363,7 @@ const CollectionsTab: React.FC<CollectionsTabProps> = ({ hospitalId }) => {
   const createEMI = async () => {
     if (!emiModal) return;
     setEmiCreating(true);
-    const { data: userData } = await supabase.from("users").select("id").limit(1).maybeSingle();
+    const collectorId = await getCurrentUserRowId();
     const installmentAmt = Math.ceil(emiModal.balance_due / emiInstallments);
     const firstDate = new Date();
     firstDate.setDate(firstDate.getDate() + (emiFrequency === "weekly" ? 7 : emiFrequency === "fortnightly" ? 14 : 30));
@@ -376,7 +377,7 @@ const CollectionsTab: React.FC<CollectionsTabProps> = ({ hospitalId }) => {
       frequency: emiFrequency,
       first_payment_date: firstDate.toISOString().split("T")[0],
       installment_amount: installmentAmt,
-      created_by: userData?.id,
+      created_by: collectorId,
     }).select("id").maybeSingle();
 
     if (error || !plan) {
@@ -422,7 +423,7 @@ const CollectionsTab: React.FC<CollectionsTabProps> = ({ hospitalId }) => {
       return;
     }
 
-    const { data: userData } = await supabase.from("users").select("id").limit(1).maybeSingle();
+    const collectorId = await getCurrentUserRowId();
 
     const newPaid = collectModal.paid_amount + amount;
     const newBalance = Math.max(0, collectModal.balance_due - amount);
@@ -435,7 +436,7 @@ const CollectionsTab: React.FC<CollectionsTabProps> = ({ hospitalId }) => {
       patientId: collectModal.patient_id,
       admissionId: collectModal.admission_id,
       rows: [{ mode: collectMode, amount }],
-      collectedBy: userData?.id || null,
+      collectedBy: collectorId,
       newPaidAmount: newPaid,
       newBalanceDue: newBalance,
       newPaymentStatus: newStatus,

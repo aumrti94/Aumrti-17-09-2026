@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { syncBillItemPaymentStatus } from "@/lib/chargePosting";
 import { recordBillPayment } from "@/lib/billPayments";
+import { getCurrentUserRowId } from "@/lib/currentUser";
 import { Loader2, RefreshCw, Search, CheckCircle2, AlertCircle, IndianRupee } from "lucide-react";
 
 interface PendingItem {
@@ -46,7 +47,9 @@ export default function PendingCollectionsPanel() {
   const [userId, setUserId] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => setUserId(user?.id || null));
+    // bill_payments.received_by (and other *_by columns) FK to public.users.id,
+    // which is NOT the auth uid — resolve the real users row id.
+    getCurrentUserRowId().then(setUserId);
   }, []);
 
   const load = useCallback(async () => {
