@@ -1,5 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { roundCurrency } from "@/lib/currency";
+import { checkBillWritable } from "@/lib/lockedDay";
 
 interface RecalculateResult {
   ok: boolean;
@@ -65,7 +66,7 @@ export async function recalculateBillTotalsSafe(billId: string): Promise<Recalcu
     const [{ data: bill, error: billError }, { data: items, error: itemsError }] = await Promise.all([
       supabase
         .from("bills")
-        .select("advance_received, insurance_amount, paid_amount, discount_amount")
+        .select("advance_received, insurance_amount, paid_amount, discount_amount, bill_date, bill_status, admission_id, hospital_id")
         .eq("id", billId)
         .maybeSingle(),
       (supabase as any)
@@ -80,6 +81,21 @@ export async function recalculateBillTotalsSafe(billId: string): Promise<Recalcu
 
     if (itemsError) {
       return { ok: false, usedFallback: true, error: itemsError.message };
+    }
+
+    // Locked-day pre-check. This function is the single chokepoint for ~23
+    // call sites that append charges and then recompute totals; every one of
+    // them inserts the line item FIRST, so an unguarded refusal here leaves
+    // the item committed against a bill whose total never moved. Failing
+    // before the UPDATE at least reports it, and with the actionable
+    // "Reopen Day" wording rather than a raw Postgres refusal.
+    const lockError = await checkBillWritable((bill as any).hospital_id, {
+      billDate: (bill as any).bill_date ?? null,
+      billStatus: (bill as any).bill_status ?? null,
+      admissionId: (bill as any).admission_id ?? null,
+    });
+    if (lockError) {
+      return { ok: false, usedFallback: true, error: lockError };
     }
 
     const { subtotal, gst, total, patientPayable, balanceDue, paymentStatus } = computeBillTotals({

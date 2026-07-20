@@ -2,6 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { autoPostJournalEntry } from "@/lib/accounting";
 import { logAudit } from "@/lib/auditLog";
 import { sendWhatsApp } from "@/lib/whatsapp-send";
+import { checkBillWritable } from "@/lib/lockedDay";
 
 export interface PaymentRow {
   mode: string;
@@ -51,7 +52,7 @@ export async function recordBillPayment(opts: RecordBillPaymentOpts): Promise<Re
   // against the authoritative DB state so no orphan row can be created.
   const { data: bill, error: billErr } = await supabase
     .from("bills")
-    .select("bill_date, balance_due, payment_status")
+    .select("bill_date, balance_due, payment_status, bill_status, admission_id")
     .eq("id", opts.billId)
     .maybeSingle();
   if (billErr) return { ok: false, totalCollected, error: billErr.message };
@@ -71,22 +72,15 @@ export async function recordBillPayment(opts: RecordBillPaymentOpts): Promise<Re
 
   // Bills dated on a locked cash-closure day are frozen: collecting against them
   // is refused until the day is reopened (Billing → Day Closure → Reopen Day).
-  const billDate = (bill as any).bill_date as string | null;
-  if (billDate) {
-    const { data: closure } = await supabase
-      .from("daily_cash_closure")
-      .select("status")
-      .eq("hospital_id", opts.hospitalId)
-      .eq("closure_date", billDate)
-      .maybeSingle();
-    if ((closure as any)?.status === "locked") {
-      return {
-        ok: false,
-        totalCollected,
-        error: `Day ${billDate} is locked (cash closure). Reopen the day before collecting against this bill.`,
-      };
-    }
-  }
+  // An open admission's draft bill is exempt — it keeps its admission-day date
+  // for the whole stay, so the patient would otherwise become uncollectable the
+  // moment the admission day closes. See src/lib/lockedDay.ts.
+  const lockError = await checkBillWritable(opts.hospitalId, {
+    billDate: (bill as any).bill_date ?? null,
+    billStatus: (bill as any).bill_status ?? null,
+    admissionId: (bill as any).admission_id ?? null,
+  });
+  if (lockError) return { ok: false, totalCollected, error: lockError };
 
   for (const row of rows) {
     const { error } = await supabase.from("bill_payments").insert({

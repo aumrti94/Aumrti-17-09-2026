@@ -239,6 +239,21 @@ const UnbilledServicesModal: React.FC<Props> = ({ bill, hospitalId, onClose, onA
       return;
     }
 
+    // Recalculate BEFORE flagging the sources as billed. Marking them first
+    // and then discarding a failed recalc lost the revenue permanently: the
+    // charges were flagged billed so they never resurfaced in this modal
+    // again, while the bill total never moved.
+    const recalc = await recalculateBillTotalsSafe(bill.id);
+    if (!recalc.ok) {
+      toast({
+        title: "Bill total update failed",
+        description: `${recalc.error || "Please refresh the page"} — the items were added but the sources have NOT been marked billed, so you can retry.`,
+        variant: "destructive",
+      });
+      setSaving(false);
+      return;
+    }
+
     // Mark sources as billed
     if (dispIdsToMark.size > 0) {
       await (supabase as any).from("pharmacy_dispensing").update({ billed: true }).in("id", Array.from(dispIdsToMark));
@@ -249,8 +264,6 @@ const UnbilledServicesModal: React.FC<Props> = ({ bill, hospitalId, onClose, onA
     if (radIdsToMark.size > 0) {
       await supabase.from("radiology_orders").update({ billed: true } as any).in("id", Array.from(radIdsToMark));
     }
-
-    await recalculateBillTotalsSafe(bill.id);
 
     toast({ title: `${rows.length} item${rows.length === 1 ? "" : "s"} added to bill` });
     setSaving(false);

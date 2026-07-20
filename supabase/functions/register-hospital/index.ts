@@ -374,6 +374,9 @@ serve(async (req) => {
         plan_id:     planRow.id,
         status:      "trial",
         trial_ends_at: trialEndsAt,
+        // Persisted separately from trial_ends_at so a later plan change can rebase the
+        // trial (created_at + new plan's trial_days + bonus) without dropping the perk.
+        trial_bonus_days: refCode?.referee_trial_extra_days ?? 0,
         // Referee discount perk: stored so the first paid invoice/checkout can honour it.
         ...(refCode && Number(refCode.referee_discount_pct) > 0 ? {
           discount_code_applied: refCode.code,

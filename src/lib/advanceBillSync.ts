@@ -40,7 +40,7 @@ export async function syncAdvanceToBill(params: {
 
   const { data: bill } = await (supabase as any)
     .from("bills")
-    .select("id, paid_amount, total_amount, balance_due")
+    .select("id, paid_amount, total_amount, balance_due, insurance_amount")
     .eq("id", found.id)
     .maybeSingle();
 
@@ -79,7 +79,15 @@ export async function syncAdvanceToBill(params: {
   // 4. Update bills.paid_amount, balance_due, payment_status
   const newPaid    = Number(bill.paid_amount   || 0) + toSync;
   const totalAmt   = Number(bill.total_amount  || 0);
-  const newBalance = Math.max(0, totalAmt - newPaid);
+  // Balance is against what the PATIENT owes, so the insurer's share comes off
+  // first. Using total_amount here charged the insured portion to the patient,
+  // leaving a balance they were never liable for.
+  // TODO: bills.paid_amount is inflated by this function folding advances into
+  // it — readers (analytics, dashboards, pharmacyReturnCredit) all work around
+  // that locally. The display layer now routes around it via lib/billMoney.ts;
+  // the column's own semantics still need a dedicated cleanup.
+  const payable    = Math.max(0, totalAmt - Number((bill as any).insurance_amount || 0));
+  const newBalance = Math.max(0, payable - newPaid);
   const newStatus  = newBalance <= 0 && newPaid > 0 ? "paid"
                    : newPaid > 0                     ? "partial"
                                                      : "unpaid";

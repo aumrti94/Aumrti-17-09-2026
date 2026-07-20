@@ -230,8 +230,13 @@ export async function postCharge(opts: PostChargeOpts): Promise<PostChargeResult
 
     if (lie || !li) return { success: false, error: lie?.message || "Line item insert failed" };
 
-    // 5. Recalculate bill totals
-    await recalculateBillTotalsSafe(billId);
+    // 5. Recalculate bill totals. The line item is already in, so a silent
+    // failure here leaves the charge on the bill but the total unchanged —
+    // report it rather than discarding the result.
+    const recalc = await recalculateBillTotalsSafe(billId);
+    if (!recalc.ok) {
+      return { success: false, error: recalc.error || "Bill totals could not be updated" };
+    }
 
     // Record for LeakageDashboard.tsx — postCharge is a second, parallel
     // billing engine (Dialysis/Physio) that never wrote service_charges.

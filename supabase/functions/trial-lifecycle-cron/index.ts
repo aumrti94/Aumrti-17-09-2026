@@ -210,6 +210,67 @@ serve(async (req) => {
       results.past_due_suspended++;
     }
 
+    // ── 3. Expire time-limited discounts (e.g. referee's "20% off for 3 months") ──
+    try {
+      const { data: expired } = await db.rpc("expire_lapsed_discounts");
+      results.discounts_expired = Number(expired ?? 0);
+    } catch (e) {
+      console.error("trial-lifecycle-cron: discount expiry failed:", e);
+    }
+
+    // ── 4. Send conversion emails for trial→active flips ───────────────────
+    // The conversion itself is handled by a DB trigger (any write path flips the
+    // status), so the email is dispatched here off the event log rather than from
+    // whichever UI happened to make the change.
+    try {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data: conversions } = await db
+        .from("subscription_events")
+        .select("id, hospital_id, metadata, new_plan_id")
+        .eq("event_type", "converted")
+        .gte("created_at", since);
+
+      for (const ev of conversions ?? []) {
+        // Skip ones already emailed on an earlier run within the window.
+        if ((ev.metadata as any)?.notified_at) continue;
+
+        const { data: admin } = await db
+          .from("users")
+          .select("email, full_name")
+          .eq("hospital_id", ev.hospital_id)
+          .in("role", ["super_admin", "hospital_admin"])
+          .limit(1)
+          .maybeSingle();
+        if (!admin?.email) continue;
+
+        const { data: plan } = await db
+          .from("subscription_plans")
+          .select("name")
+          .eq("id", ev.new_plan_id)
+          .maybeSingle();
+
+        await db.functions.invoke("send-subscription-notification", {
+          body: {
+            event: "converted",
+            email: admin.email,
+            full_name: admin.full_name,
+            plan_name: plan?.name ?? "",
+            period_end: (ev.metadata as any)?.period_end ?? null,
+            discount_pct: (ev.metadata as any)?.discount_pct ?? 0,
+            discount_expires_at: (ev.metadata as any)?.discount_expires_at ?? null,
+          },
+        }).catch(() => {});
+
+        await db.from("subscription_events")
+          .update({ metadata: { ...(ev.metadata as any ?? {}), notified_at: new Date().toISOString() } })
+          .eq("id", ev.id);
+
+        results.conversions_notified = (results.conversions_notified ?? 0) + 1;
+      }
+    } catch (e) {
+      console.error("trial-lifecycle-cron: conversion notifications failed:", e);
+    }
+
     console.log("trial-lifecycle-cron completed:", results);
 
     return new Response(JSON.stringify({ status: "done", results }), {

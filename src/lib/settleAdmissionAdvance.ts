@@ -1,5 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { syncAdvanceToBill } from "@/lib/advanceBillSync";
+import { fetchOpenAdmissionRefund } from "@/lib/refundRequests";
 
 /**
  * Pure split of an advance balance at discharge: cover the bill first, refund the rest.
@@ -121,15 +122,13 @@ export async function settleAdmissionAdvance(params: {
   // 3. Anything still held is the patient's money → raise a refund for approval.
   let refundRequested = 0;
   if (balance > 0) {
-    const { data: existing } = await (supabase as any)
-      .from("refund_payables")
-      .select("id")
-      .eq("admission_id", admissionId)
-      .in("status", ["pending_approval", "processed"])
-      .limit(1);
+    // A refund already raised (here or by hand in RefundModal) — never stack
+    // another. This guard previously missed 'approved' rows and counted
+    // pharmacy credit-note refunds as if they were this one. The DB enforces
+    // it too (migration 153) in case two discharges race.
+    const existing = await fetchOpenAdmissionRefund(admissionId);
 
-    // A refund already raised (here or by hand in RefundModal) — never stack another.
-    if (!existing?.length) {
+    if (!existing) {
       const { error: rpErr } = await (supabase as any).from("refund_payables").insert({
         hospital_id: hospitalId,
         patient_id: patientId,

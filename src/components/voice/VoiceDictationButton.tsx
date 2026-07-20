@@ -3,6 +3,8 @@ import { cn } from "@/lib/utils";
 import { Mic, MicOff, Loader2, ChevronDown, Zap } from "lucide-react";
 import { useVoiceScribe, SessionType, SUPPORTED_LANGUAGES } from "@/contexts/VoiceScribeContext";
 import { supabase } from "@/integrations/supabase/client";
+import { unwrapFunctionError } from "@/lib/invokeError";
+import { joinTranscriptChunks } from "@/lib/transcriptMerge";
 import { useToast } from "@/hooks/use-toast";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useVoiceScribeLanguages } from "@/hooks/useVoiceScribeLanguages";
@@ -138,7 +140,7 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
       const { data, error } = await supabase.functions.invoke("ai-clinical-voice", {
         body: { transcript: rawText, context_type: sessionType, language_code: selectedLanguage, existing_data: existingData ?? undefined, patient_id: patientId ?? undefined },
       });
-      if (error || data?.error) throw new Error(data?.error || error?.message);
+      if (error || data?.error) throw new Error(await unwrapFunctionError(error, data));
       setStructuredOutput(data.structured);
       setPanelState("output");
     } catch (err) {
@@ -212,7 +214,10 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
         const text = await sendChunk(blob);
         if (text.trim()) {
           chunkTranscriptsRef.current.push(text.trim());
-          const combined = chunkTranscriptsRef.current.join(" ");
+          // Segments overlap by ~200ms on purpose (gapless), so the seam is transcribed twice —
+          // stitch it instead of naively join(" ")-ing, which duplicated words every 25s and
+          // corrupted the transcript the structuring AI reads.
+          const combined = joinTranscriptChunks(chunkTranscriptsRef.current);
           setRawTranscript(combined);
           fullTranscriptRef.current = combined;
         }
@@ -226,7 +231,7 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
       pendingFinalRef.current = false;
       streamRef.current?.getTracks().forEach(t => t.stop());
       streamRef.current = null;
-      const finalTranscript = chunkTranscriptsRef.current.join(" ").trim();
+      const finalTranscript = joinTranscriptChunks(chunkTranscriptsRef.current);
       setRawTranscript(finalTranscript);
       fullTranscriptRef.current = finalTranscript;
       if (finalTranscript) {

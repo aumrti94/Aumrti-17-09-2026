@@ -11,6 +11,7 @@ import { useHospitalId } from "@/hooks/useHospitalId";
 import { supabase } from "@/integrations/supabase/client";
 import { ALL_MODULES } from "@/lib/modules";
 import SubscribeButton from "@/components/subscription/SubscribeButton";
+import PaymentHistoryTable from "@/components/billing/PaymentHistoryTable";
 
 // Module key → display name map
 const ROUTE_KEY: Record<string, string> = {
@@ -168,7 +169,7 @@ const SettingsPlanPage: React.FC = () => {
     queryFn: async () => {
       const { data } = await (supabase as any)
         .from("subscription_plans")
-        .select("id, name, slug, price_monthly, is_custom_price, badge_text, description")
+        .select("id, name, slug, price_monthly, price_yearly, is_custom_price, badge_text, description, razorpay_plan_id")
         .eq("is_active", true)
         .order("sort_order");
       return data || [];
@@ -192,13 +193,6 @@ const SettingsPlanPage: React.FC = () => {
     staleTime: 5 * 60_000,
   });
 
-  const downloadInvoice = async (inv: any) => {
-    if (!inv.pdf_storage_path) return;
-    const { data } = await supabase.storage
-      .from("subscription-invoices")
-      .createSignedUrl(inv.pdf_storage_path, 300);
-    if (data?.signedUrl) window.open(data.signedUrl, "_blank");
-  };
 
   if (isLoading) {
     return (
@@ -532,53 +526,8 @@ const SettingsPlanPage: React.FC = () => {
           </div>
         )}
 
-        {/* ── Invoice History ── */}
-        {invoices.length > 0 && (
-          <section>
-            <h2 className="text-sm font-semibold text-foreground mb-3">Invoice History</h2>
-            <div className="rounded-xl border border-border overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-muted/40 text-xs text-muted-foreground uppercase tracking-wide">
-                    <th className="text-left px-4 py-2.5 font-medium">Invoice</th>
-                    <th className="text-left px-4 py-2.5 font-medium">Plan</th>
-                    <th className="text-left px-4 py-2.5 font-medium">Period</th>
-                    <th className="text-right px-4 py-2.5 font-medium">Amount</th>
-                    <th className="text-right px-4 py-2.5 font-medium">Download</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {invoices.map((inv: any) => (
-                    <tr key={inv.id} className="hover:bg-muted/20 transition-colors">
-                      <td className="px-4 py-3 font-mono text-xs text-foreground">{inv.invoice_number}</td>
-                      <td className="px-4 py-3 text-foreground">{inv.plan_name}</td>
-                      <td className="px-4 py-3 text-muted-foreground text-xs">
-                        {inv.billing_period_start
-                          ? `${fmtDate(inv.billing_period_start)} – ${fmtDate(inv.billing_period_end)}`
-                          : fmtDate(inv.created_at)}
-                      </td>
-                      <td className="px-4 py-3 text-right font-semibold">
-                        {fmtINR(Number(inv.amount_inr))}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        {inv.pdf_storage_path ? (
-                          <button
-                            onClick={() => downloadInvoice(inv)}
-                            className="inline-flex items-center gap-1 text-primary hover:underline text-xs font-medium"
-                          >
-                            <Download size={12} /> PDF
-                          </button>
-                        ) : (
-                          <span className="text-muted-foreground text-xs">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
+        {/* ── Payment History ── */}
+        <PaymentHistoryTable hospitalId={hospitalId ?? undefined} title="Payment History" limit={12} />
 
         {/* ── Actions ── */}
         <div className="flex gap-3">
@@ -590,7 +539,7 @@ const SettingsPlanPage: React.FC = () => {
             <Mail size={14} /> Contact Support
           </Button>
           {invoices[0]?.pdf_storage_path && (
-            <Button variant="outline" className="gap-2" onClick={() => downloadInvoice(invoices[0])}>
+            <Button variant="outline" className="gap-2" onClick={() => downloadInvoiceDocument(invoices[0])}>
               <Download size={14} /> Latest Invoice
             </Button>
           )}

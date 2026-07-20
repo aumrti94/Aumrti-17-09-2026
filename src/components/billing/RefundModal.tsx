@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Loader2 } from "lucide-react";
 import { useHospitalContext } from "@/contexts/HospitalContext";
 import { hasActionAccess } from "@/lib/tabPermissions";
+import { fetchOpenRefund, isDuplicateRefundError, DUPLICATE_REFUND_MESSAGE } from "@/lib/refundRequests";
 
 interface Props {
   open: boolean;
@@ -49,6 +50,18 @@ const RefundModal: React.FC<Props> = ({
     }
     setSubmitting(true);
     try {
+      // A refund is raised ONCE. Without this, every click stacked another
+      // pending row for the same bill in the approval inbox — and approving
+      // both would pay the patient twice. The DB enforces this too (partial
+      // unique index, migration 153); this check is here to explain it.
+      const existing = await fetchOpenRefund({ billId, admissionId });
+      if (existing) {
+        toast({ title: "Refund already requested", description: DUPLICATE_REFUND_MESSAGE, variant: "destructive" });
+        setSubmitting(false);
+        onClose();
+        return;
+      }
+
       const { data: { user } } = await supabase.auth.getUser();
       const { data: userData } = await (supabase as any)
         .from("users")
@@ -79,7 +92,14 @@ const RefundModal: React.FC<Props> = ({
       toast({ title: `Refund of ₹${amt.toLocaleString("en-IN")} submitted for approval` });
       onRefunded();
     } catch (err: any) {
-      toast({ title: "Failed to record refund", description: err?.message, variant: "destructive" });
+      // Two clicks racing each other both pass the pre-flight check above; the
+      // unique index catches the loser. Report it as the duplicate it is.
+      if (isDuplicateRefundError(err)) {
+        toast({ title: "Refund already requested", description: DUPLICATE_REFUND_MESSAGE, variant: "destructive" });
+        onClose();
+      } else {
+        toast({ title: "Failed to record refund", description: err?.message, variant: "destructive" });
+      }
     } finally {
       setSubmitting(false);
     }

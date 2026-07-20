@@ -1,6 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { isAIFeatureAllowed } from "./aiEntitlement";
-import { resolveAzureSurface, buildAzureEndpointUrl, azureRequestHeaders } from "./azureFoundry";
+import { resolveAzureSurface, buildAzureEndpointUrl, azureRequestHeaders, azureMaxOutputTokens } from "./azureFoundry";
 
 /**
  * Safely parses a Fetch response as JSON, handling cases where the body might be empty, 
@@ -135,6 +135,46 @@ export const FEATURE_LABELS: Record<string, string> = {
   staff_burnout: "Staff Burnout Risk Monitor",
   esg_recommendations: "ESG Carbon Recommendations (AI)",
   plan_copywriter: "Plan Card Copywriter",
+  // ── Insurance / revenue cycle ──
+  pre_auth_cover_letter: "Pre-Auth Cover Letter",
+  claim_cover_letter: "Claim Cover Letter",
+  irdai_complaint: "IRDAI Complaint Drafter",
+  rate_dispute_letter: "Rate Dispute Letter",
+  denial_analytics: "Denial Analytics",
+  coding_accuracy_auditor: "Coding Accuracy Auditor",
+  // ── Lab / pathology ──
+  lab_report_narrative: "Lab Report Narrative",
+  pathology_impression_draft: "Pathology Impression Draft",
+  lab_reflex_tests: "Lab Reflex Test Suggester",
+  lab_ast_phenotype: "Lab AST Phenotype",
+  lab_auto_interpreter: "Lab Auto-Interpreter",
+  lab_sample_mixup: "Lab Sample Mix-up Detector",
+  // ── Clinical ──
+  differential_diagnosis: "Differential Diagnosis",
+  generate_clinical_note: "Clinical Note Generator",
+  adr_detector: "ADR Detector",
+  discharge_summary_structured: "Discharge Summary (Structured)",
+  critical_incidental_finder: "Critical Incidental Finder (Radiology)",
+  radiology_tat_predictor: "Radiology TAT Predictor",
+  // ── Emergency ──
+  ed_boarding_predictor: "ED Boarding Predictor",
+  ed_discharge_summary: "ED Discharge Summary",
+  // ── OT / nursing / HR ──
+  ot_cancellation_predictor: "OT Cancellation Predictor",
+  nurse_workload_optimizer: "Nurse Workload Optimizer",
+  roster_optimizer: "Roster Optimizer",
+  // ── Inventory / blood bank ──
+  inventory_itc_classify: "Inventory ITC Classifier",
+  inventory_anomaly_digest: "Inventory Anomaly Digest",
+  blood_demand_forecaster: "Blood Demand Forecaster",
+  // ── Patient-facing ──
+  patient_chatbot: "Patient Chatbot",
+  phr_health_story: "PHR Health Story",
+  health_coach_bot: "Health Coach Bot",
+  translation: "Patient Content Translation",
+  patient_context_summary: "Patient Context Summary",
+  // ── Messaging ──
+  whatsapp_bot_intent: "WhatsApp Bot (Intent)",
 };
 
 export const PROVIDER_TO_SERVICE_KEY: Record<string, string> = {
@@ -410,7 +450,7 @@ const callAzureOpenAI = async (
       : request.prompt;
     body = {
       model: cfg.deployment,
-      max_tokens: request.maxTokens || 500,
+      max_tokens: azureMaxOutputTokens(request.maxTokens || 500),
       temperature,
       ...(request.systemPrompt ? { system: request.systemPrompt } : {}),
       messages: [{ role: "user", content: anthContent }],
@@ -431,8 +471,9 @@ const callAzureOpenAI = async (
       model: cfg.deployment,
       input: responsesInput,
       ...(request.systemPrompt ? { instructions: request.systemPrompt } : {}),
-      max_output_tokens: request.maxTokens || 500,
-      ...(reasoning ? {} : { temperature }),
+      // Reasoning models bill hidden reasoning against this budget — give headroom + cap effort.
+      max_output_tokens: azureMaxOutputTokens(request.maxTokens || 500),
+      ...(reasoning ? { reasoning: { effort: "low" } } : { temperature }),
     };
   } else {
     // OpenAI-compatible (chat) or foundry_models (/models) — both use image_url blocks.
@@ -449,7 +490,7 @@ const callAzureOpenAI = async (
         ...(request.systemPrompt ? [{ role: "system", content: request.systemPrompt }] : []),
         { role: "user", content: chatContent },
       ],
-      max_tokens: request.maxTokens || 500,
+      max_tokens: azureMaxOutputTokens(request.maxTokens || 500),
       ...(reasoning ? {} : { temperature }),
     };
   }

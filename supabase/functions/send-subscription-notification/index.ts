@@ -216,6 +216,46 @@ function buildEmail(event: NotificationEvent, data: Record<string, any>): EmailP
         `),
       };
 
+    // Trial → paid. Sent to the hospital admin on conversion.
+    case "converted": {
+      const periodEnd = data.period_end
+        ? new Date(data.period_end).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+        : "";
+      const disc = Number(data.discount_pct) > 0
+        ? `<p style="color:#374151;">Your referral discount of <strong>${data.discount_pct}%</strong> has been applied${
+            data.discount_expires_at
+              ? ` until ${new Date(data.discount_expires_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`
+              : ""
+          }.</p>`
+        : "";
+      return {
+        to: data.email,
+        subject: `Welcome to ${plan} — your Aumrti subscription is active`,
+        html: wrap(`
+          <h2 style="color:#059669;">You're all set ✓</h2>
+          <p style="color:#374151;">Hello ${name},</p>
+          <p style="color:#374151;">Your free trial has converted to a paid <strong>${plan}</strong> subscription. Nothing changes in your workspace — all your data and settings carry over.</p>
+          ${disc}
+          ${periodEnd ? `<p style="color:#374151;">Your next billing date is <strong>${periodEnd}</strong>.</p>` : ""}
+          <a href="https://app.aumrti.in/settings/plan" style="${btnStyle}">View Plan & Billing</a>
+        `),
+      };
+    }
+
+    // Sent to the REFERRER when a hospital they referred converts.
+    case "referral_reward":
+      return {
+        to: data.email,
+        subject: "Your Aumrti referral just converted 🎉",
+        html: wrap(`
+          <h2 style="color:#059669;">Referral converted</h2>
+          <p style="color:#374151;">Hello ${name},</p>
+          <p style="color:#374151;">${data.referred_hospital_name ? `<strong>${data.referred_hospital_name}</strong>` : "A hospital you referred"} has upgraded to a paid plan.</p>
+          ${data.reward_label ? `<p style="color:#374151;">Your reward: <strong>${data.reward_label}</strong>.</p>` : ""}
+          <a href="https://app.aumrti.in/settings/plan" style="${btnStyle}">View Details</a>
+        `),
+      };
+
     default:
       return { to: data.email, subject: "Aumrti Notification", html: wrap("<p>You have a new notification from Aumrti HMS.</p>") };
   }

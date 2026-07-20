@@ -7,6 +7,8 @@ import {
   resolveAzureSurface,
   buildAzureUrl,
   azureHeaders,
+  normalizeAzureEndpoint,
+  azureMaxOutputTokens,
 } from "../_shared/ai-config.ts";
 import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 import { checkAIAllowed } from "../_shared/ai-entitlement.ts";
@@ -155,7 +157,7 @@ serve(async (req: Request) => {
     // so the drawer's "Fetch" button routes here. Tries the OpenAI-compatible, Foundry Models,
     // and classic Azure OpenAI listing surfaces and returns the union of deployment names.
     if (azureAction === "list-deployments") {
-      const ep = (azureConfig?.endpoint || "").replace(/\/$/, "");
+      const ep = normalizeAzureEndpoint(azureConfig?.endpoint);
       const key = azureConfig?.apiKey || Deno.env.get("AZURE_OPENAI_API_KEY") || "";
       if (!ep || !key) return json({ error: "Endpoint URL and API Key are required to list deployments." }, 400);
       const listFrom = async (url: string): Promise<string[] | null> => {
@@ -455,8 +457,12 @@ serve(async (req: Request) => {
           .maybeSingle();
         ac = (azData?.config as Record<string, string>) || {};
       }
-      const endpoint = (ac.endpoint || "").replace(/\/$/, "");
-      const deployment = ac.deployment || resolvedModel;
+      const endpoint = normalizeAzureEndpoint(ac.endpoint);
+      // Per-feature / requested model wins over the drawer's single deployment — otherwise every
+      // Azure feature is pinned to one deployment and the platform UI's per-feature Model box
+      // does nothing (this also made the Playground REPORT one model while calling another).
+      // Falls back to the drawer/inline deployment when no model was requested (e.g. the probe).
+      const deployment = resolvedModel || ac.deployment;
       if (!endpoint || !deployment) {
         return json({ error: "Azure OpenAI: set Endpoint URL and Deployment Name at /platform → API Hub." }, 400);
       }
@@ -483,7 +489,7 @@ serve(async (req: Request) => {
           : prompt;
         body = {
           model: deployment,
-          max_tokens: maxTok,
+          max_tokens: azureMaxOutputTokens(maxTok),
           temperature: temp,
           ...(systemPrompt ? { system: systemPrompt } : {}),
           messages: [{ role: "user", content: anthContent }],
@@ -504,8 +510,8 @@ serve(async (req: Request) => {
           model: deployment,
           input: azResponsesInput,
           ...(systemPrompt ? { instructions: systemPrompt } : {}),
-          max_output_tokens: maxTok,
-          ...(azReasoning ? {} : { temperature: temp }),
+          max_output_tokens: azureMaxOutputTokens(maxTok),
+          ...(azReasoning ? { reasoning: { effort: "low" } } : { temperature: temp }),
         };
       } else {
         // openai chat (/openai/v1 or classic deployment) or foundry_models (/models) — OpenAI-shaped.
@@ -522,7 +528,7 @@ serve(async (req: Request) => {
             ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
             { role: "user", content: azChatContent },
           ],
-          max_tokens: maxTok,
+          max_tokens: azureMaxOutputTokens(maxTok),
           ...(azReasoning ? {} : { temperature: temp }),
         };
       }
@@ -556,8 +562,8 @@ serve(async (req: Request) => {
           model: deployment,
           input: respInput,
           ...(systemPrompt ? { instructions: systemPrompt } : {}),
-          max_output_tokens: maxTok,
-          ...(azReasoning ? {} : { temperature: temp }),
+          max_output_tokens: azureMaxOutputTokens(maxTok),
+          ...(azReasoning ? { reasoning: { effort: "low" } } : { temperature: temp }),
         };
         sentUrl = `${endpoint}/openai/v1/responses`;
         sentBody = respBody;

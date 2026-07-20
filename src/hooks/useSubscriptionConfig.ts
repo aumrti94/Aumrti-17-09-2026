@@ -34,6 +34,11 @@ export interface HospitalSubscription {
   razorpay_subscription_id: string | null;
   discount_code_applied: string | null;
   discount_pct: number | null;
+  /** Null with a non-zero discount_pct means the discount never expires. */
+  discount_expires_at: string | null;
+  /** Extra trial days granted by a referral code at signup. */
+  trial_bonus_days: number | null;
+  conversion_period_start_mode: "conversion_date" | "trial_end" | null;
 }
 
 export interface SubscriptionConfig {
@@ -179,7 +184,8 @@ async function fetchSubscriptionConfig(hospitalId: string): Promise<Omit<Subscri
       .select(`
         id, hospital_id, plan_id, status,
         trial_ends_at, current_period_start, current_period_end,
-        razorpay_subscription_id, discount_code_applied, discount_pct
+        razorpay_subscription_id, discount_code_applied, discount_pct,
+        discount_expires_at, trial_bonus_days, conversion_period_start_mode
       `)
       .eq("hospital_id", hospitalId)
       .maybeSingle(),

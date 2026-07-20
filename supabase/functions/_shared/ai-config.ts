@@ -13,12 +13,23 @@ export class AIDisabledError extends Error {
   }
 }
 
+// The DB (platform_ai_provider_config.provider, and the platform UI dropdown) stores Azure as
+// "azure_openai", but the maps + dispatch below are keyed on "azure". Without normalising, the
+// service-key lookup returns undefined → the API key row is never fetched → resolveAiConfig()
+// returns null → every feature reports "No AI provider configured" for Azure ONLY. Normalise
+// once, here, so the two vocabularies can never diverge again.
+export function normalizeProviderKey(provider: string | undefined | null): string {
+  const p = String(provider || "");
+  return p === "azure_openai" ? "azure" : p;
+}
+
 const PROVIDER_SERVICE_KEYS: Record<string, string> = {
   claude: "anthropic",
   openai: "openai",
   gemini: "gemini",
   perplexity: "perplexity",
   azure: "azure_openai",
+  azure_openai: "azure_openai", // tolerate the raw DB value too
   openrouter: "openrouter",
 };
 
@@ -28,6 +39,7 @@ const PROVIDER_ENV_KEYS: Record<string, string> = {
   gemini: "GEMINI_API_KEY",
   perplexity: "PERPLEXITY_API_KEY",
   azure: "AZURE_OPENAI_API_KEY",
+  azure_openai: "AZURE_OPENAI_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
 };
 
@@ -37,6 +49,7 @@ const DEFAULT_MODELS: Record<string, string> = {
   gemini: "gemini-2.0-flash",
   perplexity: "llama-3.1-sonar-large-128k-online",
   azure: "gpt-4o",
+  azure_openai: "gpt-4o",
   openrouter: "google/gemini-2.5-flash",
 };
 
@@ -58,6 +71,35 @@ export interface AiConfig {
 //   • foundry_models → /models/chat/completions?api-version= (serverless/partner deployments, OpenAI-shaped)
 export type AzureSurface = "openai" | "anthropic" | "foundry_models";
 
+// Azure output-token headroom. `max_output_tokens`/`max_tokens` is a CEILING, not a
+// reservation — you're billed for tokens actually generated — so a generous cap costs nothing
+// for well-behaved models and rescues the two ways Foundry models blow the caller's budget:
+//   • reasoning models (gpt-5/o-series) bill HIDDEN reasoning against the same budget →
+//     it's consumed before the answer starts → empty output → JSON.parse("") blows up;
+//   • verbose/"thinking" models (e.g. Kimi-K2.5) simply run past the cap → TRUNCATED JSON.
+// Both were observed live at exactly the caller's cap (1152 and 1200 of 1200). Applied to ALL
+// Azure calls, not just name-matched reasoning models — the name pattern was too narrow.
+// Twin of the helper in src/lib/azureFoundry.ts — keep in lockstep.
+export function azureMaxOutputTokens(requested: number): number {
+  return Math.max((Number(requested) || 0) * 4, 4000);
+}
+
+// Azure inference endpoints are ALWAYS the resource root (scheme + host) — the inference path
+// (/openai/v1/…, /models/…, /anthropic/v1/…) is appended to it. Users frequently paste the
+// Foundry *project* endpoint instead:
+//   https://<res>.services.ai.azure.com/api/projects/<name>   ← Agents/SDK endpoint, NOT inference
+// which builds broken URLs and makes EVERY Azure call 404. Normalise to the origin.
+export function normalizeAzureEndpoint(endpoint: string | undefined): string {
+  const raw = (endpoint || "").trim();
+  if (!raw) return "";
+  const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    return new URL(withScheme).origin;
+  } catch {
+    return raw.replace(/\/+$/, "");
+  }
+}
+
 // Resolve "auto"/blank to a concrete surface: Claude deployments speak the Anthropic
 // surface; everything else defaults to the OpenAI-compatible surface.
 export function resolveAzureSurface(surface: string | undefined, model: string): AzureSurface {
@@ -68,7 +110,7 @@ export function resolveAzureSurface(surface: string | undefined, model: string):
 export function buildAzureUrl(cfg: {
   endpoint?: string; model: string; apiVersion?: string; apiStyle?: string; surface?: string;
 }): { url: string; surface: AzureSurface; useV1: boolean; useResponses: boolean } {
-  const endpoint = (cfg.endpoint || "").replace(/\/$/, "");
+  const endpoint = normalizeAzureEndpoint(cfg.endpoint);
   if (!endpoint) throw new Error("Azure OpenAI endpoint not configured");
   const surface = resolveAzureSurface(cfg.surface, cfg.model);
   if (surface === "anthropic") {
@@ -84,9 +126,11 @@ export function buildAzureUrl(cfg: {
   // Foundry (chat-completions 404s), so when the user left surface on "auto" we route them
   // there automatically. Explicit surface/apiStyle choices are always respected.
   const useV1 = !cfg.apiVersion;
-  const auto = !cfg.surface || cfg.surface === "auto";
+  // Reasoning models are served ONLY by the Responses API on Azure — chat-completions 404s for
+  // them — so route them there whether the surface was left on "auto" OR set explicitly to
+  // "openai". (Honouring an explicit chat_completions choice here would always fail.)
   const reasoning = /^(o[0-9]|gpt-5)/i.test(cfg.model || "");
-  const useResponses = useV1 && (cfg.apiStyle === "responses" || (auto && reasoning));
+  const useResponses = useV1 && (cfg.apiStyle === "responses" || reasoning);
   const url = useResponses
     ? `${endpoint}/openai/v1/responses`
     : useV1
@@ -175,8 +219,12 @@ export async function resolveAiConfig(
 
   if (!cfg) return null;
 
+  // The DB stores Azure as "azure_openai" but everything below is keyed on "azure" —
+  // normalise once so the service-key lookup and the Azure branch actually fire.
+  const provider = normalizeProviderKey(cfg.provider as string);
+
   // Get API key (and extra fields) from the global platform_ai_keys
-  const serviceKey = PROVIDER_SERVICE_KEYS[cfg.provider as string];
+  const serviceKey = PROVIDER_SERVICE_KEYS[provider];
   let keyCfgData: Record<string, string> | undefined;
 
   if (serviceKey) {
@@ -190,12 +238,16 @@ export async function resolveAiConfig(
   }
 
   // Azure OpenAI requires endpoint + deployment in addition to API key
-  if (cfg.provider === "azure") {
+  if (provider === "azure") {
     const azApiKey = keyCfgData?.api_key || Deno.env.get("AZURE_OPENAI_API_KEY") || undefined;
     if (!azApiKey) return null;
     return {
       provider: "azure",
-      model: keyCfgData?.deployment_name || keyCfgData?.deployment || (cfg.model_name as string) || DEFAULT_MODELS.azure,
+      // Per-feature model wins over the drawer's single deployment — otherwise EVERY Azure
+      // feature is pinned to one deployment and the platform UI's per-feature Model box does
+      // nothing (every other provider already honours cfg.model_name). Features without their
+      // own row still inherit the drawer deployment via the global_default fallback above.
+      model: (cfg.model_name as string) || keyCfgData?.deployment_name || keyCfgData?.deployment || DEFAULT_MODELS.azure,
       apiKey: azApiKey,
       endpoint: keyCfgData?.endpoint || Deno.env.get("AZURE_OPENAI_ENDPOINT") || undefined,
       apiVersion: keyCfgData?.api_version || Deno.env.get("AZURE_OPENAI_API_VERSION") || undefined,
@@ -210,15 +262,15 @@ export async function resolveAiConfig(
 
   // Env var fallback
   if (!apiKey) {
-    const envKey = PROVIDER_ENV_KEYS[cfg.provider as string];
+    const envKey = PROVIDER_ENV_KEYS[provider];
     apiKey = envKey ? (Deno.env.get(envKey) || undefined) : undefined;
   }
 
   if (!apiKey) return null;
 
   return {
-    provider: cfg.provider as string,
-    model: (cfg.model_name as string) || DEFAULT_MODELS[cfg.provider as string] || "gpt-4o",
+    provider,
+    model: (cfg.model_name as string) || DEFAULT_MODELS[provider] || "gpt-4o",
     apiKey,
     temperature: Number(cfg.temperature) || 0.3,
     maxTokens: Number(cfg.max_tokens) || defaultMaxTokens,
@@ -345,7 +397,7 @@ export function buildAzureRequest(
   if (surface === "anthropic") {
     body = {
       model: cfg.model,
-      max_tokens: opts.maxTokens,
+      max_tokens: azureMaxOutputTokens(opts.maxTokens),
       temperature: opts.temperature,
       ...(systemMsg ? { system: systemMsg.content } : {}),
       messages: chatMsgs.map((m) => ({ role: m.role, content: m.content })),
@@ -353,7 +405,7 @@ export function buildAzureRequest(
   } else if (surface === "foundry_models") {
     body = {
       model: cfg.model,
-      max_tokens: opts.maxTokens,
+      max_tokens: azureMaxOutputTokens(opts.maxTokens),
       temperature: opts.temperature,
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
     };
@@ -362,13 +414,13 @@ export function buildAzureRequest(
       model: cfg.model,
       input: chatMsgs.map((m) => ({ role: m.role, content: m.content })),
       ...(systemMsg ? { instructions: systemMsg.content } : {}),
-      max_output_tokens: opts.maxTokens,
-      ...(reasoning ? {} : { temperature: opts.temperature }),
+      max_output_tokens: azureMaxOutputTokens(opts.maxTokens),
+      ...(reasoning ? { reasoning: { effort: "low" } } : { temperature: opts.temperature }),
     };
   } else {
     body = {
       ...(useV1 ? { model: cfg.model } : {}),
-      max_tokens: opts.maxTokens,
+      max_tokens: azureMaxOutputTokens(opts.maxTokens),
       ...(reasoning ? {} : { temperature: opts.temperature }),
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
     };
@@ -398,6 +450,18 @@ export function parseAzureResponse(
     };
   }
   const content = useResponses ? extractResponsesOutputText(data) : ((data as any).choices?.[0]?.message?.content || "");
+  // A Responses payload with no message item means the model produced nothing usable — almost
+  // always a reasoning model that burned max_output_tokens on hidden reasoning. Fail with the
+  // real reason instead of returning "" and letting the caller's JSON.parse throw a misleading
+  // "Failed to parse AI response as JSON".
+  if (useResponses && !content) {
+    const status = (data as any).status ?? "unknown";
+    const reason = (data as any).incomplete_details?.reason;
+    throw new Error(
+      `Azure returned no output text (status=${status}${reason ? `, reason=${reason}` : ""}). ` +
+      `Reasoning models (gpt-5/o-series) spend max_output_tokens on hidden reasoning — raise max tokens or lower reasoning effort.`,
+    );
+  }
   return { content, usage: extractUsage(data, "azure") };
 }
 
@@ -415,7 +479,7 @@ export async function callAiChatWithUsage(
   const maxTok = maxTokens ?? config.maxTokens;
   const temp = temperature ?? config.temperature;
 
-  if (config.provider === "azure") {
+  if (normalizeProviderKey(config.provider) === "azure") {
     const { url, headers, body, surface, useResponses } = buildAzureRequest(
       {
         endpoint: config.endpoint,
@@ -635,7 +699,7 @@ export async function callAiVision(
     return data.content?.[0]?.text || "";
   }
 
-  if (config.provider === "azure") {
+  if (normalizeProviderKey(config.provider) === "azure") {
     const { url, surface, useResponses } = buildAzureUrl({
       endpoint: config.endpoint,
       model: config.model,

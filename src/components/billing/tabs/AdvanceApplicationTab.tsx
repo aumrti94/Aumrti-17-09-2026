@@ -16,9 +16,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, Wallet, AlertCircle, Loader2, Plus } from "lucide-react";
+import { CheckCircle2, Wallet, AlertCircle, Loader2, Plus, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import RefundModal from "@/components/billing/RefundModal";
+import { computeBillMoney } from "@/lib/billMoney";
+import { fetchOpenRefund, type OpenRefund } from "@/lib/refundRequests";
 
 interface Props {
   billId:          string;
@@ -63,6 +65,13 @@ const AdvanceApplicationTab: React.FC<Props> = ({
   const [applying, setApplying]         = useState(false);
 
   const [showRefundModal, setShowRefundModal] = useState(false);
+  // A refund already awaiting approval for this bill. While one exists the
+  // action is unavailable — raising a second is what filled the approval inbox
+  // with duplicate rows for the same money.
+  const [openRefund, setOpenRefund] = useState<OpenRefund | null>(null);
+  // Latches on the first click so a double-click cannot open two submissions
+  // before the request lands.
+  const [refundLocked, setRefundLocked] = useState(false);
 
   // New deposit form
   const [showDeposit, setShowDeposit] = useState(false);
@@ -147,6 +156,11 @@ const AdvanceApplicationTab: React.FC<Props> = ({
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
     setTransactions(allTxns);
+
+    const pending = await fetchOpenRefund({ billId, admissionId });
+    setOpenRefund(pending);
+    setRefundLocked(!!pending);
+
     setLoading(false);
   };
 
@@ -155,10 +169,18 @@ const AdvanceApplicationTab: React.FC<Props> = ({
   const totalRefunded = Math.max(0,
     (balance?.total_deposited ?? 0) - totalDebited - (balance?.balance ?? 0)
   );
-  // Net position: bill total minus advance and any direct cash payments already collected.
+  // Net position via the shared contract, so this tab agrees with the editor
+  // header and the line-items footer. `totalAmount` arrives already as
+  // patientPayable (gross of advance), so it is fed in as the sole charge line.
+  // Advance already debited still counts as a credit for exactly that reason.
   // Do NOT use bills.paid_amount — it is inflated by syncAdvanceToBill auto-syncs.
-  const balanceAfterApply = totalAmount - (availableToApply + totalDebited) - directCashPaid;
-  const isRefund = balanceAfterApply < 0;
+  const money = computeBillMoney({
+    lineItems: [{ taxable_amount: totalAmount, gst_amount: 0 }],
+    netAdvance: availableToApply + totalDebited,
+    directPaid: directCashPaid,
+  });
+  const balanceAfterApply = money.balanceDue;
+  const isRefund = money.settlement === "refund";
 
   const applyAdvance = async () => {
     const amount = Number(applyAmount);
@@ -222,19 +244,31 @@ const AdvanceApplicationTab: React.FC<Props> = ({
     // 3. Refresh bill state after sync so we work with accurate figures
     const { data: freshBill } = await (supabase as any)
       .from("bills")
-      .select("paid_amount, total_amount")
+      .select("paid_amount, total_amount, insurance_amount, discount_amount")
       .eq("id", billId)
       .maybeSingle();
 
-    const freshPaid   = Number(freshBill?.paid_amount  || 0);
-    const freshTotal  = Number(freshBill?.total_amount || 0);
+    const freshPaid = Number(freshBill?.paid_amount || 0);
     const newAdvanceApplied = advanceApplied + amount;
-    const newBalanceDue     = Math.max(0, freshTotal - freshPaid);
+    // Balance against what the patient actually owes. The old formula
+    // (total_amount − paid_amount) ignored insurance and discount, so an
+    // insured bill reported a balance the patient did not owe.
+    const freshMoney = computeBillMoney({
+      lineItems: [{ taxable_amount: freshBill?.total_amount, gst_amount: 0 }],
+      discountAmount: freshBill?.discount_amount,
+      insuranceAmount: freshBill?.insurance_amount,
+      directPaid: freshPaid,
+    });
+    const newBalanceDue = freshMoney.balanceDue;
 
+    // NOTE: patient_payable is deliberately NOT written here. It means "what the
+    // patient owes in total", gross of advance — every other writer treats it
+    // that way. Overwriting it with a residual balance is what made the editor
+    // header report ₹1,500 "Actual" on a bill carrying ₹6,000 of charges, and
+    // made PaymentsTab offer a refund that was never owed.
     const { error: billErr } = await (supabase as any).from("bills").update({
       advance_applied:  newAdvanceApplied,
       advance_received: newAdvanceApplied,
-      patient_payable:  newBalanceDue,
       balance_due:      newBalanceDue,
       payment_status:   newBalanceDue <= 0 ? "paid" : "partial",
     }).eq("id", billId);
@@ -319,7 +353,11 @@ const AdvanceApplicationTab: React.FC<Props> = ({
           { label: "Total Deposited",   value: balance?.total_deposited ?? 0, color: "text-emerald-700" },
           { label: "Refunded",          value: totalRefunded,                  color: totalRefunded > 0 ? "text-blue-600" : "text-slate-400" },
           { label: "Applied (debited)", value: totalDebited,                   color: totalDebited > 0 ? "text-orange-600" : "text-slate-400" },
-          { label: "Available Balance", value: (balance?.balance ?? 0) - totalAmount + directCashPaid, color: (balance?.balance ?? 0) - totalAmount + directCashPaid > 0 ? "text-blue-700 font-bold" : (balance?.balance ?? 0) - totalAmount + directCashPaid === 0 ? "text-emerald-700 font-bold" : "text-red-600 font-bold" },
+          // The advance wallet's own remaining balance. This tile used to show
+          // (wallet − bill + cash) under the label "Available Balance", which is
+          // a settlement position, not a balance — it read ₹18,500 on a wallet
+          // holding ₹20,000. The settlement now lives in the panel below.
+          { label: "Advance Remaining", value: availableToApply, color: availableToApply > 0 ? "text-blue-700 font-bold" : "text-slate-400" },
           { label: "Actual Bill",       value: totalAmount,                    color: "text-foreground" },
         ].map(s => (
           <div key={s.label} className="border border-border rounded-lg p-2.5 bg-card">
@@ -344,14 +382,15 @@ const AdvanceApplicationTab: React.FC<Props> = ({
             <span>- {inr(directCashPaid)}</span>
           </div>
         )}
-        <div className={cn("flex justify-between font-bold border-t border-border pt-1", isRefund ? "text-blue-700" : balanceAfterApply === 0 ? "text-emerald-700" : "text-red-600")}>
-          <span>{isRefund ? "⬅ Refund Due" : balanceAfterApply === 0 ? "✓ Settled" : "Balance Due"}</span>
+        <div className={cn("flex justify-between font-bold border-t border-border pt-1",
+          money.settlement === "refund" ? "text-blue-700" : money.settlement === "settled" ? "text-emerald-700" : "text-red-600")}>
+          <span>{money.settlement === "refund" ? "⬅ Refund Due" : money.settlement === "settled" ? "✓ Settled" : "Balance Due"}</span>
           <span>
-            {isRefund
-              ? inr(Math.abs(balanceAfterApply))
-              : balanceAfterApply === 0
+            {money.settlement === "refund"
+              ? inr(money.refundDue)
+              : money.settlement === "settled"
               ? "Nil"
-              : inr(balanceAfterApply)}
+              : inr(money.balanceDue)}
           </span>
         </div>
       </div>
@@ -406,31 +445,54 @@ const AdvanceApplicationTab: React.FC<Props> = ({
           Bill fully settled — no balance due.
         </div>
       )}
-      {isRefund && paymentStatus !== 'refunded' && (
+      {/* A refund already awaiting approval — the action is spent. Showing an
+          enabled button here is what let the same bill accumulate several
+          identical pending requests in the approval inbox. */}
+      {openRefund && (
+        <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded p-3 text-[12px] text-amber-900">
+          <Clock size={14} className="mt-0.5 shrink-0" />
+          <div>
+            <p className="font-semibold">
+              Refund of {inr(openRefund.amount)} already requested
+            </p>
+            <p className="mt-0.5 text-amber-700">
+              {openRefund.status === "approved"
+                ? "Approved — awaiting disbursement."
+                : "Awaiting approval in Billing → Refunds. It can be approved or rejected there."}
+            </p>
+          </div>
+        </div>
+      )}
+      {isRefund && !openRefund && paymentStatus !== 'refunded' && (
         <div className="flex items-start justify-between gap-3 bg-blue-50 border border-blue-200 rounded p-3">
           <div className="flex items-start gap-2 text-[12px] text-blue-800">
             <AlertCircle size={14} className="mt-0.5 shrink-0" />
             <div>
               <p className="font-semibold">Patient has overpaid — refund required</p>
               <p className="mt-0.5 text-blue-600">
-                Refund due: <strong>{inr(Math.abs(balanceAfterApply))}</strong>
+                Refund due: <strong>{inr(money.refundDue)}</strong>
               </p>
             </div>
           </div>
-          <Button size="sm" className="h-8 text-xs shrink-0" onClick={() => setShowRefundModal(true)}>
+          <Button
+            size="sm"
+            className="h-8 text-xs shrink-0"
+            disabled={refundLocked}
+            onClick={() => { setRefundLocked(true); setShowRefundModal(true); }}
+          >
             Process Refund
           </Button>
         </div>
       )}
-      {isRefund && paymentStatus !== 'refunded' && showRefundModal && (
+      {isRefund && !openRefund && paymentStatus !== 'refunded' && showRefundModal && (
         <RefundModal
           open={showRefundModal}
-          onClose={() => setShowRefundModal(false)}
+          onClose={() => { setShowRefundModal(false); setRefundLocked(false); }}
           billId={billId}
           patientId={patientId}
           admissionId={admissionId}
           hospitalId={hospitalId}
-          refundAmount={Math.abs(balanceAfterApply)}
+          refundAmount={money.refundDue}
           onRefunded={() => { setShowRefundModal(false); fetchBalance(); onRefresh(); }}
         />
       )}

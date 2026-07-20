@@ -18,6 +18,7 @@ Capture clinical facts stated by EITHER speaker:
 - When the doctor asks a question and the patient answers (e.g. "since when is the pain?" → "3 days"), combine them into the fact (pain × 3 days).
 - Spoken advice or instructions (e.g. "reduce sweets", "come back in a week") go into "plan" and/or "follow_up".
 - Spoken lab/vital VALUES (e.g. blood sugar 165, BP 130/80) go into "examination_findings" and/or "investigations", recorded verbatim WITH the value (do not drop the number).
+- FOLLOW-UP INTERVAL (frequently missed — check for this explicitly before finishing): any instruction to come back / return / be reviewed / be seen AGAIN after a period of time MUST populate "follow_up". In Indian consultations the interval is usually spoken as code-mixed English inside the local language — e.g. "ఫైవ్ డేస్ తర్వాత", "five days ke baad", "one week", "10 రోజులు", "after 2 weeks". Wordings that all mean follow-up include "come see me after X", "show yourself after X", "come again after X", "come back after X", "review after X". Speech-to-text frequently mangles or flattens the imperative verb ending in Indian languages, so when the doctor mentions being seen/returning AGAIN together with a time period, record it as a follow-up (e.g. "• Review after 5 days"). Normalise the interval to digits + unit. This is recognising what WAS said — not inventing.
 
 List every symptom/finding EXPLICITLY stated (do not omit a clearly-stated one), but NEVER add, infer, or invent anything that was not actually said.
 

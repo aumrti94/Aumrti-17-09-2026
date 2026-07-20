@@ -16,7 +16,7 @@ interface Partner {
 interface Code {
   id: string; code: string; owner_type: "partner" | "rep" | "hospital";
   partner_id: string | null; hospital_id: string | null;
-  referee_discount_pct: number; referee_trial_extra_days: number;
+  referee_discount_pct: number; referee_trial_extra_days: number; referee_discount_months: number;
   referrer_reward_type: "free_month" | "credit" | "commission" | "none"; referrer_reward_value: number;
   valid_from: string; valid_until: string | null;
   max_uses: number | null; used_count: number; is_active: boolean; created_at: string;
@@ -54,7 +54,7 @@ const fetchRedemptions = async (): Promise<Redemption[]> => {
 const BLANK_PARTNER: Partial<Partner> = { partner_type: "partner", name: "", email: "", phone: "", commission_pct: 0, notes: "", is_active: true };
 const BLANK_CODE: Partial<Code> = {
   code: "", owner_type: "partner", partner_id: null,
-  referee_discount_pct: 0, referee_trial_extra_days: 14,
+  referee_discount_pct: 0, referee_trial_extra_days: 14, referee_discount_months: 0,
   referrer_reward_type: "commission", referrer_reward_value: 0,
   valid_from: new Date().toISOString().split("T")[0], valid_until: "", max_uses: null, is_active: true,
 };
@@ -100,6 +100,7 @@ export default function ReferralsPage() {
         partner_id: codeForm.owner_type === "hospital" ? null : (codeForm.partner_id || null),
         referee_discount_pct: Number(codeForm.referee_discount_pct) || 0,
         referee_trial_extra_days: Number(codeForm.referee_trial_extra_days) || 0,
+        referee_discount_months: Number(codeForm.referee_discount_months) || 0,
         referrer_reward_type: codeForm.referrer_reward_type,
         referrer_reward_value: Number(codeForm.referrer_reward_value) || 0,
         valid_from: codeForm.valid_from || new Date().toISOString(),
@@ -357,6 +358,7 @@ export default function ReferralsPage() {
                 {[
                   { label: "Extra trial days", key: "referee_trial_extra_days" as const },
                   { label: "Discount %", key: "referee_discount_pct" as const },
+                  { label: "Discount months (0 = forever)", key: "referee_discount_months" as const },
                 ].map(({ label, key }) => (
                   <div key={key}>
                     <label className="text-xs text-muted-foreground">{label}</label>

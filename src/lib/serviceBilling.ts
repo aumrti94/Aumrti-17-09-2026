@@ -60,6 +60,14 @@ export interface ServiceBillingResult {
   lineItemId?: string;
   total:    number;
   isNewBill: boolean;
+  /**
+   * Set when the line item posted but the bill total could not be updated
+   * (most often a locked cash-closure day). Deliberately NOT reported by
+   * returning null: the charge IS on the bill, and callers treat null as
+   * "nothing was posted" and retry — which would double-charge. Callers that
+   * show UI should surface this.
+   */
+  totalsError?: string;
 }
 
 export interface AutoChargeServiceOpts {
@@ -339,7 +347,13 @@ export async function autoChargeService(
     .maybeSingle();
 
   // ── Recalculate bill totals ────────────────────────────────────────────────
-  await recalculateBillTotalsSafe(billId);
+  // The line item is already posted; a failure here means the bill total is
+  // stale, not that the charge was lost. Carried out on the result rather than
+  // discarded (see ServiceBillingResult.totalsError).
+  const recalc = await recalculateBillTotalsSafe(billId);
+  if (!recalc.ok) {
+    console.error("autoChargeService: bill totals not updated:", recalc.error);
+  }
 
   // ── Record in service_charges for leakage dashboard ───────────────────────
   await (supabase as any).from("service_charges").insert({
@@ -384,7 +398,13 @@ export async function autoChargeService(
     }).catch(() => {});
   }
 
-  return { billId, lineItemId: lineItem?.id, total, isNewBill };
+  return {
+    billId,
+    lineItemId: lineItem?.id,
+    total,
+    isNewBill,
+    totalsError: recalc.ok ? undefined : (recalc.error || "Bill totals could not be updated"),
+  };
 }
 
 export interface RecordServiceChargeOpts {

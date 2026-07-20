@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { formatINRExact } from "@/lib/currency";
+import { resolveEffectivePrice, type BillingCycle } from "@/lib/platformBilling";
 
 // Razorpay global type
 declare global {
@@ -20,6 +22,8 @@ interface SubscribePlan {
   name: string;
   slug: string;
   price_monthly: number;
+  /** Null means the plan is not sold annually — the yearly option is hidden. */
+  price_yearly?: number | null;
   is_custom_price: boolean;
   razorpay_plan_id: string | null;
 }
@@ -46,6 +50,7 @@ export default function SubscribeButton({ plan, label, variant = "default", clas
   const { hospitalId } = useHospitalId();
   const { refetch } = useSubscriptionConfig();
   const [open, setOpen] = useState(false);
+  const [cycle, setCycle] = useState<BillingCycle>("monthly");
   const [couponCode, setCouponCode] = useState("");
   const [couponResult, setCouponResult] = useState<{
     valid: boolean; pct: number; message: string;
@@ -102,9 +107,21 @@ export default function SubscribeButton({ plan, label, variant = "default", clas
     }
   };
 
-  const effectivePrice = couponResult?.valid && couponResult.pct > 0
-    ? plan.price_monthly * (1 - couponResult.pct / 100)
-    : plan.price_monthly;
+  // Price shown here is computed with the SAME resolver the edge function uses
+  // to bind the Razorpay plan, so the displayed figure and the charged figure
+  // cannot diverge. (They used to: the coupon was applied only for display.)
+  const price = resolveEffectivePrice({
+    plan,
+    cycle,
+    couponPct: couponResult?.valid ? couponResult.pct : 0,
+  });
+  const monthlyPrice = resolveEffectivePrice({
+    plan, cycle: "monthly", couponPct: couponResult?.valid ? couponResult.pct : 0,
+  });
+  const yearlyPrice = resolveEffectivePrice({
+    plan, cycle: "yearly", couponPct: couponResult?.valid ? couponResult.pct : 0,
+  });
+  const yearlyAvailable = yearlyPrice.available;
 
   const handleSubscribe = async () => {
     if (!hospitalId) return;
@@ -123,6 +140,7 @@ export default function SubscribeButton({ plan, label, variant = "default", clas
         body: {
           plan_id: plan.id,
           hospital_id: hospitalId,
+          billing_cycle: cycle,
           coupon_code: couponResult?.valid ? couponCode.trim().toUpperCase() : undefined,
         },
       });
@@ -147,7 +165,7 @@ export default function SubscribeButton({ plan, label, variant = "default", clas
         key: razorpay_key_id,
         subscription_id,
         name: "Aumrti HMS",
-        description: `${plan_name} — Monthly Subscription`,
+        description: `${plan_name} — ${cycle === "yearly" ? "Annual" : "Monthly"} Subscription`,
         image: "/favicon.ico",
         handler: (_response: any) => {
           // Actual activation is confirmed via webhook, not here.
@@ -200,19 +218,11 @@ export default function SubscribeButton({ plan, label, variant = "default", clas
     );
   }
 
-  // Plan has no Razorpay plan ID configured yet
-  if (!plan.razorpay_plan_id) {
-    return (
-      <Button
-        variant="outline"
-        className={className}
-        onClick={() => window.open(`mailto:support@aumrti.in?subject=Activate ${plan.name} Plan`)}
-      >
-        <CreditCard size={14} className="mr-2" />
-        {label || `Subscribe to ${plan.name}`}
-      </Button>
-    );
-  }
+  // NOTE: there used to be a `!plan.razorpay_plan_id` branch here that degraded
+  // to a mailto: link. Since no plan had a razorpay_plan_id, EVERY plan hit it —
+  // which is why "Subscribe"/"Upgrade Now" opened an email client instead of
+  // checkout. The edge function now creates the Razorpay plan on demand via the
+  // plan registry, so there is nothing to pre-configure and nothing to degrade to.
 
   return (
     <>
@@ -242,26 +252,63 @@ export default function SubscribeButton({ plan, label, variant = "default", clas
             </div>
 
             <div className="p-6 space-y-5">
+              {/* Billing cycle — a real choice, not decoration. The yearly figure
+                  used to be rendered as monthly × 10, a number that matched no
+                  plan row and was not purchasable at all. */}
+              {yearlyAvailable && (
+                <div className="grid grid-cols-2 gap-2">
+                  {(["monthly", "yearly"] as const).map((c) => {
+                    const p = c === "monthly" ? monthlyPrice : yearlyPrice;
+                    const savingPct = yearlyPrice.available && monthlyPrice.amountInr > 0
+                      ? Math.round((1 - yearlyPrice.amountInr / (monthlyPrice.amountInr * 12)) * 100)
+                      : 0;
+                    return (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => setCycle(c)}
+                        className={`rounded-xl border p-3 text-left transition-colors ${
+                          cycle === c
+                            ? "border-primary bg-primary/5"
+                            : "border-border hover:border-primary/40"
+                        }`}
+                      >
+                        <p className="text-xs text-muted-foreground capitalize">{c}</p>
+                        <p className="text-base font-bold text-foreground mt-0.5">
+                          {formatINRExact(p.amountInr)}
+                          <span className="text-xs font-normal text-muted-foreground">
+                            /{c === "yearly" ? "yr" : "mo"}
+                          </span>
+                        </p>
+                        {c === "yearly" && savingPct > 0 && (
+                          <p className="text-[11px] text-emerald-600 font-medium mt-0.5">Save {savingPct}%</p>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
               {/* Price summary */}
-              <div className="bg-accent/30 rounded-xl p-4 flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Monthly subscription</p>
-                  <p className="text-2xl font-bold text-foreground mt-0.5">
-                    ₹{Math.round(effectivePrice).toLocaleString("en-IN")}
-                    <span className="text-sm font-normal text-muted-foreground">/month</span>
+              <div className="bg-accent/30 rounded-xl p-4">
+                <p className="text-sm text-muted-foreground">
+                  {cycle === "yearly" ? "Annual subscription" : "Monthly subscription"}
+                </p>
+                <p className="text-2xl font-bold text-foreground mt-0.5">
+                  {formatINRExact(price.amountInr)}
+                  <span className="text-sm font-normal text-muted-foreground">
+                    /{cycle === "yearly" ? "year" : "month"}
+                  </span>
+                </p>
+                {price.amountInr < price.listInr && (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    <span className="line-through">{formatINRExact(price.listInr)}</span>
+                    <span className="text-emerald-600 ml-1.5 font-medium">
+                      {price.source === "override" ? "negotiated rate" : `${price.appliedCouponPct}% off`}
+                    </span>
                   </p>
-                  {couponResult?.valid && couponResult.pct > 0 && (
-                    <p className="text-xs text-emerald-600 mt-0.5 line-through text-muted-foreground">
-                      Was ₹{plan.price_monthly.toLocaleString("en-IN")}/month
-                    </p>
-                  )}
-                </div>
-                <div className="text-right">
-                  <p className="text-xs text-muted-foreground">Yearly (2 months free)</p>
-                  <p className="text-sm font-semibold text-foreground mt-0.5">
-                    ₹{Math.round(effectivePrice * 10).toLocaleString("en-IN")}/year
-                  </p>
-                </div>
+                )}
+                <p className="text-[11px] text-muted-foreground mt-1">Inclusive of 18% GST</p>
               </div>
 
               {/* Coupon code */}
@@ -296,7 +343,7 @@ export default function SubscribeButton({ plan, label, variant = "default", clas
               {/* RBI compliance note */}
               <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-lg px-4 py-3 text-xs text-blue-700 dark:text-blue-300 space-y-1">
                 <p className="font-semibold">Recurring Payment — RBI e-Mandate</p>
-                <p>You will authenticate a UPI/card mandate during checkout. Aumrti will send a 72-hour advance notification before each monthly charge. Cancel anytime from your plan settings.</p>
+                <p>You will authenticate a UPI/card mandate during checkout. Aumrti will send a 72-hour advance notification before each {cycle === "yearly" ? "annual" : "monthly"} charge. Cancel anytime from your plan settings.</p>
               </div>
 
               {/* Subscribe button */}
@@ -308,7 +355,7 @@ export default function SubscribeButton({ plan, label, variant = "default", clas
                 {loading ? (
                   <><Loader2 size={16} className="mr-2 animate-spin" /> Opening Payment…</>
                 ) : (
-                  <>Proceed to Payment — ₹{Math.round(effectivePrice).toLocaleString("en-IN")}/mo</>
+                  <>Proceed to Payment — {formatINRExact(price.amountInr)}/{cycle === "yearly" ? "yr" : "mo"}</>
                 )}
               </Button>
 

@@ -8,6 +8,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.103.0";
 import { checkAIAllowed } from "../_shared/ai-entitlement.ts";
+import { resolveAiConfig, callAiChat } from "../_shared/ai-config.ts";
 
 const supabaseAdmin = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -175,33 +176,32 @@ Reply HELP to speak with our staff.`;
         .maybeSingle();
 
       const systemPrompt = (promptRow?.system_prompt || "").replace("{{hospital_name}}", hospitalName);
-      const aiProvider = Deno.env.get("OPENAI_API_KEY") ? "openai" : null;
+      const canned = `I'm not sure I understood that. You can ask me about appointments, bills, reports, or hospital information. Reply HELP to speak with our staff.`;
       // AI entitlement floor — if this hospital's "AI Features" switch is off, skip the
       // AI generation and fall back to the canned reply (never a hard error: a patient is
       // waiting on WhatsApp). Gated on the whatsapp_bot_intent feature key.
       const gate = await checkAIAllowed(supabaseAdmin, hospitalId, "whatsapp_bot_intent");
-      if (!aiProvider || !gate.allowed) {
-        return `I'm not sure I understood that. You can ask me about appointments, bills, reports, or hospital information. Reply HELP to speak with our staff.`;
-      }
+      if (!gate.allowed) return canned;
 
-      const aiResp = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${Deno.env.get("OPENAI_API_KEY")}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [
+      // Use the platform-configured provider/model for the whatsapp_bot_intent feature
+      // (Azure/Gemini/OpenRouter/etc.) instead of a hardcoded OpenAI key. Fail-safe to the
+      // canned reply on any resolution/call error — a patient is waiting on WhatsApp.
+      try {
+        const cfg = await resolveAiConfig(hospitalId, "whatsapp_bot_intent", 200);
+        if (!cfg) return canned;
+        const reply = await callAiChat(
+          cfg,
+          [
             { role: "system", content: systemPrompt },
             { role: "user", content: `Intent: unknown\nMessage: ${inboundMessage}` },
           ],
-          max_tokens: 200,
-          temperature: 0.3,
-        }),
-      }).then(r => r.json()).catch(() => null);
-
-      return aiResp?.choices?.[0]?.message?.content || `I'm not sure I understood that. Reply HELP to speak with our staff.`;
+          200,
+          0.3,
+        );
+        return reply?.trim() || canned;
+      } catch (_err) {
+        return canned;
+      }
     }
   }
 }

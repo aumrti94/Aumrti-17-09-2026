@@ -18,11 +18,18 @@
  *   RAZORPAY_SUBSCRIPTION_KEY_SECRET
  *
  * Request body:
- *   { new_plan_id: string, hospital_id: string, coupon_code?: string }
+ *   { new_plan_id: string, hospital_id: string, coupon_code?: string,
+ *     billing_cycle?: 'monthly' | 'yearly' }   // defaults to the current cycle
  */
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  resolveEffectivePrice,
+  razorpayPeriodForCycle,
+  totalCountForCycle,
+  type BillingCycle,
+} from "../_shared/platform-billing.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -54,7 +61,7 @@ serve(async (req) => {
     const { data: { user }, error: authErr } = await userClient.auth.getUser();
     if (authErr || !user) return err("Unauthorized", 401);
 
-    const { new_plan_id, hospital_id, coupon_code } = await req.json();
+    const { new_plan_id, hospital_id, coupon_code, billing_cycle } = await req.json();
     if (!new_plan_id || !hospital_id) return err("new_plan_id and hospital_id required");
 
     const db = createClient(supabaseUrl, serviceKey);
@@ -72,7 +79,7 @@ serve(async (req) => {
     // ── Fetch current subscription ─────────────────────────────────────────
     const { data: currentSub } = await db
       .from("hospital_subscriptions")
-      .select("id, plan_id, status, razorpay_subscription_id, subscription_plans!inner(name, slug, price_monthly, is_custom_price)")
+      .select("id, plan_id, status, billing_cycle, razorpay_subscription_id, subscription_plans!inner(name, slug, price_monthly, is_custom_price)")
       .eq("hospital_id", hospital_id)
       .maybeSingle();
 
@@ -108,71 +115,125 @@ serve(async (req) => {
       discountPct = coupon.discount_type === "percentage" ? Number(coupon.discount_value) : 0;
     }
 
-    // ── Auto-create Razorpay plan ID if missing ────────────────────────────
-    let rzpPlanId = newPlan.razorpay_plan_id;
-    if (!rzpPlanId && rzpKeyId && rzpSecret) {
-      const auth = btoa(`${rzpKeyId}:${rzpSecret}`);
+    // ── Resolve the price actually charged on the new plan ─────────────────
+    // Same resolver as checkout. Previously this function bound the subscription
+    // to a list-price plan while reporting a discounted figure, so neither the
+    // negotiated rate nor the coupon reached the gateway.
+    const { data: override } = await db
+      .from("hospital_pricing_overrides")
+      .select("monthly_price, yearly_price, valid_until")
+      .eq("hospital_id", hospital_id)
+      .maybeSingle();
+
+    const cycle: BillingCycle = billing_cycle === "yearly"
+      ? "yearly"
+      : (currentSub?.billing_cycle === "yearly" ? "yearly" : "monthly");
+
+    const price = resolveEffectivePrice({ plan: newPlan, override, cycle, couponPct: discountPct });
+    if (!price.available) {
+      return err(price.reason ?? `The ${newPlan.name} plan is not available ${cycle}`);
+    }
+
+    if (!rzpKeyId || !rzpSecret) {
+      return err("Payment gateway not configured. Contact support@aumrti.in", 500);
+    }
+    const auth = btoa(`${rzpKeyId}:${rzpSecret}`);
+
+    // ── Resolve the Razorpay plan for (plan, cycle, amount) ────────────────
+    const { data: cachedPlanId } = await db.rpc("claim_razorpay_plan_slot", {
+      p_plan_id: new_plan_id,
+      p_billing_cycle: cycle,
+      p_amount_paise: price.amountPaise,
+      p_razorpay_plan_id: null,
+    });
+
+    let rzpPlanId: string | null = cachedPlanId ?? null;
+
+    if (!rzpPlanId) {
+      const cycleWord = cycle === "yearly" ? "annual" : "monthly";
       const createPlanRes = await fetch("https://api.razorpay.com/v1/plans", {
         method: "POST",
         headers: { "Authorization": `Basic ${auth}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          period: "monthly",
+          period: razorpayPeriodForCycle(cycle),
           interval: 1,
           item: {
-            name: `Aumrti HMS ${newPlan.name}`,
-            amount: Math.round(newPlan.price_monthly * 100),
+            name: `Aumrti HMS ${newPlan.name} (${cycleWord})`,
+            amount: price.amountPaise,
             currency: "INR",
-            description: `Aumrti HMS ${newPlan.name} monthly subscription`,
+            description: `Aumrti HMS ${newPlan.name} ${cycleWord} subscription`,
           },
         }),
       });
-      if (createPlanRes.ok) {
-        const rzpPlan = await createPlanRes.json();
-        rzpPlanId = rzpPlan.id;
-        await db.from("subscription_plans").update({ razorpay_plan_id: rzpPlanId }).eq("id", new_plan_id);
+      if (!createPlanRes.ok) {
+        const rzpErr = await createPlanRes.json().catch(() => ({}));
+        console.error("Auto-create Razorpay plan failed:", rzpErr);
+        return err("Payment gateway error while setting up plan. Contact support@aumrti.in", 502);
       }
+      const rzpPlan = await createPlanRes.json();
+      const { data: claimed } = await db.rpc("claim_razorpay_plan_slot", {
+        p_plan_id: new_plan_id,
+        p_billing_cycle: cycle,
+        p_amount_paise: price.amountPaise,
+        p_razorpay_plan_id: rzpPlan.id,
+      });
+      rzpPlanId = claimed ?? rzpPlan.id;
     }
 
     if (!rzpPlanId) {
       return err("Payment gateway not configured for this plan. Contact support@aumrti.in");
     }
 
-    // ── Cancel existing Razorpay subscription ─────────────────────────────
-    if (currentSub?.razorpay_subscription_id && rzpKeyId && rzpSecret) {
-      const auth = btoa(`${rzpKeyId}:${rzpSecret}`);
-      // cancel_at_cycle_end=1 for downgrade (let current period expire), 0 for upgrade (immediate)
-      const cancelAtCycleEnd = isUpgrade ? 0 : 1;
+    // ── Create the NEW Razorpay subscription first ─────────────────────────
+    // Order matters. This used to cancel the old mandate before creating the
+    // new one, so a customer who abandoned checkout was left with a cancelled
+    // subscription and an unpaid new one — no active mandate at all. The old
+    // mandate is now cancelled only after the new subscription exists (and for
+    // an upgrade, only once the webhook confirms the first charge).
+    let newRzpSubId: string | null = null;
+    const rzpRes = await fetch("https://api.razorpay.com/v1/subscriptions", {
+      method: "POST",
+      headers: { "Authorization": `Basic ${auth}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        plan_id: rzpPlanId,
+        total_count: totalCountForCycle(cycle),
+        quantity: 1,
+        customer_notify: 1,
+        notes: {
+          hospital_id,
+          plan_id: new_plan_id,
+          plan_name: newPlan.name,
+          billing_cycle: cycle,
+          amount_paise: String(price.amountPaise),
+          price_source: price.source,
+          change_type: isUpgrade ? "upgrade" : "downgrade",
+          ...(currentSub?.razorpay_subscription_id
+            ? { supersedes_subscription_id: currentSub.razorpay_subscription_id }
+            : {}),
+        },
+      }),
+    });
+
+    if (!rzpRes.ok) {
+      const rzpErr = await rzpRes.json().catch(() => ({}));
+      console.error("Razorpay subscription creation failed:", rzpErr);
+      // Nothing has been cancelled yet, so the hospital keeps its current
+      // mandate and can retry.
+      return err(rzpErr?.error?.description ?? "Payment gateway error. Please try again.", 502);
+    }
+    newRzpSubId = (await rzpRes.json()).id;
+
+    // ── Now retire the old mandate ─────────────────────────────────────────
+    // Downgrade: let the paid period run out (cancel_at_cycle_end=1).
+    // Upgrade: the new mandate needs authorisation before it charges, so the old
+    // one is left running and is cancelled by the webhook on the new
+    // subscription's first `activated`. Cancelling it here would leave a gap.
+    if (currentSub?.razorpay_subscription_id && !isUpgrade) {
       await fetch(`https://api.razorpay.com/v1/subscriptions/${currentSub.razorpay_subscription_id}/cancel`, {
         method: "POST",
         headers: { "Authorization": `Basic ${auth}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ cancel_at_cycle_end: cancelAtCycleEnd }),
+        body: JSON.stringify({ cancel_at_cycle_end: 1 }),
       }).catch((e) => console.error("Razorpay cancel failed:", e.message));
-    }
-
-    // ── Create new Razorpay subscription ───────────────────────────────────
-    let newRzpSubId: string | null = null;
-    if (rzpKeyId && rzpSecret) {
-      const auth = btoa(`${rzpKeyId}:${rzpSecret}`);
-      const rzpRes = await fetch("https://api.razorpay.com/v1/subscriptions", {
-        method: "POST",
-        headers: { "Authorization": `Basic ${auth}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          plan_id: rzpPlanId,
-          total_count: 240,
-          quantity: 1,
-          customer_notify: 1,
-          notes: {
-            hospital_id,
-            plan_id: new_plan_id,
-            plan_name: newPlan.name,
-            change_type: isUpgrade ? "upgrade" : "downgrade",
-          },
-        }),
-      });
-      if (rzpRes.ok) {
-        const rzpSub = await rzpRes.json();
-        newRzpSubId = rzpSub.id;
-      }
     }
 
     // ── Update hospital_subscriptions ──────────────────────────────────────
@@ -182,6 +243,8 @@ serve(async (req) => {
       status: currentStatus === "active" ? "active" : "trial",
       razorpay_subscription_id: newRzpSubId,
       razorpay_plan_id: rzpPlanId,
+      billing_cycle: cycle,
+      effective_amount_inr: price.amountInr,
       ...(discountPct > 0 ? { discount_pct: discountPct } : {}),
       updated_at: new Date().toISOString(),
     }, { onConflict: "hospital_id" });
@@ -219,10 +282,6 @@ serve(async (req) => {
     }
 
     // ── Return Razorpay checkout params for new subscription ───────────────
-    const effectivePrice = discountPct > 0
-      ? newPlan.price_monthly * (1 - discountPct / 100)
-      : newPlan.price_monthly;
-
     const { data: adminContact } = await db
       .from("users")
       .select("full_name, email, phone")
@@ -237,7 +296,9 @@ serve(async (req) => {
       subscription_id:  newRzpSubId,
       razorpay_key_id:  rzpKeyId,
       plan_name:        newPlan.name,
-      amount_paise:     Math.round(effectivePrice * 100),
+      amount_paise:     price.amountPaise,
+      billing_cycle:    cycle,
+      price_source:     price.source,
       customer_name:    adminContact?.full_name || "",
       customer_email:   adminContact?.email     || "",
       customer_contact: adminContact?.phone      || "",

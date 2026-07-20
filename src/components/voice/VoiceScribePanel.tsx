@@ -4,6 +4,7 @@ import { X, Check, Copy, RefreshCw, Loader2, AlertTriangle, Globe } from "lucide
 import { useVoiceScribe, SUPPORTED_LANGUAGES } from "@/contexts/VoiceScribeContext";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { unwrapFunctionError } from "@/lib/invokeError";
 import { useAIAudit } from "@/hooks/useAIAudit";
 
 interface DrugItem {
@@ -169,7 +170,7 @@ Handover: ${editableData.handover_note || ""}`;
       const { data, error } = await supabase.functions.invoke("ai-clinical-voice", {
         body: { transcript: rawTranscript, context_type: currentSessionType, language_code: selectedLanguage, existing_data: getExistingDataForCurrentScreen() ?? undefined, patient_id: currentPatientId ?? undefined },
       });
-      if (error || data?.error) throw new Error(data?.error || error?.message);
+      if (error || data?.error) throw new Error(await unwrapFunctionError(error, data));
       setStructuredOutput(data.structured);
       setPanelState("output");
     } catch (err) {
@@ -496,8 +497,8 @@ Handover: ${editableData.handover_note || ""}`;
             <p className="text-xs text-amber-800 font-semibold">AI structuring unavailable — showing raw transcript</p>
             {fallbackReason ? (
               <p className="text-[11px] text-amber-700 leading-snug">
-                {fallbackReason.includes("No AI provider") || fallbackReason.includes("Edge Function returned a non-2xx")
-                  ? "No AI provider configured. Go to Settings → API Hub to add an OpenAI, Claude, or Gemini API key."
+                {fallbackReason.includes("No AI provider")
+                  ? "No AI provider configured. Go to Settings → API Hub to configure an AI provider."
                   : fallbackReason}
               </p>
             ) : null}

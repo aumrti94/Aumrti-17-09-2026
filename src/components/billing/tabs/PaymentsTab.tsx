@@ -1,16 +1,18 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, X } from "lucide-react";
+import { Plus, X, Clock } from "lucide-react";
 import type { BillRecord } from "@/pages/billing/BillingPage";
 import type { PaymentRecord } from "@/components/billing/BillEditor";
 import RefundModal from "@/components/billing/RefundModal";
 import { recordBillPayment } from "@/lib/billPayments";
 import { isAdmissionBill } from "@/lib/admissionBill";
+import type { BillMoney } from "@/lib/billMoney";
+import { fetchOpenRefund, type OpenRefund } from "@/lib/refundRequests";
 
 const PAYMENT_MODES = [
   { value: "cash", label: "💵 Cash" },
@@ -34,19 +36,24 @@ interface Props {
   hospitalId: string | null;
   payments: PaymentRecord[];
   netAdvanceBalance?: number | null;
+  /** Shared money contract from BillEditor — the same figures every other tab shows. */
+  money: BillMoney;
   onRefresh: () => void;
 }
 
-const PaymentsTab: React.FC<Props> = ({ bill, hospitalId, payments, netAdvanceBalance, onRefresh }) => {
+const PaymentsTab: React.FC<Props> = ({ bill, hospitalId, payments, netAdvanceBalance, money, onRefresh }) => {
   // Sum of non-advance cash payments already recorded (from Payment History)
   const totalDirectPaid = payments.reduce((s, p) => s + p.amount, 0);
 
-  // Discount is stored separately; subtract it from patient_payable to get true payable
-  const netPatientPayable = Math.max(0, (bill.patient_payable || bill.total_amount) - Number(bill.discount_amount || 0));
+  // Derived from the line items and the admission-scoped advance ledger, not
+  // from bills.patient_payable / bills.paid_amount. Those two columns produced
+  // a refund of ₹18,500 on a bill owing ₹6,000 against a ₹20,000 advance:
+  // patient_payable held an advance-netted residual and paid_amount was
+  // inflated by the advance sync, so the error compounded.
+  const netPatientPayable = money.patientPayable;
 
-  // For IPD bills: patient_payable − advance − cash already paid
-  const effectiveBalanceDue = (isAdmissionBill(bill.bill_type) && netAdvanceBalance != null)
-    ? Math.max(0, netPatientPayable - netAdvanceBalance - totalDirectPaid)
+  const effectiveBalanceDue = isAdmissionBill(bill.bill_type)
+    ? money.balanceDue
     : bill.balance_due;
 
   const { toast } = useToast();
@@ -54,6 +61,22 @@ const PaymentsTab: React.FC<Props> = ({ bill, hospitalId, payments, netAdvanceBa
   const [submitting, setSubmitting] = useState(false);
   const [autoReceipt, setAutoReceipt] = useState(true);
   const [showRefundModal, setShowRefundModal] = useState(false);
+  // A refund already awaiting approval for this bill. Without this the same
+  // bill could have several identical pending requests raised from here.
+  const [openRefund, setOpenRefund] = useState<OpenRefund | null>(null);
+  // Latches on first click so a double-click cannot submit twice.
+  const [refundLocked, setRefundLocked] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchOpenRefund({ billId: bill.id, admissionId: (bill as any).admission_id ?? null })
+      .then((r) => {
+        if (cancelled) return;
+        setOpenRefund(r);
+        setRefundLocked(!!r);
+      });
+    return () => { cancelled = true; };
+  }, [bill.id, (bill as any).admission_id, bill.payment_status]);
 
   // Re-sync rows when advance balance loads asynchronously
   React.useEffect(() => {
@@ -80,7 +103,7 @@ const PaymentsTab: React.FC<Props> = ({ bill, hospitalId, payments, netAdvanceBa
 
     const newPaid = bill.paid_amount + totalCollecting;
     // For IPD bills, advance + all direct cash payments determine true balance
-    const advanceCovered = (isAdmissionBill(bill.bill_type) && netAdvanceBalance != null) ? netAdvanceBalance : 0;
+    const advanceCovered = isAdmissionBill(bill.bill_type) ? money.netAdvance : 0;
     const allDirectPaid = totalDirectPaid + totalCollecting;
     const newBalance = Math.max(0, netPatientPayable - advanceCovered - allDirectPaid);
     const newStatus: "paid" | "partial" = newBalance <= 0 ? "paid" : "partial";
@@ -217,30 +240,51 @@ const PaymentsTab: React.FC<Props> = ({ bill, hospitalId, payments, netAdvanceBa
         )}
       </div>
 
+      {/* A refund already awaiting approval — the action is spent. */}
+      {openRefund && (
+        <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-4 text-[12px] text-amber-900">
+          <Clock size={14} className="mt-0.5 shrink-0" />
+          <div>
+            <p className="font-semibold text-[13px]">
+              Refund of ₹{openRefund.amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })} already requested
+            </p>
+            <p className="mt-0.5 text-amber-700">
+              {openRefund.status === "approved"
+                ? "Approved — awaiting disbursement."
+                : "Awaiting approval in Billing → Refunds. It can be approved or rejected there."}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Refund section — shown when patient has overpaid and refund not yet processed */}
-      {bill.paid_amount > Math.max(0, bill.patient_payable) && bill.payment_status !== 'refunded' && (
+      {money.settlement === "refund" && !openRefund && bill.payment_status !== 'refunded' && (
         <>
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center justify-between">
             <div>
               <p className="text-[13px] font-semibold text-blue-800">Refund Due to Patient</p>
               <p className="text-[12px] text-blue-600 mt-0.5">
-                ₹{(bill.paid_amount - Math.max(0, bill.patient_payable))
-                    .toLocaleString("en-IN", { minimumFractionDigits: 2 })} to be returned
+                ₹{money.refundDue.toLocaleString("en-IN", { minimumFractionDigits: 2 })} to be returned
               </p>
             </div>
-            <Button size="sm" className="h-8 text-xs" onClick={() => setShowRefundModal(true)}>
+            <Button
+              size="sm"
+              className="h-8 text-xs"
+              disabled={refundLocked}
+              onClick={() => { setRefundLocked(true); setShowRefundModal(true); }}
+            >
               Process Refund
             </Button>
           </div>
           {showRefundModal && (
             <RefundModal
               open={showRefundModal}
-              onClose={() => setShowRefundModal(false)}
+              onClose={() => { setShowRefundModal(false); setRefundLocked(false); }}
               billId={bill.id}
               patientId={bill.patient_id}
               admissionId={(bill as any).admission_id ?? null}
               hospitalId={hospitalId ?? ""}
-              refundAmount={bill.paid_amount - Math.max(0, bill.patient_payable)}
+              refundAmount={money.refundDue}
               onRefunded={() => { setShowRefundModal(false); onRefresh(); }}
             />
           )}

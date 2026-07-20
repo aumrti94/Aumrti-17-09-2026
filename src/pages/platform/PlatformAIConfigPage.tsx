@@ -23,6 +23,7 @@ import {
   getCustomModels,
   saveCustomModels,
 } from "@/lib/aiProvider";
+import { normalizeAzureEndpoint } from "@/lib/azureFoundry";
 import {
   Loader2, Check, X, Play, Eye, EyeOff, ExternalLink, FlaskConical, Save, Plus, Trash2, RefreshCw,
 } from "lucide-react";
@@ -107,6 +108,7 @@ const PlatformAIConfigPage: React.FC = () => {
   const [apiKeys, setApiKeys] = useState<APIKeyConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
+  const [bulkSaving, setBulkSaving] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [voiceEngine, setVoiceEngine] = useState<string>("sarvam");
   const [usageLogs, setUsageLogs] = useState<{ feature_key: string; calls: number; tokens: number; errors: number; last_used: string }[]>([]);
@@ -237,6 +239,99 @@ const PlatformAIConfigPage: React.FC = () => {
     setSaving(null);
   };
 
+  /** Feature keys shown in the override table (everything except the global default row). */
+  const overridableFeatureKeys = useMemo(
+    () => Object.keys(FEATURE_LABELS).filter(k => k !== "global_default"),
+    []
+  );
+
+  /**
+   * Flip a feature between "Default" (inherit global_default) and "Custom".
+   * `is_active` is what the edge-function resolver keys off, so that is the switch —
+   * turning it off makes the resolver fall through to global_default.
+   */
+  const setOverride = async (featureKey: string, custom: boolean) => {
+    if (!custom) {
+      await updateAIConfig(featureKey, { is_active: false } as Partial<AIConfig>);
+      return;
+    }
+    const existing = aiConfigs.find(c => c.feature_key === featureKey);
+    await updateAIConfig(featureKey, {
+      is_active: true,
+      provider: existing?.provider || globalConfig?.provider || "claude",
+      model_name: existing?.model_name || globalConfig?.model_name || "",
+      api_key_ref:
+        existing?.api_key_ref ||
+        PROVIDER_TO_SERVICE_KEY[existing?.provider || globalConfig?.provider || "claude"] ||
+        null,
+    } as Partial<AIConfig>);
+  };
+
+  /** Bulk "all Default" / "all Custom" for every feature in the table. */
+  const bulkSetOverride = async (custom: boolean) => {
+    setBulkSaving(true);
+    try {
+      if (!custom) {
+        const ids = featureConfigs.filter(c => c.is_active).map(c => c.id);
+        if (ids.length) {
+          const { error } = await supabase
+            .from("platform_ai_provider_config")
+            .update({ is_active: false })
+            .in("id", ids);
+          if (error) {
+            toast({ title: "Bulk update failed", description: error.message, variant: "destructive" });
+            return;
+          }
+          setAiConfigs(prev => prev.map(c => (ids.includes(c.id) ? { ...c, is_active: false } : c)));
+        }
+        toast({ title: `✓ All ${overridableFeatureKeys.length} features set to Default` });
+        return;
+      }
+
+      const provider = globalConfig?.provider || "claude";
+      const modelName = globalConfig?.model_name || "";
+      const apiKeyRef = PROVIDER_TO_SERVICE_KEY[provider] || null;
+
+      const existingIds = featureConfigs.filter(c => !c.is_active).map(c => c.id);
+      if (existingIds.length) {
+        const { error } = await supabase
+          .from("platform_ai_provider_config")
+          .update({ is_active: true })
+          .in("id", existingIds);
+        if (error) {
+          toast({ title: "Bulk update failed", description: error.message, variant: "destructive" });
+          return;
+        }
+        setAiConfigs(prev => prev.map(c => (existingIds.includes(c.id) ? { ...c, is_active: true } : c)));
+      }
+
+      // Features that have never been configured need a row created first.
+      const missing = overridableFeatureKeys.filter(k => !aiConfigs.some(c => c.feature_key === k));
+      if (missing.length) {
+        const { data, error } = await supabase
+          .from("platform_ai_provider_config")
+          .insert(
+            missing.map(feature_key => ({
+              feature_key,
+              provider,
+              model_name: modelName,
+              api_key_ref: apiKeyRef,
+              is_active: true,
+            }))
+          )
+          .select();
+        if (error) {
+          toast({ title: "Bulk create failed", description: error.message, variant: "destructive" });
+          return;
+        }
+        if (data) setAiConfigs(prev => [...prev, ...(data as unknown as AIConfig[])]);
+      }
+      toast({ title: `✓ All ${overridableFeatureKeys.length} features set to Custom` });
+    } finally {
+      setBulkSaving(false);
+    }
+  };
+
   const getApiKeyForService = (serviceKey: string) => apiKeys.find(k => k.service_key === serviceKey);
 
   const saveApiKey = async () => {
@@ -249,6 +344,9 @@ const PlatformAIConfigPage: React.FC = () => {
       mode: keyForm.mode,
     };
     if (editingKey.service_key === "azure_openai") {
+      // Store the resource ROOT — a pasted Foundry project endpoint
+      // (…/api/projects/<name>) would break every inference URL.
+      config.endpoint = normalizeAzureEndpoint(keyForm.endpoint || editingKey.endpoint);
       config.deployment = keyForm.deployment;
       config.api_version = keyForm.api_version; // optional — blank uses the newer /openai/v1 surface
       config.api_style = keyForm.api_style; // "chat_completions" (default, works for any model) or "responses"
@@ -329,7 +427,7 @@ const PlatformAIConfigPage: React.FC = () => {
         // partner models (grok/llama/deepseek/mistral) → /models. Rather than guess per model,
         // PROBE the plausible surfaces in order and lock onto whichever Azure accepts, then
         // persist it to the drawer so Save keeps the working surface for real feature calls.
-        const endpoint = cfg.endpoint?.replace(/\/$/, "");
+        const endpoint = normalizeAzureEndpoint(cfg.endpoint);
         const deployment = cfg.deployment;
         if (!endpoint || !deployment) {
           success = false;
@@ -425,7 +523,7 @@ const PlatformAIConfigPage: React.FC = () => {
   };
 
   const fetchAzureModels = async () => {
-    const endpoint = keyForm.endpoint?.replace(/\/$/, "");
+    const endpoint = normalizeAzureEndpoint(keyForm.endpoint);
     const apiKey = keyForm.api_key;
     if (!endpoint || !apiKey) {
       toast({ title: "Enter API Key and Endpoint first", variant: "destructive" });
@@ -770,20 +868,49 @@ const PlatformAIConfigPage: React.FC = () => {
                   <th className="px-4 py-2.5 font-medium text-muted-foreground">Feature</th>
                   <th className="px-4 py-2.5 font-medium text-muted-foreground">Provider</th>
                   <th className="px-4 py-2.5 font-medium text-muted-foreground">Model</th>
-                  <th className="px-4 py-2.5 font-medium text-muted-foreground">Override</th>
+                  <th className="px-4 py-2.5 font-medium text-muted-foreground">
+                    <div className="flex items-center gap-2">
+                      <span>Override</span>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-2 text-[11px] font-normal"
+                          disabled={bulkSaving}
+                          onClick={() => bulkSetOverride(false)}
+                          title="Set every feature back to the Global Default"
+                        >
+                          {bulkSaving ? <Loader2 size={11} className="animate-spin" /> : "All Default"}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-2 text-[11px] font-normal"
+                          disabled={bulkSaving}
+                          onClick={() => bulkSetOverride(true)}
+                          title="Give every feature its own custom provider/model"
+                        >
+                          {bulkSaving ? <Loader2 size={11} className="animate-spin" /> : "All Custom"}
+                        </Button>
+                      </div>
+                    </div>
+                  </th>
                   <th className="px-4 py-2.5 font-medium text-muted-foreground">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {Object.entries(FEATURE_LABELS).filter(([k]) => k !== "global_default").map(([key, label]) => {
                   const config = featureConfigs.find(c => c.feature_key === key);
-                  const isOverride = config?.is_active && config?.provider !== globalConfig?.provider;
+                  const isOverride = !!config?.is_active;
+                  // An inactive row resolves to global_default at call time — show that, not its stale saved values.
+                  const effProvider = (isOverride ? config?.provider : globalConfig?.provider) || "claude";
+                  const effModel = (isOverride ? config?.model_name : globalConfig?.model_name) || "";
                   return (
                     <tr key={key} className="border-t border-border">
                       <td className="px-4 py-2.5 font-medium text-foreground">{label}</td>
                       <td className="px-4 py-2.5">
                         <Select
-                          value={config?.provider || globalConfig?.provider || "claude"}
+                          value={effProvider}
                           onValueChange={v => {
                             const models = getMergedModels(v);
                             const serviceKey = PROVIDER_TO_SERVICE_KEY[v] || null;
@@ -797,21 +924,21 @@ const PlatformAIConfigPage: React.FC = () => {
                         </Select>
                       </td>
                       <td className="px-4 py-2.5">
-                        {(config?.provider || globalConfig?.provider) === "azure_openai" ? (
+                        {effProvider === "azure_openai" ? (
                           <Input
                             className="h-8 text-xs w-[200px]"
-                            value={config?.model_name || globalConfig?.model_name || ""}
-                            onChange={e => updateAIConfig(key, { model_name: e.target.value })}
+                            value={effModel}
+                            onChange={e => updateAIConfig(key, { model_name: e.target.value, is_active: true })}
                             placeholder="Deployment name"
                           />
                         ) : (
                           <Select
-                            value={config?.model_name || globalConfig?.model_name || ""}
-                            onValueChange={v => updateAIConfig(key, { model_name: v })}
+                            value={effModel}
+                            onValueChange={v => updateAIConfig(key, { model_name: v, is_active: true })}
                           >
                             <SelectTrigger className="h-8 text-xs w-[200px]"><SelectValue /></SelectTrigger>
                             <SelectContent>
-                              {getMergedModels(config?.provider || globalConfig?.provider || "claude").map(m => (
+                              {getMergedModels(effProvider).map(m => (
                                 <SelectItem key={m.value} value={m.value}>{m.label}{m.isCustom ? " ★" : ""}</SelectItem>
                               ))}
                             </SelectContent>
@@ -821,12 +948,9 @@ const PlatformAIConfigPage: React.FC = () => {
                       <td className="px-4 py-2.5">
                         <div className="flex items-center gap-2">
                           <Switch
-                            checked={!!isOverride}
-                            onCheckedChange={checked => {
-                              if (!checked && globalConfig) {
-                                updateAIConfig(key, { provider: globalConfig.provider, model_name: globalConfig.model_name });
-                              }
-                            }}
+                            checked={isOverride}
+                            disabled={bulkSaving || saving === key}
+                            onCheckedChange={checked => setOverride(key, checked)}
                           />
                           <span className="text-xs text-muted-foreground">{isOverride ? "Custom" : "Default"}</span>
                         </div>
@@ -1117,8 +1241,13 @@ const PlatformAIConfigPage: React.FC = () => {
                 className="mt-1"
                 value={keyForm.endpoint}
                 onChange={e => setKeyForm(p => ({ ...p, endpoint: e.target.value }))}
-                placeholder={editingKey?.service_key === "azure_openai" ? "https://YOUR-RESOURCE.openai.azure.com/" : ""}
+                placeholder={editingKey?.service_key === "azure_openai" ? "https://YOUR-RESOURCE.services.ai.azure.com/" : ""}
               />
+              {editingKey?.service_key === "azure_openai" && (
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Use the <b>resource root only</b> — e.g. <code>https://YOUR-RESOURCE.services.ai.azure.com/</code>. Do <b>not</b> paste the Foundry <b>project</b> endpoint (<code>…/api/projects/NAME</code>) — that's the Agents/SDK URL, not the inference one. Any extra path is stripped automatically on save.
+                </p>
+              )}
             </div>
 
             {editingKey?.service_key === "azure_openai" && (

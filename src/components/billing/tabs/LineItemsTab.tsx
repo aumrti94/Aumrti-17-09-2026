@@ -16,6 +16,9 @@ import { isAdmissionBill } from "@/lib/admissionBill";
 import { formatINR, roundCurrency } from "@/lib/currency";
 import { getDefaultGSTRate } from "@/lib/gstRules";
 import { fetchPreAuthCeiling, type PreAuthCeiling } from "@/lib/insuranceCeiling";
+import { computeBillMoney } from "@/lib/billMoney";
+import { fetchAdvanceLedger } from "@/lib/advanceLedger";
+import { checkBillWritable } from "@/lib/lockedDay";
 import {
   fetchPackageContext,
   checkServiceAgainstPackage,
@@ -109,32 +112,10 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
     if (!bill.admission_id || !hospitalId) return;
     if (isAdmissionBill(bill.bill_type)) {
       fetchPreAuthCeiling(bill.admission_id, hospitalId).then(setPreAuthCeiling);
-      // Fetch net advance balance — same formula as AdvanceApplicationTab:
-      // viewBalance (ipd_advances net) + unmirroredTotal (legacy advance_receipts)
-      Promise.all([
-        (supabase as any)
-          .from("ipd_advance_balances")
-          .select("balance")
-          .eq("admission_id", bill.admission_id)
-          .eq("hospital_id", hospitalId)
-          .maybeSingle(),
-        (supabase as any)
-          .from("advance_receipts")
-          .select("amount, receipt_number")
-          .eq("hospital_id", hospitalId)
-          .eq("patient_id", bill.patient_id),
-        (supabase as any)
-          .from("ipd_advances")
-          .select("reference_no")
-          .eq("admission_id", bill.admission_id)
-          .not("reference_no", "is", null),
-      ]).then(([advRes, receiptsRes, refsRes]: any[]) => {
-        const mirroredRefs = new Set((refsRes.data || []).map((r: any) => r.reference_no));
-        const unmirroredTotal = (receiptsRes.data || [])
-          .filter((r: any) => !mirroredRefs.has(r.receipt_number))
-          .reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
-        setNetAdvance(Number(advRes.data?.balance || 0) + unmirroredTotal);
-      });
+      // Net advance for this ADMISSION, via the shared ledger. This used to
+      // query advance_receipts by patient_id, sweeping in advances from the
+      // patient's other stays and inventing a refund that was never owed.
+      fetchAdvanceLedger(bill.admission_id, hospitalId).then((l) => setNetAdvance(l.netAdvance));
     }
     if (isAdmissionBill(bill.bill_type)) {
       fetchPackageContext(bill.admission_id).then(setPackageCtx);
@@ -241,11 +222,33 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
     return { rate, itemType, gstPct, taxable: rate, gstAmt, total: roundCurrency(rate + gstAmt) };
   };
 
+  /**
+   * Refuse a line-item mutation the bill can't absorb, BEFORE writing it.
+   * Every handler here writes bill_line_items first and only then recomputes
+   * bills totals (via onRefresh → BillEditor.recalcBillTotals), so without
+   * this the item commits against a bill whose total is then refused —
+   * a partial write the user is never told about clearly.
+   */
+  const ensureBillWritable = async (): Promise<boolean> => {
+    if (!hospitalId) return false;
+    const lockError = await checkBillWritable(hospitalId, {
+      billDate: bill.bill_date ?? null,
+      billStatus: bill.bill_status ?? null,
+      admissionId: bill.admission_id ?? null,
+    });
+    if (lockError) {
+      toast({ title: "Bill is locked", description: lockError, variant: "destructive" });
+      return false;
+    }
+    return true;
+  };
+
   const insertServiceLine = async (
     svc: any,
     opts: { isInsuranceCovered?: boolean } = {}
   ) => {
     if (!hospitalId) return;
+    if (!(await ensureBillWritable())) return;
     const { rate, itemType, gstPct, taxable, gstAmt, total } = priceServiceLine(svc);
 
     const payload: Record<string, any> = {
@@ -361,6 +364,7 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
 
   const addCustomItem = async (desc: string) => {
     if (!hospitalId || !desc) return;
+    if (!(await ensureBillWritable())) return;
     const { error } = await supabase.from("bill_line_items").insert({
       hospital_id: hospitalId,
       bill_id: bill.id,
@@ -384,8 +388,13 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
 
   const deleteItem = async (itemId: string) => {
     const item = lineItems.find((i) => i.id === itemId);
+    if (!(await ensureBillWritable())) return;
     // Hard delete (is_deleted column not in schema yet)
-    await (supabase as any).from("bill_line_items").delete().eq("id", itemId);
+    const { error: delError } = await (supabase as any).from("bill_line_items").delete().eq("id", itemId);
+    if (delError) {
+      toast({ title: "Failed to remove item", description: delError.message, variant: "destructive" });
+      return;
+    }
     logAudit({
       action: "deleted",
       module: "billing",
@@ -401,6 +410,7 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
     if (!item) return;
     const previous = item[field];
     if (previous === value) return;
+    if (!(await ensureBillWritable())) return;
     const updated = { ...item, [field]: value };
     const taxable = updated.quantity * updated.unit_rate * (1 - updated.discount_percent / 100);
     const gstAmt = taxable * updated.gst_percent / 100;
@@ -438,24 +448,37 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
     updateItem(item.id, field, value);
   };
 
-  // Calculate totals
-  const subtotal = lineItems.reduce((s, i) => s + i.quantity * i.unit_rate * (1 - i.discount_percent / 100), 0);
-  const gstBreakdown: Record<number, number> = {};
-  lineItems.forEach((i) => {
-    const taxable = i.quantity * i.unit_rate * (1 - i.discount_percent / 100);
-    const gst = taxable * i.gst_percent / 100;
-    gstBreakdown[i.gst_percent] = (gstBreakdown[i.gst_percent] || 0) + gst;
-  });
-  const totalGst = Object.values(gstBreakdown).reduce((a, b) => a + b, 0);
-  const grossTotal = Math.max(0, subtotal + totalGst - Number(bill.discount_amount || 0));
-  const patientPayable = grossTotal - bill.insurance_amount;
-  // For IPD bills use the live net advance balance (deposits − refunds) from the view.
+  // Calculate totals — via the shared contract so this footer, the editor
+  // header and the Advance tab cannot disagree about the same bill.
+  // For IPD bills the live net advance balance (deposits − refunds) is used;
   // bill.paid_amount is inflated by syncAdvanceToBill auto-syncs and can diverge.
   const totalDirectCashPaid = payments.reduce((s, p) => s + p.amount, 0);
-  const advancePaid = (isAdmissionBill(bill.bill_type) && netAdvance !== null) ? netAdvance : Math.min(bill.paid_amount, bill.advance_received || 0);
-  const directPaid  = (isAdmissionBill(bill.bill_type)) ? totalDirectCashPaid : Math.max(0, bill.paid_amount - advancePaid);
-  const effectivePaid = advancePaid + directPaid;
-  const balanceDue  = patientPayable - effectivePaid;
+  const advancePaid = isAdmissionBill(bill.bill_type)
+    ? (netAdvance ?? 0)
+    : Math.min(bill.paid_amount, bill.advance_received || 0);
+  const directPaid = isAdmissionBill(bill.bill_type)
+    ? totalDirectCashPaid
+    : Math.max(0, bill.paid_amount - advancePaid);
+
+  const money = computeBillMoney({
+    lineItems,
+    discountAmount: bill.discount_amount,
+    insuranceAmount: bill.insurance_amount,
+    netAdvance: advancePaid,
+    directPaid,
+  });
+
+  const gstBreakdown: Record<number, number> = {};
+  lineItems.forEach((i) => {
+    gstBreakdown[i.gst_percent] = (gstBreakdown[i.gst_percent] || 0) + Number(i.gst_amount || 0);
+  });
+
+  const subtotal = money.subtotal;
+  const totalGst = money.gst;
+  const grossTotal = money.netCharges;
+  const patientPayable = money.patientPayable;
+  const effectivePaid = money.totalCredits;
+  const balanceDue = money.balanceDue;
 
   // Ceiling meter (derived from live lineItems to stay in sync)
   const ceilingRunningTotal = roundCurrency(lineItems.reduce((s, i) => s + Number(i.total_amount), 0));
@@ -856,19 +879,19 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
                 <span>{formatINR(effectivePaid)}</span>
               </div>
             )}
-            {balanceDue > 0 && (
+            {money.settlement === "due" && (
               <div className="flex justify-between text-destructive font-bold border-t border-border pt-1">
                 <span>Balance Due</span>
-                <span>{formatINR(balanceDue)}</span>
+                <span>{formatINR(money.balanceDue)}</span>
               </div>
             )}
-            {balanceDue < 0 && (
+            {money.settlement === "refund" && (
               <div className="flex justify-between text-blue-700 font-bold border-t border-border pt-1 bg-blue-50 -mx-1 px-1 rounded">
                 <span>⬅ Refund Due to Patient</span>
-                <span>{formatINR(Math.abs(balanceDue))}</span>
+                <span>{formatINR(money.refundDue)}</span>
               </div>
             )}
-            {balanceDue === 0 && effectivePaid > 0 && (
+            {money.settlement === "settled" && effectivePaid > 0 && (
               <div className="flex justify-between text-emerald-700 font-semibold border-t border-border pt-1">
                 <span>✓ Fully Settled</span>
                 <span>Nil</span>

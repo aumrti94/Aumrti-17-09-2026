@@ -3,6 +3,7 @@ import { calcGST } from "@/lib/currency";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
 import { buildOTChargeLineItems, recordOTServiceCharges, recordServiceCharge } from "@/lib/serviceBilling";
 import { getRoomChargeGSTRate, DEFAULT_PHARMACY_GST_PERCENT } from "@/lib/gstRules";
+import { checkBillWritable } from "@/lib/lockedDay";
 
 // service_charges.service_module for sweep-added item_types that don't already
 // match a canonical MODULE_ string (lab/radiology/pharmacy already do).
@@ -134,7 +135,36 @@ export async function autoPullAdmissionCharges(
   }
   _inFlightPulls.add(_guardKey);
   try {
+  // ----- Locked-day pre-flight (BEFORE any delete or insert) -----
+  // This sweep writes line items, flags source records as billed, and only then
+  // updates bills.total_amount. If that last write is refused by the day-closure
+  // trigger we would be left with line items whose sum no longer matches the
+  // bill and source rows already marked billed. Fail here instead, while the
+  // bill is still untouched. Mirrors the SQL predicate — see lib/lockedDay.ts.
+  const { data: lockBill } = await (supabase as any)
+    .from("bills")
+    .select("bill_date, bill_status, admission_id")
+    .eq("id", billId)
+    .maybeSingle();
+  if (lockBill) {
+    const lockError = await checkBillWritable(hospitalId, {
+      billDate: (lockBill as any).bill_date ?? null,
+      billStatus: (lockBill as any).bill_status ?? null,
+      admissionId: (lockBill as any).admission_id ?? null,
+    });
+    if (lockError) {
+      return { ok: false, insertedCount: 0, usedFallbackRate: false, error: lockError };
+    }
+  }
+
   const items: any[] = [];
+  // Deletes are DEFERRED until the replacement rows are safely inserted.
+  // Previously the consultation and room-charge lines were deleted up front and
+  // re-inserted at the end, so any insert failure silently wiped those charges
+  // off the bill with nothing to restore them. Collected as row ids (not dedupe
+  // keys) so the delete cannot also take out the rows we just inserted, which
+  // share the same key.
+  const pendingDeleteIds: string[] = [];
   const nursingProcedureIdsToMark: string[] = [];
   const implantIdsToMark: string[] = [];
   const otServiceChargeItems: any[] = [];
@@ -151,6 +181,23 @@ export async function autoPullAdmissionCharges(
   const existingKeys = new Set<string>(
     (scopedExisting || []).map((item: any) => buildKey(item))
   );
+
+  /** Queue the existing rows carrying `dedupeKey` for deletion after the insert lands. */
+  const queueDeleteByDedupeKey = (dedupeKey: string) => {
+    (scopedExisting || []).forEach((row: any) => {
+      if (row.source_dedupe_key === dedupeKey && row.id) pendingDeleteIds.push(row.id);
+    });
+  };
+
+  /** Retire the superseded rows. Only ever called once the replacements are in. */
+  const flushPendingDeletes = async () => {
+    if (pendingDeleteIds.length === 0) return;
+    await (supabase as any)
+      .from("bill_line_items")
+      .delete()
+      .eq("bill_id", billId)
+      .in("id", pendingDeleteIds);
+  };
 
   const addUniqueItem = (item: any, nursingProcedureId?: string) => {
     const key = buildKey(item);
@@ -530,13 +577,11 @@ export async function autoPullAdmissionCharges(
       const totalGst = calcGST(totalFee, gstPct);
       const visitDedupeKey = `ipd_visit:${doctorId}:${date}`;
       
-      // Remove old dedupe lines for this doctor so we can insert the newly pulled one and prevent race condition duplicates
-      await (supabase as any)
-        .from("bill_line_items")
-        .delete()
-        .eq("bill_id", billId)
-        .eq("source_dedupe_key", visitDedupeKey);
-        
+      // Queue removal of the old lines for this doctor so the newly pulled one
+      // replaces them without duplicating. Deferred until after the insert
+      // succeeds — see pendingDeleteIds.
+      queueDeleteByDedupeKey(visitDedupeKey);
+
       existingKeys.delete(
         buildKey({ source_module: "ipd_visit", source_dedupe_key: visitDedupeKey, item_type: "consultation" })
       );
@@ -596,15 +641,12 @@ export async function autoPullAdmissionCharges(
     .maybeSingle();
 
   if (admission) {
-    // Delete unconditionally, before deciding whether to re-add: this keeps the day-count
+    // Queue unconditionally, before deciding whether to re-add: this keeps the day-count
     // current for inpatients AND retro-cleans a phantom room charge previously written onto
     // a bed-less (day care) bill, which would otherwise survive every re-pull.
+    // Deferred until after the insert succeeds — see pendingDeleteIds.
     const roomDedupeKey = `ipd:room:${admissionId}`;
-    await (supabase as any)
-      .from("bill_line_items")
-      .delete()
-      .eq("bill_id", billId)
-      .eq("source_dedupe_key", roomDedupeKey);
+    queueDeleteByDedupeKey(roomDedupeKey);
     existingKeys.delete(
       buildKey({
         source_module: "ipd",
@@ -777,6 +819,19 @@ export async function autoPullAdmissionCharges(
   // ----- Insert + recalc -----
   let insertedCount = 0;
   if (items.length > 0) {
+    // Probe the bills row before writing anything. The pre-flight above models
+    // the day-closure rule, but RLS or another trigger could still refuse the
+    // final totals update — and by then the line items would already be in.
+    // A no-op update surfaces that refusal while the bill is still untouched.
+    const { error: probeError } = await (supabase as any)
+      .from("bills")
+      .update({ updated_at: new Date().toISOString() })
+      .eq("id", billId);
+    if (probeError) {
+      console.error("IPD auto-pull probe write failed:", probeError.message);
+      return { ok: false, insertedCount: 0, usedFallbackRate, error: probeError.message };
+    }
+
     const { error: insertError } = await supabase
       .from("bill_line_items")
       .insert(items);
@@ -785,6 +840,9 @@ export async function autoPullAdmissionCharges(
       return { ok: false, insertedCount: 0, usedFallbackRate, error: insertError.message };
     }
     insertedCount = items.length;
+
+    // Replacement rows are in — now retire the superseded ones.
+    await flushPendingDeletes();
 
     if (nursingProcedureIdsToMark.length > 0) {
       await (supabase as any)
@@ -838,6 +896,11 @@ export async function autoPullAdmissionCharges(
         performedBy: item.ordered_by ?? null,
       });
     }
+  } else {
+    // Nothing new to insert, but there may still be rows queued purely as
+    // cleanup (e.g. a phantom room charge on a bed-less day care bill, which is
+    // deleted with no replacement). Safe to run — there is no insert to protect.
+    await flushPendingDeletes();
   }
 
   const result = await recalculateBillTotalsSafe(billId);

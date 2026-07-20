@@ -11,6 +11,7 @@ import { deleteHospitalStream, checkDeletePrerequisites, type DeletePreflightRes
 import { Progress } from "@/components/ui/progress";
 import { FormError } from "@/components/ui/FormError";
 import { PLATFORM_STATUS_PILL } from "@/lib/platform-utils";
+import { formatINRExact } from "@/lib/currency";
 import { logAdminAction } from "@/lib/adminAudit";
 import { startImpersonation } from "@/lib/impersonation";
 
@@ -123,7 +124,7 @@ async function fetchHospitalDetail(id: string) {
   const [hRes, sRes, overRes, pricRes, plansRes, entRes] = await Promise.all([
     (supabase as any).from("hospitals").select("*").eq("id", id).maybeSingle(),
     (supabase as any).from("hospital_subscriptions")
-      .select("*, subscription_plans(id,name,slug,price_monthly,price_yearly)")
+      .select("*, subscription_plans(id,name,slug,price_monthly,price_yearly,max_beds,max_staff,storage_included_gb,trial_days,description)")
       .eq("hospital_id", id).maybeSingle(),
     (supabase as any).from("hospital_feature_overrides")
       .select("module_key, is_enabled, reason").eq("hospital_id", id),
@@ -199,6 +200,9 @@ export default function HospitalDetailPage() {
   const [selPlan, setSelPlan] = useState("");
   const [selStatus, setSelStatus] = useState("");
   const [subNotes, setSubNotes] = useState("");
+  // Manual trial-end override (yyyy-mm-dd, "" = leave to the plan's trial_days).
+  const [selTrialEnd, setSelTrialEnd] = useState("");
+  const [selConvMode, setSelConvMode] = useState("conversion_date");
 
   // The Plan / Status dropdowns show the hospital's CURRENT plan and status as the
   // selected value (no "Keep current" placeholder). Re-sync whenever the underlying
@@ -209,11 +213,13 @@ export default function HospitalDetailPage() {
     if (data.subscription) {
       setSelPlan(data.subscription.plan_id || "");
       setSelStatus(data.subscription.status || "trial");
+      setSelTrialEnd(data.subscription.trial_ends_at ? String(data.subscription.trial_ends_at).slice(0, 10) : "");
+      setSelConvMode(data.subscription.conversion_period_start_mode || "conversion_date");
     } else {
       setSelPlan(data.plans?.[0]?.id || "");
       setSelStatus("trial");
     }
-  }, [data?.subscription?.plan_id, data?.subscription?.status, data?.plans]);
+  }, [data?.subscription?.plan_id, data?.subscription?.status, data?.subscription?.trial_ends_at, data?.plans]);
   const [subError, setSubError] = useState<string | null>(null);
   const [pricingError, setPricingError] = useState<string | null>(null);
 
@@ -222,16 +228,45 @@ export default function HospitalDetailPage() {
       const payload: any = { notes: subNotes || data?.subscription?.notes };
       if (selPlan) payload.plan_id = selPlan;
       if (selStatus) payload.status = selStatus;
+      payload.conversion_period_start_mode = selConvMode;
+      // Only send trial_ends_at when the admin actually edited it. Sending it
+      // unchanged would read as a manual override and suppress the plan rebase.
+      const currentTrialEnd = data?.subscription?.trial_ends_at
+        ? String(data.subscription.trial_ends_at).slice(0, 10) : "";
+      if (selTrialEnd && selTrialEnd !== currentTrialEnd) {
+        payload.trial_ends_at = new Date(`${selTrialEnd}T23:59:59`).toISOString();
+      }
       if (data?.subscription) {
-        await (supabase as any).from("hospital_subscriptions")
+        const { error } = await (supabase as any).from("hospital_subscriptions")
           .update(payload).eq("hospital_id", id);
+        if (error) throw error;
       } else {
-        await (supabase as any).from("hospital_subscriptions")
+        const { error } = await (supabase as any).from("hospital_subscriptions")
           .insert({ hospital_id: id, ...payload, status: selStatus || "trial" });
+        if (error) throw error;
       }
     },
     onSuccess: () => { setSubError(null); toast.success("Subscription updated"); invalidate(); qc.invalidateQueries({ queryKey: ["subscription-config", id] }); },
     onError: (e: any) => { const m = getErrorMessage(e); setSubError(m); toast.error(m); },
+  });
+
+  // Recompute trial_ends_at from the plan's CURRENT trial_days. Needed because
+  // editing a plan's trial_days in Plans Manager does not touch live subscriptions.
+  const resyncTrial = useMutation({
+    mutationFn: async () => {
+      const { data: newEnd, error } = await (supabase as any)
+        .rpc("resync_trial_end", { p_hospital_id: id });
+      if (error) throw error;
+      return newEnd as string | null;
+    },
+    onSuccess: (newEnd) => {
+      toast.success(newEnd
+        ? `Trial resynced — now ends ${new Date(newEnd).toLocaleDateString("en-IN")}`
+        : "No trial to resync (hospital is not on trial)");
+      invalidate();
+      qc.invalidateQueries({ queryKey: ["subscription-config", id] });
+    },
+    onError: (e: any) => toast.error(getErrorMessage(e)),
   });
 
   // ── Module override toggle ──
@@ -470,6 +505,27 @@ export default function HospitalDetailPage() {
   }
 
   const { hospital, subscription, overrides, pricing, plans, entitlements } = data!;
+
+  // Trial maths for the Subscription card. `drift` is how far the stored trial end sits
+  // from what the plan's CURRENT trial_days would produce — non-zero means someone edited
+  // the plan (or moved the hospital) after signup and the stored date was never resynced.
+  const trialInfo = (() => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const endMs = subscription?.trial_ends_at ? new Date(subscription.trial_ends_at).getTime() : null;
+    const daysLeft = endMs === null ? null : Math.ceil((endMs - Date.now()) / DAY);
+    const planDays = subscription?.subscription_plans?.trial_days;
+    const planEnd = subscription?.created_at && planDays != null
+      ? new Date(subscription.created_at).getTime() + (Number(planDays) + Number(subscription.trial_bonus_days ?? 0)) * DAY
+      : null;
+    return {
+      daysLeft,
+      expired: daysLeft !== null && daysLeft <= 0,
+      planEnd,
+      drift: planEnd !== null && endMs !== null
+        ? Math.round((planEnd - endMs) / DAY)
+        : null,
+    };
+  })();
   if (!hospital) return <div className="p-6 text-muted-foreground text-sm">Hospital not found.</div>;
 
   const overrideMap = new Map(overrides.map((o) => [o.module_key, o.is_enabled]));
@@ -750,14 +806,98 @@ export default function HospitalDetailPage() {
           <div className="space-y-6 max-w-lg">
             {subscription ? (
               <div className="bg-card border border-border rounded-xl p-5 space-y-3 shadow-sm">
-                <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider">Current</p>
-                <p className="text-lg font-bold text-foreground">{subscription.subscription_plans?.name ?? "Unknown Plan"}</p>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider">Current plan</p>
+                    <p className="text-lg font-bold text-foreground">{subscription.subscription_plans?.name ?? "Unknown Plan"}</p>
+                    {subscription.subscription_plans?.description && (
+                      <p className="text-xs text-muted-foreground">{subscription.subscription_plans.description}</p>
+                    )}
+                  </div>
+                  {/* Status pill — mirrors what the hospital sees on Settings › Plan & Billing,
+                      including the days-left counter that was only rendered hospital-side. */}
+                  <span className={`shrink-0 text-xs px-2.5 py-1 rounded-full border font-medium ${
+                    trialInfo.expired
+                      ? "bg-red-50 text-red-700 border-red-200"
+                      : subscription.status === "trial"
+                        ? "bg-blue-50 text-blue-700 border-blue-200"
+                        : subscription.status === "active"
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : "bg-amber-50 text-amber-700 border-amber-200"
+                  }`}>
+                    {subscription.status === "trial"
+                      ? (trialInfo.expired
+                          ? "Trial expired"
+                          : `Free Trial — ${trialInfo.daysLeft}d left`)
+                      : subscription.status}
+                  </span>
+                </div>
+
+                {/* The trial end stored on the subscription can drift from what the plan now
+                    says (plan trial_days edited later, or the hospital moved plans). Surface
+                    the drift rather than letting it be invisible. */}
+                {subscription.status === "trial" && trialInfo.drift !== null && trialInfo.drift !== 0 && (
+                  <div className="text-xs rounded-lg border border-amber-200 bg-amber-50 text-amber-800 px-3 py-2">
+                    Out of sync with the plan: <strong>{subscription.subscription_plans?.name}</strong> grants{" "}
+                    {subscription.subscription_plans?.trial_days}d
+                    {Number(subscription.trial_bonus_days) > 0 ? ` + ${subscription.trial_bonus_days}d referral bonus` : ""},
+                    which would end on {trialInfo.planEnd ? new Date(trialInfo.planEnd).toLocaleDateString("en-IN") : "—"}{" "}
+                    ({trialInfo.drift > 0 ? `${trialInfo.drift}d later` : `${Math.abs(trialInfo.drift)}d earlier`} than the current date).
+                    Use “Resync trial to plan” to apply it.
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div><p className="text-muted-foreground">Monthly price</p><p className="text-foreground font-medium">{formatINRExact(Number(subscription.subscription_plans?.price_monthly ?? 0))}/mo</p></div>
+                  {subscription.subscription_plans?.price_yearly != null && (
+                    <div><p className="text-muted-foreground">Yearly price</p><p className="text-foreground font-medium">{formatINRExact(Number(subscription.subscription_plans.price_yearly))}/yr</p></div>
+                  )}
+                  <div><p className="text-muted-foreground">Bed limit</p><p className="text-foreground">{subscription.subscription_plans?.max_beds ?? "Unlimited"}</p></div>
+                  <div><p className="text-muted-foreground">Staff limit</p><p className="text-foreground">{subscription.subscription_plans?.max_staff ?? "Unlimited"}</p></div>
+                  <div><p className="text-muted-foreground">Storage</p><p className="text-foreground">{subscription.subscription_plans?.storage_included_gb != null ? `${subscription.subscription_plans.storage_included_gb} GB` : "Unlimited"}</p></div>
+                  <div><p className="text-muted-foreground">Plan trial days</p><p className="text-foreground">{subscription.subscription_plans?.trial_days ?? "—"}d</p></div>
+                  <div><p className="text-muted-foreground">Signed up</p><p className="text-foreground">{subscription.created_at ? new Date(subscription.created_at).toLocaleDateString("en-IN") : "—"}</p></div>
                   <div><p className="text-muted-foreground">Status</p><p className="text-foreground font-medium">{subscription.status}</p></div>
                   <div><p className="text-muted-foreground">Razorpay Sub ID</p><p className="text-muted-foreground font-mono text-[10px]">{subscription.razorpay_subscription_id || "—"}</p></div>
-                  {subscription.trial_ends_at && <div><p className="text-muted-foreground">Trial ends</p><p className="text-foreground">{new Date(subscription.trial_ends_at).toLocaleDateString("en-IN")}</p></div>}
+                  {subscription.trial_ends_at && (
+                    <div>
+                      <p className="text-muted-foreground">Trial ends</p>
+                      <p className="text-foreground">
+                        {new Date(subscription.trial_ends_at).toLocaleDateString("en-IN")}
+                        {subscription.status === "trial" && (
+                          <span className="text-muted-foreground"> · {trialInfo.expired ? "expired" : `${trialInfo.daysLeft}d left`}</span>
+                        )}
+                      </p>
+                    </div>
+                  )}
+                  {subscription.current_period_start && <div><p className="text-muted-foreground">Billing period start</p><p className="text-foreground">{new Date(subscription.current_period_start).toLocaleDateString("en-IN")}</p></div>}
                   {subscription.current_period_end && <div><p className="text-muted-foreground">Next billing</p><p className="text-foreground">{new Date(subscription.current_period_end).toLocaleDateString("en-IN")}</p></div>}
+                  {Number(subscription.discount_pct) > 0 && (
+                    <div>
+                      <p className="text-muted-foreground">Discount</p>
+                      <p className="text-foreground">
+                        {subscription.discount_pct}%{subscription.discount_code_applied ? ` (${subscription.discount_code_applied})` : ""}
+                        <span className="text-muted-foreground">
+                          {subscription.discount_expires_at
+                            ? ` — until ${new Date(subscription.discount_expires_at).toLocaleDateString("en-IN")}`
+                            : " — no expiry"}
+                        </span>
+                      </p>
+                    </div>
+                  )}
+                  {Number(subscription.trial_bonus_days) > 0 && (
+                    <div><p className="text-muted-foreground">Referral bonus</p><p className="text-foreground">+{subscription.trial_bonus_days} trial days</p></div>
+                  )}
                 </div>
+                {subscription.status === "trial" && (
+                  <button
+                    onClick={() => resyncTrial.mutate()}
+                    disabled={resyncTrial.isPending}
+                    className="text-xs px-3 h-8 rounded-lg border border-border text-foreground hover:bg-accent disabled:opacity-50"
+                  >
+                    {resyncTrial.isPending ? "Resyncing…" : "Resync trial to plan"}
+                  </button>
+                )}
               </div>
             ) : (
               <p className="text-xs text-muted-foreground">No subscription assigned yet.</p>
@@ -787,6 +927,32 @@ export default function HospitalDetailPage() {
                   {["trial","active","past_due","suspended","cancelled"].map((s) => (
                     <option key={s} value={s}>{s}</option>
                   ))}
+                </select>
+              </div>
+              {selStatus === "trial" && (
+                <div>
+                  <label className="text-xs text-muted-foreground">Trial ends (override)</label>
+                  <input
+                    type="date"
+                    value={selTrialEnd}
+                    onChange={(e) => setSelTrialEnd(e.target.value)}
+                    className="w-full mt-1 h-8 px-3 text-xs bg-background border border-border rounded-lg text-foreground focus:outline-none focus:border-primary"
+                  />
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Leave as-is to follow the plan's trial days. Changing the plan above recalculates
+                    this from the signup date unless you set a date here.
+                  </p>
+                </div>
+              )}
+              <div>
+                <label className="text-xs text-muted-foreground">On conversion, billing starts</label>
+                <select
+                  value={selConvMode}
+                  onChange={(e) => setSelConvMode(e.target.value)}
+                  className="w-full mt-1 h-8 px-3 text-xs bg-background border border-border rounded-lg text-foreground focus:outline-none focus:border-primary"
+                >
+                  <option value="conversion_date">On the conversion date</option>
+                  <option value="trial_end">When the trial would have ended</option>
                 </select>
               </div>
               <div>

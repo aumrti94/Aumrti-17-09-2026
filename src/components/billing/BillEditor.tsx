@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,8 @@ import { recalculateBillTotalsSafe } from "@/lib/billTotals";
 import { autoPullAdmissionCharges } from "@/lib/ipdBilling";
 import { isAdmissionBill } from "@/lib/admissionBill";
 import { formatINR } from "@/lib/currency";
+import { computeBillMoney } from "@/lib/billMoney";
+import { fetchAdvanceLedger, type AdvanceLedger } from "@/lib/advanceLedger";
 import type { BillRecord } from "@/pages/billing/BillingPage";
 
 interface DiscountApproval {
@@ -49,6 +51,11 @@ export interface LineItem {
   unit_rate: number;
   discount_percent: number;
   gst_percent: number;
+  // The persisted money columns. Carried through so every surface sums the SAME
+  // columns billTotals.computeBillTotals does, instead of re-deriving charges
+  // from quantity × unit_rate and drifting on rounding.
+  taxable_amount: number;
+  gst_amount: number;
   total_amount: number;
   source_module: string | null;
   service_id: string | null;
@@ -96,7 +103,8 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
   const [showPaymentLink, setShowPaymentLink] = useState(false);
   const [hospitalInfo, setHospitalInfo] = useState<any>(null);
   const [estimateData, setEstimateData] = useState<AdmissionEstimate | null>(null);
-  const [netAdvanceBalance, setNetAdvanceBalance] = useState<number | null>(null);
+  const [advanceLedger, setAdvanceLedger] = useState<AdvanceLedger | null>(null);
+  const netAdvanceBalance = advanceLedger ? advanceLedger.netAdvance : null;
   const [discountApprovals, setDiscountApprovals] = useState<DiscountApproval[]>([]);
 
   useEffect(() => {
@@ -108,7 +116,7 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
   // Fetch admission estimate + net advance balance for IPD bills
   useEffect(() => {
     if (!bill || bill.bill_type !== "ipd" || !bill.admission_id || !hospitalId) {
-      setEstimateData(null); setNetAdvanceBalance(null); return;
+      setEstimateData(null); setAdvanceLedger(null); return;
     }
     (supabase as any)
       .from("admission_estimates")
@@ -119,47 +127,41 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
       .maybeSingle()
       .then(({ data }: any) => setEstimateData(data || null));
 
-    Promise.all([
-      (supabase as any)
-        .from("ipd_advance_balances")
-        .select("balance")
-        .eq("admission_id", bill.admission_id)
-        .eq("hospital_id", hospitalId)
-        .maybeSingle(),
-      (supabase as any)
-        .from("advance_receipts")
-        .select("amount, receipt_number")
-        .eq("hospital_id", hospitalId)
-        .eq("patient_id", bill.patient_id),
-      (supabase as any)
-        .from("ipd_advances")
-        .select("reference_no")
-        .eq("admission_id", bill.admission_id)
-        .not("reference_no", "is", null),
-    ]).then(([advRes, receiptsRes, refsRes]: any[]) => {
-      const mirroredRefs = new Set((refsRes.data || []).map((r: any) => r.reference_no));
-      const unmirroredTotal = (receiptsRes.data || [])
-        .filter((r: any) => !mirroredRefs.has(r.receipt_number))
-        .reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
-      setNetAdvanceBalance(Number(advRes.data?.balance || 0) + unmirroredTotal);
-    });
+    // Admission-scoped, via the shared ledger. This used to query
+    // advance_receipts by patient_id, which swept in advances from the
+    // patient's OTHER stays and invented a refund that was never owed.
+    fetchAdvanceLedger(bill.admission_id, hospitalId).then(setAdvanceLedger);
   }, [bill?.id, bill?.admission_id, hospitalId]);
+
+  // One money computation for the whole editor — header, footer and tabs all
+  // read from here so they cannot disagree. Derived from the line items, never
+  // from bills.patient_payable (which different write paths have populated with
+  // three incompatible meanings).
+  const money = useMemo(
+    () =>
+      computeBillMoney({
+        lineItems,
+        discountAmount: bill?.discount_amount,
+        insuranceAmount: bill?.insurance_amount,
+        netAdvance: advanceLedger?.netAdvance ?? 0,
+        directPaid: payments.reduce((s, p) => s + p.amount, 0),
+      }),
+    [lineItems, bill?.discount_amount, bill?.insurance_amount, advanceLedger?.netAdvance, payments]
+  );
 
   // Auto-reconcile DB when advance + cash fully cover the bill but DB still shows partial/unpaid.
   // This corrects stale balance_due/payment_status written before the fix was in place.
   useEffect(() => {
-    if (!bill || bill.bill_type !== "ipd" || netAdvanceBalance === null || payments.length === 0 && netAdvanceBalance === 0) return;
+    if (!bill || bill.bill_type !== "ipd" || advanceLedger === null) return;
+    if (payments.length === 0 && money.netAdvance === 0) return;
     if (bill.payment_status === "paid" || bill.payment_status === "refunded") return;
-    const patientPayable = Math.max(0, (bill.patient_payable ?? bill.total_amount) - Number(bill.discount_amount || 0));
-    const directCashPaid = payments.reduce((s, p) => s + p.amount, 0);
-    const effectiveBalance = Math.max(0, patientPayable - netAdvanceBalance - directCashPaid);
-    if (effectiveBalance === 0 && patientPayable > 0) {
+    if (money.patientPayable > 0 && money.balanceDue === 0) {
       (supabase as any).from("bills").update({
         balance_due: 0,
         payment_status: "paid",
       }).eq("id", bill.id).then(() => onRefresh());
     }
-  }, [netAdvanceBalance, payments, bill?.id, bill?.payment_status]);
+  }, [money, advanceLedger, payments, bill?.id, bill?.payment_status]);
 
   const fetchLineItems = useCallback(async () => {
     if (!bill) return;
@@ -178,6 +180,8 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
         unit_rate: Number(d.unit_rate),
         discount_percent: Number(d.discount_percent),
         gst_percent: Number(d.gst_percent),
+        taxable_amount: Number(d.taxable_amount || 0),
+        gst_amount: Number(d.gst_amount || 0),
         total_amount: Number(d.total_amount),
         source_module: d.source_module,
         service_id: d.service_id,
@@ -476,7 +480,11 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
 
       {/* Estimate vs Actual comparison (IPD bills only) */}
       {estimateData && isAdmissionBill(bill.bill_type) && (() => {
-        const actual = Math.max(0, bill.patient_payable ?? bill.total_amount);
+        // Charges accrued so far, gross of advance — comparable like-for-like
+        // against the estimate. Reading bill.patient_payable here showed the
+        // advance-netted residual instead, so a ₹6,000 bill with a ₹20,000
+        // advance reported "₹1,500 actual, 98% under estimate".
+        const actual = money.netCharges;
         const estimated = estimateData.estimated_amount || 0;
         const overrun = estimated > 0 ? ((actual - estimated) / estimated) * 100 : 0;
         const isOverBudget = overrun > 20;
@@ -561,6 +569,7 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
             hospitalId={hospitalId}
             payments={payments}
             netAdvanceBalance={netAdvanceBalance}
+            money={money}
             onRefresh={() => { fetchPayments(); onRefresh(); }}
           />
         </TabsContent>
@@ -574,7 +583,7 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
               admissionId={bill.admission_id}
               patientId={bill.patient_id}
               hospitalId={hospitalId}
-              totalAmount={Math.max(0, (bill.patient_payable ?? bill.total_amount) - Number(bill.discount_amount || 0))}
+              totalAmount={money.patientPayable}
               advanceApplied={(bill as any).advance_applied ?? bill.advance_received ?? 0}
               paidAmount={bill.paid_amount}
               paymentStatus={bill.payment_status}

@@ -23,9 +23,11 @@ vi.mock("@/lib/accounting", () => ({
   autoPostJournalEntry: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Bill totals: no-op for tests
+// Bill totals: no-op for tests. Must resolve to a real RecalculateResult —
+// the function never returns undefined, and callers now read `.ok` to detect
+// a locked-day refusal rather than discarding the result.
 vi.mock("@/lib/billTotals", () => ({
-  recalculateBillTotalsSafe: vi.fn().mockResolvedValue(undefined),
+  recalculateBillTotalsSafe: vi.fn().mockResolvedValue({ ok: true, usedFallback: false }),
 }));
 
 import { autoChargeService } from "./serviceBilling";

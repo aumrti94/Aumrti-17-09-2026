@@ -52,6 +52,46 @@ export const AI_FEATURE_DEFS: AIFeatureDef[] = [
   { key: "ai_rca", label: "AI Root Cause Analysis", description: "AI root-cause analysis for safety events" },
   { key: "staff_burnout", label: "Staff Burnout Risk Monitor", description: "AI staff burnout-risk monitoring" },
   { key: "esg_recommendations", label: "ESG Carbon Recommendations", description: "AI ESG / carbon-reduction recommendations" },
+  // Insurance / revenue cycle
+  { key: "pre_auth_cover_letter", label: "Pre-Auth Cover Letter", description: "AI-drafted pre-authorisation cover letters" },
+  { key: "claim_cover_letter", label: "Claim Cover Letter", description: "AI-drafted insurance claim cover letters" },
+  { key: "irdai_complaint", label: "IRDAI Complaint Drafter", description: "AI-drafted IRDAI escalation complaints" },
+  { key: "rate_dispute_letter", label: "Rate Dispute Letter", description: "AI-drafted payer rate-dispute letters" },
+  { key: "denial_analytics", label: "Denial Analytics", description: "AI narratives on claim-denial analytics" },
+  { key: "coding_accuracy_auditor", label: "Coding Accuracy Auditor", description: "AI audit of MRD/ICD coding accuracy" },
+  // Lab / pathology
+  { key: "lab_report_narrative", label: "Lab Report Narrative", description: "AI narrative summaries of lab reports" },
+  { key: "pathology_impression_draft", label: "Pathology Impression Draft", description: "AI-drafted pathology impressions" },
+  { key: "lab_reflex_tests", label: "Lab Reflex Test Suggester", description: "AI reflex-test recommendations" },
+  { key: "lab_ast_phenotype", label: "Lab AST Phenotype", description: "AI antibiotic-susceptibility phenotype detection" },
+  { key: "lab_auto_interpreter", label: "Lab Auto-Interpreter", description: "AI auto-interpretation of lab panels" },
+  { key: "lab_sample_mixup", label: "Lab Sample Mix-up Detector", description: "AI detection of likely sample mix-ups" },
+  // Clinical
+  { key: "differential_diagnosis", label: "Differential Diagnosis", description: "AI differential-diagnosis suggestions" },
+  { key: "generate_clinical_note", label: "Clinical Note Generator", description: "AI-generated clinical notes" },
+  { key: "adr_detector", label: "ADR Detector", description: "AI adverse-drug-reaction detection" },
+  { key: "discharge_summary_structured", label: "Discharge Summary (Structured)", description: "AI structured discharge-summary drafting" },
+  { key: "critical_incidental_finder", label: "Critical Incidental Finder", description: "AI detection of critical incidental radiology findings" },
+  { key: "radiology_tat_predictor", label: "Radiology TAT Predictor", description: "AI radiology turnaround-time prediction" },
+  // Emergency
+  { key: "ed_boarding_predictor", label: "ED Boarding Predictor", description: "AI ED boarding / crowding prediction" },
+  { key: "ed_discharge_summary", label: "ED Discharge Summary", description: "AI ED discharge-summary drafting" },
+  // OT / nursing / HR
+  { key: "ot_cancellation_predictor", label: "OT Cancellation Predictor", description: "AI OT-cancellation risk prediction" },
+  { key: "nurse_workload_optimizer", label: "Nurse Workload Optimizer", description: "AI nurse workload balancing" },
+  { key: "roster_optimizer", label: "Roster Optimizer", description: "AI staff roster optimisation" },
+  // Inventory / blood bank
+  { key: "inventory_itc_classify", label: "Inventory ITC Classifier", description: "AI GST ITC classification of inventory" },
+  { key: "inventory_anomaly_digest", label: "Inventory Anomaly Digest", description: "AI inventory anomaly/leakage digest" },
+  { key: "blood_demand_forecaster", label: "Blood Demand Forecaster", description: "AI blood-bank demand forecasting" },
+  // Patient-facing
+  { key: "patient_chatbot", label: "Patient Chatbot", description: "AI patient portal chatbot" },
+  { key: "phr_health_story", label: "PHR Health Story", description: "AI patient health-story narratives" },
+  { key: "health_coach_bot", label: "Health Coach Bot", description: "AI patient health-coach assistant" },
+  { key: "translation", label: "Patient Content Translation", description: "AI translation of patient content" },
+  { key: "patient_context_summary", label: "Patient Context Summary", description: "AI patient-context summarisation" },
+  // Messaging
+  { key: "whatsapp_bot_intent", label: "WhatsApp Bot (Intent)", description: "AI intent handling for the WhatsApp bot" },
 ];
 
 export const AI_FEATURE_KEYS: string[] = AI_FEATURE_DEFS.map((f) => f.key);
