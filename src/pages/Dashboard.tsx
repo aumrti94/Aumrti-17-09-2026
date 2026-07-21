@@ -17,6 +17,7 @@ import {
 import { useDashboardData } from "@/hooks/useDashboardData";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { hasAccess } from "@/lib/routeRoles";
+import { hasTabAccess, hasActionAccess } from "@/lib/tabPermissions";
 import { useCountUp } from "@/hooks/useCountUp";
 import { cn } from "@/lib/utils";
 import RevenueChart from "@/components/dashboard/RevenueChart";
@@ -96,6 +97,14 @@ const Dashboard: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const lastUpdated = useLastUpdated(loading);
 
+  // Dashboard keycards & buttons are customisable per role (SettingsRolesPage) and per
+  // user (StaffAccessPanel) via the `dashboard` pseudo-module. A card shows only when the
+  // linked module is reachable AND its card tab is not withheld; buttons gate on actions.
+  const cardVisible = (route: string, cardKey: string) =>
+    hasAccess(route, role, permissions) && hasTabAccess("dashboard", cardKey, permissions, role);
+  const panelVisible = (panelKey: string) => hasTabAccess("dashboard", panelKey, permissions, role);
+  const actionAllowed = (actionKey: string) => hasActionAccess("dashboard", actionKey, permissions, role);
+
   // Redirect admin users to onboarding wizard if setup not complete
   useEffect(() => {
     if (roleLoading || !hospitalId) return;
@@ -125,6 +134,7 @@ const Dashboard: React.FC = () => {
   };
 
   const openDrillDown = (type: KPIType) => {
+    if (!actionAllowed("drilldown")) return; // drill-down withheld for this role/user
     const configs: Record<KPIType, DrillDownConfig> = {
       revenue: {
         type: "revenue",
@@ -249,13 +259,15 @@ const Dashboard: React.FC = () => {
         </div>
         <div className="flex items-center gap-2">
           <span className="text-[11px] text-muted-foreground">Updated {lastUpdated}</span>
-          <button
-            onClick={handleRefresh}
-            className="p-1.5 rounded-md hover:bg-muted transition-colors active:scale-95"
-            aria-label="Refresh dashboard"
-          >
-            <RefreshCw size={14} className={cn("text-muted-foreground", refreshing && "animate-spin")} />
-          </button>
+          {actionAllowed("refresh") && (
+            <button
+              onClick={handleRefresh}
+              className="p-1.5 rounded-md hover:bg-muted transition-colors active:scale-95"
+              aria-label="Refresh dashboard"
+            >
+              <RefreshCw size={14} className={cn("text-muted-foreground", refreshing && "animate-spin")} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -284,12 +296,16 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <Button variant="outline" size="sm" onClick={seedData} disabled={seeding} className="text-xs">
-              {seeding ? "Loading..." : "Load Sample Data"}
-            </Button>
-            <Button size="sm" onClick={() => navigate("/setup/onboarding")} className="text-xs">
-              Complete Setup →
-            </Button>
+            {actionAllowed("load_sample_data") && (
+              <Button variant="outline" size="sm" onClick={seedData} disabled={seeding} className="text-xs">
+                {seeding ? "Loading..." : "Load Sample Data"}
+              </Button>
+            )}
+            {actionAllowed("complete_setup") && (
+              <Button size="sm" onClick={() => navigate("/setup/onboarding")} className="text-xs">
+                Complete Setup →
+              </Button>
+            )}
           </div>
         </div>
       )}
@@ -297,7 +313,7 @@ const Dashboard: React.FC = () => {
       {/* ROW 1 — KPI Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 xl:grid-cols-8 gap-3 shrink-0 mb-3">
             {/* Card 1 - Patients */}
-            {hasAccess("/opd", role, permissions) && (
+            {cardVisible("/opd", "card_patients") && (
               <Card
                 className="shadow-sm hover:shadow-md transition-shadow cursor-pointer group"
                 onClick={() => openDrillDown("opd")}
@@ -318,7 +334,7 @@ const Dashboard: React.FC = () => {
             )}
 
             {/* Card 2 - Beds */}
-            {hasAccess("/ipd", role, permissions) && (
+            {cardVisible("/ipd", "card_beds") && (
               <Card
                 className="shadow-sm hover:shadow-md transition-shadow cursor-pointer group"
                 onClick={() => openDrillDown("beds")}
@@ -341,7 +357,7 @@ const Dashboard: React.FC = () => {
             )}
 
             {/* Card 3 - OPD */}
-            {hasAccess("/opd", role, permissions) && (
+            {cardVisible("/opd", "card_opd") && (
               <Card
                 className="shadow-sm hover:shadow-md transition-shadow cursor-pointer group"
                 onClick={() => openDrillDown("opd")}
@@ -362,7 +378,7 @@ const Dashboard: React.FC = () => {
             )}
 
             {/* Card 4 - Revenue */}
-            {hasAccess("/billing", role, permissions) && (
+            {cardVisible("/billing", "card_revenue") && (
               <Card
                 className="shadow-sm hover:shadow-md transition-shadow cursor-pointer group"
                 onClick={() => openDrillDown("revenue")}
@@ -383,7 +399,7 @@ const Dashboard: React.FC = () => {
             )}
 
             {/* Card 5 - Doctors */}
-            {hasAccess("/hr", role, permissions) && (
+            {cardVisible("/hr", "card_doctors") && (
               <Card
                 className="shadow-sm hover:shadow-md transition-shadow cursor-pointer group"
                 onClick={() => openDrillDown("doctors")}
@@ -404,7 +420,7 @@ const Dashboard: React.FC = () => {
             )}
 
             {/* Card 6 - Alerts */}
-            {hasAccess("/analytics", role, permissions) && (
+            {cardVisible("/analytics", "card_alerts") && (
               <Card
                 className={cn("shadow-sm hover:shadow-md transition-shadow cursor-pointer group", kpis.criticalAlerts > 0 && !loading && "border-l-[3px] border-l-destructive")}
                 onClick={() => openDrillDown("alerts")}
@@ -427,7 +443,7 @@ const Dashboard: React.FC = () => {
             )}
  
             {/* Card 7 - Follow-ups Due */}
-            {hasAccess("/opd", role, permissions) && (
+            {cardVisible("/opd", "card_followups") && (
               <ChronicFollowupsStatCard
                 hospitalId={hospitalId}
                 onClick={() => openDrillDown("followups")}
@@ -435,12 +451,12 @@ const Dashboard: React.FC = () => {
             )}
 
             {/* Card 8 - NABH Readiness */}
-            {hasAccess("/nabh/compliance", role, permissions) && (
+            {cardVisible("/nabh/compliance", "card_nabh") && (
               <NABHReadinessCard hospitalId={hospitalId} />
             )}
 
             {/* Card 9 - ABDM Compliance (spans 2 cols so horizontal layout fits) */}
-            {hasAccess("/abdm", role, permissions) && hospitalId && (
+            {cardVisible("/abdm", "card_abdm") && hospitalId && (
               <div className="col-span-2">
                 <ABDMComplianceCard hospitalId={hospitalId} />
               </div>
@@ -449,9 +465,9 @@ const Dashboard: React.FC = () => {
 
       {/* ROW 2 — Three panels */}
       <div className="grid grid-cols-1 lg:grid-cols-[3fr_3fr_2fr] gap-3 flex-1 min-h-0">
-        <RevenueChart />
-        <BedOccupancy />
-        <AlertsPanel kpis={kpis} />
+        {panelVisible("panel_revenue") && <RevenueChart />}
+        {panelVisible("panel_beds") && <BedOccupancy />}
+        {panelVisible("panel_alerts") && <AlertsPanel kpis={kpis} />}
       </div>
 
       {/* Drill-Down Drawer */}

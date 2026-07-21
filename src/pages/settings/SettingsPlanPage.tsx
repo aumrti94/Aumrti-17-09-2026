@@ -11,7 +11,8 @@ import { useHospitalId } from "@/hooks/useHospitalId";
 import { supabase } from "@/integrations/supabase/client";
 import { ALL_MODULES } from "@/lib/modules";
 import SubscribeButton from "@/components/subscription/SubscribeButton";
-import PaymentHistoryTable from "@/components/billing/PaymentHistoryTable";
+import PaymentHistoryTable, { downloadInvoiceDocument } from "@/components/billing/PaymentHistoryTable";
+import UpgradeDialog from "@/components/subscription/UpgradeDialog";
 
 // Module key → display name map
 const ROUTE_KEY: Record<string, string> = {
@@ -162,6 +163,7 @@ const SettingsPlanPage: React.FC = () => {
     staleTime: 5 * 60_000,
   });
   const [refCopied, setRefCopied] = React.useState(false);
+  const [upgradeOpen, setUpgradeOpen] = React.useState(false);
 
   // Other available plans for upgrade section
   const { data: allPlans = [] } = useQuery({
@@ -183,7 +185,7 @@ const SettingsPlanPage: React.FC = () => {
     queryFn: async () => {
       const { data } = await (supabase as any)
         .from("subscription_invoices")
-        .select("id, invoice_number, amount_inr, plan_name, billing_period_start, billing_period_end, pdf_storage_path, status, created_at")
+        .select("id, invoice_number, pdf_storage_path, document_format, created_at")
         .eq("hospital_id", hospitalId!)
         .order("created_at", { ascending: false })
         .limit(12);
@@ -266,10 +268,10 @@ const SettingsPlanPage: React.FC = () => {
             <XCircle size={18} className="shrink-0" />
             <div>
               <p className="font-semibold">Your trial has expired</p>
-              <p className="text-xs mt-0.5 text-red-600">Contact support to activate your subscription and restore full access.</p>
+              <p className="text-xs mt-0.5 text-red-600">Activate a paid subscription to restore full access. Your data is safe.</p>
             </div>
-            <Button size="sm" className="ml-auto bg-red-600 hover:bg-red-700 text-white" onClick={() => window.open("mailto:support@aumrti.in")}>
-              Contact Support
+            <Button size="sm" className="ml-auto bg-red-600 hover:bg-red-700 text-white" onClick={() => setUpgradeOpen(true)}>
+              Reactivate
             </Button>
           </div>
         )}
@@ -278,10 +280,10 @@ const SettingsPlanPage: React.FC = () => {
             <AlertTriangle size={18} className="shrink-0" />
             <div>
               <p className="font-semibold">Account {status === "past_due" ? "payment overdue" : "suspended"}</p>
-              <p className="text-xs mt-0.5 text-amber-600">Please clear dues to restore access. Contact support for help.</p>
+              <p className="text-xs mt-0.5 text-amber-600">Clear the outstanding amount to restore access.</p>
             </div>
-            <Button size="sm" variant="outline" className="ml-auto border-amber-400 text-amber-700 hover:bg-amber-50" onClick={() => window.open("mailto:support@aumrti.in")}>
-              Contact Support
+            <Button size="sm" variant="outline" className="ml-auto border-amber-400 text-amber-700 hover:bg-amber-50" onClick={() => setUpgradeOpen(true)}>
+              Pay Now
             </Button>
           </div>
         )}
@@ -289,7 +291,7 @@ const SettingsPlanPage: React.FC = () => {
           <div className="flex items-center gap-3 bg-blue-50 border border-blue-200 rounded-xl px-5 py-4 text-sm text-blue-700">
             <Clock size={18} className="shrink-0" />
             <p><span className="font-semibold">{trialDaysLeft} day{trialDaysLeft !== 1 ? "s" : ""} left</span> in your free trial.</p>
-            <Button size="sm" className="ml-auto bg-blue-600 hover:bg-blue-700 text-white" onClick={() => window.open("mailto:support@aumrti.in")}>
+            <Button size="sm" className="ml-auto bg-blue-600 hover:bg-blue-700 text-white" onClick={() => setUpgradeOpen(true)}>
               Upgrade Now
             </Button>
           </div>
@@ -551,6 +553,20 @@ const SettingsPlanPage: React.FC = () => {
             Subscription ID: <span className="font-mono">{subscription.razorpay_subscription_id}</span>
           </p>
         )}
+
+        <UpgradeDialog
+          open={upgradeOpen}
+          onClose={() => setUpgradeOpen(false)}
+          currentPlanId={plan?.id}
+          title={isExpired || isSuspended ? "Reactivate your subscription" : "Choose your plan"}
+          subtitle={
+            isExpired
+              ? "Your trial has ended. Pick a plan to restore full access — your data is intact."
+              : isSuspended
+                ? "Clear the outstanding amount to restore access."
+                : "Upgrade any time. You keep the rest of your trial."
+          }
+        />
       </div>
     </SettingsPageWrapper>
   );

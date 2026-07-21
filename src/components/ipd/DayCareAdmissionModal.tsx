@@ -4,11 +4,23 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { formatINRExact } from "@/lib/currency";
 import { generateAdmissionNumber } from "@/lib/admissionNumber";
-import { Stethoscope, Search, User, ClipboardList, CalendarClock } from "lucide-react";
+import {
+  DayCareProcedureSelection,
+  anyPreAuthRequired,
+  filterProcedureOptions,
+  listProcedures,
+  saveAdmissionProcedures,
+  setProcedureQuantity,
+  toggleProcedure,
+  totalProcedureCharge,
+} from "@/lib/dayCareProcedures";
+import { Stethoscope, Search, User, ClipboardList, CalendarClock, ChevronDown, X, Minus, Plus } from "lucide-react";
 
 /** What the caller needs to open Estimate & Deposit straight after a booking. */
 export interface DayCareBooking {
@@ -16,8 +28,11 @@ export interface DayCareBooking {
   patientId:     string;
   patientName:   string;
   uhid:          string;
+  /** Human label for all booked procedures, e.g. "Cataract ×2, Endoscopy". */
   procedureName: string;
+  /** TOTAL charge across every booked procedure — what the estimate is seeded from. */
   standardRate:  number;
+  procedures:    DayCareProcedureSelection[];
   /** IST calendar date (YYYY-MM-DD) the procedure is booked for — lets the board jump to it. */
   scheduledDate: string;
 }
@@ -66,7 +81,10 @@ const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onB
   // Step 2
   const [procedures, setProcedures] = useState<Procedure[]>([]);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
-  const [selectedProcedure, setSelectedProcedure] = useState<Procedure | null>(null);
+  /** Order matters: the FIRST pick is the primary procedure written to admissions. */
+  const [selectedProcedures, setSelectedProcedures] = useState<DayCareProcedureSelection[]>([]);
+  const [procedureMenuOpen, setProcedureMenuOpen] = useState(false);
+  const [procedureSearch, setProcedureSearch] = useState("");
   const [doctorId, setDoctorId] = useState("");
   const [insuranceType, setInsuranceType] = useState("self_pay");
   const [insuranceId, setInsuranceId] = useState("");
@@ -81,7 +99,9 @@ const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onB
       setSearch("");
       setResults([]);
       setSelectedPatient(null);
-      setSelectedProcedure(null);
+      setSelectedProcedures([]);
+      setProcedureMenuOpen(false);
+      setProcedureSearch("");
       setDoctorId("");
       setInsuranceType("self_pay");
       setInsuranceId("");
@@ -112,6 +132,8 @@ const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onB
     }
   }, [step, hospitalId]);
 
+  const visibleProcedures = filterProcedureOptions(procedures, procedureSearch);
+
   const handleSearch = async (q: string) => {
     setSearch(q);
     if (q.length < 2) { setResults([]); return; }
@@ -135,10 +157,10 @@ const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onB
    * always measures against when the patient was actually here. (20261008000138)
    */
   const handleBook = async () => {
-    if (!selectedPatient || !selectedProcedure || !doctorId || !scheduledTime) {
+    if (!selectedPatient || selectedProcedures.length === 0 || !doctorId || !scheduledTime) {
       toast({
         title: "Required fields missing",
-        description: "Select patient, procedure, doctor, and the scheduled date & time.",
+        description: "Select patient, at least one procedure, doctor, and the scheduled date & time.",
         variant: "destructive",
       });
       return;
@@ -158,6 +180,10 @@ const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onB
       return;
     }
     const scheduledAt = new Date(scheduledTime);
+    // The first pick is the primary procedure: it goes in the legacy single-FK column that
+    // the board query, the service-catalog mirror and PMJAY mapping still read.
+    const primary = selectedProcedures[0];
+    const procedureLabel = listProcedures(selectedProcedures);
 
     const { data: inserted, error } = await supabase.from("admissions").insert({
       hospital_id: hospitalId,
@@ -165,7 +191,7 @@ const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onB
       admitting_doctor_id: doctorId,
       admission_type: "daycare",
       admission_number: admNum,
-      admitting_diagnosis: selectedProcedure.procedure_name,
+      admitting_diagnosis: procedureLabel,
       insurance_type: insuranceType,
       insurance_id: insuranceId || null,
       scheduled_at: scheduledAt.toISOString(),
@@ -173,7 +199,7 @@ const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onB
       // Day care discharges on the day of the procedure, not the day it was booked.
       expected_discharge_date: scheduledAt.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }),
       status: "scheduled",
-      day_care_procedure_id: selectedProcedure.id,
+      day_care_procedure_id: primary.procedureId,
       // admissions has no `notes` column — writing one silently failed the whole
       // insert. nursing_handover_notes is the real column for admission-time
       // clinical notes (AdmitPatientModal writes it, and ClaimBundleGenerator
@@ -187,17 +213,29 @@ const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onB
       return;
     }
 
+    // The procedures ARE the money on this booking. If they don't land, an admission with no
+    // charge attached is worse than no admission at all — undo it rather than leave a ₹0
+    // booking that gets admitted and discharged unbilled.
+    const procErr = await saveAdmissionProcedures(hospitalId, inserted.id, selectedProcedures);
+    if (procErr) {
+      await supabase.from("admissions").delete().eq("id", inserted.id);
+      toast({ title: "Booking failed", description: procErr, variant: "destructive" });
+      setSubmitting(false);
+      return;
+    }
+
     toast({
-      title: "Procedure booked",
-      description: `${selectedPatient.full_name} — ${selectedProcedure.procedure_name}. Give the estimate and collect the deposit before admitting.`,
+      title: selectedProcedures.length > 1 ? "Procedures booked" : "Procedure booked",
+      description: `${selectedPatient.full_name} — ${procedureLabel}. Give the estimate and collect the deposit before admitting.`,
     });
     onBooked({
       admissionId:   inserted.id,
       patientId:     selectedPatient.id,
       patientName:   selectedPatient.full_name,
       uhid:          selectedPatient.uhid,
-      procedureName: selectedProcedure.procedure_name,
-      standardRate:  Number(selectedProcedure.standard_rate) || 0,
+      procedureName: procedureLabel,
+      standardRate:  totalProcedureCharge(selectedProcedures),
+      procedures:    selectedProcedures,
       scheduledDate: scheduledAt.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }),
     });
     onClose();
@@ -206,7 +244,10 @@ const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onB
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-lg">
+      {/* DialogContent is centred with a -50% translate and has no height cap of its own, so
+          a tall booking (many procedures selected) bled off the top AND bottom of the screen
+          with nothing to scroll. Cap it to the viewport and let the dialog scroll instead. */}
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Stethoscope size={18} className="text-teal-600" />
@@ -275,31 +316,136 @@ const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onB
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-medium">Day Care Procedure *</label>
-              <div className="space-y-1 max-h-48 overflow-y-auto border rounded p-1">
-                {procedures.length === 0 && (
-                  <p className="text-xs text-muted-foreground text-center py-3">
-                    No procedures configured. Add them in Settings → Day Care Procedures.
-                  </p>
-                )}
-                {procedures.map(proc => (
+              <label className="text-xs font-medium">Day Care Procedures *</label>
+
+              {/* Multi-select: a day care list routinely bundles procedures, and every one
+                  of them has to reach the estimate and the bill. */}
+              <Popover
+                open={procedureMenuOpen}
+                onOpenChange={o => { setProcedureMenuOpen(o); if (!o) setProcedureSearch(""); }}
+              >
+                <PopoverTrigger asChild>
                   <button
-                    key={proc.id}
-                    onClick={() => setSelectedProcedure(proc)}
-                    className={cn(
-                      "w-full text-left px-2 py-1.5 rounded text-xs hover:bg-muted transition-colors",
-                      selectedProcedure?.id === proc.id && "bg-teal-50 border border-teal-300"
-                    )}
+                    type="button"
+                    className="w-full flex items-center justify-between gap-2 border rounded px-2 py-1.5 text-sm text-left hover:bg-muted/50 transition-colors"
                   >
-                    <div className="font-medium">{proc.procedure_name}</div>
-                    <div className="text-muted-foreground">
-                      {proc.procedure_code && `${proc.procedure_code} · `}
-                      {proc.duration_minutes} min · {formatINRExact(Number(proc.standard_rate) || 0)}
-                      {proc.pre_auth_required && " · Pre-auth required"}
-                    </div>
+                    <span className={cn("truncate", selectedProcedures.length === 0 && "text-muted-foreground")}>
+                      {selectedProcedures.length === 0
+                        ? "Select procedures…"
+                        : `${selectedProcedures.length} selected`}
+                    </span>
+                    <ChevronDown size={14} className="shrink-0 text-muted-foreground" />
                   </button>
-                ))}
-              </div>
+                </PopoverTrigger>
+                <PopoverContent className="w-[--radix-popover-trigger-width] p-1" align="start">
+                  <div className="relative mb-1">
+                    <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      className="pl-7 h-8 text-xs"
+                      placeholder="Search name, code or specialty…"
+                      value={procedureSearch}
+                      onChange={e => setProcedureSearch(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
+                  {/* overscroll-contain: reaching the end of this list must not start
+                      scrolling the dialog underneath it. */}
+                  <div className="max-h-56 overflow-y-auto overscroll-contain">
+                    {procedures.length === 0 && (
+                      <p className="text-xs text-muted-foreground text-center py-3 px-2">
+                        No procedures configured. Add them in Settings → Day Care Procedures.
+                      </p>
+                    )}
+                    {/* Distinct from the message above: "you have none" and "none match what
+                        you typed" send the user to completely different places. */}
+                    {procedures.length > 0 && visibleProcedures.length === 0 && (
+                      <p className="text-xs text-muted-foreground text-center py-3 px-2">
+                        No procedure matches “{procedureSearch.trim()}”.
+                      </p>
+                    )}
+                    {visibleProcedures.map(proc => {
+                      const checked = selectedProcedures.some(s => s.procedureId === proc.id);
+                      return (
+                        <button
+                          key={proc.id}
+                          type="button"
+                          onClick={() => setSelectedProcedures(prev => toggleProcedure(prev, {
+                            procedureId:     proc.id,
+                            procedureName:   proc.procedure_name,
+                            rate:            Number(proc.standard_rate) || 0,
+                            durationMinutes: proc.duration_minutes,
+                            preAuthRequired: proc.pre_auth_required,
+                          }))}
+                          className={cn(
+                            "w-full flex items-start gap-2 text-left px-2 py-1.5 rounded text-xs hover:bg-muted transition-colors",
+                            checked && "bg-teal-50"
+                          )}
+                        >
+                          <Checkbox checked={checked} className="mt-0.5 pointer-events-none" tabIndex={-1} />
+                          <span className="min-w-0">
+                            <span className="block font-medium truncate">{proc.procedure_name}</span>
+                            <span className="block text-muted-foreground">
+                              {proc.procedure_code && `${proc.procedure_code} · `}
+                              {proc.duration_minutes} min · {formatINRExact(Number(proc.standard_rate) || 0)}
+                              {proc.pre_auth_required && " · Pre-auth required"}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </PopoverContent>
+              </Popover>
+
+              {/* Selected lines with quantity — bilateral cataract is one procedure ×2. */}
+              {selectedProcedures.length > 0 && (
+                <div className="border rounded mt-1">
+                  {/* Only the LINES scroll — the Total stays pinned below, because the one
+                      figure the counsellor is reading must never scroll out of sight. */}
+                  <div className="divide-y max-h-40 overflow-y-auto">
+                  {selectedProcedures.map(p => (
+                    <div key={p.procedureId} className="flex items-center gap-2 px-2 py-1.5 text-xs">
+                      <span className="flex-1 min-w-0 truncate font-medium">{p.procedureName}</span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          aria-label={`Decrease quantity of ${p.procedureName}`}
+                          className="w-5 h-5 rounded border flex items-center justify-center disabled:opacity-40"
+                          disabled={p.quantity <= 1}
+                          onClick={() => setSelectedProcedures(prev => setProcedureQuantity(prev, p.procedureId, p.quantity - 1))}
+                        >
+                          <Minus size={11} />
+                        </button>
+                        <span className="w-5 text-center tabular-nums">{p.quantity}</span>
+                        <button
+                          type="button"
+                          aria-label={`Increase quantity of ${p.procedureName}`}
+                          className="w-5 h-5 rounded border flex items-center justify-center"
+                          onClick={() => setSelectedProcedures(prev => setProcedureQuantity(prev, p.procedureId, p.quantity + 1))}
+                        >
+                          <Plus size={11} />
+                        </button>
+                      </div>
+                      <span className="w-20 text-right font-mono shrink-0">
+                        {formatINRExact(p.rate * p.quantity)}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`Remove ${p.procedureName}`}
+                        className="text-muted-foreground hover:text-destructive shrink-0"
+                        onClick={() => setSelectedProcedures(prev => prev.filter(s => s.procedureId !== p.procedureId))}
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  ))}
+                  </div>
+                  <div className="flex items-center justify-between px-2 py-1.5 text-xs font-semibold bg-muted/40 border-t">
+                    <span>Total{selectedProcedures.length > 1 && ` · ${selectedProcedures.length} procedures`}</span>
+                    <span className="font-mono">{formatINRExact(totalProcedureCharge(selectedProcedures))}</span>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -351,9 +497,10 @@ const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onB
               />
             </div>
 
-            {selectedProcedure?.pre_auth_required && insuranceType !== "self_pay" && (
+            {/* One procedure needing pre-auth makes the whole booking need it. */}
+            {anyPreAuthRequired(selectedProcedures) && insuranceType !== "self_pay" && (
               <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
-                This procedure requires insurance pre-authorisation. An intimation will be raised
+                This booking requires insurance pre-authorisation. An intimation will be raised
                 automatically, due 2 hours before the scheduled time.
               </div>
             )}
@@ -369,7 +516,7 @@ const DayCareAdmissionModal: React.FC<Props> = ({ open, onClose, hospitalId, onB
                 size="sm"
                 className="bg-teal-600 hover:bg-teal-700"
                 onClick={handleBook}
-                disabled={submitting || !selectedProcedure || !doctorId || !scheduledTime}
+                disabled={submitting || selectedProcedures.length === 0 || !doctorId || !scheduledTime}
               >
                 {submitting ? "Booking…" : "Book Procedure"}
               </Button>

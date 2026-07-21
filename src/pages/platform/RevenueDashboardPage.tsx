@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { IndianRupee, TrendingUp, RefreshCw, Repeat2, Wallet, ArrowUpRight } from "lucide-react";
 import { fmtINR, RECHARTS_TOOLTIP_STYLE } from "@/lib/platform-utils";
 import MetricInfoIcon from "@/components/platform/MetricInfoIcon";
+import { effectiveMonthlyAmount } from "@/lib/platformBilling";
 import { format, addDays, subMonths } from "date-fns";
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, Legend,
@@ -17,6 +18,8 @@ interface SubRow {
   created_at: string;
   trial_ends_at: string | null;
   current_period_end: string | null;
+  billing_cycle?: "monthly" | "yearly" | null;
+  effective_amount_inr?: number | string | null;
   subscription_plans: { name: string; price_monthly: number } | null;
   hospitals: { name: string } | null;
 }
@@ -31,7 +34,11 @@ interface RevData {
   trialCount: number;
   atRiskMrr: number;
   byPlan: Array<{ name: string; count: number; revenue: number; pct: number }>;
-  monthlyChart: Array<{ month: string; newMrr: number; totalMrr: number }>;
+  monthlyChart: Array<{ month: string; newMrr: number; totalMrr: number; collected: number }>;
+  /** Cash actually received this calendar month, net of refunds. */
+  collectedMtd: number;
+  /** Cash actually received over the trailing 12 months, net of refunds. */
+  collected12mo: number;
   upcoming: Array<{ hospital: string; plan: string; ends: string; amount: number }>;
   pastDue: Array<{ hospital: string; plan: string; since: string; amount: number }>;
 }
@@ -42,12 +49,22 @@ async function fetchRevenue(): Promise<RevData> {
     .from("hospital_subscriptions")
     .select(`
       hospital_id, status, plan_id, created_at, trial_ends_at, current_period_end,
+      billing_cycle, effective_amount_inr,
       subscription_plans(name, price_monthly),
       hospitals(name)
     `);
 
   const rows: SubRow[] = subs || [];
-  const price = (r: SubRow) => Number(r.subscription_plans?.price_monthly) || 0;
+
+  // MRR must reflect what the hospital is ACTUALLY billed, not the plan's list
+  // price: negotiated overrides and coupons are now genuinely charged, and an
+  // annual subscriber pays 12 months at once. Reading price_monthly directly
+  // (as this did) overstates discounted customers and 12x-overstates annual ones
+  // in their payment month.
+  const price = (r: SubRow) =>
+    r.effective_amount_inr != null
+      ? effectiveMonthlyAmount({ amountInr: r.effective_amount_inr, cycle: r.billing_cycle })
+      : Number(r.subscription_plans?.price_monthly) || 0;
 
   const active    = rows.filter((r) => r.status === "active");
   const trial     = rows.filter((r) => r.status === "trial");
@@ -103,13 +120,45 @@ async function fetchRevenue(): Promise<RevData> {
     .filter((r) => new Date(r.created_at) < twelveMonthsAgo)
     .reduce((s, r) => s + price(r), 0);
 
+  // ── Collected cash ─────────────────────────────────────────────────────────
+  // Everything above is CONTRACTED revenue derived from subscriptions. This is
+  // money that actually arrived, from the invoice ledger — the two diverge when
+  // a charge fails or is refunded, and only this side is real.
+  const { data: invRows } = await (supabase as any)
+    .from("subscription_invoices")
+    .select("amount_inr, refund_amount_inr, status, invoice_type, created_at")
+    .gte("created_at", twelveMonthsAgo.toISOString());
+
+  const collectedByMonth = new Map<string, number>();
+  let collectedMtd = 0;
+  let collected12mo = 0;
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+
+  for (const inv of (invRows || []) as any[]) {
+    // Credit notes are the refund record; subtracting them AND the originating
+    // invoice's refund_amount_inr would double-count the same refund.
+    const signed = inv.invoice_type === "credit_note"
+      ? -Number(inv.amount_inr || 0)
+      : (inv.status === "paid" || inv.status === "partially_refunded" || inv.status === "refunded")
+        ? Number(inv.amount_inr || 0)
+        : 0;   // failed attempts contribute nothing
+    if (!signed) continue;
+
+    const key = format(new Date(inv.created_at), "MMM yy");
+    collectedByMonth.set(key, (collectedByMonth.get(key) || 0) + signed);
+    collected12mo += signed;
+    if (new Date(inv.created_at) >= monthStart) collectedMtd += signed;
+  }
+
   let running = baseline;
   const monthlyChart = Array.from({ length: 12 }, (_, i) => {
     const d = subMonths(new Date(), 11 - i);
     const month = format(d, "MMM yy");
     const newMrr = signupRevByMonth.get(month) || 0;
     running += newMrr;
-    return { month, newMrr, totalMrr: running };
+    return { month, newMrr, totalMrr: running, collected: collectedByMonth.get(month) || 0 };
   });
 
   // ── Plan breakdown ─────────────────────────────────────────────────────────
@@ -145,7 +194,7 @@ async function fetchRevenue(): Promise<RevData> {
     }))
     .slice(0, 10);
 
-  return { mrr, arr, logoRetention12mo, ltv, conversionRate, activeCount, trialCount, atRiskMrr, byPlan, monthlyChart, upcoming, pastDue };
+  return { mrr, arr, logoRetention12mo, ltv, conversionRate, activeCount, trialCount, atRiskMrr, byPlan, monthlyChart, upcoming, pastDue, collectedMtd, collected12mo };
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -188,9 +237,14 @@ export default function RevenueDashboardPage() {
       <div className="flex-1 overflow-auto p-6 space-y-6">
 
         {/* ── Top metric cards ── */}
-        <div className="grid grid-cols-5 gap-4">
-          {topCard("Monthly Recurring Revenue", data ? fmtINR(data.mrr) : "—", "Live MRR", <IndianRupee size={16} />, "text-emerald-600", "mrr")}
+        <div className="grid grid-cols-4 gap-4">
+          {topCard("Monthly Recurring Revenue", data ? fmtINR(data.mrr) : "—", "Contracted MRR", <IndianRupee size={16} />, "text-emerald-600", "mrr")}
           {topCard("Annual Run Rate", data ? fmtINR(data.arr) : "—", "ARR", <TrendingUp size={16} />, "text-emerald-600", "arr")}
+          {/* Contracted ≠ collected. Everything above is derived from
+              subscriptions; these two come from the invoice ledger, i.e. money
+              that actually arrived, net of refunds. */}
+          {topCard("Collected This Month", data ? fmtINR(data.collectedMtd) : "—", "Cash received, net of refunds", <Wallet size={16} />, "text-emerald-600")}
+          {topCard("Collected (12 mo)", data ? fmtINR(data.collected12mo) : "—", "Trailing 12 months", <Wallet size={16} />, "text-emerald-600")}
           {topCard(
             "12-Month Logo Retention",
             data?.logoRetention12mo != null ? `${data.logoRetention12mo}%` : "N/A",
@@ -276,6 +330,9 @@ export default function RevenueDashboardPage() {
                 <Legend wrapperStyle={{ fontSize: 11, color: "#64748b" }} />
                 <Bar yAxisId="left" dataKey="newMrr" name="New MRR" fill="#3b82f6" radius={[3, 3, 0, 0]} />
                 <Line yAxisId="right" type="monotone" dataKey="totalMrr" name="Total MRR" stroke="#10b981" strokeWidth={2} dot={false} />
+                {/* Collected sits against contracted so a gap between the two —
+                    failed charges, refunds — is visible rather than inferred. */}
+                <Line yAxisId="right" type="monotone" dataKey="collected" name="Collected" stroke="#6366f1" strokeWidth={2} strokeDasharray="4 3" dot={false} />
               </ComposedChart>
             </ResponsiveContainer>
           )}

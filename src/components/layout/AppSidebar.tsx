@@ -14,12 +14,17 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { hasAccess } from "@/lib/routeRoles";
+import { hasActionAccess } from "@/lib/tabPermissions";
 
 interface SidebarItem {
   label: string;
   path: string;
   icon: React.ElementType;
   moduleKey?: string; // optional: if set, hidden when module is disabled
+  // optional: if set, this Quick Access shortcut is gated by the `dashboard` module
+  // action of the same key, so admins can hide it per role/user (SettingsRolesPage /
+  // StaffAccessPanel) without removing the underlying module.
+  actionKey?: string;
 }
 
 const topItems: SidebarItem[] = [
@@ -29,15 +34,15 @@ const topItems: SidebarItem[] = [
 ];
 
 const quickAccessItems: SidebarItem[] = [
-  { label: "Scheduling",       path: "/schedule",    icon: CalendarDays, moduleKey: "opd" },
-  { label: "OPD Queue",        path: "/opd",         icon: Stethoscope,  moduleKey: "opd" },
-  { label: "IPD / Wards",      path: "/ipd",         icon: BedDouble,    moduleKey: "ipd" },
-  { label: "Billing",          path: "/billing",     icon: Receipt,      moduleKey: "billing" },
-  { label: "HR & Staff",       path: "/hr",          icon: Users,        moduleKey: "hr" },
-  { label: "CEO Board",        path: "/ceo-board",   icon: Building2,    moduleKey: "analytics" },
-  { label: "Govt Schemes",     path: "/pmjay",       icon: HeartPulse,   moduleKey: "insurance" },
-  { label: "Lab",              path: "/lab",         icon: FlaskConical, moduleKey: "lab" },
-  { label: "Analytics",        path: "/analytics",   icon: BarChart3,    moduleKey: "analytics" },
+  { label: "Scheduling",       path: "/schedule",    icon: CalendarDays, moduleKey: "opd",       actionKey: "quick_scheduling" },
+  { label: "OPD Queue",        path: "/opd",         icon: Stethoscope,  moduleKey: "opd",       actionKey: "quick_opd" },
+  { label: "IPD / Wards",      path: "/ipd",         icon: BedDouble,    moduleKey: "ipd",       actionKey: "quick_ipd" },
+  { label: "Billing",          path: "/billing",     icon: Receipt,      moduleKey: "billing",   actionKey: "quick_billing" },
+  { label: "HR & Staff",       path: "/hr",          icon: Users,        moduleKey: "hr",        actionKey: "quick_hr" },
+  { label: "CEO Board",        path: "/ceo-board",   icon: Building2,    moduleKey: "analytics", actionKey: "quick_ceo_board" },
+  { label: "Govt Schemes",     path: "/pmjay",       icon: HeartPulse,   moduleKey: "insurance", actionKey: "quick_govt_schemes" },
+  { label: "Lab",              path: "/lab",         icon: FlaskConical, moduleKey: "lab",       actionKey: "quick_lab" },
+  { label: "Analytics",        path: "/analytics",   icon: BarChart3,    moduleKey: "analytics", actionKey: "quick_analytics" },
 ];
 
 const recordsItems: SidebarItem[] = [
@@ -75,7 +80,8 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ isMobileOverlay, onClose }) => 
   const filterItems = (items: SidebarItem[]) =>
     items.filter((item) =>
       hasAccess(item.path, role, permissions) &&
-      (!item.moduleKey || isModuleEnabled(item.moduleKey))
+      (!item.moduleKey || isModuleEnabled(item.moduleKey)) &&
+      (!item.actionKey || hasActionAccess("dashboard", item.actionKey, permissions, role))
     );
 
   useEffect(() => {

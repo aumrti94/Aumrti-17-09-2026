@@ -26,30 +26,16 @@ import { cn } from "@/lib/utils";
 import { logConfigChange } from "@/lib/ims";
 import { MODULE_TABS, MODULE_ACTIONS, parseModuleTabs, parseModuleActions } from "@/lib/tabPermissions";
 import { Zap } from "lucide-react";
+import { PERMISSION_MODULES } from "@/lib/moduleRegistry";
+import { CATEGORIES, type ModuleCategory } from "@/lib/modules";
+import { useSubscriptionConfig, isModuleKeyAllowed } from "@/hooks/useSubscriptionConfig";
 
-/* ───── Module definitions ───── */
-const MODULES = [
-  { key: "opd", label: "OPD (Outpatient)", emoji: "🩺" },
-  { key: "ipd", label: "IPD (Inpatient)", emoji: "🛏️" },
-  { key: "emergency", label: "Emergency", emoji: "🚑" },
-  { key: "nursing", label: "Nursing", emoji: "💉" },
-  { key: "lab", label: "Laboratory (LIS)", emoji: "🔬" },
-  { key: "radiology", label: "Radiology (RIS)", emoji: "🩻" },
-  { key: "pharmacy", label: "Pharmacy", emoji: "💊" },
-  { key: "ot", label: "Operation Theatre", emoji: "✂️" },
-  { key: "billing", label: "Billing & Finance", emoji: "🧾" },
-  { key: "insurance", label: "Insurance / TPA", emoji: "🛡️" },
-  { key: "hr", label: "HR & Payroll", emoji: "👥" },
-  { key: "inventory", label: "Inventory", emoji: "📦" },
-  { key: "quality", label: "Quality & NABH", emoji: "🏅" },
-  { key: "analytics", label: "Analytics & BI", emoji: "📊" },
-  { key: "patients", label: "Patient Registry", emoji: "📋" },
-  { key: "settings", label: "Settings", emoji: "⚙️" },
-  { key: "reports", label: "Reports", emoji: "📈" },
-  { key: "user_management", label: "User Management", emoji: "🔑" },
-] as const;
+/* ───── Module definitions ─────
+   Single source of truth shared with Layers 1/2 and the per-user editor. Was a
+   hardcoded 18-module array; now every canonical module + internal governance key. */
+const MODULES = PERMISSION_MODULES.map((m) => ({ key: m.key, label: m.label, emoji: m.icon, category: m.category }));
 
-type ModuleKey = (typeof MODULES)[number]["key"];
+type ModuleKey = string;
 const ACTIONS = ["view", "create", "edit", "delete", "approve", "export"] as const;
 type Action = (typeof ACTIONS)[number];
 
@@ -217,6 +203,14 @@ const SettingsRolesPage: React.FC = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { hospitalId } = useHospitalId();
+
+  // Layer 2 clamp: modules the hospital's plan/entitlement does not include render
+  // locked here (visible for upselling) — a role can never grant beyond the plan.
+  const { enabledModules } = useSubscriptionConfig();
+  const isEntitled = useCallback(
+    (key: string) => isModuleKeyAllowed(key, enabledModules),
+    [enabledModules],
+  );
 
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
   const [matrix, setMatrix] = useState<Record<ModuleKey, Record<Action, boolean>> | null>(null);
@@ -832,9 +826,19 @@ const SettingsRolesPage: React.FC = () => {
                 ))}
               </div>
 
-              {/* Module rows */}
-              {MODULES.map((mod) => {
-                const perms = matrix[mod.key];
+              {/* Module rows — grouped by category */}
+              {CATEGORIES.map((cat: ModuleCategory) => {
+                const catModules = MODULES.filter((m) => m.category === cat);
+                if (catModules.length === 0) return null;
+                return (
+                <React.Fragment key={cat}>
+                  <div className="grid grid-cols-[1fr_repeat(6,80px)] bg-muted/40 border-b border-border">
+                    <div className="px-4 py-1.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{cat}</div>
+                    <div className="col-span-6" />
+                  </div>
+                  {catModules.map((mod) => {
+                const perms = matrix[mod.key] ?? { view: false, create: false, edit: false, delete: false, approve: false, export: false };
+                const entitled = isEntitled(mod.key);
                 const modTabs = MODULE_TABS[mod.key] ?? [];
                 const modActions = MODULE_ACTIONS[mod.key] ?? [];
                 const isExpanded = expandedModules.has(mod.key);
@@ -845,23 +849,32 @@ const SettingsRolesPage: React.FC = () => {
                 const hasCustomize = modTabs.length > 0 || modActions.length > 0;
                 return (
                   <React.Fragment key={mod.key}>
-                    <div className="group grid grid-cols-[1fr_repeat(6,80px)] border-b border-border hover:bg-muted/30 transition-colors">
+                    <div className={cn(
+                      "group grid grid-cols-[1fr_repeat(6,80px)] border-b border-border transition-colors",
+                      entitled ? "hover:bg-muted/30" : "bg-muted/20 opacity-60",
+                    )}>
                       <div className="px-4 py-2.5 flex items-center gap-2">
                         <span className="text-sm">{mod.emoji}</span>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-[13px] text-foreground">{mod.label}</span>
-                            {restrictedTabCount > 0 && (
+                            {!entitled && (
+                              <Badge variant="outline" className="text-[9px] h-4 px-1.5 text-muted-foreground border-border gap-0.5">
+                                <Lock size={8} /> Not in plan — upgrade
+                              </Badge>
+                            )}
+                            {entitled && restrictedTabCount > 0 && (
                               <Badge variant="outline" className="text-[9px] h-4 px-1.5 text-amber-600 border-amber-300">
                                 {modTabs.length - restrictedTabCount}/{modTabs.length} tabs
                               </Badge>
                             )}
-                            {restrictedActionCount > 0 && (
+                            {entitled && restrictedActionCount > 0 && (
                               <Badge variant="outline" className="text-[9px] h-4 px-1.5 text-rose-600 border-rose-300">
                                 {modActions.length - restrictedActionCount}/{modActions.length} actions
                               </Badge>
                             )}
                           </div>
+                          {entitled && (
                           <div className="hidden group-hover:flex gap-1 mt-0.5 items-center">
                             <button className="text-[10px] text-primary hover:underline" onClick={() => applyModulePreset(mod.key, "full")}>Full</button>
                             <span className="text-[10px] text-muted-foreground">·</span>
@@ -869,8 +882,9 @@ const SettingsRolesPage: React.FC = () => {
                             <span className="text-[10px] text-muted-foreground">·</span>
                             <button className="text-[10px] text-destructive hover:underline" onClick={() => applyModulePreset(mod.key, "none")}>None</button>
                           </div>
+                          )}
                         </div>
-                        {hasCustomize && (
+                        {hasCustomize && entitled && (
                           <button
                             onClick={() => toggleExpand(mod.key)}
                             className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors px-1.5 py-0.5 rounded border border-transparent hover:border-border whitespace-nowrap"
@@ -885,7 +899,8 @@ const SettingsRolesPage: React.FC = () => {
                       {ACTIONS.map((action) => (
                         <div key={action} className="flex items-center justify-center py-2.5">
                           <Switch
-                            checked={perms[action]}
+                            checked={entitled && perms[action]}
+                            disabled={!entitled}
                             onCheckedChange={() => togglePerm(mod.key, action)}
                             className="scale-75"
                           />
@@ -894,7 +909,7 @@ const SettingsRolesPage: React.FC = () => {
                     </div>
 
                     {/* Expanded customisation panel — Tabs + Actions */}
-                    {isExpanded && hasCustomize && (
+                    {isExpanded && hasCustomize && entitled && (
                       <div className="border-b border-border bg-muted/20">
 
                         {/* Tab Access section */}
@@ -974,6 +989,9 @@ const SettingsRolesPage: React.FC = () => {
                       </div>
                     )}
                   </React.Fragment>
+                );
+                  })}
+                </React.Fragment>
                 );
               })}
             </div>

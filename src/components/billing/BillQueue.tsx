@@ -179,6 +179,9 @@ const BillQueue: React.FC<Props> = ({
       ) : (
         bills.map((bill) => {
           const isPendingIPD = bill.bill_status === "pending_ipd";
+          // Money collected against a booking with no bill yet. Deliberately styled apart
+          // from a bill so nobody reads it as revenue already invoiced.
+          const isDepositHeld = bill.bill_status === "deposit_held";
           const sb = statusBadge[bill.payment_status] || statusBadge.unpaid;
           const days = isPendingIPD
             ? Math.max(1, Math.ceil((Date.now() - new Date(bill.bill_date).getTime()) / 86400000))
@@ -190,11 +193,15 @@ const BillQueue: React.FC<Props> = ({
               className={cn(
                 "w-full text-left p-2.5 rounded-lg border transition-all",
                 "border-l-[3px]",
-                isPendingIPD ? "border-l-accent" : (statusBorder[bill.payment_status] || "border-l-muted-foreground"),
+                isPendingIPD ? "border-l-accent"
+                  : isDepositHeld ? "border-l-teal-500"
+                  : (statusBorder[bill.payment_status] || "border-l-muted-foreground"),
                 selectedBillId === bill.id
                   ? "bg-primary/5 border-primary"
                   : isPendingIPD
                   ? "border-accent/40 bg-accent/5 hover:bg-accent/10"
+                  : isDepositHeld
+                  ? "border-teal-500/40 bg-teal-500/5 hover:bg-teal-500/10"
                   : "border-border hover:bg-muted/50"
               )}
             >
@@ -202,6 +209,10 @@ const BillQueue: React.FC<Props> = ({
                 <span className="text-[10px] font-mono text-muted-foreground">{bill.bill_number}</span>
                 {isPendingIPD ? (
                   <span className="text-[11px] font-bold text-accent">Day {days}</span>
+                ) : isDepositHeld ? (
+                  // The DEPOSIT is the headline figure, not the estimate: it is the money
+                  // actually in hand, which is the question this screen has to answer.
+                  <span className="text-[13px] font-bold text-teal-600">₹{bill.paid_amount.toLocaleString("en-IN")}</span>
                 ) : (
                   <span className="text-[13px] font-bold text-foreground">₹{bill.total_amount.toLocaleString("en-IN")}</span>
                 )}
@@ -239,6 +250,12 @@ const BillQueue: React.FC<Props> = ({
                 <Badge variant="outline" className="text-[10px] h-5">{bill.bill_type.toUpperCase()}</Badge>
                 {isPendingIPD ? (
                   <span className="text-[11px] text-accent font-medium">Click to create bill →</span>
+                ) : isDepositHeld ? (
+                  <span className={cn("text-[11px]", bill.balance_due > 0 ? "text-destructive" : "text-muted-foreground")}>
+                    {bill.balance_due > 0
+                      ? `₹${bill.balance_due.toLocaleString("en-IN")} short`
+                      : "Bills on admission"}
+                  </span>
                 ) : (
                   <span className={cn("text-[11px]", bill.balance_due > 0 ? "text-destructive" : "text-success")}>
                     {bill.balance_due > 0 ? `₹${bill.balance_due.toLocaleString("en-IN")} due` : "Settled"}
@@ -249,6 +266,8 @@ const BillQueue: React.FC<Props> = ({
                 <span className="text-[10px] text-muted-foreground">{bill.bill_date}</span>
                 {isPendingIPD ? (
                   <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-accent/10 text-accent">Pending IPD</span>
+                ) : isDepositHeld ? (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-teal-500/10 text-teal-600">Deposit held</span>
                 ) : (
                   <span className={cn("text-[10px] px-2 py-0.5 rounded-full font-medium", sb.bg, sb.text)}>{sb.label}</span>
                 )}

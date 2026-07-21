@@ -9,6 +9,10 @@ import { hasTabAccess, hasActionAccess } from "@/lib/tabPermissions";
 import { cn } from "@/lib/utils";
 import { autoPullAdmissionCharges as autoPullAdmissionChargesUtil } from "@/lib/ipdBilling";
 import { ADMISSION_BILL_TYPES, findOrCreateAdmissionBill } from "@/lib/admissionBill";
+import { buildDepositHoldings } from "@/lib/depositHoldings";
+import {
+  DAY_CARE_PROCEDURES_SELECT, listProcedures, mapProcedureRow, totalProcedureCharge,
+} from "@/lib/dayCareProcedures";
 import { AlertTriangle, Lock, X, Receipt } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import NABHBadge from "@/components/nabh/NABHBadge";
@@ -288,6 +292,26 @@ const BillingPage: React.FC = () => {
       payer_type: (b.admission as any)?.payer_type || (b as any).payer_type || null,
     }));
 
+    // "Has a bill" must consider BOTH admission bill types. Checking only 'ipd' meant a day
+    // care patient with a perfectly good daycare bill still showed as "Pending IPD — click
+    // to create bill", and clicking it minted a duplicate.
+    //
+    // Hoisted out of the Pending-IPD block because the deposit-holding rows below need the
+    // same set: a booking must vanish from BOTH lists the moment a bill exists for it.
+    const admissionsWithBills = new Set<string>(
+      realBills
+        .filter((b) => ADMISSION_BILL_TYPES.includes(b.bill_type as any) && b.admission_id)
+        .map((b) => b.admission_id as string)
+    );
+    // Also check bills that fall outside the date filter
+    const { data: existingIpd } = await supabase
+      .from("bills")
+      .select("admission_id")
+      .eq("hospital_id", hospitalId)
+      .in("bill_type", ADMISSION_BILL_TYPES as unknown as string[])
+      .not("admission_id", "is", null);
+    (existingIpd || []).forEach((b: any) => admissionsWithBills.add(b.admission_id));
+
     // Find active admissions WITHOUT a bill — surface as virtual "Pending IPD" rows
     let virtualBills: BillRecord[] = [];
     if (statusFilter === "all" || statusFilter === "unpaid") {
@@ -296,23 +320,6 @@ const BillingPage: React.FC = () => {
         .select("id, admitted_at, admission_number, patient_id, is_mlc, payer_type, patients!inner(full_name, uhid)")
         .eq("hospital_id", hospitalId)
         .eq("status", "active");
-
-      // "Has a bill" must consider BOTH admission bill types. Checking only 'ipd' meant a day
-      // care patient with a perfectly good daycare bill still showed as "Pending IPD — click
-      // to create bill", and clicking it minted a duplicate.
-      const admissionsWithBills = new Set(
-        realBills
-          .filter((b) => ADMISSION_BILL_TYPES.includes(b.bill_type as any) && b.admission_id)
-          .map((b) => b.admission_id)
-      );
-      // Also check bills that fall outside the date filter
-      const { data: existingIpd } = await supabase
-        .from("bills")
-        .select("admission_id")
-        .eq("hospital_id", hospitalId)
-        .in("bill_type", ADMISSION_BILL_TYPES as unknown as string[])
-        .not("admission_id", "is", null);
-      (existingIpd || []).forEach((b: any) => admissionsWithBills.add(b.admission_id));
 
       virtualBills = (activeAdms || [])
         .filter((a: any) => !admissionsWithBills.has(a.id))
@@ -347,7 +354,98 @@ const BillingPage: React.FC = () => {
         }));
     }
 
-    setBills([...virtualBills, ...realBills]);
+    // Deposits collected against a booking that has no bill yet. Real cash, and until now
+    // invisible on this screen — see lib/depositHoldings.ts. Not shown when filtering to a
+    // bill payment_status, because a holding has no bill and therefore no such status.
+    let depositRows: BillRecord[] = [];
+    if (statusFilter === "all" && !patientSearch.trim()) {
+      const { data: bookings } = await (supabase as any)
+        .from("admissions")
+        .select(`
+          id, admission_number, patient_id, scheduled_at, insurance_type,
+          patients!inner(full_name, uhid),
+          estimates:admission_estimates(estimated_amount, created_at),
+          ${DAY_CARE_PROCEDURES_SELECT}
+        `)
+        .eq("hospital_id", hospitalId)
+        .eq("admission_type", "daycare")
+        .eq("status", "scheduled");
+
+      const bookingIds = (bookings || []).map((b: any) => b.id);
+      if (bookingIds.length > 0) {
+        const [balRes, advRes] = await Promise.all([
+          (supabase as any)
+            .from("ipd_advance_balances")
+            .select("admission_id, balance")
+            .in("admission_id", bookingIds),
+          (supabase as any)
+            .from("ipd_advances")
+            .select("admission_id, transaction_type, payment_mode, created_at")
+            .in("admission_id", bookingIds),
+        ]);
+
+        const holdings = buildDepositHoldings({
+          bookings: (bookings || []).map((b: any) => {
+            const items = (b.day_care_items || []).map(mapProcedureRow);
+            // Latest estimate wins — counselling can be redone before the patient reports.
+            const estimate = [...(b.estimates || [])]
+              .sort((x: any, y: any) => String(y.created_at).localeCompare(String(x.created_at)))[0];
+            return {
+              admissionId:    b.id,
+              admissionNumber: b.admission_number,
+              patientId:      b.patient_id,
+              patientName:    b.patients?.full_name || "Unknown",
+              uhid:           b.patients?.uhid || "",
+              procedureLabel: listProcedures(items),
+              estimate:       Number(estimate?.estimated_amount) || totalProcedureCharge(items),
+              scheduledDate:  (b.scheduled_at || "").slice(0, 10),
+            };
+          }),
+          balances: new Map<string, number>(
+            (balRes.data || []).map((r: any) => [r.admission_id, Number(r.balance) || 0])
+          ),
+          advances: advRes.data || [],
+          admissionsWithBills,
+          from: dateStart,
+          to: dateEnd,
+        });
+
+        depositRows = holdings.map((h) => ({
+          id: `deposit:${h.admissionId}`,
+          bill_number: h.admissionNumber,
+          patient_id: h.patientId,
+          patient_name: h.patientName,
+          uhid: h.uhid,
+          encounter_id: null,
+          admission_id: h.admissionId,
+          bill_type: "daycare",
+          bill_date: h.collectedOn,
+          bill_status: "deposit_held",
+          subtotal: 0,
+          discount_percent: 0,
+          discount_amount: 0,
+          gst_amount: 0,
+          // The estimate, not a billed total — this is what the deposit is measured against.
+          total_amount: h.estimate,
+          advance_received: h.collected,
+          insurance_amount: 0,
+          patient_payable: 0,
+          paid_amount: h.collected,
+          // Drives the queue's "pending" figure: an under-deposited booking is money still
+          // to collect, and it should read that way here as it does on the Day Care board.
+          balance_due: h.outstanding,
+          payment_status: h.outstanding > 0 ? "partial" : "paid",
+          notes: h.procedureLabel,
+          irn: null,
+          irn_generated_at: null,
+          created_at: h.collectedOn,
+          is_mlc: false,
+          payer_type: null,
+        }));
+      }
+    }
+
+    setBills([...virtualBills, ...depositRows, ...realBills]);
     setLoading(false);
   }, [hospitalId, statusFilter, dateFilter, startDate, endDate, patientSearch]);
 
@@ -465,7 +563,14 @@ const BillingPage: React.FC = () => {
             loading={loading}
             selectedBillId={selectedBillId}
             onSelectBill={(id) => {
-              if (id.startsWith("pending:")) {
+              if (id.startsWith("deposit:")) {
+                // There is nothing to open: the procedure has not been delivered, so no bill
+                // exists yet. Minting one here would bill a patient who may still no-show.
+                toast({
+                  title: "Deposit held — not yet billed",
+                  description: "The bill is created when the patient is admitted from the Day Care board.",
+                });
+              } else if (id.startsWith("pending:")) {
                 const admissionId = id.slice("pending:".length);
                 setDischargeBillCreated(false);
                 createDischargeBill(admissionId);

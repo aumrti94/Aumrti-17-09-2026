@@ -1,4 +1,6 @@
 import { ALL_MODULES } from './modules';
+import { ROUTE_TO_MODULE_KEY } from '@/lib/moduleKeys';
+import { LEGACY_MODULE_PARENT } from './moduleRegistry';
 
 export const ROUTE_ROLES: Record<string, string[]> = {};
 
@@ -94,49 +96,42 @@ ROUTE_ROLES['/inbox'] = [
 export const BYPASS_ROLES = ["super_admin", "hospital_admin"];
 
 /**
- * Mapping from route path to the module key used in role_permissions table
+ * Mapping from route path to the module key used in the role_permissions blob.
+ *
+ * Derived from the canonical `ROUTE_TO_MODULE_KEY` (the same map Layers 1 & 2 use) so a
+ * route resolves to its OWN module key instead of being bucketed into one of ~18 parents.
+ * Only the internal governance / convenience routes that the sellable registry does not
+ * carry are added on top. Specialty modules that previously inherited a bucket keep working
+ * via the LEGACY_MODULE_PARENT fallback in `hasAccess`/`hasPermission` below.
  */
 export const ROUTE_TO_MODULE: Record<string, string> = {
-  "/opd": "opd",
-  "/ipd": "ipd",
-  "/emergency": "emergency",
-  "/nursing": "nursing",
-  "/lab": "lab",
-  "/radiology": "radiology",
-  "/pharmacy": "pharmacy",
-  "/ot": "ot",
-  "/billing": "billing",
-  "/insurance": "insurance",
-  "/hr": "hr",
-  "/inventory": "inventory",
-  "/quality": "quality",
-  "/nabh/compliance": "quality",
+  ...ROUTE_TO_MODULE_KEY,
+  // Internal / non-sellable governance routes (not in the canonical registry)
+  "/patients": "patients",
+  "/reports": "reports",
+  "/users": "user_management",
+  "/schedule": "opd",
+  "/teleconsult": "telemedicine",
+  // Quality sub-pages resolve to the quality module
   "/quality/events": "quality",
-  "/ipc/dashboard": "quality",
   "/quality/clinical-audits": "quality",
   "/quality/qi-projects": "quality",
   "/quality/committees": "quality",
-  "/fms/dashboard": "quality",
-  "/analytics": "analytics",
-  "/patients": "patients",
-  "/settings": "settings",
-  "/reports": "reports",
-  "/users": "user_management",
-  // Additional route mappings to prevent static fallthrough
-  "/schedule": "opd",
-  "/payments": "billing",
-  "/accounts": "billing",
-  "/telemedicine": "opd",
-  "/teleconsult": "opd",
-  "/blood-bank": "ipd",
-  "/dialysis": "ipd",
-  "/cssd": "ipd",
-  "/oncology": "ipd",
-  "/mrd": "patients",
-  "/pmjay": "insurance",
-  "/lms": "hr",
-  "/crm": "analytics",
 };
+
+/**
+ * Resolve a module's permission entry from the blob, falling back to the legacy parent
+ * bucket when the specific key is absent. This keeps modules that USED to inherit a
+ * bucket (e.g. /dialysis → ipd) working for role blobs written before the rewire, until
+ * the backfill migration normalizes them.
+ */
+function resolveModPerms(permissions: Record<string, any>, moduleKey: string): any {
+  const direct = permissions[moduleKey];
+  if (direct !== undefined && direct !== null) return direct;
+  const parent = LEGACY_MODULE_PARENT[moduleKey];
+  if (parent) return permissions[parent];
+  return undefined;
+}
 
 /**
  * Checks if a role (or specifically its permissions) has access to a path
@@ -176,7 +171,7 @@ export function hasAccess(
     }
 
     if (moduleKey) {
-      const modPerms = permissions[moduleKey];
+      const modPerms = resolveModPerms(permissions, moduleKey);
 
       if (modPerms) {
         if (typeof modPerms === "string") {
@@ -215,7 +210,7 @@ export function hasPermission(
   if (!permissions) return false;
   if (permissions.all === true) return true;
 
-  const modPerms = permissions[moduleKey];
+  const modPerms = resolveModPerms(permissions, moduleKey);
   if (!modPerms) return false;
 
   // Handle legacy string format

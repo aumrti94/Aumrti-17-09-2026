@@ -21,7 +21,11 @@ import {
   DayCareClearance, DayCarePaymentPolicy, DEFAULT_DAY_CARE_POLICY,
   checkDayCareClearance, deriveDepositDefault, fetchDayCarePolicy,
 } from "@/lib/dayCareGate";
-import { chargeDayCareProcedure } from "@/lib/dayCareBilling";
+import { chargeDayCareProcedures } from "@/lib/dayCareBilling";
+import {
+  DAY_CARE_PROCEDURES_SELECT, DayCareProcedureSelection, describeProcedures,
+  listProcedures, mapProcedureRow, totalDurationMinutes, totalProcedureCharge,
+} from "@/lib/dayCareProcedures";
 import { CancelStatus } from "@/lib/dayCareCancel";
 import { useConfigLabelMap } from "@/hooks/useConfigValues";
 import { syncAdvanceToBill } from "@/lib/advanceBillSync";
@@ -38,9 +42,12 @@ interface DayCareAdmission {
   admitting_diagnosis: string;
   doctor_name: string;
   insurance_type: string;
+  /** One-line label for the board, e.g. "Cataract ×2 +1 more". */
   procedure_name: string | null;
   duration_minutes: number | null;
+  /** TOTAL charge across every booked procedure — never a single procedure's rate. */
   standard_rate: number;
+  procedures: DayCareProcedureSelection[];
   status: string;
   cancellation_reason: string | null;
   cancellation_note: string | null;
@@ -102,10 +109,11 @@ const DayCarePage: React.FC = () => {
       .from("admissions")
       .select(`
         id, patient_id, admission_number, admitted_at, scheduled_at, admitting_diagnosis,
-        insurance_type, status, cancellation_reason, cancellation_note,
+        insurance_type, status, cancellation_reason, cancellation_note, day_care_procedure_id,
         patient:patients(full_name, uhid),
         doctor:users!admissions_admitting_doctor_id_fkey(full_name),
-        procedure:day_care_procedures(procedure_name, duration_minutes, standard_rate)
+        procedure:day_care_procedures(procedure_name, duration_minutes, standard_rate),
+        ${DAY_CARE_PROCEDURES_SELECT}
       `)
       .eq("hospital_id", ud.hospital_id)
       .eq("admission_type", "daycare")
@@ -116,7 +124,22 @@ const DayCarePage: React.FC = () => {
 
     if (error) { console.error("Day care fetch:", error.message); setLoading(false); return; }
 
-    const rows: DayCareAdmission[] = (data || []).map((a: any) => ({
+    const rows: DayCareAdmission[] = (data || []).map((a: any) => {
+      // Junction rows are the truth. The single-FK join is only a fallback for a booking
+      // written before 20261008000158 backfilled — reading 0 there would silently zero the
+      // deposit bar and let an unpaid patient through the gate.
+      const items: DayCareProcedureSelection[] = (a.day_care_items || []).length > 0
+        ? a.day_care_items.map(mapProcedureRow)
+        : a.procedure
+          ? [{
+              procedureId:     a.day_care_procedure_id || "",
+              procedureName:   a.procedure.procedure_name,
+              rate:            Number(a.procedure.standard_rate) || 0,
+              quantity:        1,
+              durationMinutes: Number(a.procedure.duration_minutes) || 0,
+            }]
+          : [];
+      return {
       id: a.id,
       patient_id: a.patient_id,
       patient_name: a.patient?.full_name || "—",
@@ -127,13 +150,15 @@ const DayCarePage: React.FC = () => {
       admitting_diagnosis: a.admitting_diagnosis,
       doctor_name: a.doctor?.full_name || "—",
       insurance_type: a.insurance_type,
-      procedure_name: a.procedure?.procedure_name || null,
-      duration_minutes: a.procedure?.duration_minutes || null,
-      standard_rate: Number(a.procedure?.standard_rate) || 0,
+      procedure_name: describeProcedures(items),
+      duration_minutes: totalDurationMinutes(items) || null,
+      standard_rate: totalProcedureCharge(items),
+      procedures: items,
       status: a.status,
       cancellation_reason: a.cancellation_reason ?? null,
       cancellation_note: a.cancellation_note ?? null,
-    }));
+      };
+    });
 
     setAdmissions(rows);
     setLoading(false);
@@ -226,15 +251,20 @@ const DayCarePage: React.FC = () => {
     // Billing is non-blocking: the patient is already admitted, so a billing hiccup must
     // warn rather than strand them. Same posture as the discharge flow.
     try {
-      await chargeDayCareProcedure({
+      // Every booked procedure gets its own bill line — see dayCareBilling.ts. The fallback
+      // keeps a booking with no junction rows billable rather than silently free.
+      await chargeDayCareProcedures({
         hospitalId,
         patientId: a.patient_id,
         admissionId: a.id,
-        procedure: {
-          id: a.id,
-          procedure_name: a.procedure_name || a.admitting_diagnosis,
-          standard_rate: a.standard_rate,
-        },
+        procedures: a.procedures.length > 0
+          ? a.procedures
+          : [{
+              procedureId:   a.id,
+              procedureName: a.procedure_name || a.admitting_diagnosis,
+              rate:          a.standard_rate,
+              quantity:      1,
+            }],
         performedBy: userId,
       });
       await (supabase as any).from("admissions").update({ day_care_billed_at: now }).eq("id", a.id);
@@ -471,7 +501,12 @@ const DayCarePage: React.FC = () => {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <DetailCard label="Procedure" value={selected.procedure_name || selected.admitting_diagnosis} />
+                {/* Detail panel gets the FULL list — the board's "+1 more" is a table-cell
+                    compromise and must not be the only place the second procedure exists. */}
+                <DetailCard
+                  label={selected.procedures.length > 1 ? "Procedures" : "Procedure"}
+                  value={listProcedures(selected.procedures) || selected.admitting_diagnosis}
+                />
                 <DetailCard label="Duration" value={selected.duration_minutes ? `${selected.duration_minutes} min` : "—"} />
                 <DetailCard label="Doctor" value={selected.doctor_name} icon={<User size={12} />} />
                 {view === "scheduled" ? (

@@ -123,3 +123,81 @@ export function computeDayClosureTotals(input: DayClosureInput): SystemTotals {
 
   return totals;
 }
+
+// ─── Per-cashier breakdown ─────────────────────────────────────────────────────
+//
+// Multiple accounts (any role — reception, doctor, admin, lab…) take payments on
+// the same day. The single hospital-wide total can't tell you how much cash each
+// person's drawer should hold. groupTotalsByCashier splits the same rows by the
+// user who took them (received_by) and runs the identical NET computation per
+// group, so each account can be counted separately.
+//
+// Invariant: the per-cashier totals sum back to computeDayClosureTotals over the
+// same rows. This holds as long as a deposit and its mirror row land in the SAME
+// group (the caller leaves both unattributed, so they share the "Unattributed"
+// group and the per-mode advance dedup happens exactly as it does globally).
+
+/** A moded amount that also knows which user (received_by) it belongs to. */
+export interface CashierModedAmount extends ModedAmount {
+  /** public.users.id of the collector. null/undefined ⇒ unattributed (e.g. online/gateway). */
+  cashierId?: string | null;
+  /** Display name resolved from users.full_name. */
+  cashierName?: string | null;
+}
+
+export interface CashierDayClosureInput {
+  payments: CashierModedAmount[];
+  refunds: CashierModedAmount[];
+  advanceDeposits: CashierModedAmount[];
+  mirroredAdvances: CashierModedAmount[];
+}
+
+export interface CashierBreakdown {
+  /** received_by, or null for the pooled unattributed group. */
+  cashierId: string | null;
+  cashierName: string;
+  totals: SystemTotals;
+}
+
+/** Rows with no collector (online/gateway, or actor not fetched) pool here. */
+export const UNATTRIBUTED_KEY = "__unattributed__";
+export const UNATTRIBUTED_LABEL = "Online / Unattributed";
+
+export function groupTotalsByCashier(input: CashierDayClosureInput): CashierBreakdown[] {
+  const groups = new Map<string, { id: string | null; name: string; input: DayClosureInput }>();
+
+  const ensure = (r: CashierModedAmount) => {
+    const key = r.cashierId ? r.cashierId : UNATTRIBUTED_KEY;
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        id: r.cashierId ?? null,
+        name: r.cashierId ? (r.cashierName?.trim() || "Unknown user") : UNATTRIBUTED_LABEL,
+        input: { payments: [], refunds: [], advanceDeposits: [], mirroredAdvances: [] },
+      };
+      groups.set(key, g);
+    } else if (r.cashierId && r.cashierName?.trim() && g.name === "Unknown user") {
+      // Name arrived on a later row for the same id.
+      g.name = r.cashierName.trim();
+    }
+    return g;
+  };
+
+  for (const r of input.payments) ensure(r).input.payments.push(r);
+  for (const r of input.refunds) ensure(r).input.refunds.push(r);
+  for (const r of input.advanceDeposits) ensure(r).input.advanceDeposits.push(r);
+  for (const r of input.mirroredAdvances) ensure(r).input.mirroredAdvances.push(r);
+
+  const out: CashierBreakdown[] = [];
+  for (const g of groups.values()) {
+    out.push({ cashierId: g.id, cashierName: g.name, totals: computeDayClosureTotals(g.input) });
+  }
+
+  // Named collectors first (alphabetical), the pooled unattributed group last.
+  out.sort((a, b) => {
+    if (a.cashierId === null) return 1;
+    if (b.cashierId === null) return -1;
+    return a.cashierName.localeCompare(b.cashierName);
+  });
+  return out;
+}

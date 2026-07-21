@@ -8,6 +8,7 @@
 // needs to correctly reflect churn.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { effectiveMonthlyAmount } from "../_shared/platform-billing.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -25,11 +26,19 @@ serve(async (req) => {
 
     const { data: subs } = await admin
       .from("hospital_subscriptions")
-      .select("hospital_id, status, plan_id, subscription_plans(price_monthly)");
+      .select("hospital_id, status, plan_id, billing_cycle, effective_amount_inr, subscription_plans(price_monthly)");
 
     let written = 0;
     for (const s of subs || []) {
-      const mrrAmount = s.status === "active" ? Number((s as any).subscription_plans?.price_monthly) || 0 : 0;
+      // Use what the hospital is ACTUALLY billed (negotiated overrides and
+      // coupons are genuinely charged now), normalised to a monthly figure so an
+      // annual subscriber does not book 12x their true MRR in one month.
+      // Snapshots cannot be recomputed later, so getting this right matters.
+      const mrrAmount = s.status === "active"
+        ? ((s as any).effective_amount_inr != null
+            ? effectiveMonthlyAmount({ amountInr: (s as any).effective_amount_inr, cycle: (s as any).billing_cycle })
+            : Number((s as any).subscription_plans?.price_monthly) || 0)
+        : 0;
       const { error } = await admin.from("mrr_snapshots").upsert(
         {
           hospital_id: s.hospital_id,

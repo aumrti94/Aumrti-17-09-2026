@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { formatINRExact } from "@/lib/currency";
 import { printDocument, printHeader } from "@/lib/printUtils";
+import { DAY_CARE_PROCEDURES_SELECT, listProcedures, mapProcedureRow } from "@/lib/dayCareProcedures";
 import { CheckCircle2, Printer, IndianRupee } from "lucide-react";
 
 interface Props {
@@ -76,12 +77,21 @@ const AdvanceReceiptModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, 
     if (!admissionId) { setContext({ admissionNumber: null, procedureName: null }); return; }
     (supabase as any)
       .from("admissions")
-      .select("admission_number, admitting_diagnosis, procedure:day_care_procedures(procedure_name)")
+      .select(`
+        admission_number, admitting_diagnosis,
+        ${DAY_CARE_PROCEDURES_SELECT}
+      `)
       .eq("id", admissionId)
       .maybeSingle()
       .then(({ data }: any) => setContext({
         admissionNumber: data?.admission_number ?? null,
-        procedureName: data?.procedure?.procedure_name ?? data?.admitting_diagnosis ?? null,
+        // A day care deposit covers EVERY booked procedure, so the receipt has to name them
+        // all — the old single-FK join printed one and left the patient's money looking like
+        // it was for a cheaper procedure than they paid for.
+        procedureName:
+          listProcedures((data?.day_care_items || []).map(mapProcedureRow)) ||
+          data?.admitting_diagnosis ||
+          null,
       }));
   }, [admissionId]);
 

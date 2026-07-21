@@ -250,10 +250,14 @@ const SettingsDayCareProceduresPage: React.FC = () => {
 
         <p className="text-xs text-muted-foreground">{filtered.length} procedure{filtered.length !== 1 ? "s" : ""}</p>
 
+        {/* The page scrolls, but with a long catalogue the header row scrolled away and you
+            could no longer tell which column was the rate. Scroll the rows inside a capped
+            box instead, with the header pinned. */}
         <div className="border border-border rounded-lg overflow-hidden">
+          <div className="max-h-[55vh] overflow-y-auto">
           <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-muted/40 border-b border-border">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-muted border-b border-border">
                 <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Procedure</th>
                 <th className="px-3 py-2.5 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide w-28">Code</th>
                 <th className="px-3 py-2.5 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide w-32">Specialty</th>
@@ -299,12 +303,13 @@ const SettingsDayCareProceduresPage: React.FC = () => {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       </div>
 
       {/* Add / Edit Dialog */}
       <Dialog open={showAdd || !!editingId} onOpenChange={o => { if (!o) { setShowAdd(false); setEditingId(null); } }}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editingId ? "Edit Procedure" : "Add Day Care Procedure"}</DialogTitle>
           </DialogHeader>

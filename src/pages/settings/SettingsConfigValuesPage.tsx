@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useHospitalId } from "@/hooks/useHospitalId";
@@ -96,7 +96,14 @@ const SettingsConfigValuesPage: React.FC = () => {
   const { hospitalId } = useHospitalId();
   const qc          = useQueryClient();
 
-  const [activeCat, setActiveCat] = useState<string>(CATEGORIES[0].key);
+  // `?cat=` lets Settings search deep-link straight to the list a module cares about
+  // (e.g. a "pharmacy" search opens this page on Drug Routes). Unknown values fall back
+  // to the first category rather than crashing on the `catDef` lookup below.
+  const [searchParams] = useSearchParams();
+  const requestedCat   = searchParams.get("cat");
+  const [activeCat, setActiveCat] = useState<string>(
+    CATEGORIES.some(c => c.key === requestedCat) ? requestedCat! : CATEGORIES[0].key
+  );
   const [addOpen,   setAddOpen]   = useState(false);
   const [addForm,   setAddForm]   = useState<RowFormState>(EMPTY_FORM);
   const [editId,    setEditId]    = useState<string | null>(null);

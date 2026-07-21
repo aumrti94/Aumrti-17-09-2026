@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useRef, useState } from "r
 import { supabase } from "@/integrations/supabase/client";
 import { ENTITLEMENT_KEY } from "@/lib/tabPermissions";
 import { resolveEntitlement, type EntitlementMap } from "@/lib/entitlementResolve";
+import { applyUserOverrides, type UserOverrideBlob } from "@/lib/moduleRegistry";
 
 /**
  * Fetch the plan default + per-hospital override rows and resolve them into the
@@ -34,6 +35,21 @@ async function fetchEntitlement(hospitalId: string): Promise<EntitlementMap | nu
   }
 
   return resolveEntitlement(planRows, hospRows);
+}
+
+/**
+ * Layer 4 — fetch the signed-in user's per-user permission override (a restrict-only
+ * "withhold map", one row per user). Returns null when there is nothing to withhold.
+ */
+async function fetchUserOverrides(userId: string | null): Promise<UserOverrideBlob | null> {
+  if (!userId) return null;
+  const { data } = await (supabase as any)
+    .from("user_permission_overrides")
+    .select("permissions")
+    .eq("user_id", userId)
+    .maybeSingle();
+  const p = data?.permissions as UserOverrideBlob | undefined;
+  return p && Object.keys(p).length ? p : null;
 }
 
 /**
@@ -193,7 +209,7 @@ export const HospitalProvider = ({ children }: { children: React.ReactNode }) =>
       setRole(userData.role);
       setFullName((userData as any).full_name ?? null);
 
-      const [{ data: permsData, error: permsError }, entitlement] = await Promise.all([
+      const [{ data: permsData, error: permsError }, entitlement, userOverrides] = await Promise.all([
         supabase
           .from("role_permissions")
           .select("permissions")
@@ -201,6 +217,7 @@ export const HospitalProvider = ({ children }: { children: React.ReactNode }) =>
           .eq("role_name", userData.role)
           .maybeSingle(),
         fetchEntitlement(userData.hospital_id),
+        fetchUserOverrides((userData as any).id ?? null),
       ]);
 
       if (permsError) {
@@ -208,7 +225,8 @@ export const HospitalProvider = ({ children }: { children: React.ReactNode }) =>
       }
 
       const rolePerms = (permsData?.permissions as Record<string, any>) || null;
-      const perms = applyEntitlement(rolePerms, entitlement);
+      // L4 (per-user withholds) applied BEFORE the entitlement floor is folded in.
+      const perms = applyEntitlement(applyUserOverrides(rolePerms, userOverrides), entitlement);
       setPermissions(perms);
       resolvedRef.current = true;
       setLoading(false);
@@ -258,7 +276,7 @@ export const HospitalProvider = ({ children }: { children: React.ReactNode }) =>
 
         authUserIdRef.current = authUserId;
 
-        const [{ data: permsData }, entitlement] = await Promise.all([
+        const [{ data: permsData }, entitlement, userOverrides] = await Promise.all([
           supabase
             .from("role_permissions")
             .select("permissions")
@@ -266,10 +284,11 @@ export const HospitalProvider = ({ children }: { children: React.ReactNode }) =>
             .eq("role_name", userData.role)
             .maybeSingle(),
           fetchEntitlement(userData.hospital_id),
+          fetchUserOverrides((userData as any).id ?? null),
         ]);
 
         const rolePerms = (permsData?.permissions as Record<string, any>) || null;
-        const perms = applyEntitlement(rolePerms, entitlement);
+        const perms = applyEntitlement(applyUserOverrides(rolePerms, userOverrides), entitlement);
 
         setHospitalId(userData.hospital_id);
         setUserId((userData as any).id ?? null);
@@ -343,6 +362,41 @@ export const HospitalProvider = ({ children }: { children: React.ReactNode }) =>
             }
             return next;
           });
+        },
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [hospitalId, userId, role, fullName]);
+
+  // Live-apply per-user (Layer 4) override changes without a reload. Recomposes the full
+  // blob (role ⊕ user withholds ⊕ hospital entitlement) so the change takes effect at once.
+  useEffect(() => {
+    if (!hospitalId || !userId || !role) return;
+    const channel = supabase
+      .channel(`user-perm-overrides-${userId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "user_permission_overrides", filter: `user_id=eq.${userId}` },
+        async () => {
+          const [{ data: permsData }, entitlement, userOverrides] = await Promise.all([
+            supabase
+              .from("role_permissions")
+              .select("permissions")
+              .eq("hospital_id", hospitalId)
+              .eq("role_name", role)
+              .maybeSingle(),
+            fetchEntitlement(hospitalId),
+            fetchUserOverrides(userId),
+          ]);
+          const rolePerms = (permsData?.permissions as Record<string, any>) || null;
+          const next = applyEntitlement(applyUserOverrides(rolePerms, userOverrides), entitlement);
+          setPermissions(next);
+          const authUserId = authUserIdRef.current;
+          if (authUserId) {
+            writeCache(authUserId, { hospitalId, userId, role, permissions: next, fullName, loading: false });
+          }
         },
       )
       .subscribe();

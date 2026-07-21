@@ -12,6 +12,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import StaffPrivilegesPanel from "@/components/hr/StaffPrivilegesPanel";
+import StaffAccessPanel from "@/components/settings/StaffAccessPanel";
 
 /* ─── Types ─── */
 type AppRole = string;
@@ -141,7 +142,7 @@ const SettingsStaffPage: React.FC = () => {
   const [loginPassword, setLoginPassword] = useState("");
   const [creatingLogin, setCreatingLogin] = useState(false);
   const [resettingMfaId, setResettingMfaId] = useState<string | null>(null);
-  const [drawerTab, setDrawerTab] = useState<"profile" | "privileges">("profile");
+  const [drawerTab, setDrawerTab] = useState<"profile" | "privileges" | "access">("profile");
 
   // HPR verification state (per-open-drawer)
   const [hprVerifying, setHprVerifying] = useState(false);
@@ -888,7 +889,7 @@ const SettingsStaffPage: React.FC = () => {
           <div className="fixed inset-0 bg-black/20 z-40" onClick={closeDrawer} />
           <div className={cn(
             "fixed right-0 top-0 bottom-0 w-full bg-card border-l border-border z-50 flex flex-col shadow-xl animate-in slide-in-from-right duration-200",
-            editingId && drawerTab === "privileges" ? "sm:w-[560px]" : "sm:w-[420px]"
+            editingId && (drawerTab === "privileges" || drawerTab === "access") ? "sm:w-[560px]" : "sm:w-[420px]"
           )}>
             <div className="flex-shrink-0 px-6 py-4 border-b border-border flex items-center justify-between">
               <h2 className="text-lg font-bold text-foreground">
@@ -901,6 +902,7 @@ const SettingsStaffPage: React.FC = () => {
               <div className="flex-shrink-0 flex border-b border-border">
                 {([
                   { id: "profile" as const, label: "Profile" },
+                  { id: "access" as const, label: "Access" },
                   { id: "privileges" as const, label: "Privileges" },
                 ] as const).map(t => (
                   <button
@@ -922,6 +924,10 @@ const SettingsStaffPage: React.FC = () => {
             {editingId && drawerTab === "privileges" ? (
               <div className="flex-1 overflow-hidden min-h-0">
                 <StaffPrivilegesPanel userId={editingId} staffName={form.full_name} />
+              </div>
+            ) : editingId && drawerTab === "access" ? (
+              <div className="flex-1 overflow-hidden min-h-0">
+                <StaffAccessPanel userId={editingId} role={form.role} staffName={form.full_name} />
               </div>
             ) : (
             <>

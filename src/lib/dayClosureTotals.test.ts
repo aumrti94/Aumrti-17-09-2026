@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { computeDayClosureTotals, bucketForMode, type DayClosureInput } from "./dayClosureTotals";
+import {
+  computeDayClosureTotals,
+  bucketForMode,
+  groupTotalsByCashier,
+  UNATTRIBUTED_LABEL,
+  type DayClosureInput,
+  type SystemTotals,
+  type CashierDayClosureInput,
+} from "./dayClosureTotals";
 
 /**
  * Day-closure reconciliation regression suite.
@@ -121,6 +129,80 @@ describe("computeDayClosureTotals — refunds by mode", () => {
     });
     expect(t.refunds).toBe(3500);
     expect(t.cash).toBe(1500);
+  });
+});
+
+describe("groupTotalsByCashier — per-account breakdown", () => {
+  const MODES: (keyof SystemTotals)[] = ["cash", "upi", "card", "cheque", "net_banking", "insurance", "other"];
+
+  it("splits payments by the user who took them, any role", () => {
+    const groups = groupTotalsByCashier({
+      payments: [
+        { mode: "cash", amount: 1000, cashierId: "u1", cashierName: "Reception1" },
+        { mode: "upi", amount: 500, cashierId: "u1", cashierName: "Reception1" },
+        { mode: "cash", amount: 2000, cashierId: "u2", cashierName: "Dr Rao" },
+      ],
+      refunds: [], advanceDeposits: [], mirroredAdvances: [],
+    });
+    expect(groups).toHaveLength(2);
+    const r1 = groups.find(g => g.cashierId === "u1")!;
+    const r2 = groups.find(g => g.cashierId === "u2")!;
+    expect(r1.cashierName).toBe("Reception1");
+    expect(r1.totals.cash).toBe(1000);
+    expect(r1.totals.upi).toBe(500);
+    expect(r2.cashierName).toBe("Dr Rao");
+    expect(r2.totals.cash).toBe(2000);
+  });
+
+  it("pools rows with no collector into a single 'Online / Unattributed' group, listed last", () => {
+    const groups = groupTotalsByCashier({
+      payments: [
+        { mode: "cash", amount: 1000, cashierId: "u1", cashierName: "Reception1" },
+        { mode: "card", amount: 800, cashierId: null },
+        { mode: "upi", amount: 200 }, // cashierId undefined
+      ],
+      refunds: [], advanceDeposits: [], mirroredAdvances: [],
+    });
+    const pooled = groups[groups.length - 1];
+    expect(pooled.cashierId).toBeNull();
+    expect(pooled.cashierName).toBe(UNATTRIBUTED_LABEL);
+    expect(pooled.totals.card).toBe(800);
+    expect(pooled.totals.upi).toBe(200);
+  });
+
+  it("per-cashier totals sum back to the hospital-wide computeDayClosureTotals", () => {
+    // Deposits + mirrored advances stay unattributed (as the page passes them),
+    // so their per-mode dedup happens in one group, exactly as it does globally.
+    const cashierInput: CashierDayClosureInput = {
+      payments: [
+        { mode: "cash", amount: 677, cashierId: "u1", cashierName: "Reception1" },
+        { mode: "cash", amount: 1500, cashierId: "u2", cashierName: "Reception2" },
+        { mode: "advance_adjust", amount: 1500, cashierId: "u2", cashierName: "Reception2" },
+        { mode: "card", amount: 900 }, // unattributed
+      ],
+      refunds: [{ mode: "cash", amount: 3500, cashierId: null }],
+      advanceDeposits: [{ mode: "upi", amount: 5000 }],
+      mirroredAdvances: [{ mode: "advance_adjust", amount: 1500 }],
+    };
+    const flat: DayClosureInput = {
+      payments: cashierInput.payments,
+      refunds: cashierInput.refunds,
+      advanceDeposits: cashierInput.advanceDeposits,
+      mirroredAdvances: cashierInput.mirroredAdvances,
+    };
+    const whole = computeDayClosureTotals(flat);
+    const groups = groupTotalsByCashier(cashierInput);
+
+    for (const mode of MODES) {
+      const summed = groups.reduce((s, g) => s + (g.totals[mode] as number), 0);
+      expect(summed).toBeCloseTo(whole[mode] as number, 6);
+    }
+    const summedTotal = groups.reduce((s, g) => s + g.totals.total, 0);
+    expect(summedTotal).toBeCloseTo(whole.total, 6);
+  });
+
+  it("returns an empty array when there is nothing to group", () => {
+    expect(groupTotalsByCashier({ payments: [], refunds: [], advanceDeposits: [], mirroredAdvances: [] })).toEqual([]);
   });
 });
 

@@ -12,6 +12,7 @@ import { Progress } from "@/components/ui/progress";
 import { FormError } from "@/components/ui/FormError";
 import { PLATFORM_STATUS_PILL } from "@/lib/platform-utils";
 import { formatINRExact } from "@/lib/currency";
+import PaymentHistoryTable from "@/components/billing/PaymentHistoryTable";
 import { logAdminAction } from "@/lib/adminAudit";
 import { startImpersonation } from "@/lib/impersonation";
 
@@ -157,7 +158,7 @@ async function fetchPlanFeatures(planId: string) {
 
 // ── component ─────────────────────────────────────────────────
 
-const TABS = ["Overview", "Users", "Subscription", "Modules", "Pricing", "Notes", "Usage"];
+const TABS = ["Overview", "Users", "Subscription", "Modules", "Billing", "Notes", "Usage"];
 
 export default function HospitalDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -1098,8 +1099,8 @@ export default function HospitalDetailPage() {
         )}
 
         {/* ── Pricing ── */}
-        {tab === "Pricing" && (
-          <div className="max-w-md space-y-6">
+        {tab === "Billing" && (
+          <div className="max-w-4xl space-y-6">
             {pricing && (
               <div className="bg-card border border-border rounded-xl p-4 space-y-2 shadow-sm">
                 <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider">Active Override</p>
@@ -1137,7 +1138,15 @@ export default function HospitalDetailPage() {
                 {savePricing.isPending ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
                 Save Pricing Override
               </button>
+              <p className="text-[11px] text-muted-foreground">
+                Applied at checkout: the hospital is charged this instead of the plan's list
+                price. A new Razorpay plan is created for the negotiated amount automatically.
+              </p>
             </div>
+
+            {/* What they were agreed to pay sits directly above what they actually
+                paid — the two questions are always asked together. */}
+            <PaymentHistoryTable hospitalId={id} title="Payment History" limit={24} />
           </div>
         )}
 

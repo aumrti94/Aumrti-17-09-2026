@@ -7,8 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Lock, Unlock, CheckCircle2, AlertTriangle, Clock, ChevronDown, Printer, ShieldAlert } from "lucide-react";
-import { computeDayClosureTotals, EMPTY_TOTALS, type SystemTotals } from "@/lib/dayClosureTotals";
+import { computeDayClosureTotals, groupTotalsByCashier, EMPTY_TOTALS, UNATTRIBUTED_LABEL, type SystemTotals, type CashierBreakdown } from "@/lib/dayClosureTotals";
 import { useModuleAccess } from "@/components/access/useModuleAccess";
 import { useHospitalContext } from "@/contexts/HospitalContext";
 import { logConfigChange } from "@/lib/ims";
@@ -22,7 +23,10 @@ interface PaymentRow {
   payment_time: string;
   patient_name: string;
   bill_number: string;
+  received_by: string | null;
   received_by_name: string;
+  created_by: string | null;
+  created_by_name: string;
 }
 
 interface ClosureRecord {
@@ -72,6 +76,11 @@ const DailyCashClosurePage: React.FC = () => {
   const todayStr = new Date().toISOString().split("T")[0];
   const [closureDate, setClosureDate] = useState<string>(todayStr);
   const [systemTotals, setSystemTotals] = useState<SystemTotals>(EMPTY_TOTALS);
+  const [cashierTotals, setCashierTotals] = useState<CashierBreakdown[]>([]);
+  const [cashierFilter, setCashierFilter] = useState<string>("all"); // "all" | received_by | "__none__"
+  // Every billing account in the hospital, so the picker is populated even on a
+  // day an account collected nothing (it then reads ₹0 rather than disappearing).
+  const [accounts, setAccounts] = useState<{ id: string; full_name: string; role: string | null }[]>([]);
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [locking, setLocking] = useState(false);
@@ -113,16 +122,30 @@ const DailyCashClosurePage: React.FC = () => {
     });
   }, []);
 
+  // ── Billing accounts for the picker (any role can collect) ────────────────
+
+  useEffect(() => {
+    if (!hospitalId) return;
+    (supabase as any)
+      .from("users")
+      .select("id, full_name, role")
+      .eq("hospital_id", hospitalId)
+      .eq("is_active", true)
+      .order("full_name")
+      .then(({ data }: any) => setAccounts(data || []));
+  }, [hospitalId]);
+
   // ── Fetch day's payments and existing closure ─────────────────────────────
 
   const loadDay = useCallback(async () => {
     if (!hospitalId) return;
     setLoading(true);
+    setCashierFilter("all"); // a collector on one day may not exist on another
 
     // Fetch all payments for closure_date
     const { data: pData } = await (supabase as any)
       .from("bill_payments")
-      .select("id, payment_mode, amount, payment_time, bill_id, received_by, bills!inner(bill_number, patients!inner(full_name))")
+      .select("id, payment_mode, amount, payment_time, bill_id, received_by, receiver:users!bill_payments_received_by_fkey(full_name), bills!inner(bill_number, created_by, creator:users!bills_created_by_fkey(full_name), patients!inner(full_name))")
       .eq("hospital_id", hospitalId)
       .eq("payment_date", closureDate)
       .order("payment_time", { ascending: false });
@@ -134,7 +157,10 @@ const DailyCashClosurePage: React.FC = () => {
       payment_time: p.payment_time,
       patient_name: p.bills?.patients?.full_name || "—",
       bill_number: p.bills?.bill_number || "—",
-      received_by_name: "",
+      received_by: p.received_by ?? null,
+      received_by_name: p.receiver?.full_name || "",
+      created_by: p.bills?.created_by ?? null,
+      created_by_name: p.bills?.creator?.full_name || "",
     }));
     setPayments(rows);
 
@@ -171,6 +197,16 @@ const DailyCashClosurePage: React.FC = () => {
       mirroredAdvances: (mirroredAdvancesData || []).map((p: any) => ({ mode: p.payment_mode, amount: Number(p.amount || 0) })),
     });
     setSystemTotals(totals);
+
+    // Per-account breakdown. Only payments carry a collector (received_by); refunds,
+    // deposits and mirrored advances stay unattributed so their per-mode dedup happens
+    // in one pooled group — which keeps the per-cashier figures summing to the total.
+    setCashierTotals(groupTotalsByCashier({
+      payments: rows.map(r => ({ mode: r.payment_mode, amount: r.amount, cashierId: r.received_by, cashierName: r.received_by_name })),
+      refunds: (refundsData || []).map((r: any) => ({ mode: r.refund_mode, amount: Number(r.amount || 0) })),
+      advanceDeposits: (advancesData || []).map((a: any) => ({ mode: a.payment_mode, amount: Number(a.amount || 0) })),
+      mirroredAdvances: (mirroredAdvancesData || []).map((p: any) => ({ mode: p.payment_mode, amount: Number(p.amount || 0) })),
+    }));
 
     // Fetch revenue by service type for today's finalized bills (for Tally summary)
     const { data: lineItemsData } = await supabase
@@ -230,11 +266,34 @@ const DailyCashClosurePage: React.FC = () => {
 
   // ── Computed values ───────────────────────────────────────────────────────
 
+  // Transaction list filtered to the selected account ("all" = combined view).
+  const visiblePayments =
+    cashierFilter === "all"       ? payments
+    : cashierFilter === "__none__" ? payments.filter(p => !p.received_by)
+    :                                payments.filter(p => p.received_by === cashierFilter);
+
+  // Which account the screen is currently showing. "all" = the combined
+  // hospital view, which is the only view the day can be locked from.
+  const viewingAccount = cashierFilter !== "all";
+  const selectedAccountName =
+    cashierFilter === "all"        ? "All Accounts"
+    : cashierFilter === "__none__" ? UNATTRIBUTED_LABEL
+    : (accounts.find(a => a.id === cashierFilter)?.full_name
+       ?? cashierTotals.find(c => c.cashierId === cashierFilter)?.cashierName
+       ?? "Account");
+
+  // The figures shown in the System Totals column follow the picker; an account
+  // with nothing collected today correctly reads ₹0 rather than vanishing.
+  const viewTotals: SystemTotals = !viewingAccount
+    ? systemTotals
+    : (cashierTotals.find(c => (c.cashierId ?? "__none__") === cashierFilter)?.totals ?? EMPTY_TOTALS);
+
   const manualTotal = MODES.reduce((s, m) => s + (parseFloat(manual[m]) || 0), 0);
+  // Reconciliation is always against the whole hospital — never a filtered slice.
   const variance = manualTotal - systemTotals.total;
   const varianceZero = Math.abs(variance) < 0.005;
   const allManualFilled = MODES.every(m => manual[m] !== "");
-  const canLock = allManualFilled && (varianceZero || varianceReason.trim().length > 0);
+  const canLock = !viewingAccount && allManualFilled && (varianceZero || varianceReason.trim().length > 0);
   const isLocked = existing?.status === "locked";
 
   // ── Lock Day ──────────────────────────────────────────────────────────────
@@ -375,6 +434,23 @@ const DailyCashClosurePage: React.FC = () => {
       ledgerRow("Other Receipts", systemTotals.other),
     ].filter(Boolean).join("");
 
+    // Staff names come from user-editable data — escape before writing to the print doc.
+    const esc = (s: string) =>
+      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+    // Per-account collections, so each drawer can be counted against its own figure.
+    const accountRows = cashierTotals.map(c => {
+      const modeLine = ([...MODES, "other"] as (keyof SystemTotals)[])
+        .filter(m => Math.abs(c.totals[m] as number) >= 0.005)
+        .map(m => `${MODE_LABELS[m] ?? "Other"} ₹${fmtAmt(c.totals[m] as number)}`)
+        .join("  ·  ");
+      const t = c.totals.total;
+      return `<tr><td class="lbl">${esc(c.cashierName)}` +
+        (modeLine ? `<div style="font-size:9px;color:#666;">${modeLine}</div>` : "") +
+        `</td><td class="amt">₹ ${fmtAmt(Math.abs(t))}</td>` +
+        `<td class="tag ${t >= 0 ? "dr" : "cr"}">${t >= 0 ? "DR" : "CR"}</td></tr>`;
+    }).join("");
+
     const revenueRows = Object.entries(revenueByHead)
       .filter(([, v]) => v > 0)
       .sort((a, b) => b[1] - a[1])
@@ -430,6 +506,16 @@ const DailyCashClosurePage: React.FC = () => {
     </tr>
   </table>
 
+  ${accountRows ? `<h2>Collections by Account &nbsp;<small style="font-weight:normal;font-size:9px">(count each drawer separately)</small></h2>
+  <table>
+    ${accountRows}
+    <tr class="total">
+      <td class="lbl">TOTAL — ALL ACCOUNTS</td>
+      <td class="amt">₹ ${fmtAmt(systemTotals.total)}</td>
+      <td></td>
+    </tr>
+  </table>` : ""}
+
   <h2>Revenue by Service &nbsp;<small style="font-weight:normal;font-size:9px">(Credit entries in Tally)</small></h2>
   <table>
     ${revenueRows || `<tr><td class="lbl" colspan="3" style="color:#888;font-size:10px;">No bills finalised today yet</td></tr>`}
@@ -471,7 +557,7 @@ const DailyCashClosurePage: React.FC = () => {
     win.document.write(html);
     win.document.close();
     setTimeout(() => win.print(), 400);
-  }, [systemTotals, revenueByHead, dateLabel, hospitalName, toast]);
+  }, [systemTotals, cashierTotals, revenueByHead, dateLabel, hospitalName, toast]);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -552,6 +638,27 @@ const DailyCashClosurePage: React.FC = () => {
           onChange={(e) => e.target.value && setClosureDate(e.target.value)}
           className="h-7 w-[150px] text-[12px]"
         />
+        {/* Billing-account picker — one screen from which an admin can review
+            any account's collections (centralised collection point). */}
+        <Select value={cashierFilter} onValueChange={setCashierFilter}>
+          <SelectTrigger className="h-7 w-[210px] text-[12px]">
+            <SelectValue placeholder="All Accounts" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all" className="text-[12px]">All Accounts (combined)</SelectItem>
+            {accounts.map(a => {
+              const t = cashierTotals.find(c => c.cashierId === a.id)?.totals.total ?? 0;
+              return (
+                <SelectItem key={a.id} value={a.id} className="text-[12px]">
+                  {a.full_name}{a.role ? ` · ${a.role}` : ""} — {fmt(t)}
+                </SelectItem>
+              );
+            })}
+            <SelectItem value="__none__" className="text-[12px]">
+              {UNATTRIBUTED_LABEL} — {fmt(cashierTotals.find(c => c.cashierId === null)?.totals.total ?? 0)}
+            </SelectItem>
+          </SelectContent>
+        </Select>
         {isLocked && (
           <Badge className="bg-green-100 text-green-700 text-[11px]">
             <CheckCircle2 size={11} className="mr-1" /> Locked
@@ -622,44 +729,52 @@ const DailyCashClosurePage: React.FC = () => {
       <div className="flex-shrink-0 grid grid-cols-2 gap-0 border-b border-border">
         {/* System totals */}
         <div className="bg-card border-r border-border px-5 py-3">
-          <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">System Totals (from transactions)</p>
+          <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">
+            {viewingAccount ? `Collections — ${selectedAccountName}` : "System Totals (from transactions)"}
+          </p>
           <div className="space-y-1.5">
             {MODES.map(m => (
               <div key={m} className="flex justify-between items-center text-[12px]">
                 <span className="text-muted-foreground w-32">{MODE_LABELS[m]}</span>
-                <span className="font-mono font-semibold tabular-nums">{fmt(systemTotals[m as keyof SystemTotals] as number)}</span>
+                <span className="font-mono font-semibold tabular-nums">{fmt(viewTotals[m as keyof SystemTotals] as number)}</span>
               </div>
             ))}
-            {systemTotals.other > 0 && (
+            {viewTotals.other > 0 && (
               <div className="flex justify-between items-center text-[12px]">
                 <span className="text-muted-foreground w-32">Other</span>
-                <span className="font-mono font-semibold tabular-nums">{fmt(systemTotals.other)}</span>
+                <span className="font-mono font-semibold tabular-nums">{fmt(viewTotals.other)}</span>
               </div>
             )}
-            {(systemTotals.advances > 0 || systemTotals.refunds > 0) && (
+            {(viewTotals.advances > 0 || viewTotals.refunds > 0) && (
               <div className="mt-2 pt-1.5 border-t border-dashed border-border space-y-1">
                 <p className="text-[9px] text-muted-foreground uppercase tracking-wider">
                   Included above — for reference
                 </p>
-                {systemTotals.advances > 0 && (
+                {viewTotals.advances > 0 && (
                   <div className="flex justify-between items-center text-[12px] text-emerald-700">
                     <span className="w-32">Advance deposits taken</span>
-                    <span className="font-mono font-semibold tabular-nums">+{fmt(systemTotals.advances)}</span>
+                    <span className="font-mono font-semibold tabular-nums">+{fmt(viewTotals.advances)}</span>
                   </div>
                 )}
-                {systemTotals.refunds > 0 && (
+                {viewTotals.refunds > 0 && (
                   <div className="flex justify-between items-center text-[12px] text-destructive">
                     <span className="w-32">Refunds Paid Out</span>
-                    <span className="font-mono font-semibold tabular-nums">-{fmt(systemTotals.refunds)}</span>
+                    <span className="font-mono font-semibold tabular-nums">-{fmt(viewTotals.refunds)}</span>
                   </div>
                 )}
               </div>
             )}
           </div>
           <div className="mt-2 pt-2 border-t border-border flex justify-between items-center">
-            <span className="text-[12px] font-bold">System Total</span>
-            <span className="text-[14px] font-bold tabular-nums">{fmt(systemTotals.total)}</span>
+            <span className="text-[12px] font-bold">{viewingAccount ? "Account Total" : "System Total"}</span>
+            <span className="text-[14px] font-bold tabular-nums">{fmt(viewTotals.total)}</span>
           </div>
+          {viewingAccount && (
+            <p className="mt-1.5 text-[10px] text-amber-700">
+              Viewing one account. Hospital total for the day is {fmt(systemTotals.total)} — switch to
+              “All Accounts” to count and lock the day.
+            </p>
+          )}
         </div>
 
         {/* Manual counts */}
@@ -691,6 +806,55 @@ const DailyCashClosurePage: React.FC = () => {
         </div>
       </div>
 
+      {/* ── Collections by account (per-cashier breakdown) ── */}
+      {cashierTotals.length > 0 && (
+        <div className="flex-shrink-0 border-b border-border bg-card px-5 py-3">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+              Collections by Account — verify each drawer separately
+            </p>
+            {cashierFilter !== "all" && (
+              <button onClick={() => setCashierFilter("all")} className="text-[10px] text-primary hover:underline">
+                Show all
+              </button>
+            )}
+          </div>
+          <div className="flex gap-3 overflow-x-auto pb-1">
+            {cashierTotals.map(c => {
+              const key = c.cashierId ?? "__none__";
+              const active = cashierFilter === key;
+              const buckets = ([...MODES, "other"] as (keyof SystemTotals)[])
+                .filter(m => (c.totals[m] as number) !== 0);
+              return (
+                <button
+                  key={key}
+                  onClick={() => setCashierFilter(active ? "all" : key)}
+                  className={`flex-shrink-0 text-left border rounded-lg px-3 py-2 min-w-[170px] transition-colors ${
+                    active ? "border-primary bg-primary/5" : "border-border hover:bg-muted/40"
+                  }`}
+                >
+                  <p className="text-[12px] font-semibold truncate max-w-[150px]">{c.cashierName}</p>
+                  <div className="mt-1.5 space-y-0.5">
+                    {buckets.length === 0 ? (
+                      <div className="text-[11px] text-muted-foreground">No net tender</div>
+                    ) : buckets.map(m => (
+                      <div key={m} className="flex justify-between gap-4 text-[11px]">
+                        <span className="text-muted-foreground">{MODE_LABELS[m] ?? "Other"}</span>
+                        <span className="font-mono tabular-nums">{fmt(c.totals[m] as number)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-1.5 pt-1 border-t border-dashed border-border flex justify-between">
+                    <span className="text-[10px] font-bold uppercase text-muted-foreground">Total</span>
+                    <span className="text-[12px] font-bold tabular-nums">{fmt(c.totals.total)}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* ── Variance bar ── */}
       <div className={`flex-shrink-0 px-5 py-2.5 border-b border-border flex items-center gap-4 ${
         varianceZero ? "bg-green-50" : "bg-red-50"
@@ -718,7 +882,12 @@ const DailyCashClosurePage: React.FC = () => {
         {!varianceZero && isLocked && varianceReason && (
           <p className="text-[11px] text-muted-foreground flex-1">{varianceReason}</p>
         )}
-        <div className="ml-auto shrink-0">
+        <div className="ml-auto shrink-0 flex items-center gap-2">
+          {!isLocked && viewingAccount && (
+            <span className="text-[10px] text-muted-foreground">
+              Showing {selectedAccountName} — switch to “All Accounts” to lock
+            </span>
+          )}
           {!isLocked ? (
             <Button
               size="sm"
@@ -742,7 +911,12 @@ const DailyCashClosurePage: React.FC = () => {
       <div className="flex-1 overflow-hidden flex flex-col">
         <div className="flex-shrink-0 px-5 py-1.5 bg-muted/50 border-b border-border/50 flex items-center">
           <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">
-            {payments.length} Transaction{payments.length !== 1 ? "s" : ""} — {dateLabel}
+            {visiblePayments.length} Transaction{visiblePayments.length !== 1 ? "s" : ""} — {dateLabel}
+            {cashierFilter !== "all" && (
+              <span className="ml-2 normal-case text-primary">
+                (filtered to {cashierTotals.find(c => (c.cashierId ?? "__none__") === cashierFilter)?.cashierName ?? "account"})
+              </span>
+            )}
           </span>
         </div>
         <div className="flex-1 overflow-auto">
@@ -753,11 +927,13 @@ const DailyCashClosurePage: React.FC = () => {
                 <th className="text-left px-3 py-1.5 text-[10px] font-bold uppercase text-muted-foreground">Patient</th>
                 <th className="text-left px-3 py-1.5 text-[10px] font-bold uppercase text-muted-foreground">Bill #</th>
                 <th className="text-left px-3 py-1.5 text-[10px] font-bold uppercase text-muted-foreground">Mode</th>
+                <th className="text-left px-3 py-1.5 text-[10px] font-bold uppercase text-muted-foreground">Received By</th>
+                <th className="text-left px-3 py-1.5 text-[10px] font-bold uppercase text-muted-foreground">Bill By</th>
                 <th className="text-right px-5 py-1.5 text-[10px] font-bold uppercase text-muted-foreground">Amount</th>
               </tr>
             </thead>
             <tbody>
-              {payments.map(p => (
+              {visiblePayments.map(p => (
                 <tr key={p.id} className="border-b border-border/30 hover:bg-muted/20">
                   <td className="px-5 py-1.5 text-muted-foreground">{fmtTime(p.payment_time)}</td>
                   <td className="px-3 py-1.5 font-medium">{p.patient_name}</td>
@@ -767,12 +943,18 @@ const DailyCashClosurePage: React.FC = () => {
                       {p.payment_mode}
                     </span>
                   </td>
+                  <td className="px-3 py-1.5">{p.received_by_name || <span className="text-muted-foreground">—</span>}</td>
+                  <td className="px-3 py-1.5">{p.created_by_name || <span className="text-muted-foreground">—</span>}</td>
                   <td className="px-5 py-1.5 text-right font-semibold tabular-nums">{fmt(p.amount)}</td>
                 </tr>
               ))}
-              {payments.length === 0 && (
+              {visiblePayments.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="text-center py-8 text-muted-foreground">No payments recorded for {dateLabel}</td>
+                  <td colSpan={7} className="text-center py-8 text-muted-foreground">
+                    {payments.length === 0
+                      ? `No payments recorded for ${dateLabel}`
+                      : "No payments for the selected account"}
+                  </td>
                 </tr>
               )}
             </tbody>

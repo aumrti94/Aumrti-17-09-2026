@@ -13,6 +13,23 @@ export interface ActionDef {
 
 /* ── Tab definitions per module ── */
 export const MODULE_TABS: Record<string, TabDef[]> = {
+  // Home dashboard KPI keycards + main panels. Each "tab" is a card/panel that can be
+  // hidden per role (SettingsRolesPage) and per user (StaffAccessPanel). Runtime gating
+  // lives in Dashboard.tsx via hasTabAccess("dashboard", <key>, …). Default = show.
+  dashboard: [
+    { key: "card_patients", label: "Total Patients (card)" },
+    { key: "card_beds", label: "Beds Occupied (card)" },
+    { key: "card_opd", label: "OPD Tokens (card)" },
+    { key: "card_revenue", label: "Revenue MTD (card)" },
+    { key: "card_doctors", label: "Doctors On Duty (card)" },
+    { key: "card_alerts", label: "Critical Alerts (card)" },
+    { key: "card_followups", label: "Follow-ups Due (card)" },
+    { key: "card_nabh", label: "NABH Readiness (card)" },
+    { key: "card_abdm", label: "ABDM Compliance (card)" },
+    { key: "panel_revenue", label: "Revenue Chart (panel)" },
+    { key: "panel_beds", label: "Bed Occupancy (panel)" },
+    { key: "panel_alerts", label: "Active Alerts (panel)" },
+  ],
   opd: [
     { key: "complaint", label: "Complaint" },
     { key: "vitals", label: "Vitals" },
@@ -381,6 +398,32 @@ export const MODULE_TABS: Record<string, TabDef[]> = {
 
 /* ── Action definitions per module ── */
 export const MODULE_ACTIONS: Record<string, ActionDef[]> = {
+  // Dashboard buttons — page controls, Quick Access sidebar shortcuts, and top-bar header
+  // buttons. Gated via hasActionAccess("dashboard", <key>, …) in Dashboard.tsx,
+  // AppSidebar.tsx and AppHeader.tsx respectively. Default = allow (backward compatible).
+  dashboard: [
+    // ── Dashboard page buttons ──
+    { key: "refresh", label: "Refresh Dashboard", description: "Manually refresh the live KPI data" },
+    { key: "drilldown", label: "Card Drill-Downs", description: "Open the detailed drawer when a KPI card is clicked" },
+    { key: "load_sample_data", label: "Load Sample Data", description: "Seed demo data on an empty hospital (welcome banner)" },
+    { key: "complete_setup", label: "Complete Setup Shortcut", description: "Jump to the onboarding wizard from the welcome banner" },
+    // ── Quick Access sidebar shortcuts ──
+    { key: "quick_scheduling", label: "Quick Access: Scheduling", description: "Scheduling shortcut in the sidebar Quick Access group" },
+    { key: "quick_opd", label: "Quick Access: OPD Queue", description: "OPD Queue shortcut in the sidebar" },
+    { key: "quick_ipd", label: "Quick Access: IPD / Wards", description: "IPD / Wards shortcut in the sidebar" },
+    { key: "quick_billing", label: "Quick Access: Billing", description: "Billing shortcut in the sidebar" },
+    { key: "quick_hr", label: "Quick Access: HR & Staff", description: "HR & Staff shortcut in the sidebar" },
+    { key: "quick_ceo_board", label: "Quick Access: CEO Board", description: "CEO Board shortcut in the sidebar" },
+    { key: "quick_govt_schemes", label: "Quick Access: Govt Schemes", description: "Govt Schemes (PMJAY) shortcut in the sidebar" },
+    { key: "quick_lab", label: "Quick Access: Lab", description: "Lab shortcut in the sidebar" },
+    { key: "quick_analytics", label: "Quick Access: Analytics", description: "Analytics shortcut in the sidebar" },
+    // ── Header (top bar) action buttons ──
+    { key: "header_report_incident", label: "Header: Report Incident", description: "Red alert-triangle icon in the top bar" },
+    { key: "header_report_event", label: "Header: Report Event", description: "Report Event button in the top bar" },
+    { key: "header_sync_status", label: "Header: Online / Sync", description: "Online status & offline-sync button" },
+    { key: "header_notifications", label: "Header: Notifications", description: "Notification bell in the top bar" },
+    { key: "header_theme", label: "Header: Theme Toggle", description: "Dark / light mode toggle" },
+  ],
   opd: [
     { key: "register_walkin", label: "Register Walk-in", description: "Add a new walk-in patient to the OPD queue" },
     { key: "call_next_patient", label: "Call Next Patient", description: "Advance the queue to the next waiting patient" },
