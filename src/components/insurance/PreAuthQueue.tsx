@@ -224,6 +224,7 @@ const PreAuthQueue: React.FC<Props> = ({ initialAdmission, onAdmissionHandled })
     setPatientSearching(true);
     const { data: patients } = await supabase.from("patients")
       .select("id, full_name, uhid")
+      .eq("is_active", true)
       .or(`full_name.ilike.%${q}%,uhid.ilike.%${q}%`)
       .limit(10);
     const results = patients || [];

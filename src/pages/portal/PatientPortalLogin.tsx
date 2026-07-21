@@ -182,7 +182,9 @@ const PatientPortalLogin: React.FC<Props> = ({ hospitalId }) => {
 
       let query = (supabase as any)
         .from("patients")
-        .select("id, full_name, uhid, phone, email, dob, gender, blood_group, hospital_id");
+        .select("id, full_name, uhid, phone, email, dob, gender, blood_group, hospital_id")
+        // A soft-deleted patient must not be able to authenticate into the portal.
+        .eq("is_active", true);
 
       if (hospitalId) query = query.eq("hospital_id", hospitalId);
 

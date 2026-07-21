@@ -22,12 +22,15 @@ async function fetchAumrtiAdmin(): Promise<AumrtiAdmin | null> {
   return data ?? null;
 }
 
-export function useAumrtiAdmin() {
+export function useAumrtiAdmin(options?: { enabled?: boolean }) {
+  const enabled = options?.enabled ?? true;
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["aumrti-admin-me"],
     queryFn: fetchAumrtiAdmin,
     staleTime: 10 * 60 * 1000,
     retry: 1,
+    enabled,
   });
-  return { admin: data ?? null, isAdmin: !!data, isLoading, refetch };
+  // A disabled query is never "loading" — callers must not block on it.
+  return { admin: data ?? null, isAdmin: !!data, isLoading: enabled && isLoading, refetch };
 }

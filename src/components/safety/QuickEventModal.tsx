@@ -91,6 +91,7 @@ const QuickEventModal: React.FC<Props> = ({ open, onOpenChange }) => {
         .from("patients")
         .select("id, full_name, uhid")
         .eq("hospital_id", hospitalId)
+        .eq("is_active", true)
         .or(`full_name.ilike.%${patientQuery}%,uhid.ilike.%${patientQuery}%`)
         .order("full_name")
         .limit(6);

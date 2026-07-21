@@ -7,6 +7,7 @@ import { getErrorMessage } from "@/lib/errorMessage";
 import ForgotPasswordModal from "./ForgotPasswordModal";
 import MFAEnrollmentModal from "@/components/auth/MFAEnrollmentModal";
 import MFAVerifyModal, { isTrustedDevice } from "@/components/auth/MFAVerifyModal";
+import { isPlatformAdmin } from "@/lib/postAuthRoute";
 
 const ROLE_ROUTES: Record<string, string> = {
   super_admin: "/dashboard",
@@ -86,6 +87,13 @@ const LoginPage: React.FC = () => {
       if (!session) return;
 
       const uid = session.user.id;
+
+      // Platform admins have no `users` row — sending them to /dashboard traps them
+      // behind "Access denied". Check first, exactly like the sign-in handler below.
+      if (await isPlatformAdmin(uid)) {
+        navigate("/platform", { replace: true });
+        return;
+      }
 
       // Fetch user profile to honour per-user mfa_required flag
       const { data: userRow } = await supabase

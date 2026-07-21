@@ -110,6 +110,7 @@ const ChronicDiseasePage: React.FC = () => {
       .from("patients")
       .select("id, full_name, uhid, dob")
       .eq("hospital_id", hospitalId)
+      .eq("is_active", true)
       .or(`full_name.ilike.%${searchPatient}%,uhid.ilike.%${searchPatient}%`)
       .limit(10);
     setPatientResults(data || []);

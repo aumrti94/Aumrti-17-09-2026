@@ -288,6 +288,7 @@ const KioskCheckinPage: React.FC = () => {
       .from("patients")
       .select("id")
       .eq("hospital_id", hospitalId)
+      .eq("is_active", true)
       .ilike("phone", `%${phone.slice(-10)}`)
       .limit(5);
 

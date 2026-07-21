@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { nextDocumentNumber } from "@/lib/documentNumber";
 
 /**
  * Route an ED patient into the mortuary pipeline (used for both an ED "expired"
@@ -23,8 +24,7 @@ export async function routeEdPatientToMortuary(opts: {
     cause, isMlc = false, mlcDetails = {}, notes,
   } = opts;
 
-  const year = new Date().getFullYear();
-  const bodyNumber = `BODY-${year}-${String(Math.floor(Math.random() * 9000) + 1000).padStart(4, "0")}`;
+  const bodyNumber = await nextDocumentNumber(hospitalId, "body");
 
   await supabase.from("mortuary_admissions").insert({
     hospital_id: hospitalId,
@@ -44,7 +44,7 @@ export async function routeEdPatientToMortuary(opts: {
     await supabase.from("mlc_records").insert({
       hospital_id: hospitalId,
       patient_id: patientId,
-      mlc_number: `MLC-${year}-${String(Math.floor(Math.random() * 9000) + 1000).padStart(4, "0")}`,
+      mlc_number: await nextDocumentNumber(hospitalId, "mlc"),
       incident_type: "unknown_cause",
       police_station: mlcDetails.police_station || "",
       officer_name: mlcDetails.officer || "",

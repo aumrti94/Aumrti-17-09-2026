@@ -315,8 +315,12 @@ Claim Reference: ${claimNumber}`;
     try {
       // Atomic, gap-free claim number via the shared per-hospital sequence —
       // never Math.random() (collision-prone) or SELECT MAX+1.
-      const { data: seq } = await supabase.rpc("next_seq", { p_hospital_id: hospitalId, p_type: "claim" });
-      claimNumber = `CLM-${new Date().getFullYear()}-${String(seq ?? Date.now()).padStart(5, "0")}`;
+      // Falling back to Date.now() wrote a 13-digit number outside the CLM series that no
+      // TPA reconciliation could match; a failed save is better than a fabricated claim
+      // number, so this throws instead (same rule as generateAdmissionNumber).
+      const { data: seq, error: seqErr } = await supabase.rpc("next_seq", { p_hospital_id: hospitalId, p_type: "claim" });
+      if (seqErr || seq == null) throw new Error(seqErr?.message || "Could not generate a claim number");
+      claimNumber = `CLM-${new Date().getFullYear()}-${String(seq).padStart(5, "0")}`;
       const postedBy = await currentAppUserId();
       // ─ Manual ──────────────────────────────────────────────────────────────
       if (mode === "manual") {

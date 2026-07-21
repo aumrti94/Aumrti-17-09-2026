@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { resolvePostAuthRoute } from "@/lib/postAuthRoute";
 import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
@@ -66,7 +67,7 @@ const LoginModal: React.FC<Props> = ({ open, onOpenChange }) => {
       if (error) throw error;
       toast({ title: "Welcome back! 🎉" });
       onOpenChange(false);
-      navigate("/dashboard", { replace: true });
+      navigate(await resolvePostAuthRoute(), { replace: true });
     } catch (err: any) {
       toast({ title: "Sign in failed", description: err.message, variant: "destructive" });
     } finally {
@@ -166,7 +167,7 @@ const LoginModal: React.FC<Props> = ({ open, onOpenChange }) => {
       if (error) throw error;
       toast({ title: "Welcome back! 🎉" });
       onOpenChange(false);
-      navigate("/dashboard", { replace: true });
+      navigate(await resolvePostAuthRoute(), { replace: true });
     } catch (err: any) {
       toast({ title: "Invalid OTP", description: err.message, variant: "destructive" });
     } finally {
@@ -185,7 +186,7 @@ const LoginModal: React.FC<Props> = ({ open, onOpenChange }) => {
       if (error) throw error;
       toast({ title: "Welcome back! 🎉" });
       onOpenChange(false);
-      navigate("/dashboard", { replace: true });
+      navigate(await resolvePostAuthRoute(), { replace: true });
     } catch (err: any) {
       toast({ title: "Invalid OTP", description: err.message, variant: "destructive" });
     } finally {

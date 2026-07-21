@@ -35,6 +35,55 @@ export function getDefaultGSTRate(itemType: string, unitRate?: number): number {
   return GST_RATE_RULES[itemType] ?? 0;
 }
 
+/** The shape resolveServiceGstPercent needs off a service_master row. */
+export interface CatalogServiceGstInput {
+  item_type?: string | null;
+  gst_applicable?: boolean | null;
+  gst_percent?: number | string | null;
+  /** NULL for hospital-authored rows; the owning table for trigger-maintained mirrors. */
+  source_table?: string | null;
+}
+
+/**
+ * The GST rate that actually lands on a bill line for a catalog service.
+ *
+ * Two populations live in service_master and they need opposite rules:
+ *
+ *  - Hospital-authored rows (source_table IS NULL) come from Settings › Services & Fees,
+ *    where "GST applicable" is a deliberate choice the hospital made. That choice is
+ *    authoritative: unchecked means 0%, full stop. Previously the toggle was ignored
+ *    entirely — item_type defaults to 'service' (18% here), and the Add Service drawer
+ *    never wrote item_type, so EVERY service created from it was billed at 18% while
+ *    the UI displayed "GST: No".
+ *
+ *  - Mirrored rows (source_table NOT NULL) are maintained by the catalog-sync triggers
+ *    in 20261008000136, which never set gst_applicable — so they all carry the column
+ *    default false. Reading the toggle for them would zero out rates that are a matter
+ *    of law, e.g. a non-ICU room above ₹5,000/day must attract 5%. These keep the
+ *    statutory default derived from item_type.
+ */
+export function resolveServiceGstPercent(
+  svc: CatalogServiceGstInput,
+  unitRate?: number,
+): number {
+  const configured = Number(svc.gst_percent);
+  const hasConfigured = Number.isFinite(configured) && configured > 0;
+
+  // Hospital-authored: purely toggle-driven. Note that gst_applicable=true with a 0
+  // percent is a legitimate saved state meaning "0%" — SettingsServicesPage writes
+  // `form.gst_applicable ? (parseFloat(form.gst_percent) || 0) : 0` and its dropdown
+  // offers 0% explicitly — so this must NOT fall through to the statutory rate. This
+  // matches every other catalog-pricing path (serviceBilling, chargePosting,
+  // ipdBilling), which all read `gst_applicable ? gst_percent : 0`.
+  if (svc.source_table == null) {
+    if (!svc.gst_applicable) return 0;
+    return hasConfigured ? configured : 0;
+  }
+
+  // Module-owned mirror: an explicit rate if the module set one, else statute.
+  return hasConfigured ? configured : getDefaultGSTRate(svc.item_type || "other", unitRate);
+}
+
 // ICU/CCU/ICCU/NICU rooms are fully GST-exempt regardless of room rent, per CBIC
 // clarifications on Notification 12/2017-CT(Rate). SICU/PICU are treated as ICU-equivalent
 // (clearly intensive-care by name) though not individually named in the circular. HDU is

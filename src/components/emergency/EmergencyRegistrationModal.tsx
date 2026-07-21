@@ -77,6 +77,7 @@ const EmergencyRegistrationModal: React.FC<Props> = ({ open, onClose, hospitalId
       const { data } = await supabase.from("patients")
         .select("id, full_name, uhid, phone")
         .eq("hospital_id", hospitalId)
+        .eq("is_active", true)
         .or(`phone.ilike.%${phoneSearch}%,full_name.ilike.%${phoneSearch}%`)
         .limit(3);
       setPhoneResults(data || []);

@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { formatINRExact } from "@/lib/currency";
-import { Plus, Search, Clock, User, Stethoscope, LogOut, RefreshCw, CalendarClock, IndianRupee, LogIn, XCircle, UserX, CheckCircle2 } from "lucide-react";
+import { Plus, Search, Clock, User, Stethoscope, LogOut, RefreshCw, CalendarClock, IndianRupee, LogIn, XCircle, UserX, CheckCircle2, Printer } from "lucide-react";
 import { formatDateIST } from "@/lib/dateUtils";
 import { DayCareTab, dayCareDateColumn, dayCareStatusFilter, dayCareSortAscending } from "@/lib/dayCareBoard";
 import {
@@ -29,6 +29,7 @@ import {
 import { CancelStatus } from "@/lib/dayCareCancel";
 import { useConfigLabelMap } from "@/hooks/useConfigValues";
 import { syncAdvanceToBill } from "@/lib/advanceBillSync";
+import { printAdmissionBill } from "@/lib/billPrint";
 import { getCurrentUserRowId } from "@/lib/currentUser";
 
 interface DayCareAdmission {
@@ -68,6 +69,7 @@ const yesterdayStr = () => {
 
 const DayCarePage: React.FC = () => {
   const [hospitalId, setHospitalId] = useState<string | null>(null);
+  const [printingBillFor, setPrintingBillFor] = useState<string | null>(null);
   const [admissions, setAdmissions] = useState<DayCareAdmission[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -298,6 +300,26 @@ const DayCarePage: React.FC = () => {
     setAdmitting(false);
   };
 
+  /**
+   * Print the itemised bill for this stay. Day care had no bill print at all — the only
+   * paper the patient ever got was the deposit receipt, which showed a lump sum and never
+   * said what it bought.
+   */
+  const handlePrintBill = async (admissionId: string) => {
+    if (!hospitalId) return;
+    setPrintingBillFor(admissionId);
+    const result = await printAdmissionBill(admissionId, hospitalId);
+    if (result === "no-bill") {
+      toast({
+        title: "Nothing billed yet",
+        description: "The procedure charges are posted when the patient is admitted.",
+      });
+    } else if (result === "failed") {
+      toast({ title: "Could not load the bill", description: "Refresh and try again.", variant: "destructive" });
+    }
+    setPrintingBillFor(null);
+  };
+
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">
       {/* Header */}
@@ -482,6 +504,21 @@ const DayCarePage: React.FC = () => {
                         {admitting ? "Admitting…" : "Admit Patient"}
                       </Button>
                     </>
+                  )}
+                  {/* Charges only exist once the patient is admitted, so a booking has no
+                      bill to print — the estimate is the right document at that stage, and a
+                      cancelled booking never generated one. */}
+                  {(view === "active" || view === "discharged") && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1"
+                      disabled={printingBillFor === selected.id}
+                      onClick={() => handlePrintBill(selected.id)}
+                    >
+                      <Printer size={13} />
+                      {printingBillFor === selected.id ? "Preparing…" : "Print Bill"}
+                    </Button>
                   )}
                   {view === "active" && (
                     <Button

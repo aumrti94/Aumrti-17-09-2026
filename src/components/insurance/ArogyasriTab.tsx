@@ -110,6 +110,7 @@ const ArogyasriTab: React.FC = () => {
       .from("patients")
       .select("id, full_name, uhid, phone")
       .eq("hospital_id", hospitalId)
+      .eq("is_active", true)
       .or(`full_name.ilike.%${patientSearch}%,uhid.ilike.%${patientSearch}%`)
       .limit(8);
     setPatientResults(data || []);

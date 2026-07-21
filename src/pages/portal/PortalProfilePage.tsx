@@ -52,6 +52,7 @@ const PortalProfilePage: React.FC<{ session: PortalSession }> = ({ session }) =>
         .from("patients")
         .select("id, full_name, uhid, dob, gender")
         .eq("hospital_id", session.hospitalId)
+        .eq("is_active", true)
         .ilike("phone", `%${clean.slice(-10)}`)
         .neq("id", session.patientId)
         .limit(10);

@@ -22,7 +22,6 @@
  */
 
 import { supabase } from "@/integrations/supabase/client";
-import { generateBillNumber } from "@/hooks/useBillNumber";
 
 export const ADMISSION_BILL_TYPES = ["ipd", "daycare"] as const;
 export type AdmissionBillType = (typeof ADMISSION_BILL_TYPES)[number];
@@ -44,7 +43,11 @@ export function admissionBillType(
 }
 
 /**
- * PURE. Bill-number prefix for generateBillNumber().
+ * PURE. Bill-number prefix for an admission bill.
+ *
+ * Numbers are now minted by the bills BEFORE INSERT trigger (20261008000161), so this is
+ * the TypeScript mirror of its bill_prefix_for_type() — kept as the canonical statement of
+ * the rule (and as the regression lock below). Change both together.
  *
  * Both admission bill types share the 'BILL' series, which is what every admission bill in
  * the system already uses (BillingPage has always minted BILL-YYYYMMDD-NNNN for them).
@@ -139,15 +142,17 @@ export async function findOrCreateAdmissionBill(
     .maybeSingle();
 
   const billType = admissionBillType(adm?.admission_type);
-  const billNumber = await generateBillNumber(hospitalId, admissionBillPrefix(billType));
 
+  // bill_number is omitted deliberately: the BEFORE INSERT trigger (20261008000161) mints it
+  // in the SAME transaction as this insert, so a failed insert rolls the counter back rather
+  // than burning a number. The trigger's bill_prefix_for_type() maps both admission types to
+  // 'BILL', matching admissionBillPrefix() below — keep the two in step.
   const { data: newBill } = await (supabase as any)
     .from("bills")
     .insert({
       hospital_id:     hospitalId,
       patient_id:      patientId,
       admission_id:    admissionId,
-      bill_number:     billNumber,
       bill_type:       billType,
       bill_date:       billDate || new Date().toISOString().split("T")[0],
       bill_status:     "draft",

@@ -66,6 +66,7 @@ const ManualDispenseModal: React.FC<Props> = ({ hospitalId, open, onClose, onCre
         .from("patients")
         .select("id, full_name, uhid, phone, gender, dob, blood_group")
         .eq("hospital_id", hospitalId)
+        .eq("is_active", true)
         .or(`full_name.ilike.%${search}%,phone.ilike.%${search}%,uhid.ilike.%${search}%`)
         .order("created_at", { ascending: false })
         .limit(8);

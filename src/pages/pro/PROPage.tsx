@@ -287,7 +287,7 @@ const PROPage: React.FC = () => {
   const searchPatients = async (q: string) => {
     setVForm(f => ({ ...f, patient_search: q }));
     if (q.length < 2) { setPatientResults([]); return; }
-    const { data } = await supabase.from("patients").select("id, full_name, phone").eq("hospital_id", hospitalId).or(`full_name.ilike.%${q}%,phone.ilike.%${q}%`).limit(10);
+    const { data } = await supabase.from("patients").select("id, full_name, phone").eq("hospital_id", hospitalId).eq("is_active", true).or(`full_name.ilike.%${q}%,phone.ilike.%${q}%`).limit(10);
     setPatientResults(data || []);
   };
 

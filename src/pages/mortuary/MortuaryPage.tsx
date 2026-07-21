@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
 import { autoChargeService, MODULE_MORTUARY } from "@/lib/serviceBilling";
+import { nextDocumentNumber } from "@/lib/documentNumber";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -210,9 +211,15 @@ export default function MortuaryPage() {
       toast.error("Please fill all required fields"); return;
     }
     setLoading(true);
-    const year = new Date().getFullYear();
-    const seq = admissions.length + 1;
-    const body_number = `BODY-${year}-${String(seq).padStart(3, "0")}`;
+    // Atomic per-hospital series. `admissions.length + 1` counted the rows loaded in this
+    // browser, not the table — so it restarted from 1 on any filtered view and repeated
+    // forever once a body was released and removed from the list.
+    let body_number: string;
+    try {
+      body_number = await nextDocumentNumber(hospitalId, "body");
+    } catch (e: any) {
+      toast.error(e?.message || "Could not generate a body number"); setLoading(false); return;
+    }
     const { error } = await supabase.from("mortuary_admissions").insert({
       hospital_id: hospitalId, patient_id: admitForm.patient_id,
       body_number, time_of_death: admitForm.time_of_death,
@@ -265,8 +272,12 @@ export default function MortuaryPage() {
     }
     setLoading(true);
     const mort = admissions.find(a => a.id === mccdForm);
-    const seq = mccdCerts.length + 1;
-    const mccd_number = `MCCD-${new Date().getFullYear()}-${String(seq).padStart(4, "0")}`;
+    let mccd_number: string;
+    try {
+      mccd_number = await nextDocumentNumber(hospitalId, "mccd");
+    } catch (e: any) {
+      toast.error(e?.message || "Could not generate an MCCD number"); setLoading(false); return;
+    }
     const { error } = await supabase.from("mccd_certificates").insert({
       hospital_id: hospitalId, mortuary_id: mccdForm, patient_id: mort?.patient_id || "",
       cause_1a: mccdDraft.cause_1a, cause_1b: mccdDraft.cause_1b || null,
@@ -293,8 +304,12 @@ export default function MortuaryPage() {
       toast.error("Patient and incident type are required"); return;
     }
     setLoading(true);
-    const seq = mlcRecords.length + 1;
-    const mlc_number = `MLC-${new Date().getFullYear()}-${String(seq).padStart(3, "0")}`;
+    let mlc_number: string;
+    try {
+      mlc_number = await nextDocumentNumber(hospitalId, "mlc");
+    } catch (e: any) {
+      toast.error(e?.message || "Could not generate an MLC number"); setLoading(false); return;
+    }
     const { error } = await supabase.from("mlc_records").insert({
       hospital_id: hospitalId, patient_id: mlcForm.patient_id,
       mortuary_id: mlcForm.mortuary_id || null, mlc_number,

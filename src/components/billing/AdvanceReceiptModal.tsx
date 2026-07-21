@@ -2,13 +2,18 @@ import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { syncAdvanceToBill } from "@/lib/advanceBillSync";
+import { generateBillNumber } from "@/hooks/useBillNumber";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { formatINRExact } from "@/lib/currency";
 import { printDocument, printHeader } from "@/lib/printUtils";
-import { DAY_CARE_PROCEDURES_SELECT, listProcedures, mapProcedureRow } from "@/lib/dayCareProcedures";
+import {
+  DAY_CARE_PROCEDURES_SELECT, DayCareProcedureSelection, lineTotal, listProcedures,
+  mapProcedureRow, normalizeQuantity, totalProcedureCharge,
+} from "@/lib/dayCareProcedures";
+import { amt, escapeHtml } from "@/lib/billPrint";
 import { CheckCircle2, Printer, IndianRupee } from "lucide-react";
 
 interface Props {
@@ -42,6 +47,8 @@ interface ReceiptData {
   reference: string | null;
   admissionNumber: string | null;
   procedureName: string | null;
+  /** The booked procedures this deposit is against — priced, so the receipt is auditable. */
+  procedures: DayCareProcedureSelection[];
   notes: string | null;
 }
 
@@ -58,9 +65,11 @@ const AdvanceReceiptModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, 
   const [submitting, setSubmitting] = useState(false);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [hospitalInfo, setHospitalInfo] = useState<{ name: string; address: string | null } | null>(null);
-  const [context, setContext] = useState<{ admissionNumber: string | null; procedureName: string | null }>({
-    admissionNumber: null, procedureName: null,
-  });
+  const [context, setContext] = useState<{
+    admissionNumber: string | null;
+    procedureName: string | null;
+    procedures: DayCareProcedureSelection[];
+  }>({ admissionNumber: null, procedureName: null, procedures: [] });
 
   useEffect(() => {
     if (prefilledPatient) setSelectedPatient(prefilledPatient);
@@ -74,7 +83,7 @@ const AdvanceReceiptModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, 
 
   // Context for the receipt: which stay/procedure this deposit is against.
   useEffect(() => {
-    if (!admissionId) { setContext({ admissionNumber: null, procedureName: null }); return; }
+    if (!admissionId) { setContext({ admissionNumber: null, procedureName: null, procedures: [] }); return; }
     (supabase as any)
       .from("admissions")
       .select(`
@@ -83,16 +92,19 @@ const AdvanceReceiptModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, 
       `)
       .eq("id", admissionId)
       .maybeSingle()
-      .then(({ data }: any) => setContext({
-        admissionNumber: data?.admission_number ?? null,
-        // A day care deposit covers EVERY booked procedure, so the receipt has to name them
-        // all — the old single-FK join printed one and left the patient's money looking like
-        // it was for a cheaper procedure than they paid for.
-        procedureName:
-          listProcedures((data?.day_care_items || []).map(mapProcedureRow)) ||
-          data?.admitting_diagnosis ||
-          null,
-      }));
+      .then(({ data }: any) => {
+        // Keep the PRICED list, not just the names. A receipt reading "Amount Received
+        // ₹51,500" against a comma string of procedures tells the patient nothing about
+        // what they were charged for — the rates are already frozen on the booking, so
+        // the receipt can and should show them.
+        const procedures: DayCareProcedureSelection[] =
+          (data?.day_care_items || []).map(mapProcedureRow);
+        setContext({
+          admissionNumber: data?.admission_number ?? null,
+          procedureName: listProcedures(procedures) || data?.admitting_diagnosis || null,
+          procedures,
+        });
+      });
   }, [admissionId]);
 
   const searchPatients = async (q: string) => {
@@ -102,6 +114,7 @@ const AdvanceReceiptModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, 
       .from("patients")
       .select("id, full_name, uhid, phone")
       .eq("hospital_id", hospitalId)
+      .eq("is_active", true)
       .or(`full_name.ilike.%${q}%,uhid.ilike.%${q}%,phone.ilike.%${q}%`)
       .limit(8);
     setPatients(data || []);
@@ -118,13 +131,19 @@ const AdvanceReceiptModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, 
       .eq("auth_user_id", user?.id || "")
       .maybeSingle();
 
-    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    const { count } = await supabase
-      .from("advance_receipts")
-      .select("id", { count: "exact", head: true })
-      .eq("hospital_id", hospitalId);
-    const seq = String((count ?? 0) + 1).padStart(4, "0");
-    const receiptNumber = `ADV-${dateStr}-${seq}`;
+    // Atomic, per-hospital receipt number — never a SELECT count()+1. Counting rows
+    // repeats a number the moment any receipt is deleted, and two cashiers collecting at
+    // once both read the same count and both write ADV-<date>-0001. 'ADV' is its own key
+    // in bill_sequences (hospital_id, prefix), so this counter cannot interleave with any
+    // bill series.
+    let receiptNumber: string;
+    try {
+      receiptNumber = await generateBillNumber(hospitalId, "ADV");
+    } catch (e: any) {
+      toast({ title: "Error", description: e?.message || "Could not generate a receipt number", variant: "destructive" });
+      setSubmitting(false);
+      return;
+    }
 
     const { error } = await (supabase as any).from("advance_receipts").insert({
       hospital_id: hospitalId,
@@ -183,16 +202,54 @@ const AdvanceReceiptModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, 
       reference: paymentMode !== "cash" && paymentRef.trim() ? paymentRef.trim() : null,
       admissionNumber: context.admissionNumber,
       procedureName: context.procedureName,
+      procedures: context.procedures,
       notes: notes || null,
     });
     setStep("receipt");
     setSubmitting(false);
   };
 
+  // What the booking is worth, and what is still owed after this deposit. Computed once so
+  // the on-screen card and the printed receipt cannot state different figures. A deposit with
+  // no procedures behind it (patient-level advance) has no charge to compare against, so it
+  // shows no balance rather than a negative one.
+  const receiptCharges = receipt ? totalProcedureCharge(receipt.procedures) : 0;
+  const receiptBalance = receiptCharges > 0 ? Math.max(0, receiptCharges - (receipt?.amount || 0)) : 0;
+
   const handlePrintReceipt = () => {
     if (!receipt) return;
     const hospitalName = hospitalInfo?.name || "Hospital Receipt";
     const hospitalAddress = hospitalInfo?.address || "";
+
+    const totalCharges = receiptCharges;
+    const balancePayable = receiptBalance;
+
+    // Priced breakdown of what the deposit is against. Falls back to the plain layout for a
+    // patient-level advance (no admission), where there are no procedures to list — an empty
+    // table would read as "you were charged nothing".
+    const chargesHtml = receipt.procedures.length > 0
+      ? `<div style="border-top:1px dashed #cbd5e1; padding-top:8px; margin-top:8px;">
+          <p style="font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;margin:0 0 4px;">Charges Covered</p>
+          <table style="width:100%;border-collapse:collapse;">
+            <tr>
+              <th style="text-align:left;font-size:10px;">Particulars</th>
+              <th style="text-align:right;font-size:10px;">Rate</th>
+              <th style="text-align:center;font-size:10px;">Qty</th>
+              <th style="text-align:right;font-size:10px;">Amount</th>
+            </tr>
+            ${receipt.procedures.map(p => `<tr>
+              <td style="font-size:11px;">${escapeHtml(p.procedureName)}</td>
+              <td style="text-align:right;font-size:11px;" class="amount">${amt(p.rate)}</td>
+              <td style="text-align:center;font-size:11px;">${normalizeQuantity(p.quantity)}</td>
+              <td style="text-align:right;font-size:11px;" class="amount">${amt(lineTotal(p))}</td>
+            </tr>`).join("")}
+          </table>
+          <div class="row" style="margin-top:6px;">
+            <span class="label">Total Charges</span>
+            <span class="amount">₹${amt(totalCharges)}</span>
+          </div>
+        </div>`
+      : "";
 
     const body = `
       ${printHeader(hospitalName, hospitalAddress)}
@@ -205,7 +262,9 @@ const AdvanceReceiptModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, 
       <div class="row"><span class="label">Patient</span><span class="value">${receipt.patientName}</span></div>
       <div class="row"><span class="label">UHID</span><span class="amount">${receipt.uhid}</span></div>
       ${receipt.admissionNumber ? `<div class="row"><span class="label">Admission No.</span><span class="amount">${receipt.admissionNumber}</span></div>` : ""}
-      ${receipt.procedureName ? `<div class="row"><span class="label">Procedure</span><span class="value">${receipt.procedureName}</span></div>` : ""}
+      ${receipt.procedures.length === 0 && receipt.procedureName ? `<div class="row"><span class="label">Procedure</span><span class="value">${escapeHtml(receipt.procedureName)}</span></div>` : ""}
+
+      ${chargesHtml}
 
       <div style="border-top:1px dashed #cbd5e1; padding-top:10px; margin-top:10px;">
         <div class="row">
@@ -216,8 +275,11 @@ const AdvanceReceiptModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, 
           <span class="label">Payment</span>
           <span class="paid">Paid (${receipt.paymentMode})</span>
         </div>
-        ${receipt.reference ? `<div class="row"><span class="label">Reference</span><span class="amount">${receipt.reference}</span></div>` : ""}
-        ${receipt.notes ? `<div class="row"><span class="label">Notes</span><span class="value">${receipt.notes}</span></div>` : ""}
+        ${receipt.reference ? `<div class="row"><span class="label">Reference</span><span class="amount">${escapeHtml(receipt.reference)}</span></div>` : ""}
+        ${receipt.notes ? `<div class="row"><span class="label">Notes</span><span class="value">${escapeHtml(receipt.notes)}</span></div>` : ""}
+        ${balancePayable > 0 ? `<div class="row" style="color:#dc2626;font-weight:700;">
+          <span>Balance Payable</span><span class="amount">₹${amt(balancePayable)}</span>
+        </div>` : ""}
       </div>
 
       <style>
@@ -370,8 +432,42 @@ const AdvanceReceiptModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, 
                 <Line label="Patient" value={receipt?.patientName} />
                 <Line label="UHID" value={receipt?.uhid} mono />
                 {receipt?.admissionNumber && <Line label="Admission No." value={receipt.admissionNumber} mono />}
-                {receipt?.procedureName && <Line label="Procedure" value={receipt.procedureName} />}
+                {/* Named here only when there is no priced table below to name them. */}
+                {receipt?.procedures.length === 0 && receipt?.procedureName && (
+                  <Line label="Procedure" value={receipt.procedureName} />
+                )}
               </div>
+
+              {/* Same content as the printed receipt — screen and paper must not disagree. */}
+              {receipt && receipt.procedures.length > 0 && (
+                <div className="border-t border-dashed border-border mt-3 pt-3">
+                  <p className="text-[10px] font-bold uppercase text-muted-foreground mb-1.5">Charges Covered</p>
+                  <table className="w-full text-[12px]">
+                    <thead>
+                      <tr className="text-[10px] uppercase text-muted-foreground">
+                        <th className="text-left font-medium">Particulars</th>
+                        <th className="text-right font-medium">Rate</th>
+                        <th className="text-center font-medium">Qty</th>
+                        <th className="text-right font-medium">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {receipt.procedures.map((p) => (
+                        <tr key={p.procedureId}>
+                          <td className="py-0.5">{p.procedureName}</td>
+                          <td className="py-0.5 text-right font-mono">{amt(p.rate)}</td>
+                          <td className="py-0.5 text-center">{normalizeQuantity(p.quantity)}</td>
+                          <td className="py-0.5 text-right font-mono">{amt(lineTotal(p))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div className="flex justify-between text-sm font-semibold mt-1.5 pt-1.5 border-t border-border">
+                    <span>Total Charges</span>
+                    <span>{formatINRExact(totalProcedureCharge(receipt.procedures))}</span>
+                  </div>
+                </div>
+              )}
 
               <div className="border-t border-dashed border-border mt-3 pt-3 space-y-1.5">
                 <div className="flex justify-between text-sm">
@@ -383,6 +479,12 @@ const AdvanceReceiptModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, 
                   <span className="font-medium text-emerald-600">Paid ({receipt?.paymentMode})</span>
                 </div>
                 {receipt?.reference && <Line label="Reference" value={receipt.reference} mono />}
+                {receiptBalance > 0 && (
+                  <div className="flex justify-between text-sm font-bold text-red-600">
+                    <span>Balance Payable</span>
+                    <span>{formatINRExact(receiptBalance)}</span>
+                  </div>
+                )}
               </div>
 
               <div className="border-t border-dashed border-border mt-3 pt-2 text-center">

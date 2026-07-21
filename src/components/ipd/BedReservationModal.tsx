@@ -98,6 +98,7 @@ const BedReservationModal: React.FC<Props> = ({
     const { data } = await supabase.from("patients")
       .select("id, full_name, uhid, phone, dob, gender")
       .eq("hospital_id", hospitalId)
+      .eq("is_active", true)
       .or(`full_name.ilike.%${q}%,uhid.ilike.%${q}%,phone.ilike.%${q}%`)
       .limit(8);
     setResults(data || []);

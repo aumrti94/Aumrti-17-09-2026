@@ -788,11 +788,12 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
 
           if (!billId) {
             // No bill at all — create one (pure follow-up / portal booking)
-            const { generateBillNumber } = await import("@/hooks/useBillNumber");
-            const billNumber = await generateBillNumber(hospitalId, "OPD");
+            // bill_number omitted: the bills BEFORE INSERT trigger (20261008000161) mints it
+            // in this transaction, so a failed insert rolls the counter back instead of
+            // leaving a hole in the OPD series.
             const { data: newBill } = await (supabase as any).from("bills").insert({
               hospital_id: hospitalId, patient_id: token.patient_id,
-              bill_number: billNumber, bill_type: "opd", bill_date: today,
+              bill_type: "opd", bill_date: today,
               encounter_id: encounterId, bill_status: "final", payment_status: "unpaid",
               subtotal: 0, gst_amount: 0, total_amount: 0,
               patient_payable: 0, balance_due: 0, created_by: userId,

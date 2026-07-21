@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { resolvePostAuthRoute } from "@/lib/postAuthRoute";
 import {
   Dialog,
   DialogContent,
@@ -40,9 +41,9 @@ const LandingPage: React.FC = () => {
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (session) {
-        navigate("/dashboard", { replace: true });
+        navigate(await resolvePostAuthRoute(), { replace: true });
       } else {
         setChecking(false);
       }

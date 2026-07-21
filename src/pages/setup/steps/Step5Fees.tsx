@@ -64,6 +64,9 @@ const Step5Fees: React.FC<Props> = ({ hospitalId, selectedDepts, onComplete }) =
         hospital_id: hospitalId,
         name: f.name,
         category: "consultation",
+        // Keep item_type in step with category — service_master defaults it to
+        // 'service', which GST_RATE_RULES prices at 18%.
+        item_type: "consultation",
         fee: f.fee,
         follow_up_fee: f.followUp,
         gst_applicable: gstEnabled,
@@ -73,6 +76,7 @@ const Step5Fees: React.FC<Props> = ({ hospitalId, selectedDepts, onComplete }) =
         hospital_id: hospitalId,
         name: p.name,
         category: "procedure",
+        item_type: "procedure",
         fee: p.fee,
         follow_up_fee: null,
         gst_applicable: gstEnabled,

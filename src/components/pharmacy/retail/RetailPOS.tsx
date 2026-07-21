@@ -218,6 +218,7 @@ const RetailPOS: React.FC<Props> = ({ hospitalId }) => {
           .from("patients")
           .select("id, full_name, uhid, phone")
           .eq("hospital_id", hospitalId)
+          .eq("is_active", true)
           .or(`full_name.ilike.%${query}%,phone.ilike.%${query}%,uhid.ilike.%${query}%`)
           .order("created_at", { ascending: false })
           .limit(6);

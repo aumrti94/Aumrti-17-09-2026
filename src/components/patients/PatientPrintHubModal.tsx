@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Loader2, Printer } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { printDocument, printHeader } from "@/lib/printUtils";
+import { printBillById } from "@/lib/billPrint";
 import { useToast } from "@/hooks/use-toast";
 
 interface Props {
@@ -80,37 +81,10 @@ const PatientPrintHubModal: React.FC<Props> = ({
 
   async function handlePrintBill(billId: string) {
     setPrintingId(billId);
-    const { data: bill } = await supabase.from("bills")
-      .select("*, bill_line_items(*), bill_payments(*)")
-      .eq("id", billId).maybeSingle();
-    if (!bill) { setPrintingId(null); return; }
-    const b = bill as any;
-
-    const lineRows = (b.bill_line_items || []).map((item: any) =>
-      `<tr><td>${item.description || "—"}</td><td style="text-align:center">${item.quantity}</td>
-       <td style="text-align:right">₹${Number(item.unit_rate || 0).toFixed(2)}</td>
-       <td style="text-align:right">₹${Number(item.total_amount || 0).toFixed(2)}</td></tr>`
-    ).join("");
-
-    printDocument(`Invoice — ${b.bill_number}`,
-      `${buildHeader()}
-       <div class="section-title" style="margin-bottom:12px;">INVOICE</div>
-       <div class="row"><span class="label">Bill No.</span><span><b>${b.bill_number}</b></span></div>
-       <div class="row"><span class="label">Date</span><span>${b.bill_date || "—"}</span></div>
-       <div class="row"><span class="label">Bill Type</span><span style="text-transform:capitalize">${b.bill_type || "—"}</span></div>
-       ${patientRow()}
-       <div class="section-title" style="margin-top:16px;">Items</div>
-       <table><thead><tr><th>Description</th><th>Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th></tr></thead>
-       <tbody>${lineRows || `<tr><td colspan="4" style="color:#94a3b8">No items</td></tr>`}</tbody></table>
-       <div style="margin-top:12px;">
-         <div class="row"><span class="label">Subtotal</span><span>₹${Number(b.subtotal || b.total_amount || 0).toFixed(2)}</span></div>
-         ${Number(b.discount_amount) > 0 ? `<div class="row"><span class="label">Discount</span><span>-₹${Number(b.discount_amount).toFixed(2)}</span></div>` : ""}
-         ${Number(b.gst_amount) > 0 ? `<div class="row"><span class="label">GST</span><span>₹${Number(b.gst_amount).toFixed(2)}</span></div>` : ""}
-       </div>
-       <div class="total-row"><span>Total Amount</span><span class="amount">₹${Number(b.total_amount || 0).toFixed(2)}</span></div>
-       ${b.paid_amount != null ? `<div class="total-row" style="color:#16a34a"><span>Amount Paid</span><span class="amount">₹${Number(b.paid_amount).toFixed(2)}</span></div>` : ""}
-       ${Number(b.balance_due) > 0 ? `<div class="total-row" style="color:#dc2626"><span>Balance Due</span><span class="amount">₹${Number(b.balance_due).toFixed(2)}</span></div>` : ""}`
-    );
+    // Shared itemised renderer — see lib/billPrint.ts. This used to be a bespoke flat table
+    // that printed a different-looking bill from the one Billing printed for the same record.
+    const ok = await printBillById(billId, hospitalId);
+    if (!ok) toast({ title: "Could not load the bill", description: "Refresh and try again.", variant: "destructive" });
     setPrintingId(null);
   }
 

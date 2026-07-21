@@ -57,6 +57,7 @@ const PatientSearchPicker: React.FC<Props> = ({
         .from("patients")
         .select("id, full_name, uhid, phone, gender")
         .eq("hospital_id", hospitalId)
+        .eq("is_active", true)
         .or(`full_name.ilike.${q},uhid.ilike.${q}`)
         .order("created_at", { ascending: false })
         .limit(20);

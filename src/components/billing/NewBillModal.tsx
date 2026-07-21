@@ -1,6 +1,5 @@
 import React, { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { generateBillNumber } from "@/hooks/useBillNumber";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -38,6 +37,7 @@ const NewBillModal: React.FC<Props> = ({ hospitalId, onClose, onCreated }) => {
       .from("patients")
       .select("id, full_name, uhid, phone")
       .eq("hospital_id", hospitalId)
+      .eq("is_active", true)
       .or(`full_name.ilike.%${q}%,uhid.ilike.%${q}%,phone.ilike.%${q}%`)
       .limit(8);
     setPatients(data || []);
@@ -55,16 +55,19 @@ const NewBillModal: React.FC<Props> = ({ hospitalId, onClose, onCreated }) => {
         .eq("auth_user_id", user?.id || "")
         .maybeSingle();
 
-      const billNumber = await generateBillNumber(hospitalId, "BILL");
-
+      // No bill_number here on purpose. The BEFORE INSERT trigger (20261008000161) mints it
+      // inside THIS transaction, so a failed or cancelled save rolls the counter back
+      // instead of burning a number. Pre-generating it client-side committed the increment
+      // first and left a permanent hole in the series on every failure.
+      // It also picks the prefix from bill_type, so an OPD bill lands on the OPD series
+      // rather than the generic BILL one this screen used to stamp on everything.
       const { data, error } = await supabase.from("bills").insert({
         hospital_id: hospitalId,
-        bill_number: billNumber,
         patient_id: selectedPatient.id,
         bill_type: billType,
         bill_status: "draft",
         created_by: userData?.id || null,
-      }).select("id").maybeSingle();
+      } as any).select("id, bill_number").maybeSingle();
 
       if (error || !data) {
         const msg = error ? getErrorMessage(error) : "No data returned";
@@ -73,7 +76,7 @@ const NewBillModal: React.FC<Props> = ({ hospitalId, onClose, onCreated }) => {
         return;
       }
 
-      toast({ title: `Bill #${billNumber} created` });
+      toast({ title: `Bill #${(data as any).bill_number} created` });
       onCreated(data.id);
     } catch (err: any) {
       const msg = getErrorMessage(err);

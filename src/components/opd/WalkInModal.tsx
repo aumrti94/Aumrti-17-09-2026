@@ -465,6 +465,7 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
       .from("patients")
       .select("id, full_name, uhid, phone, abha_id")
       .eq("hospital_id", hospitalId)
+      .eq("is_active", true)
       .or(`phone.ilike.%${val}%,full_name.ilike.%${val}%,uhid.ilike.%${val}%`)
       .limit(5);
     const results = data || [];
@@ -545,6 +546,9 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
       .from("patients")
       .select("id, full_name, uhid, phone")
       .eq("hospital_id", hospitalId)
+      // Deleted patients are excluded: the dupe dialog offers "use existing", which would
+      // otherwise pull a soft-deleted record back into active clinical use.
+      .eq("is_active", true)
       .or(`phone.eq.${phone},full_name.ilike.%${fullName.trim()}%`)
       .limit(5);
 
@@ -778,9 +782,6 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
 
       const today = new Date().toISOString().split("T")[0];
 
-      // Generate bill number
-      const billNumber = await generateBillNumber(hospitalId, "OPD");
-
       const fee = consultationFee;
       const isPaid = !skipPayment && fee > 0;
       const discountNote = revisitDiscountNote;
@@ -805,7 +806,9 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
       const { data: bill, error: billErr } = await supabase.from("bills").insert({
         hospital_id: hospitalId,
         patient_id: patientId,
-        bill_number: billNumber,
+        // bill_number omitted: minted by the bills BEFORE INSERT trigger (20261008000161)
+        // inside this transaction, so a failed insert cannot burn a number. bill_type 'opd'
+        // still puts it on the OPD series. Read back below for the receipt and audit trail.
         bill_type: "opd",
         bill_date: today,
         subtotal: taxableFee,
@@ -817,8 +820,11 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
         payment_status: isPaid ? "paid" : "unpaid",
         bill_status: "final",
         created_by: userId,
-      }).select("id").maybeSingle();
+        // `as any`: the generated types still mark bill_number NOT NULL with no default,
+        // since they cannot see the BEFORE INSERT trigger that supplies it.
+      } as any).select("id, bill_number").maybeSingle();
       if (billErr) throw billErr;
+      const billNumber = (bill as any).bill_number as string;
 
       // Audit: patient + bill creation
       if (!useExisting) logAudit({ action: "created", module: "opd", entityType: "patient", entityId: patientId });

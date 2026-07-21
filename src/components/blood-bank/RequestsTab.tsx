@@ -41,7 +41,7 @@ const RequestsTab: React.FC<Props> = ({ showModal, onCloseModal, onRefresh }) =>
   };
 
   const fetchPatients = async () => {
-    const { data } = await supabase.from("patients").select("id, full_name, uhid, blood_group").limit(200);
+    const { data } = await supabase.from("patients").select("id, full_name, uhid, blood_group").eq("is_active", true).limit(200);
     if (data) setPatients(data);
   };
 

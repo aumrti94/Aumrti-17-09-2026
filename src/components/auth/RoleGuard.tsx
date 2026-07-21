@@ -4,6 +4,7 @@ import { useHospitalId } from "@/hooks/useHospitalId";
 import { Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { hasAccess } from "@/lib/routeRoles";
+import { useAumrtiAdmin } from "@/hooks/useAumrtiAdmin";
 
 interface RoleGuardProps {
   allowedRoles: string[];
@@ -18,8 +19,15 @@ const RoleGuard: React.FC<RoleGuardProps> = ({ allowedRoles, children }) => {
 
   const isAuthorized = hasAccess(location.pathname, role, permissions);
 
+  // A platform admin has no `users` row, so `role` is null and EVERY app route denies —
+  // including /dashboard, which we redirect to below. Without this check they land in a
+  // redirect loop behind an "Access denied" toast. Only queried when already denied.
+  const { isAdmin: isPlatformAdmin, isLoading: adminLoading } = useAumrtiAdmin({
+    enabled: !loading && !isAuthorized && role === null,
+  });
+
   useEffect(() => {
-    if (!loading && !isAuthorized && !hasShownToast.current) {
+    if (!loading && !isAuthorized && !adminLoading && !isPlatformAdmin && !hasShownToast.current) {
       toast({
         title: "Access denied",
         description: "You don't have permission to view this module.",
@@ -32,7 +40,7 @@ const RoleGuard: React.FC<RoleGuardProps> = ({ allowedRoles, children }) => {
     if (isAuthorized) {
       hasShownToast.current = false;
     }
-  }, [loading, isAuthorized, toast]);
+  }, [loading, isAuthorized, adminLoading, isPlatformAdmin, toast]);
 
   // Only block rendering on the very first load (no role data yet).
   // If role is already known, a background re-check is in progress — let the
@@ -47,6 +55,19 @@ const RoleGuard: React.FC<RoleGuardProps> = ({ allowedRoles, children }) => {
 
   if (isAuthorized) {
     return <>{children}</>;
+  }
+
+  // Denied — wait for the platform-admin check before choosing where to send them.
+  if (adminLoading) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (isPlatformAdmin) {
+    return <Navigate to="/platform" replace />;
   }
 
   return <Navigate to="/dashboard" replace />;

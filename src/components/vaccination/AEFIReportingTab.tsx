@@ -73,6 +73,7 @@ const AEFIReportingTab: React.FC<Props> = ({ hospitalId }) => {
       .from("patients")
       .select("id")
       .eq("hospital_id", hospitalId)
+      .eq("is_active", true)
       .ilike("full_name", form.patient_name)
       .limit(1)
       .maybeSingle();

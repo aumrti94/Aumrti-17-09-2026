@@ -211,6 +211,7 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
       .from("patients")
       .select("id, full_name, uhid, gender, dob")
       .eq("hospital_id", hospitalId)
+      .eq("is_active", true)
       .or(`full_name.ilike.${q},uhid.ilike.${q},phone.ilike.${q}`)
       .limit(8)
       .then(({ data }) => { setPatients((data as any) || []); setShowPatientResults(true); });

@@ -6,6 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, Plus, X, Receipt } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { resolveServiceGstPercent, getDefaultGSTRate } from "@/lib/gstRules";
 
 const TABS = [
   { key: "consultation", label: "OPD Consultation" },
@@ -17,8 +18,70 @@ const TABS = [
   { key: "ipd_beds", label: "IPD Beds & Wards" },
   { key: "emergency", label: "Emergency" },
   { key: "specialized", label: "Specialized Services" },
+  // Catch-all for every category without a tab of its own. Previously keyed strictly
+  // to category='other', which left anything else the drawer could save rendering on
+  // no tab at all — invisible and uneditable despite being billable.
+  { key: "other", label: "Other" },
+  { key: "day_care", label: "Day Care" },
+  { key: "all", label: "All Services" },
   { key: "rates", label: "Default Rates" },
 ];
+
+// Tabs that render their own table from a module-owned source table rather than the
+// generic service_master list, so the "Add Service" drawer does not apply to them.
+const NON_CATALOG_TABS = ["ot", "ipd_beds", "emergency", "specialized", "lab", "radiology", "package", "day_care", "all"];
+
+// Categories already surfaced by a tab of their own. Everything else falls to the
+// "Other" catch-all — that fallback is what keeps a newly-added category from silently
+// disappearing. 'ot' and 'emergency' are here because upsertFixedCharge writes those
+// rows with source_table NULL (they are hospital-authored, not mirrored), so without
+// them listed the OT and Emergency charges would appear twice.
+const DEDICATED_TAB_CATEGORIES = [
+  "consultation", "procedure", "package", "lab", "radiology", "ot", "emergency",
+];
+
+/**
+ * The categories a service can be filed under — the full vocabulary GST_RATE_RULES
+ * models, so every option resolves to a defensible statutory rate instead of falling
+ * through to the 18% 'service' default. `category` is written to item_type verbatim
+ * on save, which is what makes the GST come out right.
+ *
+ * Deliberately omitted: 'service' (the legacy 18% trap this list exists to avoid) and
+ * room_charge_luxury / room_charge_icu, which are derived from a ward's bed category
+ * and rate by ward_catalog_item_type — not something to pick by hand.
+ */
+const SERVICE_CATEGORIES: { value: string; label: string }[] = [
+  { value: "consultation", label: "Consultation" },
+  { value: "procedure",    label: "Procedure" },
+  { value: "surgery",      label: "Surgery" },
+  { value: "package",      label: "Package" },
+  { value: "lab",          label: "Lab" },
+  { value: "radiology",    label: "Radiology" },
+  { value: "nursing",      label: "Nursing" },
+  { value: "blood",        label: "Blood / Component" },
+  { value: "ambulance",    label: "Ambulance" },
+  { value: "room_charge",  label: "Room / Bed Charge" },
+  { value: "oxygen",       label: "Medical Oxygen" },
+  { value: "pharmacy",     label: "Pharmacy / Drugs" },
+  { value: "consumable",   label: "Consumable" },
+  { value: "cafeteria",    label: "Cafeteria / Food" },
+  { value: "cosmetic",     label: "Cosmetic (non-therapeutic)" },
+  { value: "parking",      label: "Parking" },
+  { value: "other",        label: "Other" },
+];
+
+// Where each mirrored row actually comes from, so All Services can point the user at
+// the tab that owns the price instead of letting them edit a mirror the sync trigger
+// (20261008000136 / …139) will overwrite on the next source edit.
+const MIRROR_SOURCE_LABELS: Record<string, { label: string; tab: string }> = {
+  lab_test_master:        { label: "Lab Test Master",   tab: "lab" },
+  lab_test_groups:        { label: "Lab Panels",        tab: "lab" },
+  radiology_study_master: { label: "Radiology",         tab: "radiology" },
+  health_packages:        { label: "Health Packages",   tab: "package" },
+  wards:                  { label: "Wards & Beds",      tab: "ipd_beds" },
+  service_rates:          { label: "Specialized",       tab: "specialized" },
+  day_care_procedures:    { label: "Day Care",          tab: "day_care" },
+};
 
 // Specialized clinical modules — one configurable default rate each, stored in
 // service_rates by item_code. Codes match MODULE_RATE_CODE in src/lib/serviceRates.ts
@@ -113,14 +176,38 @@ const SettingsServicesPage: React.FC = () => {
   // Bulk fee
   const [bulkFee, setBulkFee] = useState("");
 
+  // All Services tab search
+  const [allSearch, setAllSearch] = useState("");
+
   const { data: services, isLoading } = useQuery({
     queryKey: ["settings-services"],
     queryFn: async () => {
+      // Mirrors the Billing line-item picker's own query (LineItemsTab), so the
+      // All Services tab shows exactly the catalog billing can find — including
+      // item_type / source_table, which drive the effective-GST column.
       const { data, error } = await supabase.from("service_master")
-        .select("id, name, category, fee, follow_up_fee, is_active, gst_applicable")
+        .select("id, name, category, item_type, fee, follow_up_fee, is_active, gst_applicable, gst_percent, source_table")
+        .eq("is_active", true)
         .order("category").order("name");
       if (error) throw error;
-      return data;
+      return (data ?? []) as Array<{
+        id: string; name: string; category: string; item_type: string | null;
+        fee: number; follow_up_fee: number | null; is_active: boolean;
+        gst_applicable: boolean; gst_percent: number | null; source_table: string | null;
+      }>;
+    },
+  });
+
+  // Day Care procedures — standard_rate is what day-care billing charges.
+  // Same shape as SettingsDayCareProceduresPage, which owns add/edit.
+  const { data: dayCareProcedures } = useQuery({
+    queryKey: ["settings-day-care-fees"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).from("day_care_procedures")
+        .select("id, procedure_name, procedure_code, specialty, standard_rate, is_active")
+        .eq("is_active", true).order("procedure_name");
+      if (error) throw error;
+      return (data ?? []) as Array<{ id: string; procedure_name: string; procedure_code: string | null; specialty: string | null; standard_rate: number | null; is_active: boolean }>;
     },
   });
 
@@ -333,14 +420,41 @@ const SettingsServicesPage: React.FC = () => {
     qc.invalidateQueries({ queryKey: ["settings-service-rates"] });
   };
 
+  // Only hospital-authored rows belong in the per-category tabs — mirrored rows are
+  // edited on the tab that owns their source table, and would otherwise appear twice.
   const filtered = services?.filter((s) => {
+    if (s.source_table) return false;
     if (tab === "consultation") return s.category === "consultation";
     if (tab === "procedure") return s.category === "procedure";
     if (tab === "package") return s.category === "package";
     if (tab === "lab") return s.category === "lab";
     if (tab === "radiology") return s.category === "radiology";
+    // Catch-all: anything without a tab of its own lands here, so a category added
+    // to SERVICE_CATEGORIES later can never become invisible.
+    if (tab === "other") return !DEDICATED_TAB_CATEGORIES.includes(s.category);
     return true;
   }) ?? [];
+
+  // ── All Services: the completeness view ────────────────────────────────────
+  // Everything in service_master, grouped by category, with the GST percent that
+  // will ACTUALLY land on a bill line — computed with the same helper Billing uses,
+  // so a mis-taxed service is visible here rather than only on a patient's invoice.
+  const allServicesGrouped = React.useMemo(() => {
+    const q = allSearch.trim().toLowerCase();
+    const rows = (services ?? []).filter((s) =>
+      !q ||
+      s.name.toLowerCase().includes(q) ||
+      (s.category || "").toLowerCase().includes(q) ||
+      (s.item_type || "").toLowerCase().includes(q)
+    );
+    const groups = new Map<string, typeof rows>();
+    for (const r of rows) {
+      const key = r.category || "uncategorised";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(r);
+    }
+    return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [services, allSearch]);
 
   const saveService = useMutation({
     mutationFn: async () => {
@@ -353,6 +467,10 @@ const SettingsServicesPage: React.FC = () => {
         const gstPct = form.gst_applicable ? (parseFloat(form.gst_percent) || 0) : 0;
         const { error } = await supabase.from("service_master").update({
           name: form.name, category: form.category, fee,
+          // item_type must track category. service_master defaults it to 'service',
+          // which GST_RATE_RULES prices at 18% — leaving it unset here is what taxed
+          // every drawer-created service at 18% regardless of the toggle below.
+          item_type: form.category,
           follow_up_fee: followUpFee,
           gst_applicable: form.gst_applicable,
           gst_percent: gstPct,
@@ -362,6 +480,7 @@ const SettingsServicesPage: React.FC = () => {
         const gstPct = form.gst_applicable ? (parseFloat(form.gst_percent) || 0) : 0;
         const { error } = await supabase.from("service_master").insert({
           hospital_id: hid, name: form.name, category: form.category,
+          item_type: form.category,
           fee,
           follow_up_fee: followUpFee,
           gst_applicable: form.gst_applicable,
@@ -382,7 +501,7 @@ const SettingsServicesPage: React.FC = () => {
     mutationFn: async () => {
       const hid = await getHospitalId();
       const rows = DEFAULT_PROCEDURES.map((p) => ({
-        hospital_id: hid, name: p.name, category: p.category, fee: p.fee,
+        hospital_id: hid, name: p.name, category: p.category, item_type: p.category, fee: p.fee,
       }));
       const { error } = await supabase.from("service_master").insert(rows);
       if (error) throw error;
@@ -405,7 +524,8 @@ const SettingsServicesPage: React.FC = () => {
       const missing = departments?.filter((d) => !existing.includes(`${d.name} Consultation`)) ?? [];
       if (missing.length > 0) {
         const rows = missing.map((d) => ({
-          hospital_id: hid, name: `${d.name} Consultation`, category: "consultation" as const, fee,
+          hospital_id: hid, name: `${d.name} Consultation`, category: "consultation" as const,
+          item_type: "consultation", fee,
         }));
         await supabase.from("service_master").insert(rows);
       }
@@ -441,12 +561,35 @@ const SettingsServicesPage: React.FC = () => {
       });
     } else {
       setEditingId(null);
-      const genericCats = ["procedure", "package", "lab", "radiology"];
-      setForm({ name: "", category: genericCats.includes(tab) ? tab : "consultation", fee: "", follow_up_fee: "", gst_applicable: false, gst_percent: "0" });
+      const genericCats = ["procedure", "package", "lab", "radiology", "other"];
+      const category = genericCats.includes(tab) ? tab : "consultation";
+      // Seed GST from the category the same way onCategoryChange does, so opening
+      // the drawer and picking a category can't leave inconsistent defaults.
+      const statutory = getDefaultGSTRate(category);
+      setForm({
+        name: "", category, fee: "", follow_up_fee: "",
+        gst_applicable: statutory > 0, gst_percent: String(statutory),
+      });
     }
     setDrawerOpen(true);
   };
   const closeDrawer = () => { setDrawerOpen(false); setEditingId(null); };
+
+  /**
+   * Picking a category pre-fills the GST fields with the statutory rate for that
+   * category, so a taxable service (pharmacy 12%, parking 18%) isn't left at 0% by
+   * omission. Still fully overridable — the checkbox remains authoritative on save
+   * for hospital-authored rows (see resolveServiceGstPercent).
+   */
+  const onCategoryChange = (category: string) => {
+    const statutory = getDefaultGSTRate(category);
+    setForm((prev) => ({
+      ...prev,
+      category,
+      gst_applicable: statutory > 0,
+      gst_percent: String(statutory),
+    }));
+  };
 
   const openPayerRates = async (service: { id: string; name: string; category: string }) => {
     setPayerRatesService(service);
@@ -515,7 +658,7 @@ const SettingsServicesPage: React.FC = () => {
             <p className="text-xs text-muted-foreground">Settings › Services & Fees</p>
           </div>
         </div>
-        {!["ot", "ipd_beds", "emergency", "specialized", "lab", "radiology", "package"].includes(tab) && (
+        {!NON_CATALOG_TABS.includes(tab) && (
           <button onClick={() => openDrawer()} className="flex items-center gap-1.5 bg-[hsl(222,55%,23%)] text-white px-4 py-2 rounded-lg text-sm font-medium hover:opacity-90 active:scale-[0.97]">
             <Plus size={14} /> Add Service
           </button>
@@ -913,6 +1056,113 @@ const SettingsServicesPage: React.FC = () => {
           </table>
           <p className="text-[11px] text-muted-foreground mt-3">Chemotherapy bills per-mg; Blood Unit applies per component issued. Per-item pricing (per vaccine, per dental procedure) stays in those modules.</p>
         </div>
+      ) : tab === "day_care" ? (
+        /* DAY CARE TAB — edits day_care_procedures.standard_rate directly */
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div className="mb-3">
+            <h2 className="text-sm font-semibold text-foreground">Day Care Procedure Rates</h2>
+            <p className="text-xs text-muted-foreground">The rate day-care billing charges. Add or edit procedures in{" "}
+              <button onClick={() => navigate("/settings/day-care-procedures")} className="text-primary hover:underline font-medium">Day Care Procedures</button>.</p>
+          </div>
+          <table className="w-full text-sm border border-border rounded-lg overflow-hidden">
+            <thead className="bg-muted/50">
+              <tr className="text-left text-[11px] text-muted-foreground uppercase tracking-wider">
+                <th className="px-4 py-2.5 font-medium">Procedure</th>
+                <th className="px-4 py-2.5 font-medium">Code</th>
+                <th className="px-4 py-2.5 font-medium">Specialty</th>
+                <th className="px-4 py-2.5 font-medium text-right">Rate (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(dayCareProcedures ?? []).length === 0 ? (
+                <tr><td colSpan={4} className="px-4 py-10 text-center text-muted-foreground text-xs">No day care procedures yet. Add them in Day Care Procedures.</td></tr>
+              ) : (dayCareProcedures ?? []).map((p) => (
+                <tr key={p.id} className="border-t border-border/50 hover:bg-muted/20">
+                  <td className="px-4 py-2.5 font-medium text-foreground">{p.procedure_name}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{p.procedure_code || "—"}</td>
+                  <td className="px-4 py-2.5"><span className="text-[11px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground capitalize">{p.specialty || "—"}</span></td>
+                  <td className="px-4 py-2.5 text-right">
+                    <input type="number" defaultValue={p.standard_rate != null ? Number(p.standard_rate) : ""} placeholder="0"
+                      onBlur={(e) => updateTableFee("day_care_procedures", p.id, "standard_rate", e.target.value, "settings-day-care-fees")}
+                      className="w-24 h-7 text-right text-sm font-medium tabular-nums bg-transparent border border-transparent hover:border-input focus:border-input rounded px-1 outline-none" />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="text-[11px] text-muted-foreground mt-3">A booking freezes the rate at the time it is made, so changing a rate here affects new bookings only.</p>
+        </div>
+      ) : tab === "all" ? (
+        /* ALL SERVICES TAB — the whole billing catalog, nothing hidden */
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div className="mb-3">
+            <h2 className="text-sm font-semibold text-foreground">All Billable Services</h2>
+            <p className="text-xs text-muted-foreground">
+              Everything the Billing screen can find, from every module. <span className="font-medium">GST %</span> is the rate that will actually land on a bill line.
+            </p>
+          </div>
+          <Input value={allSearch} onChange={(e) => setAllSearch(e.target.value)}
+            placeholder="Search all services by name, category or type…" className="h-9 mb-3 max-w-md" />
+          {allServicesGrouped.length === 0 ? (
+            <div className="text-center text-muted-foreground text-xs py-10 border border-border rounded-lg">
+              {allSearch ? `No services match "${allSearch}".` : "No services configured yet."}
+            </div>
+          ) : allServicesGrouped.map(([category, rows]) => (
+            <div key={category} className="mb-5">
+              <h3 className="text-xs font-semibold text-foreground mb-2 capitalize">
+                {category} <span className="text-muted-foreground font-normal">({rows.length})</span>
+              </h3>
+              <table className="w-full text-sm border border-border rounded-lg overflow-hidden">
+                <thead className="bg-muted/50">
+                  <tr className="text-left text-[11px] text-muted-foreground uppercase tracking-wider">
+                    <th className="px-4 py-2.5 font-medium">Service Name</th>
+                    <th className="px-4 py-2.5 font-medium">Billing Type</th>
+                    <th className="px-4 py-2.5 font-medium">Managed In</th>
+                    <th className="px-4 py-2.5 font-medium text-right">Fee (₹)</th>
+                    <th className="px-4 py-2.5 font-medium text-right">GST %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((s) => {
+                    const mirror = s.source_table ? MIRROR_SOURCE_LABELS[s.source_table] : null;
+                    const effectiveGst = resolveServiceGstPercent(s, Number(s.fee) || 0);
+                    return (
+                      <tr key={s.id} className="border-t border-border/50 hover:bg-muted/20">
+                        <td className="px-4 py-2.5 font-medium text-foreground">{s.name}</td>
+                        <td className="px-4 py-2.5">
+                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-mono">{s.item_type || "—"}</span>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          {s.source_table ? (
+                            <button onClick={() => setTab(mirror?.tab ?? "all")}
+                              className="text-[11px] text-primary hover:underline font-medium">
+                              ↗ {mirror?.label ?? s.source_table}
+                            </button>
+                          ) : (
+                            <span className="text-[11px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-medium">Manual</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          {s.source_table ? (
+                            <span className="text-sm font-medium tabular-nums text-muted-foreground pr-1">{Number(s.fee).toLocaleString("en-IN")}</span>
+                          ) : (
+                            <input type="number" defaultValue={Number(s.fee)}
+                              onBlur={(e) => inlineUpdateFee(s.id, "fee", e.target.value)}
+                              className="w-24 h-7 text-right text-sm font-medium tabular-nums bg-transparent border border-transparent hover:border-input focus:border-input rounded px-1 outline-none" />
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-sm tabular-nums text-muted-foreground">{effectiveGst}%</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ))}
+          <p className="text-[11px] text-muted-foreground mt-1">
+            Rows marked <span className="font-medium">Manual</span> were created here and their fee is editable inline. Mirrored rows are priced by the module that owns them — edit them there, or a background sync will overwrite the change.
+          </p>
+        </div>
       ) : (
       <>
       {/* TABLE */}
@@ -1059,15 +1309,27 @@ const SettingsServicesPage: React.FC = () => {
               </div>
               <div>
                 <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Category</label>
-                <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}
+                <select value={form.category} onChange={(e) => onCategoryChange(e.target.value)}
                   className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
-                  <option value="consultation">Consultation</option>
-                  <option value="procedure">Procedure</option>
-                  <option value="package">Package</option>
-                  <option value="lab">Lab</option>
-                  <option value="radiology">Radiology</option>
-                  <option value="other">Other</option>
+                  {SERVICE_CATEGORIES.map((c) => {
+                    const rate = getDefaultGSTRate(c.value);
+                    return (
+                      <option key={c.value} value={c.value}>
+                        {c.label}{rate > 0 ? ` — GST ${rate}%` : " — GST exempt"}
+                      </option>
+                    );
+                  })}
+                  {/* A legacy row may carry a category outside this list (e.g. the old
+                      'service' default). Without an option to match it, the browser
+                      would show the first entry and silently re-categorise the service
+                      on save. Keep its own value selectable instead. */}
+                  {form.category && !SERVICE_CATEGORIES.some((c) => c.value === form.category) && (
+                    <option value={form.category}>{form.category} (existing)</option>
+                  )}
                 </select>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Sets how the service is taxed and which tab it appears under.
+                </p>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -1101,6 +1363,15 @@ const SettingsServicesPage: React.FC = () => {
                   </div>
                 )}
               </div>
+              {/* Categories that carry a statutory rate bill at 0% when the toggle is
+                  off. Surface that so leaving it unchecked is a deliberate choice
+                  rather than a silent one. */}
+              {!form.gst_applicable && getDefaultGSTRate(form.category) > 0 && (
+                <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-2">
+                  {SERVICE_CATEGORIES.find((c) => c.value === form.category)?.label ?? form.category} normally attracts{" "}
+                  <span className="font-semibold">{getDefaultGSTRate(form.category)}% GST</span>. With this unchecked, bills will charge 0% on this service.
+                </p>
+              )}
             </div>
             <div className="flex-shrink-0 px-6 py-4 border-t border-border flex gap-3">
               <button onClick={closeDrawer} className="flex-1 h-11 rounded-lg border border-border text-sm font-medium text-muted-foreground hover:bg-muted active:scale-[0.98]">Cancel</button>

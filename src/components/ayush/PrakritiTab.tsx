@@ -88,6 +88,7 @@ export default function PrakritiTab() {
         .from("patients")
         .select("id, full_name, uhid, phone, dob, gender")
         .eq("hospital_id", hospitalId)
+        .eq("is_active", true)
         .or(`full_name.ilike.%${search}%,uhid.ilike.%${search}%,phone.ilike.%${search}%`)
         .limit(20);
 

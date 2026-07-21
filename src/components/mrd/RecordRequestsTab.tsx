@@ -62,7 +62,7 @@ const RecordRequestsTab: React.FC<Props> = ({ hospitalId, userId, showNewRequest
   const searchPatients = async (q: string) => {
     setNrPatientSearch(q);
     if (q.length < 2 || !hospitalId) { setNrPatients([]); return; }
-    const { data } = await (supabase as any).from("patients").select("id, full_name, uhid").eq("hospital_id", hospitalId).or(`full_name.ilike.%${q}%,uhid.ilike.%${q}%`).limit(10);
+    const { data } = await (supabase as any).from("patients").select("id, full_name, uhid").eq("hospital_id", hospitalId).eq("is_active", true).or(`full_name.ilike.%${q}%,uhid.ilike.%${q}%`).limit(10);
     setNrPatients(data || []);
   };
 

@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/hooks/use-toast";
-import { LogOut, CheckCircle2, XCircle } from "lucide-react";
+import { LogOut, CheckCircle2, XCircle, Printer } from "lucide-react";
+import { printAdmissionBill } from "@/lib/billPrint";
 import { settleAdmissionAdvance } from "@/lib/settleAdmissionAdvance";
 import { findAdmissionBill } from "@/lib/admissionBill";
 import { formatINRExact } from "@/lib/currency";
@@ -37,11 +38,15 @@ const DayCareDischargeModal: React.FC<Props> = ({
   const [dischargeNotes, setDischargeNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [readiness, setReadiness] = useState<DayCareDischargeReadiness | null>(null);
+  // Captured from the readiness fetch so the bill can be printed at the door without a
+  // second round-trip for the admission's hospital.
+  const [hospitalId, setHospitalId] = useState<string | null>(null);
+  const [printing, setPrinting] = useState(false);
 
   // Billing readiness is DERIVED, never self-attested. The old "Bill finalised and payment
   // cleared" checkbox could be ticked on a bill that did not exist.
   useEffect(() => {
-    if (!open) { setReadiness(null); return; }
+    if (!open) { setReadiness(null); setHospitalId(null); return; }
     (async () => {
       const { data: adm } = await (supabase as any)
         .from("admissions")
@@ -49,6 +54,7 @@ const DayCareDischargeModal: React.FC<Props> = ({
         .eq("id", admissionId)
         .maybeSingle();
       if (!adm) { setReadiness(evaluateDayCareDischargeReadiness(null, "self_pay")); return; }
+      setHospitalId(adm.hospital_id);
 
       const found = await findAdmissionBill(adm.hospital_id, admissionId, { paymentStatuses: [] });
       if (!found) {
@@ -204,6 +210,27 @@ const DayCareDischargeModal: React.FC<Props> = ({
           )}
 
           <div className="flex gap-2 justify-end">
+            {/* The patient should leave holding an itemised bill, not just a deposit receipt. */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1 mr-auto"
+              disabled={!hospitalId || printing}
+              onClick={async () => {
+                if (!hospitalId) return;
+                setPrinting(true);
+                const result = await printAdmissionBill(admissionId, hospitalId);
+                if (result === "no-bill") {
+                  toast({ title: "Nothing billed yet", description: "No charges have been posted for this stay." });
+                } else if (result === "failed") {
+                  toast({ title: "Could not load the bill", variant: "destructive" });
+                }
+                setPrinting(false);
+              }}
+            >
+              <Printer size={13} />
+              {printing ? "Preparing…" : "Print Bill"}
+            </Button>
             <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
             <Button
               size="sm"

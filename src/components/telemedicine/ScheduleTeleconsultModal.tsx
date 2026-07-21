@@ -42,7 +42,7 @@ const ScheduleTeleconsultModal: React.FC<Props> = ({ open, onOpenChange, onCreat
   const searchPatients = async (q: string) => {
     setPatientSearch(q);
     if (q.length < 2) { setPatients([]); return; }
-    const { data } = await supabase.from("patients").select("id, full_name, uhid, phone").ilike("full_name", `%${q}%`).limit(8);
+    const { data } = await supabase.from("patients").select("id, full_name, uhid, phone").eq("is_active", true).ilike("full_name", `%${q}%`).limit(8);
     setPatients(data || []);
   };
 

@@ -48,7 +48,7 @@ const AdultImmunizationTab: React.FC = () => {
   const searchPatients = useCallback(async (q: string) => {
     if (!hospitalId || q.length < 2) { setPatients([]); return; }
     const { data } = await supabase.from("patients").select("id, full_name, uhid")
-      .eq("hospital_id", hospitalId).ilike("full_name", `%${q}%`).limit(8);
+      .eq("hospital_id", hospitalId).eq("is_active", true).ilike("full_name", `%${q}%`).limit(8);
     setPatients(data || []);
   }, [hospitalId]);
 

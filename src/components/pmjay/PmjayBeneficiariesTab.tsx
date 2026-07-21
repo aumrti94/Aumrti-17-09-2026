@@ -84,7 +84,7 @@ const PmjayBeneficiariesTab: React.FC<Props> = ({ showNewForm, onFormClosed }) =
   const searchPatients = async (q: string) => {
     setPatientSearch(q);
     if (q.length < 2) { setPatientResults([]); return; }
-    const { data } = await supabase.from("patients").select("id, full_name, phone").or(`full_name.ilike.%${q}%,phone.ilike.%${q}%`).limit(6);
+    const { data } = await supabase.from("patients").select("id, full_name, phone").eq("is_active", true).or(`full_name.ilike.%${q}%,phone.ilike.%${q}%`).limit(6);
     setPatientResults((data || []) as any[]);
   };
 

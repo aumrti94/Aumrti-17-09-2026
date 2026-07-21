@@ -5,6 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Check } from "lucide-react";
 import { RegistrationData, initialData } from "./constants";
 import { getInvokeError } from "@/lib/errorMessage";
+import { resolvePostAuthRoute } from "@/lib/postAuthRoute";
 import { FormError } from "@/components/ui/FormError";
 import Step1HospitalIdentity from "./Step1HospitalIdentity";
 import Step2AdminAccount from "./Step2AdminAccount";
@@ -37,8 +38,8 @@ const Register: React.FC = () => {
   const [otpRequired, setOtpRequired] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) navigate("/dashboard", { replace: true });
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (session) navigate(await resolvePostAuthRoute(), { replace: true });
       else setChecking(false);
     });
   }, [navigate]);

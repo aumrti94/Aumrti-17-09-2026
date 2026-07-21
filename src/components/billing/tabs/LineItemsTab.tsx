@@ -14,7 +14,7 @@ import EnhancementRequestModal from "@/components/billing/EnhancementRequestModa
 import { autoPullAdmissionCharges } from "@/lib/ipdBilling";
 import { isAdmissionBill } from "@/lib/admissionBill";
 import { formatINR, roundCurrency } from "@/lib/currency";
-import { getDefaultGSTRate } from "@/lib/gstRules";
+import { resolveServiceGstPercent } from "@/lib/gstRules";
 import { fetchPreAuthCeiling, type PreAuthCeiling } from "@/lib/insuranceCeiling";
 import { computeBillMoney } from "@/lib/billMoney";
 import { fetchAdvanceLedger } from "@/lib/advanceLedger";
@@ -26,22 +26,9 @@ import {
   type PackageContext,
 } from "@/lib/packageGuard";
 import { logAudit } from "@/lib/auditLog";
-
-function numberToWords(n: number): string {
-  if (n === 0) return "Zero";
-  const ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
-    "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
-  const tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
-  const convert = (num: number): string => {
-    if (num < 20) return ones[num];
-    if (num < 100) return tens[Math.floor(num / 10)] + (num % 10 ? " " + ones[num % 10] : "");
-    if (num < 1000) return ones[Math.floor(num / 100)] + " Hundred" + (num % 100 ? " " + convert(num % 100) : "");
-    if (num < 100000) return convert(Math.floor(num / 1000)) + " Thousand" + (num % 1000 ? " " + convert(num % 1000) : "");
-    if (num < 10000000) return convert(Math.floor(num / 100000)) + " Lakh" + (num % 100000 ? " " + convert(num % 100000) : "");
-    return convert(Math.floor(num / 10000000)) + " Crore" + (num % 10000000 ? " " + convert(num % 10000000) : "");
-  };
-  return convert(Math.floor(n));
-}
+// One implementation of the words conversion, shared with the printed bill — the screen and
+// the paper must not word the same amount differently.
+import { amountInWords as numberToWords } from "@/lib/billPrint";
 
 interface Props {
   bill: BillRecord;
@@ -174,7 +161,7 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
     if (!q || !hospitalId) { setSearchResults([]); return; }
     const { data } = await supabase
       .from("service_master")
-      .select("id, name, fee, category, gst_percent, hsn_code, item_type")
+      .select("id, name, fee, category, gst_percent, gst_applicable, hsn_code, item_type, source_table")
       .eq("hospital_id", hospitalId)
       .eq("is_active", true)
       .ilike("name", `%${q}%`)
@@ -187,7 +174,7 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
     if (!hospitalId) return;
     const { data } = await supabase
       .from("service_master")
-      .select("id, name, fee, category, gst_percent, hsn_code, item_type")
+      .select("id, name, fee, category, gst_percent, gst_applicable, hsn_code, item_type, source_table")
       .eq("hospital_id", hospitalId)
       .eq("is_active", true)
       .order("name")
@@ -210,14 +197,20 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
    * billed by its own module (autoChargeService, chargeOTCase) was exempt. It
    * also erased the item_type that the pre-discharge OT-billing check greps for,
    * so a hand-added OT charge never satisfied it.
+   *
+   * GST comes from resolveServiceGstPercent (src/lib/gstRules.ts), which splits the
+   * catalog in two: for hospital-authored rows (source_table IS NULL) the Settings
+   * "GST applicable" checkbox is authoritative in both directions, while mirrored
+   * module rows keep the statutory rate derived from item_type. This function used to
+   * read item_type alone and ignore gst_applicable entirely — combined with the Add
+   * Service drawer not writing item_type (so service_master's DEFAULT 'service' = 18%
+   * applied), every service created from Settings was billed at 18% GST while the
+   * screen displayed "GST: No".
    */
   const priceServiceLine = (svc: any) => {
     const rate = Number(svc.fee) || 0;
     const itemType = svc.item_type || "other";
-    const gstPct =
-      svc.gst_percent != null && svc.gst_percent > 0
-        ? Number(svc.gst_percent)
-        : getDefaultGSTRate(itemType, rate);
+    const gstPct = resolveServiceGstPercent(svc, rate);
     const gstAmt = roundCurrency(rate * gstPct / 100);
     return { rate, itemType, gstPct, taxable: rate, gstAmt, total: roundCurrency(rate + gstAmt) };
   };

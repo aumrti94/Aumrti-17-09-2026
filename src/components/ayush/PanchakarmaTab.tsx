@@ -80,6 +80,7 @@ export default function PanchakarmaTab({ showNew, onShowNewDone }: Props) {
   useEffect(() => {
     if (patientSearch.length >= 2) {
       supabase.from("patients").select("id, full_name, uhid, phone")
+        .eq("is_active", true)
         .or(`full_name.ilike.%${patientSearch}%,uhid.ilike.%${patientSearch}%`)
         .limit(10)
         .then(({ data }) => { if (data) setSearchResults(data); });

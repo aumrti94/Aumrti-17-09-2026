@@ -92,7 +92,7 @@ const PatientsPage: React.FC = () => {
 
     // Filter active/inactive
     if (!showInactive) {
-      query = query.neq("is_active", false);
+      query = query.eq("is_active", true);
     }
 
     if (debouncedSearch.trim()) {

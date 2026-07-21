@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getDefaultGSTRate, getRoomChargeGSTRate, GST_RATE_RULES } from "./gstRules";
+import { getDefaultGSTRate, getRoomChargeGSTRate, resolveServiceGstPercent, GST_RATE_RULES } from "./gstRules";
 
 /**
  * Regression suite for the healthcare GST rate engine
@@ -137,6 +137,120 @@ describe("getRoomChargeGSTRate — deterministic, config-independent room GST", 
     expect(getRoomChargeGSTRate(null, 6000)).toBe(5);
     expect(getRoomChargeGSTRate(undefined, 6000)).toBe(5);
     expect(getRoomChargeGSTRate("", 4000)).toBe(0);
+  });
+});
+
+describe("resolveServiceGstPercent — hospital-authored rows (source_table IS NULL)", () => {
+  // Regression: the Add Service drawer never wrote item_type, so service_master's
+  // DEFAULT 'service' applied — and GST_RATE_RULES.service is 18. The billing picker
+  // read item_type ONLY and ignored gst_applicable, so a service the hospital saved
+  // with "GST applicable" unchecked was billed at 18% while the UI showed "GST: No".
+  it("unchecked toggle bills at 0% even when item_type carries a statutory rate", () => {
+    expect(
+      resolveServiceGstPercent(
+        { item_type: "service", gst_applicable: false, gst_percent: 0, source_table: null },
+        1000
+      )
+    ).toBe(0);
+  });
+
+  it("unchecked toggle wins over an 18% item_type ('other')", () => {
+    expect(
+      resolveServiceGstPercent(
+        { item_type: "other", gst_applicable: false, gst_percent: 0, source_table: null },
+        200
+      )
+    ).toBe(0);
+  });
+
+  it("checked toggle uses the configured percent", () => {
+    expect(
+      resolveServiceGstPercent(
+        { item_type: "consultation", gst_applicable: true, gst_percent: 12, source_table: null },
+        1000
+      )
+    ).toBe(12);
+  });
+
+  // gst_applicable=true with a 0 percent is a legitimate saved state meaning "0%"
+  // (the Settings drawer's rate dropdown offers 0% explicitly), so it must NOT fall
+  // through to the statutory rate for the item_type. This keeps the picker in step
+  // with serviceBilling / chargePosting / ipdBilling, which all read
+  // `gst_applicable ? gst_percent : 0`.
+  it("checked toggle with a 0 percent means 0%, not the statutory rate", () => {
+    expect(
+      resolveServiceGstPercent(
+        { item_type: "pharmacy", gst_applicable: true, gst_percent: 0, source_table: null },
+        500
+      )
+    ).toBe(0);
+  });
+
+  it("a missing source_table field is treated as hospital-authored", () => {
+    expect(
+      resolveServiceGstPercent({ item_type: "other", gst_applicable: false }, 100)
+    ).toBe(0);
+  });
+});
+
+describe("resolveServiceGstPercent — mirrored rows (source_table NOT NULL)", () => {
+  // The catalog-sync triggers (20261008000136) never set gst_applicable, so every
+  // mirrored row carries the column default false. Honouring the toggle for these
+  // would silently UNDER-tax legally taxable lines — the opposite compliance bug.
+  it("a non-ICU room above ₹5,000/day still attracts 5% despite gst_applicable=false", () => {
+    expect(
+      resolveServiceGstPercent(
+        { item_type: "room_charge", gst_applicable: false, gst_percent: 0, source_table: "wards" },
+        12000
+      )
+    ).toBe(5);
+  });
+
+  it("an ICU room above the threshold stays exempt", () => {
+    expect(
+      resolveServiceGstPercent(
+        { item_type: "room_charge_icu", gst_applicable: false, gst_percent: 0, source_table: "wards" },
+        12000
+      )
+    ).toBe(0);
+  });
+
+  it("a mirrored lab test stays exempt", () => {
+    expect(
+      resolveServiceGstPercent(
+        { item_type: "lab", gst_applicable: false, gst_percent: 0, source_table: "lab_test_master" },
+        450
+      )
+    ).toBe(0);
+  });
+
+  it("an explicit module-set percent overrides the statutory default", () => {
+    expect(
+      resolveServiceGstPercent(
+        { item_type: "room_charge", gst_applicable: false, gst_percent: 12, source_table: "wards" },
+        12000
+      )
+    ).toBe(12);
+  });
+});
+
+describe("resolveServiceGstPercent — input robustness", () => {
+  it("tolerates gst_percent arriving as a numeric string (PostgREST numeric)", () => {
+    expect(
+      resolveServiceGstPercent(
+        { item_type: "other", gst_applicable: true, gst_percent: "18", source_table: null },
+        100
+      )
+    ).toBe(18);
+  });
+
+  it("tolerates null gst_percent on a mirrored row", () => {
+    expect(
+      resolveServiceGstPercent(
+        { item_type: "lab", gst_applicable: null, gst_percent: null, source_table: "lab_test_master" },
+        100
+      )
+    ).toBe(0);
   });
 });
 

@@ -70,6 +70,7 @@ const MentalHealthPage: React.FC = () => {
       .from("patients")
       .select("id, full_name, uhid, gender, dob, phone")
       .eq("hospital_id", hospitalId)
+      .eq("is_active", true)
       .or(`full_name.ilike.%${search}%,uhid.ilike.%${search}%`)
       .limit(20);
     setPatients(data || []);

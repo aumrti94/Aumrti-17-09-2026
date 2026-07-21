@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { formatINRExact } from "@/lib/currency";
 import { generateAdmissionNumber } from "@/lib/admissionNumber";
+import { nextDocumentNumber } from "@/lib/documentNumber";
 import { generatePatientUhid } from "@/lib/patient-records";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -276,6 +277,7 @@ const AdmitPatientModal: React.FC<Props> = ({
       supabase.from("patients")
         .select("id, full_name, uhid, phone, dob, gender, blood_group, chronic_conditions")
         .eq("hospital_id", hospitalId)
+        .eq("is_active", true)
         .or(`full_name.ilike.%${search}%,phone.ilike.%${search}%,uhid.ilike.%${search}%`)
         .limit(5)
         .then(({ data, error }) => {
@@ -338,6 +340,20 @@ const AdmitPatientModal: React.FC<Props> = ({
       return;
     }
 
+    // Same treatment for the MLC number, which was the last 4 digits of a millisecond
+    // timestamp — two medico-legal admissions in the same 10-second window collided, and
+    // the number bore no relation to the MLC series the Mortuary module maintains.
+    let mlcNum: string | null = null;
+    if (isMlcAdm) {
+      try {
+        mlcNum = await nextDocumentNumber(hospitalId, "mlc");
+      } catch (e: any) {
+        setFormError(e?.message || "Could not generate an MLC number");
+        setSubmitting(false);
+        return;
+      }
+    }
+
     const { error } = await supabase.from("admissions").insert({
       hospital_id: hospitalId,
       patient_id: selectedPatient.id,
@@ -353,7 +369,7 @@ const AdmitPatientModal: React.FC<Props> = ({
       expected_discharge_date: expectedDischarge || null,
       nursing_handover_notes: handoverNotes.trim() || null,
       is_mlc: isMlcAdm,
-      mlc_number: isMlcAdm ? `MLC-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}` : null,
+      mlc_number: mlcNum,
       police_station: isMlcAdm && mlcPoliceStation.trim() ? mlcPoliceStation.trim() : null,
       police_informed_at: isMlcAdm ? new Date().toISOString() : null,
       payer_type: payerType,
