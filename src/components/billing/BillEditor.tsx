@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { Receipt, Printer, MessageSquare, FileText, Send, Lock, AlertTriangle, ShieldAlert } from "lucide-react";
 import { printAmount } from "@/lib/printUtils";
 import { printBillById } from "@/lib/billPrint";
+import { billStatusDisplay } from "@/lib/billStatus";
 import { logRecordAccess } from "@/lib/ims";
 import { Badge } from "@/components/ui/badge";
 import RevenueIntelligencePanel from "@/components/billing/RevenueIntelligencePanel";
@@ -71,15 +72,6 @@ export interface PaymentRecord {
   transaction_id: string | null;
   notes: string | null;
 }
-
-const statusBadgeStyle: Record<string, string> = {
-  draft: "bg-muted text-muted-foreground",
-  final: "bg-primary/10 text-primary",
-  unpaid: "bg-destructive/10 text-destructive",
-  partial: "bg-accent/10 text-accent",
-  paid: "bg-success/10 text-success",
-  pending_approval: "bg-amber-100 text-amber-700",
-};
 
 interface Props {
   bill: BillRecord | null;
@@ -409,8 +401,10 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
           <p className="text-[11px] text-muted-foreground">{bill.bill_date}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Badge className={cn("text-[10px]", statusBadgeStyle[bill.payment_status] || statusBadgeStyle.unpaid)}>
-            {bill.payment_status.toUpperCase()}
+          {/* Shared map — an unknown status must never render in "unpaid" red, which is how
+              a refunded bill read as money still owed. */}
+          <Badge className={cn("text-[10px]", billStatusDisplay(bill.payment_status).badge)}>
+            {billStatusDisplay(bill.payment_status).label.toUpperCase()}
           </Badge>
           {isIRNLocked && (
             <Badge variant="outline" className="text-[10px] gap-1 border-amber-300 text-amber-700">

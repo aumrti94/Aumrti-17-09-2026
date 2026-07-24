@@ -20,7 +20,7 @@ export default defineConfig(({ mode }) => ({
       registerType: "autoUpdate",
       injectRegister: null, // registration is handled explicitly in src/main.tsx
       manifest: false, // served from public/manifest.json + index.html link tag
-      includeAssets: ["favicon.ico", "icon-192.svg", "icon-512.svg", "offline.html"],
+      includeAssets: ["icon-192.svg", "offline.html"],
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
         runtimeCaching: [

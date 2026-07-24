@@ -15,55 +15,85 @@ interface DbPlan {
   price_monthly: number;
   price_yearly: number;
   max_beds: number | null;
-  max_staff: number | null;
   trial_days: number;
   is_custom_price: boolean;
   badge_text: string | null;
   description: string | null;
+  /** Bed-band pricing (v3) — NULL price_per_bed_block = no bed billing. */
+  beds_included: number | null;
+  bed_block_size: number | null;
+  price_per_bed_block: number | null;
   feature_highlights?: Array<{ text: string; included: boolean }>;
   enabled_count?: number;
 }
 
-// Static fallback — mirrors the migration seed data.
-// Used if Supabase is unreachable or the anon policy is not yet applied.
+// DISPLAY-ONLY fallback, used if Supabase is unreachable or the anon read
+// policy is not yet applied. It mirrors the migration-164 seed but NEVER drives
+// what anyone is charged — checkout resolves the price server-side from the live
+// subscription_plans row, so a price edited in /platform always wins.
 const STATIC_PLANS: DbPlan[] = [
+  {
+    id: "10000000-0000-0000-0000-000000000004",
+    name: "Clinic & Day Care", slug: "clinic",
+    price_monthly: 2499, price_yearly: 24990,
+    max_beds: 15, trial_days: 30,
+    beds_included: 15, bed_block_size: 10, price_per_bed_block: null,
+    is_custom_price: false, badge_text: "New",
+    description: "For clinics, day-care centres and small nursing homes up to 15 beds.",
+    enabled_count: 10,
+  },
   {
     id: "10000000-0000-0000-0000-000000000001",
     name: "Starter", slug: "starter",
     price_monthly: 8999, price_yearly: 89990,
-    max_beds: 50, max_staff: 15, trial_days: 30,
+    max_beds: null, trial_days: 30,
+    beds_included: 20, bed_block_size: 10, price_per_bed_block: 750,
     is_custom_price: false, badge_text: null,
-    description: "For clinics and small hospitals up to 50 beds.",
+    description: "Full core clinical for growing hospitals. Includes 20 beds.",
     enabled_count: 18,
   },
   {
     id: "10000000-0000-0000-0000-000000000002",
     name: "Professional", slug: "professional",
-    price_monthly: 18999, price_yearly: 189990,
-    max_beds: 250, max_staff: 100, trial_days: 30,
+    price_monthly: 17999, price_yearly: 179990,
+    max_beds: null, trial_days: 30,
+    beds_included: 40, bed_block_size: 10, price_per_bed_block: 950,
     is_custom_price: false, badge_text: "Most Popular",
-    description: "For hospitals 50–250 beds. All 56 modules including AI, NABH & ABDM.",
+    description: "Everything Aumrti does, including AI, NABH & ABDM. Includes 40 beds.",
     enabled_count: 56,
   },
   {
     id: "10000000-0000-0000-0000-000000000003",
     name: "Enterprise", slug: "enterprise",
-    price_monthly: 0, price_yearly: 0,
-    max_beds: null, max_staff: null, trial_days: 30,
-    is_custom_price: true, badge_text: "Custom Pricing",
-    description: "For chains and 250+ bed hospitals. Multi-branch, white-label and SLA support.",
+    price_monthly: 49999, price_yearly: 499990,
+    max_beds: null, trial_days: 30,
+    beds_included: 100, bed_block_size: 10, price_per_bed_block: 1100,
+    is_custom_price: true, badge_text: "From ₹49,999",
+    description: "For chains and 250+ bed hospitals. SLA-backed support and a dedicated CSM.",
     enabled_count: 56,
   },
 ];
 
 // Feature highlights per plan (shown when we can't fetch individual module names)
 const PLAN_HIGHLIGHTS: Record<string, Array<{ text: string; included: boolean }>> = {
+  clinic: [
+    { text: "OPD & Day Care", included: true },
+    { text: "Billing & Payments (GST)", included: true },
+    { text: "Retail Pharmacy POS", included: true },
+    { text: "Laboratory", included: true },
+    { text: "Patient Portal", included: true },
+    { text: "Unlimited staff logins", included: true },
+    { text: "IPD / Wards & Nursing", included: false },
+    { text: "Operation Theatre & Emergency", included: false },
+    { text: "Insurance / TPA", included: false },
+  ],
   starter: [
     { text: "OPD, IPD & Emergency", included: true },
     { text: "Lab, Radiology & Pharmacy", included: true },
     { text: "Billing & Payments (GST)", included: true },
     { text: "HR & Inventory", included: true },
     { text: "WhatsApp Notifications", included: true },
+    { text: "Unlimited staff logins", included: true },
     { text: "Insurance / TPA", included: false },
     { text: "AI Voice Scribe", included: false },
     { text: "NABH Compliance Engine", included: false },
@@ -88,7 +118,7 @@ const PLAN_HIGHLIGHTS: Record<string, Array<{ text: string; included: boolean }>
     { text: "SLA-backed Support", included: true },
     { text: "On-site Training", included: true },
     { text: "Data Migration Assistance", included: true },
-    { text: "Unlimited Users & Beds", included: true },
+    { text: "Unlimited staff logins", included: true },
   ],
 };
 
@@ -110,7 +140,7 @@ const Step4ChoosePlan: React.FC<Props> = ({ data, onChange }) => {
         // Fetch active plans — works for both anon and authenticated sessions
         const { data: rows, error } = await (supabase as any)
           .from("subscription_plans")
-          .select("id, name, slug, price_monthly, price_yearly, max_beds, max_staff, trial_days, is_custom_price, badge_text, description, feature_highlights")
+          .select("id, name, slug, price_monthly, price_yearly, max_beds, trial_days, is_custom_price, badge_text, description, feature_highlights, beds_included, bed_block_size, price_per_bed_block")
           .eq("is_active", true)
           .order("sort_order");
 
@@ -247,6 +277,16 @@ const Step4ChoosePlan: React.FC<Props> = ({ data, onChange }) => {
                   ? `Up to ${plan.max_beds} beds`
                   : "Unlimited beds"}
               </p>
+
+              {/* Bed basis — the price a hospital actually pays depends on its
+                  bed count, so say so on the card rather than at checkout. */}
+              {plan.beds_included != null && (
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  {plan.price_per_bed_block
+                    ? `Includes ${plan.beds_included} beds · ${fmtINR(plan.price_per_bed_block)}/mo per additional ${plan.bed_block_size ?? 10} beds`
+                    : `Up to ${plan.beds_included} beds`}
+                </p>
+              )}
 
               {/* Module count pill */}
               {plan.enabled_count !== undefined && (

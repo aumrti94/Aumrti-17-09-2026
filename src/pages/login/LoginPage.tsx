@@ -8,6 +8,7 @@ import ForgotPasswordModal from "./ForgotPasswordModal";
 import MFAEnrollmentModal from "@/components/auth/MFAEnrollmentModal";
 import MFAVerifyModal, { isTrustedDevice } from "@/components/auth/MFAVerifyModal";
 import { isPlatformAdmin } from "@/lib/postAuthRoute";
+import AumrtiLogo from "@/components/brand/AumrtiLogo";
 
 const ROLE_ROUTES: Record<string, string> = {
   super_admin: "/dashboard",
@@ -317,16 +318,11 @@ const LoginPage: React.FC = () => {
         className="hidden md:flex md:w-[42%] flex-col justify-between p-14"
         style={{ backgroundColor: panelColor }}
       >
+        {/* Only the hospital's own logo goes on the navy panel. The Aumrti logo is
+            artwork on a light ground, so it lives on the white side instead. */}
         <div>
-          {brand?.logo_url ? (
+          {brand?.logo_url && (
             <img src={brand.logo_url} alt={`${brand.name} logo`} className="max-h-16 object-contain" />
-          ) : (
-            <div className="flex items-center gap-3">
-              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5">
-                <path d="M3 21h18M9 8h1M9 12h1M9 16h1M14 8h1M14 12h1M14 16h1M5 21V5a2 2 0 012-2h10a2 2 0 012 2v16" />
-              </svg>
-              <span className="text-white text-xl font-bold">Aumrti</span>
-            </div>
           )}
         </div>
 
@@ -355,12 +351,8 @@ const LoginPage: React.FC = () => {
         className="md:hidden fixed top-0 left-0 right-0 h-40 flex flex-col items-center justify-center z-10"
         style={{ backgroundColor: panelColor }}
       >
-        {brand?.logo_url ? (
+        {brand?.logo_url && (
           <img src={brand.logo_url} alt="logo" className="h-10 object-contain mb-2" />
-        ) : (
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" className="mb-2">
-            <path d="M3 21h18M9 8h1M9 12h1M9 16h1M14 8h1M14 12h1M14 16h1M5 21V5a2 2 0 012-2h10a2 2 0 012 2v16" />
-          </svg>
         )}
         <h2 className="text-white font-bold text-lg">{brand?.name || "Aumrti"}</h2>
         <p className="text-[13px] mt-0.5" style={{ color: "rgba(255,255,255,0.65)" }}>{dateStr}</p>
@@ -369,6 +361,7 @@ const LoginPage: React.FC = () => {
       {/* ── Right panel — login form ───────────────────────────────── */}
       <div className="flex-1 bg-background flex flex-col justify-center items-center md:pt-0 pt-40">
         <div className="w-full max-w-[400px] px-6 md:px-16">
+          <AumrtiLogo variant="lockup" className="h-16 w-auto max-w-[200px] mb-8" />
           <p className="text-[13px] text-muted-foreground">Welcome back</p>
           <h2 className="text-2xl font-bold text-foreground mt-1">Sign in to continue</h2>
 

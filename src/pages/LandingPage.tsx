@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { resolvePostAuthRoute } from "@/lib/postAuthRoute";
+import { Mail, Phone, Linkedin, Facebook, Instagram, Twitter } from "lucide-react";
+import AumrtiLogo from "@/components/brand/AumrtiLogo";
 import {
   Dialog,
   DialogContent,
@@ -37,8 +40,18 @@ const floatingBadges = [
 const LandingPage: React.FC = () => {
   const navigate = useNavigate();
   const [demoOpen, setDemoOpen] = useState(false);
-  
+
   const [checking, setChecking] = useState(true);
+
+  const { data: publicSettings } = useQuery({
+    queryKey: ["public-platform-settings"],
+    queryFn: async () => {
+      const { data, error } = await (supabase.rpc as any)("get_public_platform_settings");
+      if (error) throw error;
+      return data as any;
+    },
+    staleTime: 60_000,
+  });
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -57,16 +70,62 @@ const LandingPage: React.FC = () => {
       {/* Top Nav */}
       <nav className="h-16 shrink-0 bg-card border-b border-border flex items-center justify-between px-6 md:px-12">
         <div className="flex items-center gap-3">
-          {/* Hospital Cross Icon */}
-          <svg width="32" height="32" viewBox="0 0 32 32" fill="none" className="shrink-0">
-            <rect x="2" y="2" width="28" height="28" rx="6" className="fill-primary" />
-            <path d="M14 9h4v14h-4z" fill="white" />
-            <path d="M9 14h14v4H9z" fill="white" />
-          </svg>
-          <span className="font-bold text-lg text-primary">Aumrti</span>
-          <span className="hidden sm:inline text-[13px] text-muted-foreground">AI-First Hospital Management</span>
+          <AumrtiLogo variant="mark" className="h-11 w-11" />
+          {/* Wordmark stacked over its tagline. AUMRTI uses the same Inter bold as the
+              hero headline, in the brand teal, so the name carries the most weight. */}
+          <div className="flex flex-col justify-center leading-none">
+            <span className="text-xl font-bold tracking-tight text-secondary">AUMRTI</span>
+            <span className="hidden sm:block mt-1.5 font-mono text-sm font-bold tracking-tight text-[#0F172A] whitespace-nowrap">
+              AI-Native Hospital Operating System
+            </span>
+          </div>
         </div>
         <div className="flex items-center gap-3">
+          {publicSettings && (
+            <div className="hidden lg:flex items-center gap-4 mr-2 text-sm text-muted-foreground border-r border-border pr-5">
+              {publicSettings.contact_email && (
+                <a href={`mailto:${publicSettings.contact_email}`} className="flex items-center gap-1.5 hover:text-foreground transition-colors" title="Email us">
+                  <Mail size={14} /> <span className="hidden xl:inline">{publicSettings.contact_email}</span>
+                </a>
+              )}
+              {publicSettings.contact_phone && (
+                <a href={`tel:${publicSettings.contact_phone}`} className="flex items-center gap-1.5 hover:text-foreground transition-colors" title="Call us">
+                  <Phone size={14} /> <span className="hidden xl:inline">{publicSettings.contact_phone}</span>
+                </a>
+              )}
+              <div className="flex items-center gap-2">
+                {publicSettings.social_linkedin && (
+                  <a href={publicSettings.social_linkedin} target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors"><Linkedin size={14} /></a>
+                )}
+                {publicSettings.social_facebook && (
+                  <a href={publicSettings.social_facebook} target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors"><Facebook size={14} /></a>
+                )}
+                {publicSettings.social_instagram && (
+                  <a href={publicSettings.social_instagram} target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors"><Instagram size={14} /></a>
+                )}
+                {publicSettings.social_x && (
+                  <a href={publicSettings.social_x} target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors"><Twitter size={14} /></a>
+                )}
+              </div>
+            </div>
+          )}
+
+          {publicSettings?.demo_button_enabled && publicSettings?.demo_button_url && (
+            <a
+              href={publicSettings.demo_button_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hidden sm:block text-sm font-medium text-emerald-600 hover:text-emerald-700 transition-colors px-2"
+            >
+              Demo
+            </a>
+          )}
+          <button
+            onClick={() => navigate("/pricing")}
+            className="hidden sm:block text-sm font-medium text-muted-foreground hover:text-foreground transition-colors px-2"
+          >
+            Pricing
+          </button>
           <button
             onClick={() => navigate("/login")}
             className="border-[1.5px] border-primary text-primary bg-transparent px-5 py-2 rounded-md text-sm font-medium hover:bg-primary hover:text-primary-foreground transition-colors active:scale-[0.97]"
@@ -119,6 +178,17 @@ const LandingPage: React.FC = () => {
               Watch 2-Min Demo
             </button>
           </div>
+
+          {/* Price anchor — a prospect who cannot find a price does not shortlist
+              you. Links to the full calculator rather than expanding the hero,
+              which is deliberately single-viewport. */}
+          <button
+            onClick={() => navigate("/pricing")}
+            className="mt-4 self-start text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            From <span className="font-semibold text-foreground">₹2,499/month</span> · unlimited staff logins
+            <span className="text-primary ml-1.5">See pricing →</span>
+          </button>
 
           {/* Compliance Trust Bar */}
           <div className="mt-10 flex flex-wrap gap-2">
@@ -186,7 +256,7 @@ const LandingPage: React.FC = () => {
           <div className="aspect-video bg-muted rounded-lg flex flex-col items-center justify-center gap-4 p-6">
             <div className="bg-card rounded-xl border border-border p-4 shadow-sm w-full max-w-sm">
               <div className="flex items-center gap-2 mb-3">
-                <svg width="20" height="20" viewBox="0 0 32 32" fill="none"><rect x="2" y="2" width="28" height="28" rx="6" className="fill-primary" /><path d="M14 9h4v14h-4z" fill="white" /><path d="M9 14h14v4H9z" fill="white" /></svg>
+                <AumrtiLogo variant="mark" className="h-5 w-5" />
                 <span className="text-xs font-bold text-primary">Aumrti HMS Dashboard</span>
               </div>
               <div className="grid grid-cols-3 gap-2 text-center">
@@ -209,7 +279,7 @@ const LandingPage: React.FC = () => {
       </Dialog>
 
       {/* Login Modal */}
-      
+
     </div>
   );
 };

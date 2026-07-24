@@ -18,6 +18,8 @@ import { X, Check, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import SubscribeButton from "./SubscribeButton";
 import { formatINRExact } from "@/lib/currency";
+import { useHospitalId } from "@/hooks/useHospitalId";
+import { resolveEffectivePrice } from "@/lib/platformBilling";
 
 interface Props {
   open: boolean;
@@ -35,12 +37,28 @@ export default function UpgradeDialog({
   title = "Choose your plan",
   subtitle = "Activate a paid subscription to keep full access.",
 }: Props) {
+  const { hospitalId } = useHospitalId();
+
+  // The card price must include the bed fee, because that is what checkout will
+  // charge. Quoting the plan's base here while SubscribeButton bills base + bed
+  // blocks is exactly the display-vs-charge divergence the shared resolver
+  // exists to prevent.
+  const { data: activeBeds = null } = useQuery({
+    queryKey: ["upgrade-dialog-beds", hospitalId],
+    queryFn: async () => {
+      const { data } = await (supabase as any).rpc("current_active_beds", { p_hospital_id: hospitalId });
+      return typeof data === "number" ? data : null;
+    },
+    enabled: open && !!hospitalId,
+    staleTime: 5 * 60_000,
+  });
+
   const { data: plans = [] } = useQuery({
     queryKey: ["upgrade-dialog-plans"],
     queryFn: async () => {
       const { data } = await (supabase as any)
         .from("subscription_plans")
-        .select("id, name, slug, price_monthly, price_yearly, is_custom_price, badge_text, description, razorpay_plan_id, max_beds")
+        .select("id, name, slug, price_monthly, price_yearly, is_custom_price, badge_text, description, razorpay_plan_id, max_beds, beds_included, bed_block_size, price_per_bed_block, price_per_bed_block_yearly")
         .eq("is_active", true)
         .order("sort_order");
       return data || [];
@@ -70,6 +88,9 @@ export default function UpgradeDialog({
         <div className="p-6 grid gap-4 sm:grid-cols-2">
           {plans.map((p: any) => {
             const isCurrent = p.id === currentPlanId;
+            // Same resolver the edge function binds the Razorpay plan with.
+            const monthly = resolveEffectivePrice({ plan: p, cycle: "monthly", activeBeds });
+            const yearly  = resolveEffectivePrice({ plan: p, cycle: "yearly",  activeBeds });
             return (
               <div
                 key={p.id}
@@ -92,19 +113,29 @@ export default function UpgradeDialog({
                 </div>
 
                 <p className="text-xl font-bold text-foreground mt-2">
-                  {p.is_custom_price ? "Custom" : formatINRExact(Number(p.price_monthly))}
+                  {p.is_custom_price ? "Custom" : formatINRExact(monthly.amountInr)}
                   {!p.is_custom_price && <span className="text-xs font-normal text-muted-foreground">/mo</span>}
                 </p>
-                {!p.is_custom_price && p.price_yearly != null && (
+                {!p.is_custom_price && yearly.available && (
                   <p className="text-[11px] text-muted-foreground">
-                    or {formatINRExact(Number(p.price_yearly))}/year
+                    or {formatINRExact(yearly.amountInr)}/year
+                  </p>
+                )}
+                {monthly.bedBlocks > 0 && (
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    {formatINRExact(monthly.baseInr)} base + {monthly.bedBlocks} × {p.bed_block_size ?? 10}-bed block
+                    {" "}for your {activeBeds} beds
                   </p>
                 )}
 
                 {p.description && (
                   <p className="text-xs text-muted-foreground mt-2 leading-relaxed">{p.description}</p>
                 )}
-                {p.max_beds != null && (
+                {p.price_per_bed_block != null ? (
+                  <p className="text-[11px] text-muted-foreground mt-1 flex items-center gap-1">
+                    <Check size={11} className="text-emerald-600" /> Includes {p.beds_included} beds
+                  </p>
+                ) : p.max_beds != null && (
                   <p className="text-[11px] text-muted-foreground mt-1 flex items-center gap-1">
                     <Check size={11} className="text-emerald-600" /> Up to {p.max_beds} beds
                   </p>

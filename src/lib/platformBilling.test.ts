@@ -107,6 +107,144 @@ describe("resolveEffectivePrice", () => {
   });
 });
 
+describe("resolveEffectivePrice — bed blocks (pricing v3)", () => {
+  // Mirrors the migration-164 seed for Starter / Professional.
+  const STARTER = { price_monthly: 8999, price_yearly: 89990, beds_included: 20, bed_block_size: 10, price_per_bed_block: 750 };
+  const PRO = { price_monthly: 17999, price_yearly: 179990, beds_included: 40, bed_block_size: 10, price_per_bed_block: 950 };
+
+  it("charges no bed fee at exactly the included count", () => {
+    const r = resolveEffectivePrice({ plan: STARTER, cycle: "monthly", activeBeds: 20, asOf: NOW });
+    expect(r).toMatchObject({ amountInr: 8999, bedBlocks: 0, bedFeeInr: 0, baseInr: 8999 });
+  });
+
+  it("one bed over the included count starts a whole block (ceil)", () => {
+    const r = resolveEffectivePrice({ plan: STARTER, cycle: "monthly", activeBeds: 21, asOf: NOW });
+    expect(r).toMatchObject({ amountInr: 9749, bedBlocks: 1, bedFeeInr: 750 });
+  });
+
+  it("prices the 55-bed nursing home (the cliff case) at ₹11,999 on Starter", () => {
+    // 55 beds − 20 included = 35 extra → ceil(35/10) = 4 blocks × ₹750 = ₹3,000
+    const r = resolveEffectivePrice({ plan: STARTER, cycle: "monthly", activeBeds: 55, asOf: NOW });
+    expect(r.bedBlocks).toBe(4);
+    expect(r.amountInr).toBe(8999 + 4 * 750);
+  });
+
+  it("prices the 100-bed hospital at ₹23,699 on Professional (inside the ₹20k–35k guardrail)", () => {
+    const r = resolveEffectivePrice({ plan: PRO, cycle: "monthly", activeBeds: 100, asOf: NOW });
+    expect(r.bedBlocks).toBe(6);
+    expect(r.amountInr).toBe(17999 + 6 * 950); // 23,699
+  });
+
+  it("fewer beds than included is not a discount", () => {
+    const r = resolveEffectivePrice({ plan: PRO, cycle: "monthly", activeBeds: 12, asOf: NOW });
+    expect(r).toMatchObject({ amountInr: 17999, bedBlocks: 0, bedFeeInr: 0 });
+  });
+
+  it("yearly bed fee defaults to 10× monthly (2-months-free convention)", () => {
+    const r = resolveEffectivePrice({ plan: STARTER, cycle: "yearly", activeBeds: 55, asOf: NOW });
+    expect(r.bedFeeInr).toBe(4 * 750 * 10);
+    expect(r.amountInr).toBe(89990 + 30000);
+  });
+
+  it("uses the explicit yearly block price knob when set", () => {
+    const r = resolveEffectivePrice({
+      plan: { ...STARTER, price_per_bed_block_yearly: 7000 }, cycle: "yearly", activeBeds: 55, asOf: NOW,
+    });
+    expect(r.bedFeeInr).toBe(4 * 7000);
+  });
+
+  it("legacy plans (NULL bed columns) are completely unaffected", () => {
+    const r = resolveEffectivePrice({ plan: PLAN, cycle: "monthly", activeBeds: 500, asOf: NOW });
+    expect(r).toMatchObject({ amountInr: 8999, bedBlocks: 0, bedFeeInr: 0 });
+  });
+
+  it("callers that do not pass activeBeds keep pre-v3 behaviour", () => {
+    const r = resolveEffectivePrice({ plan: STARTER, cycle: "monthly", asOf: NOW });
+    expect(r).toMatchObject({ amountInr: 8999, bedBlocks: 0, bedFeeInr: 0 });
+  });
+
+  it("a plan with beds_included but no block price never bills beds (Clinic)", () => {
+    const clinic = { price_monthly: 2499, price_yearly: 24990, beds_included: 15, bed_block_size: 10, price_per_bed_block: null };
+    const r = resolveEffectivePrice({ plan: clinic, cycle: "monthly", activeBeds: 40, asOf: NOW });
+    expect(r).toMatchObject({ amountInr: 2499, bedBlocks: 0, bedFeeInr: 0 });
+  });
+
+  it("adds the bed fee on top of a negotiated override, then coupons the whole invoice", () => {
+    const r = resolveEffectivePrice({
+      plan: PRO, cycle: "monthly", activeBeds: 100, asOf: NOW,
+      override: { monthly_price: 15000, valid_until: null },
+      couponPct: 10,
+    });
+    // (15,000 override + 6 × 950 bed fee) × 0.9
+    expect(r.baseInr).toBe(15000);
+    expect(r.bedFeeInr).toBe(5700);
+    expect(r.amountInr).toBe(Math.round((15000 + 5700) * 0.9 * 100) / 100); // 18,630
+    expect(r.source).toBe("override");
+  });
+
+  it("accepts numeric strings for bed columns, as PostgREST delivers numerics", () => {
+    const r = resolveEffectivePrice({
+      plan: { price_monthly: "17999", price_yearly: "179990", beds_included: "40", bed_block_size: "10", price_per_bed_block: "950.00" },
+      cycle: "monthly", activeBeds: 100, asOf: NOW,
+    });
+    expect(r.amountInr).toBe(23699);
+  });
+});
+
+describe("resolveEffectivePrice — add-on SKUs (pricing v3 Phase 2)", () => {
+  const PRO = { price_monthly: 17999, price_yearly: 179990, beds_included: 40, bed_block_size: 10, price_per_bed_block: 950 };
+
+  it("adds the add-on total on top of base", () => {
+    const r = resolveEffectivePrice({ plan: PLAN, cycle: "monthly", addonsMonthlyInr: 4999, asOf: NOW });
+    expect(r).toMatchObject({ amountInr: 8999 + 4999, addonsInr: 4999, bedFeeInr: 0 });
+  });
+
+  it("stacks with the bed fee — base + beds + add-ons", () => {
+    // 100-bed Professional (₹23,699) + Insurance ₹4,999 + Accounts ₹3,999
+    const r = resolveEffectivePrice({
+      plan: PRO, cycle: "monthly", activeBeds: 100, addonsMonthlyInr: 4999 + 3999, asOf: NOW,
+    });
+    expect(r.baseInr).toBe(17999);
+    expect(r.bedFeeInr).toBe(5700);
+    expect(r.addonsInr).toBe(8998);
+    expect(r.amountInr).toBe(17999 + 5700 + 8998); // 32,697
+  });
+
+  it("yearly add-ons default to 10× monthly", () => {
+    const r = resolveEffectivePrice({ plan: PLAN, cycle: "yearly", addonsMonthlyInr: 4999, asOf: NOW });
+    expect(r.addonsInr).toBe(49990);
+  });
+
+  it("uses the explicit yearly add-on total when supplied", () => {
+    const r = resolveEffectivePrice({
+      plan: PLAN, cycle: "yearly", addonsMonthlyInr: 4999, addonsYearlyInr: 45000, asOf: NOW,
+    });
+    expect(r.addonsInr).toBe(45000);
+  });
+
+  it("a coupon discounts the whole invoice including add-ons", () => {
+    const r = resolveEffectivePrice({
+      plan: PLAN, cycle: "monthly", addonsMonthlyInr: 4999, couponPct: 10, asOf: NOW,
+    });
+    expect(r.amountInr).toBe(round2p((8999 + 4999) * 0.9));
+  });
+
+  it("add-ons apply on top of a negotiated override", () => {
+    const r = resolveEffectivePrice({
+      plan: PLAN, cycle: "monthly", addonsMonthlyInr: 4999, asOf: NOW,
+      override: { monthly_price: 7000, valid_until: null },
+    });
+    expect(r).toMatchObject({ baseInr: 7000, addonsInr: 4999, amountInr: 11999, source: "override" });
+  });
+
+  it("callers that pass no add-ons are completely unaffected", () => {
+    const withOut = resolveEffectivePrice({ plan: PLAN, cycle: "monthly", asOf: NOW });
+    expect(withOut).toMatchObject({ amountInr: 8999, addonsInr: 0 });
+  });
+});
+
+const round2p = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+
 describe("isOverrideActive", () => {
   it("treats a null valid_until as open-ended", () => {
     expect(isOverrideActive({ monthly_price: 1, valid_until: null }, NOW)).toBe(true);

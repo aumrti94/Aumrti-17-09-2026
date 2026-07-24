@@ -3,6 +3,7 @@ import { Outlet } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import ModuleGate from "./ModuleGate";
 import { AIEntitlementSync } from "@/components/access/AIEntitlementSync";
+import { SubscriptionLockSync } from "@/components/access/SubscriptionLockSync";
 import { SidebarProvider, useSidebar } from "./SidebarContext";
 import AppSidebar from "./AppSidebar";
 import AppHeader from "./AppHeader";
@@ -57,6 +58,7 @@ const ShellContent: React.FC = () => {
       <AppHeader />
       <IdleTimer />
       <AIEntitlementSync />
+      <SubscriptionLockSync />
 
       {/* Desktop sidebar */}
       {!isMobile && <AppSidebar />}

@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { REFUND_PAYMENT_STATUSES } from "@/lib/billStatus";
 
 export interface OutstandingSummary {
   totalOutstanding: number;
@@ -19,7 +20,11 @@ export async function fetchPatientOutstandingBalance(
     .select("balance_due")
     .eq("patient_id", patientId)
     .eq("hospital_id", hospitalId)
-    .gt("balance_due", 0);
+    .gt("balance_due", 0)
+    // A refunded bill keeps balance_due = total_amount (the refund zeroes paid_amount), so
+    // without this the patient is greeted at registration with an outstanding-balance
+    // warning for money the hospital handed back to them.
+    .not("payment_status", "in", `(${REFUND_PAYMENT_STATUSES.join(",")})`);
 
   const bills = data || [];
   return {

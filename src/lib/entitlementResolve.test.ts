@@ -63,4 +63,49 @@ describe("resolveEntitlement — plan default layered under hospital override", 
     );
     expect(r).toEqual({ billing: { tabs: { leakage: false }, actions: {} } });
   });
+
+  // ── Add-on layer (pricing v3 Phase 2) ──────────────────────────────────
+  describe("add-on grants", () => {
+    // Starter withholds the AI Suite Pro features at the plan level.
+    const planWithheld = [{
+      module_key: "ai_suite",
+      tabs: {},
+      actions: { ai_digest: false, ot_optimizer: false, roster_optimizer: false },
+    }];
+
+    it("un-withholds exactly the features the purchased SKU grants", () => {
+      const r = resolveEntitlement(
+        planWithheld,
+        [],
+        [{ module_key: "ai_suite", tabs: {}, actions: { ai_digest: true, ot_optimizer: true } }],
+      );
+      // Granted keys disappear from the withheld map; the unbought one remains.
+      expect(r).toEqual({ ai_suite: { tabs: {}, actions: { roster_optimizer: false } } });
+    });
+
+    it("returns null when an add-on grants everything the plan withheld", () => {
+      const r = resolveEntitlement(
+        [{ module_key: "ai_suite", tabs: {}, actions: { ai_digest: false } }],
+        [],
+        [{ module_key: "ai_suite", tabs: {}, actions: { ai_digest: true } }],
+      );
+      expect(r).toBeNull(); // nothing withheld anywhere = fully permissive
+    });
+
+    it("an admin override still beats a paid add-on", () => {
+      const r = resolveEntitlement(
+        planWithheld,
+        [{ module_key: "ai_suite", tabs: {}, actions: { ai_digest: false } }],
+        [{ module_key: "ai_suite", tabs: {}, actions: { ai_digest: true } }],
+      );
+      expect(r?.ai_suite.actions.ai_digest).toBe(false);
+    });
+
+    it("omitting addonRows preserves the previous two-argument behaviour", () => {
+      const withOut = resolveEntitlement(planWithheld, []);
+      const withEmpty = resolveEntitlement(planWithheld, [], []);
+      expect(withOut).toEqual(withEmpty);
+      expect(withOut?.ai_suite.actions.ai_digest).toBe(false);
+    });
+  });
 });

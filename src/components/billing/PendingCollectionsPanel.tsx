@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { syncBillItemPaymentStatus } from "@/lib/chargePosting";
 import { recordBillPayment } from "@/lib/billPayments";
 import { getCurrentUserRowId } from "@/lib/currentUser";
+import { isRefundStatus } from "@/lib/billStatus";
 import { Loader2, RefreshCw, Search, CheckCircle2, AlertCircle, IndianRupee } from "lucide-react";
 
 interface PendingItem {
@@ -85,6 +86,11 @@ export default function PendingCollectionsPanel() {
           const b = r.bills;
           if (!b) return false;
           if (b.payment_status === "paid") return false;
+          // A refunded bill is settled in the other direction — the money went OUT. The
+          // refund flow zeroes paid_amount and restores balance_due to the full total, so
+          // both tests below wave it through and the counter would collect, from a patient
+          // who has already been paid back, money the hospital does not claim.
+          if (isRefundStatus(b.payment_status)) return false;
           if (Number(b.balance_due) <= 0 && Number(b.paid_amount) > 0) return false;
           return true;
         })

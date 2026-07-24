@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { resolveAiConfig, resolveAiConfigFromEnv, callAiChatWithUsage, estimateAiCostUsd } from "../_shared/ai-config.ts";
+import { resolveAiConfig, resolveAiConfigFromEnv, callAiChatWithUsage } from "../_shared/ai-config.ts";
 import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 import { checkAIAllowed } from "../_shared/ai-entitlement.ts";
 
@@ -280,42 +280,19 @@ Dictation transcript:
     try {
       const result = await callAiChatWithUsage(config, messages, 1200, 0.2);
       rawContent = result.content;
-      // Real token counts and cost now — this was previously invisible to
-      // ai_usage_logs entirely because this function calls the provider
-      // directly instead of via ai-proxy; callAiChatWithUsage() closes that gap.
-      const costUsd = estimateAiCostUsd(config.model, result.usage);
-      await sb.from("ai_usage_logs").insert({
-        hospital_id: hospitalId,
-        feature_key: "ai-clinical-voice",
-        provider: config.provider,
-        model_name: config.model,
-        tokens_input: result.usage.tokensInput,
-        tokens_output: result.usage.tokensOutput,
-        cache_creation_tokens: result.usage.cacheCreationTokens,
-        cache_read_tokens: result.usage.cacheReadTokens,
-        cache_hit: result.usage.cacheReadTokens > 0,
-        estimated_cost_usd: costUsd,
-        latency_ms: Date.now() - aiCallStartedAt,
-        success: true,
-        // NOTE: a supabase-js query builder is a thenable but has NO .catch() —
-        // use .then(ok, err) to swallow logging failures without a TypeError.
-      }).then(() => {}, () => {});
-      // Roll up into the same daily-aggregate table ai-proxy feeds, so this
-      // function's usage shows up on AIPerformancePage and the tenant's own
-      // usage card — not just in the raw log.
-      if (hospitalId) {
-        await sb.rpc("upsert_ai_cost_daily", {
-          p_hospital_id: hospitalId,
-          p_date: new Date().toISOString().split("T")[0],
-          p_feature_key: "ai-clinical-voice",
-          p_provider: config.provider,
-          p_tokens_input: result.usage.tokensInput,
-          p_tokens_output: result.usage.tokensOutput,
-          p_cache_read_tokens: result.usage.cacheReadTokens,
-          p_cache_hit: result.usage.cacheReadTokens > 0,
-          p_cost_usd: costUsd,
-        }).then(() => {}, () => {});
-      }
+      // Usage/cost logging deliberately REMOVED from here.
+      //
+      // callAiChatWithUsage() now meters every call itself, using the
+      // `meter` context resolveAiConfig() attaches — so this function's manual
+      // insert had become a duplicate. It was worse than redundant: the shared
+      // path keys the row to the catalogue feature `voice_scribe` while this
+      // block used the string "ai-clinical-voice", so the same dictation landed
+      // twice under two different keys and doubled the cost recorded against
+      // the one feature Phase 4 is trying to price per encounter.
+      //
+      // The FAILURE path below still logs by hand: the shared helper only fires
+      // on success, so failed calls would otherwise disappear from call-volume
+      // and error-rate stats entirely.
     } catch (callErr) {
       // Best-effort — tokens/cost are unknown on a failed call, but
       // call-volume, latency and failure rate are still worth logging.

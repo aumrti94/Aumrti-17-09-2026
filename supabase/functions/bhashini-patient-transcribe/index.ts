@@ -1,5 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  resolveHospitalFromJwt, recordAsrUsage, estimateAudioSeconds, assumedBitrateKbps,
+} from "../_shared/asr-metering.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -79,6 +82,7 @@ serve(async (req) => {
     const authToken = pipelineData.pipelineInferenceAPIEndPoint?.inferenceApiKey?.value;
 
     // Step 2: Transcribe audio
+    const asrStartedAt = Date.now();
     const transcribeRes = await fetch(serviceEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": authToken || "" },
@@ -110,6 +114,28 @@ serve(async (req) => {
         transcript,
       });
     }
+
+    // Meter the transcription. The hospital is derived from the JWT, NOT from
+    // the hospital_id in the request body: that one is client-supplied and is
+    // fine for attaching a session note, but billing must not be something a
+    // caller can point at another tenant.
+    void (async () => {
+      const meterClient = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      );
+      const billedHospitalId = await resolveHospitalFromJwt(req, meterClient);
+      const bitrate = await assumedBitrateKbps(meterClient, "bhashini");
+      const approxBytes = Math.floor((audio_base64?.length ?? 0) * 3 / 4);
+      await recordAsrUsage(meterClient, {
+        hospitalId: billedHospitalId,
+        provider: "bhashini",
+        model: modelId || "bhashini-asr",
+        seconds: estimateAudioSeconds(approxBytes, bitrate),
+        estimated: true,
+        latencyMs: Date.now() - asrStartedAt,
+      });
+    })();
 
     return new Response(JSON.stringify({ transcript, language_code }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

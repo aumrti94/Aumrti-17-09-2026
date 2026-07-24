@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Loader2 } from "lucide-react";
+import AumrtiLogo from "@/components/brand/AumrtiLogo";
 
 const ROLE_ROUTES: Record<string, string> = {
   super_admin: "/dashboard",
@@ -88,6 +89,7 @@ const AuthCallbackPage: React.FC = () => {
   if (rejected) {
     return (
       <div className="flex h-screen items-center justify-center flex-col gap-4 text-center px-6 max-w-md mx-auto">
+        <AumrtiLogo variant="lockup" className="h-12 w-auto max-w-[200px] mb-2" />
         <p className="text-foreground font-semibold">No Aumrti account linked to this email</p>
         <p className="text-sm text-muted-foreground">
           This email isn't registered with any hospital on Aumrti. Ask your hospital admin to add
@@ -114,6 +116,7 @@ const AuthCallbackPage: React.FC = () => {
   if (error) {
     return (
       <div className="flex h-screen items-center justify-center flex-col gap-4 text-center px-6">
+        <AumrtiLogo variant="lockup" className="h-12 w-auto max-w-[200px] mb-2" />
         <p className="text-destructive font-medium">{error}</p>
         <button
           onClick={() => navigate("/login")}
@@ -126,9 +129,12 @@ const AuthCallbackPage: React.FC = () => {
   }
 
   return (
-    <div className="flex h-screen items-center justify-center flex-col gap-3 text-muted-foreground">
-      <Loader2 className="h-6 w-6 animate-spin" />
-      <span className="text-sm">Signing you in…</span>
+    <div className="flex h-screen items-center justify-center flex-col gap-5 text-muted-foreground">
+      <AumrtiLogo variant="lockup" className="h-24 w-auto max-w-[260px]" />
+      <div className="flex flex-col items-center gap-3">
+        <Loader2 className="h-6 w-6 animate-spin" />
+        <span className="text-sm">Signing you in…</span>
+      </div>
     </div>
   );
 };

@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { RefreshCw, Phone, Mail, AlertTriangle, CheckCircle2, Eye } from "lucide-react";
 import { fmtINR, computeHealthScore } from "@/lib/platform-utils";
+import { effectiveMonthlyAmount } from "@/lib/platformBilling";
 import MetricInfoIcon from "@/components/platform/MetricInfoIcon";
 import { format, formatDistanceToNow } from "date-fns";
 
@@ -68,7 +69,7 @@ async function fetchChurnData(): Promise<HospitalRisk[]> {
       .eq("is_active", true)
       .is("deleted_at", null),
     (supabase as any).from("hospital_subscriptions")
-      .select("hospital_id, status, trial_ends_at, subscription_plans(name, price_monthly)"),
+      .select("hospital_id, status, trial_ends_at, billing_cycle, effective_amount_inr, subscription_plans(name, price_monthly)"),
     (supabase as any).rpc("platform_active_hospitals", { since: thirtyDaysAgo }),
     (supabase as any).from("churn_remediation_actions")
       .select("hospital_id, triggered_at")
@@ -104,7 +105,12 @@ async function fetchChurnData(): Promise<HospitalRisk[]> {
         beds_count: h.beds_count, created_at: h.created_at,
         status: sub?.status || "no_subscription",
         plan_name:  sub?.subscription_plans?.name || "—",
-        plan_price: Number(sub?.subscription_plans?.price_monthly) || 0,
+        // Revenue-at-risk must reflect what the hospital actually pays. Under
+        // bed-band pricing a large hospital pays well above its plan's list
+        // price, and understating that hides the most valuable churn risks.
+        plan_price: sub?.effective_amount_inr != null
+          ? effectiveMonthlyAmount({ amountInr: sub.effective_amount_inr, cycle: sub.billing_cycle })
+          : Number(sub?.subscription_plans?.price_monthly) || 0,
         trial_ends_at: sub?.trial_ends_at || null,
         hasRecentOpd: hasOpd, hasRecentBilling: hasBill,
         score,

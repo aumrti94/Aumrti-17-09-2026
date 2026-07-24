@@ -7,6 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import { X, Phone, MapPin, Shield, Heart, Pencil, Trash2, FileJson, Loader2, Info } from "lucide-react";
 import ChronicDiseaseSection from "@/components/clinical/ChronicDiseaseSection";
 import PatientDocuments from "@/components/clinical/PatientDocuments";
+import { REFUND_PAYMENT_STATUSES } from "@/lib/billStatus";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -184,9 +185,11 @@ const PatientDetailDrawer: React.FC<Props> = ({ patient, onClose, onUpdated, onD
       setDeleteError("Cannot delete patient with active admissions. Please discharge first.");
       setDeleting(false); return;
     }
-    // Check unpaid bills
+    // Check unpaid bills. A refunded or cancelled bill is settled — it owes nothing — so
+    // "not paid" alone would block the delete forever on a bill that was fully refunded.
     const { count: billCount } = await supabase.from("bills").select("*", { count: "exact", head: true })
-      .eq("patient_id", patient.id).neq("payment_status", "paid");
+      .eq("patient_id", patient.id)
+      .not("payment_status", "in", `(paid,cancelled,${REFUND_PAYMENT_STATUSES.join(",")})`);
     if ((billCount ?? 0) > 0) {
       setDeleteError("Cannot delete patient with unpaid bills. Please settle bills first.");
       setDeleting(false); return;

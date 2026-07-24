@@ -10,6 +10,7 @@ import { FormError } from "@/components/ui/FormError";
 import { callAIOrThrow } from "@/lib/aiProvider";
 import { MODULE_TABS, MODULE_ACTIONS } from "@/lib/tabPermissions";
 import { ModuleAccessDrawer } from "@/components/access/ModuleAccessDrawer";
+import type { AddonSku } from "@/lib/addons";
 
 type ModuleDetail = { tabs: Record<string, boolean>; actions: Record<string, boolean> };
 
@@ -48,7 +49,13 @@ interface Plan {
   is_custom_price: boolean; sort_order: number;
   badge_text: string | null; description: string | null;
   razorpay_plan_id: string | null;
-  ai_included_budget_usd: number | null;
+  ai_included_budget_inr: number | null;
+  // Bed-band pricing (v3). Every knob is editable here — no pricing number
+  // lives in code, so the rate card can be re-tuned without a deploy.
+  beds_included: number | null;
+  bed_block_size: number | null;
+  price_per_bed_block: number | null;
+  price_per_bed_block_yearly: number | null;
   feature_highlights: Highlight[];
 }
 
@@ -76,15 +83,22 @@ async function fetchPlans() {
 
 const BLANK_PLAN: Partial<Plan> = {
   name: "", slug: "", price_monthly: 0, price_yearly: 0,
-  max_beds: 50, max_staff: 20, storage_included_gb: null, trial_days: 30,
+  // max_beds blank = unlimited: on bed-banded plans, extra beds are BILLED
+  // rather than blocked, so a hard cap is only for tiers that must not grow
+  // (e.g. Clinic at 15). max_staff is always unlimited — per-user pricing
+  // incentivises shared logins, which destroy clinical audit attribution.
+  max_beds: null, max_staff: null, storage_included_gb: null, trial_days: 30,
   is_active: true, is_custom_price: false, sort_order: 99,
   badge_text: null, description: null, razorpay_plan_id: null,
-  ai_included_budget_usd: null, feature_highlights: [],
+  ai_included_budget_inr: null,
+  beds_included: null, bed_block_size: 10,
+  price_per_bed_block: null, price_per_bed_block_yearly: null,
+  feature_highlights: [],
 };
 
 export default function PlansManagerPage() {
   const qc = useQueryClient();
-  const [activeTab, setActiveTab] = useState<"plans" | "leads">("plans");
+  const [activeTab, setActiveTab] = useState<"plans" | "addons" | "leads">("plans");
   const [editing, setEditing] = useState<string | null>(null);
   const [form, setForm] = useState<Partial<Plan>>(BLANK_PLAN);
   const [enabledKeys, setEnabledKeys] = useState<Set<string>>(new Set());
@@ -108,6 +122,31 @@ export default function PlansManagerPage() {
   const { data, isLoading } = useQuery({
     queryKey: ["platform-plans"],
     queryFn: fetchPlans,
+    staleTime: 60_000,
+  });
+
+  // Add-on SKU catalogue + any inconsistency between it and the plan matrix.
+  const { data: addonSkus } = useQuery({
+    queryKey: ["addon-skus-admin"],
+    queryFn: async () => {
+      const { data } = await (supabase as any)
+        .from("addon_skus")
+        .select("id, slug, name, description, price_monthly, price_yearly, module_keys, ai_feature_keys, is_active, sort_order, badge_text")
+        .order("sort_order");
+      return (data || []) as AddonSku[];
+    },
+    staleTime: 60_000,
+  });
+
+  const { data: addonDrift } = useQuery({
+    queryKey: ["addon-drift"],
+    queryFn: async () => {
+      const { data } = await (supabase as any)
+        .from("addon_entitlement_drift")
+        .select("drift_type, addon_name, plan_slug, module_key, detail")
+        .eq("drift_type", "unsellable");
+      return (data || []) as Array<{ drift_type: string; addon_name: string; plan_slug: string | null; module_key: string; detail: string }>;
+    },
     staleTime: 60_000,
   });
 
@@ -241,7 +280,10 @@ export default function PlansManagerPage() {
       const prompt = [
         `Plan name: ${form.name || "(unnamed)"}`,
         `Price: ${priceLine}`,
-        `Max beds: ${form.max_beds ?? "unlimited"} · Max staff: ${form.max_staff ?? "unlimited"}`,
+        form.price_per_bed_block
+          ? `Beds: ${form.beds_included ?? 0} included, then ₹${form.price_per_bed_block}/month per ${form.bed_block_size ?? 10} beds`
+          : `Max beds: ${form.max_beds ?? "unlimited"}`,
+        "Unlimited staff logins",
         `Included modules (${enabledLabels.length}): ${enabledLabels.join(", ") || "none specified"}`,
         "",
         "Write marketing copy for this hospital-software subscription plan's pricing card.",
@@ -282,13 +324,13 @@ export default function PlansManagerPage() {
         <div className="flex items-center gap-4">
           <h1 className="text-[15px] font-semibold text-foreground">Plans Manager</h1>
           <div className="flex gap-1">
-            {(["plans", "leads"] as const).map((tab) => (
+            {(["plans", "addons", "leads"] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
                 className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${activeTab === tab ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted"}`}
               >
-                {tab === "plans" ? "Subscription Plans" : (
+                {tab === "plans" ? "Subscription Plans" : tab === "addons" ? "Add-ons" : (
                   <span className="flex items-center gap-1.5">
                     <Users size={11} /> Enterprise Leads
                     {leads && leads.filter(l => l.status === "new").length > 0 && (
@@ -308,6 +350,63 @@ export default function PlansManagerPage() {
           </button>
         )}
       </div>
+
+      {/* Add-ons tab — the SKU catalogue. Prices and the module/AI keys each SKU
+          grants are edited here, so packaging changes need no deploy. */}
+      {activeTab === "addons" && (
+        <div className="flex-1 overflow-auto p-6">
+          <p className="text-xs text-muted-foreground mb-4 max-w-2xl">
+            Add-ons extend a plan without changing tier. A hospital that buys one gets access
+            immediately; the subscription amount is rebound at its next renewal. Editing a price
+            here changes what every future renewal charges — it does not retro-bill.
+          </p>
+          <div className="grid gap-3 md:grid-cols-2 max-w-4xl">
+            {(addonSkus || []).map((s) => (
+              <div key={s.id} className="border border-border rounded-xl p-4 bg-card">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-foreground">{s.name}</p>
+                    <p className="text-[11px] text-muted-foreground font-mono">{s.slug}</p>
+                  </div>
+                  <p className="text-sm font-bold text-foreground font-mono shrink-0">
+                    ₹{Number(s.price_monthly).toLocaleString("en-IN")}/mo
+                  </p>
+                </div>
+                {s.description && (
+                  <p className="text-xs text-muted-foreground mt-2 leading-relaxed">{s.description}</p>
+                )}
+                <div className="mt-3 pt-3 border-t border-border space-y-1.5">
+                  <p className="text-[11px] text-muted-foreground">
+                    <span className="font-medium text-foreground">Modules ({s.module_keys?.length ?? 0}):</span>{" "}
+                    {s.module_keys?.length ? s.module_keys.join(", ") : "none"}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    <span className="font-medium text-foreground">AI features ({s.ai_feature_keys?.length ?? 0}):</span>{" "}
+                    {s.ai_feature_keys?.length ? s.ai_feature_keys.join(", ") : "none"}
+                  </p>
+                </div>
+              </div>
+            ))}
+            {(!addonSkus || addonSkus.length === 0) && (
+              <p className="text-xs text-muted-foreground">
+                No add-on SKUs yet — apply the add-on migration to seed the catalogue.
+              </p>
+            )}
+          </div>
+          {addonDrift && addonDrift.length > 0 && (
+            <div className="mt-6 max-w-4xl">
+              <p className="text-xs font-semibold text-foreground mb-2">Catalogue drift</p>
+              <div className="space-y-1.5">
+                {addonDrift.map((d, i) => (
+                  <p key={i} className="text-[11px] bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900 text-amber-800 dark:text-amber-300 rounded-lg px-3 py-2">
+                    {d.detail}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Enterprise Leads tab */}
       {activeTab === "leads" && (
@@ -410,7 +509,11 @@ export default function PlansManagerPage() {
                     {plan.is_custom_price ? "Custom" : `₹${plan.price_monthly.toLocaleString("en-IN")}/mo`}
                   </p>
                   <div className="text-xs text-muted-foreground space-y-1">
-                    <p>Max beds: {plan.max_beds ?? "Unlimited"}</p>
+                    <p>
+                      {plan.price_per_bed_block
+                        ? `Beds: ${plan.beds_included ?? 0} incl. + ₹${Number(plan.price_per_bed_block).toLocaleString("en-IN")}/${plan.bed_block_size ?? 10} beds`
+                        : `Max beds: ${plan.max_beds ?? "Unlimited"}`}
+                    </p>
                     <p>Modules: {enabledCount} / {ALL_KEYS.length}</p>
                     <p>Trial: {plan.trial_days} days</p>
                     <p className={plan.razorpay_plan_id ? "text-emerald-600" : "text-amber-600"}>
@@ -449,14 +552,17 @@ export default function PlansManagerPage() {
                 { label: "Slug (unique)", key: "slug" as const, type: "text" },
                 { label: "Monthly Price (₹)", key: "price_monthly" as const, type: "number" },
                 { label: "Yearly Price (₹)", key: "price_yearly" as const, type: "number" },
-                { label: "Max Beds (blank = unlimited)", key: "max_beds" as const, type: "number" },
-                { label: "Max Staff (blank = unlimited)", key: "max_staff" as const, type: "number" },
+                { label: "Max Beds — hard cap, blocks new beds (blank = unlimited; use bed blocks to bill instead)", key: "max_beds" as const, type: "number" },
+                { label: "Beds Included in base price (blank = bed count does not affect price)", key: "beds_included" as const, type: "number" },
+                { label: "Bed Block Size (beds per billing increment)", key: "bed_block_size" as const, type: "number" },
+                { label: "₹ per Bed Block / month (blank = no bed billing)", key: "price_per_bed_block" as const, type: "number" },
+                { label: "₹ per Bed Block / year (blank = 10× monthly)", key: "price_per_bed_block_yearly" as const, type: "number" },
                 { label: "Storage Included (GB, blank = unlimited)", key: "storage_included_gb" as const, type: "number" },
                 { label: "Trial Days", key: "trial_days" as const, type: "number" },
                 { label: "Badge Text (e.g. Most Popular)", key: "badge_text" as const, type: "text" },
                 { label: "Description", key: "description" as const, type: "text" },
                 { label: "Razorpay Plan ID (from Razorpay Dashboard → Products → Plans)", key: "razorpay_plan_id" as const, type: "text" },
-                { label: "AI Budget Included (USD/month, blank = not metered)", key: "ai_included_budget_usd" as const, type: "number" },
+                { label: "AI Budget Included (₹/month, blank = not metered)", key: "ai_included_budget_inr" as const, type: "number" },
               ].map(({ label, key, type }) => (
                 <div key={key}>
                   <label className="text-xs text-muted-foreground">{label}</label>

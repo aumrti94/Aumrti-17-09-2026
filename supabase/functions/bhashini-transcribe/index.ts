@@ -1,5 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  resolveHospitalFromJwt, recordAsrUsage, estimateAudioSeconds, assumedBitrateKbps,
+} from "../_shared/asr-metering.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -101,6 +104,7 @@ serve(async (req) => {
     }
 
     // Step 2: Call ASR inference
+    const asrStartedAt = Date.now();
     const asrRes = await fetch(serviceUrl, {
       method: "POST",
       headers: {
@@ -134,6 +138,29 @@ serve(async (req) => {
 
     const asrData = await asrRes.json();
     const transcript = asrData?.pipelineResponse?.[0]?.output?.[0]?.source || "";
+
+    // Meter the transcription — ASR spend was previously invisible entirely, so
+    // a dictated encounter only ever counted its LLM half. Fire-and-forget: a
+    // metering failure must never cost the clinician their transcript.
+    void (async () => {
+      const meterClient = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      );
+      const hospitalId = await resolveHospitalFromJwt(req, meterClient);
+      const bitrate = await assumedBitrateKbps(meterClient, "bhashini");
+      // Audio never leaves base64 in this function, so approximate the decoded
+      // byte length rather than decoding a whole recording just to measure it.
+      const approxBytes = Math.floor((audio_base64?.length ?? 0) * 3 / 4);
+      await recordAsrUsage(meterClient, {
+        hospitalId,
+        provider: "bhashini",
+        model: asrConfig?.serviceId || "bhashini-asr",
+        seconds: estimateAudioSeconds(approxBytes, bitrate),
+        estimated: true,
+        latencyMs: Date.now() - asrStartedAt,
+      });
+    })();
 
     return new Response(
       JSON.stringify({ transcript }),

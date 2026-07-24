@@ -38,7 +38,12 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { computePeriodEnd, type BillingCycle } from "../_shared/platform-billing.ts";
+import {
+  computePeriodEnd,
+  resolveEffectivePrice,
+  razorpayPeriodForCycle,
+  type BillingCycle,
+} from "../_shared/platform-billing.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -428,6 +433,229 @@ serve(async (req) => {
           : new Date().toISOString(),
       },
     }).catch((e: Error) => console.error("generate-invoice call failed:", e.message));
+  }
+
+  // ── Renewal amount reconciliation (pricing v3) ────────────────────────────
+  // Reconciles BOTH involuntary/deferred amount changes: bed-band drift (the
+  // hospital opened or retired beds) and purchased add-ons (granted on purchase,
+  // billed from the next renewal — which is this event).
+  // On every successful charge, recompute what this hospital SHOULD pay against
+  // its live active-bed count. If the bound amount has drifted (beds added or
+  // retired since checkout), rebind the mandate at cycle end — never mid-cycle,
+  // so a renewal is the only moment the price can move (Aditya's rule).
+  //
+  // Hospitals with an ACTIVE hospital_pricing_overrides row are skipped
+  // entirely: an override means the price is admin-set — a negotiated deal or
+  // the migration-164 twelve-month grandfather freeze — and the automated
+  // repricer must not touch it. When valid_until lapses, the next renewal
+  // reprices naturally.
+  //
+  // Idempotent: acts only when the desired amount differs from
+  // effective_amount_inr, which is updated in the same pass — a webhook replay
+  // finds no drift and does nothing.
+  if (event === "subscription.charged") {
+    try {
+      const { data: subRow } = await db
+        .from("hospital_subscriptions")
+        .select("plan_id, effective_amount_inr, discount_pct")
+        .eq("hospital_id", hospitalId)
+        .maybeSingle();
+
+      const effectivePlanId = subRow?.plan_id ?? planId;
+      if (subRow && effectivePlanId) {
+        const [{ data: planRow }, { data: ovRow }, { data: activeBeds }, { data: addonRows }] = await Promise.all([
+          db.from("subscription_plans")
+            .select("id, name, price_monthly, price_yearly, is_custom_price, beds_included, bed_block_size, price_per_bed_block, price_per_bed_block_yearly")
+            .eq("id", effectivePlanId)
+            .maybeSingle(),
+          db.from("hospital_pricing_overrides")
+            .select("monthly_price, yearly_price, valid_until")
+            .eq("hospital_id", hospitalId)
+            .maybeSingle(),
+          db.rpc("current_active_beds", { p_hospital_id: hospitalId }),
+          // Purchased add-ons (pricing v3 Phase 2). Granted on purchase, billed
+          // from the next renewal — which is this event.
+          db.from("hospital_addons")
+            .select("addon_skus(price_monthly, price_yearly)")
+            .eq("hospital_id", hospitalId)
+            .eq("status", "active"),
+        ]);
+
+        const overrideActive = !!ovRow && (
+          !ovRow.valid_until || new Date(ovRow.valid_until).getTime() >= Date.now()
+        );
+
+        const addonsMonthlyInr = (addonRows ?? []).reduce(
+          (sum: number, r: { addon_skus?: { price_monthly?: number | string | null } | null }) =>
+            sum + Number(r.addon_skus?.price_monthly ?? 0), 0);
+        const addonsYearlyInr = (addonRows ?? []).reduce(
+          (sum: number, r: { addon_skus?: { price_yearly?: number | string | null } | null }) =>
+            sum + Number(r.addon_skus?.price_yearly ?? 0), 0);
+
+        // Reconcile when EITHER axis can drift: bed-banded plans, or any plan
+        // carrying purchased add-ons. Checking beds alone would strand a Clinic
+        // hospital (no bed billing) that has bought an add-on — it would keep
+        // paying the base price forever.
+        const hasBedBilling = planRow?.beds_included != null && planRow?.price_per_bed_block != null;
+        const hasAddons = addonsMonthlyInr > 0;
+        if (planRow && !overrideActive && (hasBedBilling || hasAddons)) {
+          const desired = resolveEffectivePrice({
+            plan: planRow,
+            override: null,
+            cycle,
+            // Preserve a checkout coupon's stored discount across reprices —
+            // a bed change must never silently strip a promotional rate.
+            couponPct: Number(subRow.discount_pct ?? 0),
+            activeBeds: activeBeds as number | null,
+            addonsMonthlyInr,
+            // 0 means "no explicit yearly price on any SKU" → let the resolver
+            // apply the 10× convention rather than charging zero.
+            addonsYearlyInr: addonsYearlyInr > 0 ? addonsYearlyInr : null,
+          });
+
+          const boundPaise = Math.round(Number(subRow.effective_amount_inr ?? 0) * 100);
+          if (desired.available && boundPaise > 0 && desired.amountPaise !== boundPaise) {
+            // Shared audit payload — identical in shadow and live, so a preview
+            // row can be compared like-for-like against what actually happened.
+            const repriceMeta = {
+              razorpay_subscription_id: razorpaySubId,
+              previous_amount_inr: Number(subRow.effective_amount_inr),
+              new_amount_inr: desired.amountInr,
+              active_beds: activeBeds,
+              bed_blocks: desired.bedBlocks,
+              bed_fee_inr: desired.bedFeeInr,
+              addons_inr: desired.addonsInr,
+            };
+
+            // ── Shadow gate ───────────────────────────────────────────────
+            // This path mutates live payment mandates fleet-wide and cannot be
+            // exercised outside production. It therefore ships OFF: with the
+            // flag disabled we record what WOULD have been charged and touch
+            // nothing. resolve_feature_flag returns false for an unknown key,
+            // so a missing/deleted flag degrades to shadow, never to live
+            // billing. Flip it in /platform → Feature Flags (per-hospital
+            // override first, then a rollout percentage).
+            const { data: repriceLive } = await db.rpc("resolve_feature_flag", {
+              p_key: "bed_reprice_live",
+              p_hospital_id: hospitalId,
+            });
+
+            if (!repriceLive) {
+              // Record what WOULD have been charged; change nothing.
+              await db.from("subscription_events").insert({
+                hospital_id: hospitalId,
+                event_type:  "bed_reprice_preview",
+                new_status:  newStatus,
+                new_plan_id: planRow.id,
+                razorpay_event: event,
+                metadata: { ...repriceMeta, mode: "shadow", applied: false },
+              }).catch(() => {});
+
+              console.log(
+                `[shadow] Amount reconciliation NOT applied for ${hospitalId}: ` +
+                `₹${subRow.effective_amount_inr} → ₹${desired.amountInr} ` +
+                `(${activeBeds} beds, ${desired.bedBlocks} blocks). ` +
+                `Enable the 'bed_reprice_live' flag to charge this.`,
+              );
+            } else {
+
+            const rzpKeyId  = Deno.env.get("RAZORPAY_SUBSCRIPTION_KEY_ID");
+            const rzpSecret = Deno.env.get("RAZORPAY_SUBSCRIPTION_KEY_SECRET");
+            if (rzpKeyId && rzpSecret) {
+              const auth = btoa(`${rzpKeyId}:${rzpSecret}`);
+
+              // Same claim/create-on-miss protocol as checkout: one Razorpay
+              // plan per (plan, cycle, amount), race-safe via the RPC.
+              const { data: cachedPlanId } = await db.rpc("claim_razorpay_plan_slot", {
+                p_plan_id: planRow.id,
+                p_billing_cycle: cycle,
+                p_amount_paise: desired.amountPaise,
+                p_razorpay_plan_id: null,
+              });
+              let newRzpPlanId: string | null = cachedPlanId ?? null;
+
+              if (!newRzpPlanId) {
+                const cycleWord = cycle === "yearly" ? "annual" : "monthly";
+                const createPlanRes = await fetch("https://api.razorpay.com/v1/plans", {
+                  method: "POST",
+                  headers: { "Authorization": `Basic ${auth}`, "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    period:   razorpayPeriodForCycle(cycle),
+                    interval: 1,
+                    item: {
+                      name:        `Aumrti HMS ${planRow.name} (${cycleWord})`,
+                      amount:      desired.amountPaise,
+                      currency:    "INR",
+                      description: `Aumrti HMS ${planRow.name} ${cycleWord} subscription`,
+                    },
+                  }),
+                });
+                if (createPlanRes.ok) {
+                  const rzpPlan = await createPlanRes.json();
+                  const { data: claimed } = await db.rpc("claim_razorpay_plan_slot", {
+                    p_plan_id: planRow.id,
+                    p_billing_cycle: cycle,
+                    p_amount_paise: desired.amountPaise,
+                    p_razorpay_plan_id: rzpPlan.id,
+                  });
+                  newRzpPlanId = claimed ?? rzpPlan.id;
+                } else {
+                  const rzpErr = await createPlanRes.json().catch(() => ({}));
+                  console.error("Bed-reprice: Razorpay plan create failed:", rzpErr);
+                }
+              }
+
+              if (newRzpPlanId) {
+                // schedule_change_at "cycle_end": the NEXT invoice moves to the
+                // new amount; the cycle that just charged is untouched.
+                const patchRes = await fetch(
+                  `https://api.razorpay.com/v1/subscriptions/${razorpaySubId}`,
+                  {
+                    method: "PATCH",
+                    headers: { "Authorization": `Basic ${auth}`, "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      plan_id: newRzpPlanId,
+                      schedule_change_at: "cycle_end",
+                    }),
+                  },
+                );
+
+                if (patchRes.ok) {
+                  await db.from("hospital_subscriptions")
+                    .update({
+                      effective_amount_inr: desired.amountInr,
+                      razorpay_plan_id: newRzpPlanId,
+                      updated_at: new Date().toISOString(),
+                    })
+                    .eq("hospital_id", hospitalId);
+
+                  // Never a silent transition (Aditya's rule).
+                  await db.from("subscription_events").insert({
+                    hospital_id: hospitalId,
+                    event_type:  "bed_reprice_scheduled",
+                    new_status:  newStatus,
+                    new_plan_id: planRow.id,
+                    razorpay_event: event,
+                    metadata: { ...repriceMeta, mode: "live", applied: true, applies: "next_cycle" },
+                  }).catch(() => {});
+
+                  console.log(`✓ Amount reconciliation scheduled for ${hospitalId}: ₹${subRow.effective_amount_inr} → ₹${desired.amountInr} (${activeBeds} beds, ₹${desired.addonsInr} add-ons) at cycle end`);
+                } else {
+                  const patchErr = await patchRes.json().catch(() => ({}));
+                  console.error("Bed-reprice: subscription PATCH failed:", patchErr);
+                }
+              }
+            }
+
+            } // end live branch (bed_reprice_live flag)
+          }
+        }
+      }
+    } catch (repriceErr) {
+      // Never let a reprice failure break charge processing — the invoice and
+      // status update above must stand regardless.
+      console.error("Bed-reprice check failed (non-fatal):", repriceErr);
+    }
   }
 
   // ── Retire a superseded mandate after the new one is confirmed ────────────

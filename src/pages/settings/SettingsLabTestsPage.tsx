@@ -178,6 +178,15 @@ const SettingsLabTestsPage: React.FC = () => {
     queryClient.invalidateQueries({ queryKey: ["settings-lab-tests"] });
   };
 
+  const bulkToggleActive = async (active: boolean) => {
+    const ids = filtered.map((t: any) => t.id);
+    if (ids.length === 0) return;
+    const { error } = await supabase.from("lab_test_master").update({ is_active: active }).in("id", ids);
+    if (error) { toast({ title: "Bulk update failed", description: error.message, variant: "destructive" }); return; }
+    queryClient.invalidateQueries({ queryKey: ["settings-lab-tests"] });
+    toast({ title: `Bulk updated ${ids.length} tests to ${active ? 'Active' : 'Inactive'}` });
+  };
+
   const formatRange = (min: number | null, max: number | null) => {
     if (min != null && max != null) return `${min}–${max}`;
     if (min != null) return `≥${min}`;
@@ -304,7 +313,15 @@ const SettingsLabTestsPage: React.FC = () => {
             <Button size="sm" onClick={() => setShowAdd(true)} className="gap-1"><Plus size={14} /> Add Test</Button>
           </div>
 
-          <p className="text-xs text-muted-foreground">{filtered.length} test{filtered.length !== 1 ? "s" : ""}</p>
+          <div className="flex justify-between items-center">
+            <p className="text-xs text-muted-foreground">{filtered.length} test{filtered.length !== 1 ? "s" : ""}</p>
+            {filtered.length > 0 && (
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" className="h-7 text-[11px] px-2" onClick={() => bulkToggleActive(true)}>Enable All Filtered</Button>
+                <Button variant="outline" size="sm" className="h-7 text-[11px] px-2" onClick={() => bulkToggleActive(false)}>Disable All Filtered</Button>
+              </div>
+            )}
+          </div>
 
           <div className="border border-border rounded-lg overflow-hidden">
             <table className="w-full text-sm">

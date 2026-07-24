@@ -82,7 +82,7 @@ serve(async (req) => {
     // ── Fetch plan ────────────────────────────────────────────────────────
     const { data: plan } = await db
       .from("subscription_plans")
-      .select("id, name, price_monthly, price_yearly, razorpay_plan_id, is_custom_price")
+      .select("id, name, price_monthly, price_yearly, razorpay_plan_id, is_custom_price, beds_included, bed_block_size, price_per_bed_block, price_per_bed_block_yearly")
       .eq("id", plan_id)
       .maybeSingle();
 
@@ -127,7 +127,36 @@ serve(async (req) => {
       .eq("hospital_id", hospital_id)
       .maybeSingle();
 
-    const price = resolveEffectivePrice({ plan, override, cycle, couponPct: discountPct });
+    // ── Bed-banded pricing (v3): bill the live active-bed count ───────────
+    // Same definition as the migration-150 enforcement trigger, via the
+    // canonical current_active_beds() RPC — the billed count and the enforced
+    // count cannot diverge. NULL bed columns on the plan = no bed fee.
+    const { data: activeBeds } = await db.rpc("current_active_beds", {
+      p_hospital_id: hospital_id,
+    });
+
+    // Purchased add-ons must be inside the mandate amount from the start —
+    // otherwise a hospital that owns add-ons and re-subscribes (e.g. after a
+    // lapsed mandate) would authorise the base price and silently stop paying
+    // for them until the next reconciliation.
+    const { data: addonRows } = await db
+      .from("hospital_addons")
+      .select("addon_skus(price_monthly, price_yearly)")
+      .eq("hospital_id", hospital_id)
+      .eq("status", "active");
+
+    const addonsMonthlyInr = (addonRows ?? []).reduce(
+      (s: number, r: { addon_skus?: { price_monthly?: number | string | null } | null }) =>
+        s + Number(r.addon_skus?.price_monthly ?? 0), 0);
+    const addonsYearlyInr = (addonRows ?? []).reduce(
+      (s: number, r: { addon_skus?: { price_yearly?: number | string | null } | null }) =>
+        s + Number(r.addon_skus?.price_yearly ?? 0), 0);
+
+    const price = resolveEffectivePrice({
+      plan, override, cycle, couponPct: discountPct, activeBeds,
+      addonsMonthlyInr,
+      addonsYearlyInr: addonsYearlyInr > 0 ? addonsYearlyInr : null,
+    });
 
     if (!price.available) {
       return err(price.reason ?? `The ${plan.name} plan is not available ${cycle}`);

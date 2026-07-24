@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Calendar, FlaskConical, Receipt, Pill, Download, Video } from "lucide-react";
 import type { PortalSession } from "./PortalLogin";
 import HealthCoachBot from "@/components/portal/HealthCoachBot";
+import { REFUND_PAYMENT_STATUSES } from "@/lib/billStatus";
 
 function getGreeting() {
   const h = new Date().getHours();
@@ -110,7 +111,11 @@ const PortalDashboard: React.FC<{ session: PortalSession }> = ({ session }) => {
         .eq("patient_id", pid).eq("hospital_id", hid).gte("visit_date", today),
       supabase.from("lab_orders").select("id", { count: "exact", head: true })
         .eq("patient_id", pid).eq("hospital_id", hid).eq("status", "completed"),
-      supabase.from("bills").select("balance_due").eq("patient_id", pid).eq("hospital_id", hid).gt("balance_due", 0),
+      // Refunded bills keep balance_due = total_amount, so without excluding them the patient
+      // is shown a "due" figure for money already refunded to them.
+      supabase.from("bills").select("balance_due").eq("patient_id", pid).eq("hospital_id", hid)
+        .gt("balance_due", 0)
+        .not("payment_status", "in", `(${REFUND_PAYMENT_STATUSES.join(",")})`),
       supabase.from("prescriptions").select("id", { count: "exact", head: true })
         .eq("patient_id", pid).eq("hospital_id", hid),
     ]);

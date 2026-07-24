@@ -6,6 +6,16 @@ import {
   Lightbulb, Bell, Zap, Calendar, ArrowRight,
 } from "lucide-react";
 import { fmtINR } from "@/lib/platform-utils";
+import { effectiveMonthlyAmount } from "@/lib/platformBilling";
+
+// What a subscription actually contributes per month. Under bed-band pricing
+// the plan's list price is only the base — a hospital above its included bed
+// count pays more — so every revenue figure on this page reads the amount bound
+// to the subscription, falling back to list only for pre-billing-v2 rows.
+const monthlyContribution = (s: any): number =>
+  s?.effective_amount_inr != null
+    ? effectiveMonthlyAmount({ amountInr: s.effective_amount_inr, cycle: s.billing_cycle })
+    : Number(s?.subscription_plans?.price_monthly) || 0;
 import { format, formatDistanceToNow, subDays, addDays } from "date-fns";
 
 
@@ -44,7 +54,7 @@ async function fetchBriefing(): Promise<BriefingData> {
       .eq("is_active", true)
       .is("deleted_at", null),
     (supabase as any).from("hospital_subscriptions")
-      .select("hospital_id, status, trial_ends_at, current_period_end, subscription_plans(name, price_monthly)"),
+      .select("hospital_id, status, trial_ends_at, current_period_end, billing_cycle, effective_amount_inr, subscription_plans(name, price_monthly)"),
     (supabase as any).rpc("platform_active_hospitals", { since: thirtyDaysAgo }),
   ]);
 
@@ -60,7 +70,7 @@ async function fetchBriefing(): Promise<BriefingData> {
   const active   = subs.filter((s: any) => s.status === "active");
   const trial    = subs.filter((s: any) => s.status === "trial");
   const pastDue  = subs.filter((s: any) => ["past_due", "suspended"].includes(s.status));
-  const mrr      = [...active, ...trial].reduce((s: number, r: any) => s + (Number(r.subscription_plans?.price_monthly) || 0), 0);
+  const mrr      = [...active, ...trial].reduce((s: number, r: any) => s + monthlyContribution(r), 0);
 
   const newThisWeek = hospitals.filter((h: any) => new Date(h.created_at) >= new Date(sevenDaysAgo)).length;
   const totalActive = active.length;
@@ -92,7 +102,7 @@ async function fetchBriefing(): Promise<BriefingData> {
   for (const s of pastDue.slice(0, 3)) {
     const h = hospMap.get(s.hospital_id);
     if (!h) continue;
-    const price = Number(s.subscription_plans?.price_monthly) || 0;
+    const price = monthlyContribution(s);
     const daysSince = s.current_period_end
       ? Math.round((now.getTime() - new Date(s.current_period_end).getTime()) / 86400000)
       : null;
@@ -178,7 +188,7 @@ async function fetchBriefing(): Promise<BriefingData> {
     return d >= now && d <= addDays(now, 7);
   });
   if (renewalsThisWeek.length > 0) {
-    const renewalMrr = renewalsThisWeek.reduce((sum: number, s: any) => sum + (Number(s.subscription_plans?.price_monthly) || 0), 0);
+    const renewalMrr = renewalsThisWeek.reduce((sum: number, s: any) => sum + monthlyContribution(s), 0);
     items.push({
       id: "renewals",
       category: "insight",

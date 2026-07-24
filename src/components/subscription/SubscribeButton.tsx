@@ -26,6 +26,11 @@ interface SubscribePlan {
   price_yearly?: number | null;
   is_custom_price: boolean;
   razorpay_plan_id: string | null;
+  /** Bed-band pricing (v3) — NULL columns mean the plan has no bed billing. */
+  beds_included?: number | null;
+  bed_block_size?: number | null;
+  price_per_bed_block?: number | null;
+  price_per_bed_block_yearly?: number | null;
 }
 
 interface Props {
@@ -107,6 +112,22 @@ export default function SubscribeButton({ plan, label, variant = "default", clas
     }
   };
 
+  // Bed-band pricing (v3): the price depends on the live active-bed count, via
+  // the same current_active_beds() RPC the edge function bills against — the
+  // preview and the charge use one bed count by construction. Until it loads
+  // (or for plans with no bed billing) the base price is shown unchanged.
+  const [activeBeds, setActiveBeds] = useState<number | null>(null);
+  useEffect(() => {
+    if (!hospitalId || plan.price_per_bed_block == null) return;
+    let cancelled = false;
+    (supabase as any)
+      .rpc("current_active_beds", { p_hospital_id: hospitalId })
+      .then(({ data }: { data: number | null }) => {
+        if (!cancelled && typeof data === "number") setActiveBeds(data);
+      });
+    return () => { cancelled = true; };
+  }, [hospitalId, plan.price_per_bed_block]);
+
   // Price shown here is computed with the SAME resolver the edge function uses
   // to bind the Razorpay plan, so the displayed figure and the charged figure
   // cannot diverge. (They used to: the coupon was applied only for display.)
@@ -114,12 +135,13 @@ export default function SubscribeButton({ plan, label, variant = "default", clas
     plan,
     cycle,
     couponPct: couponResult?.valid ? couponResult.pct : 0,
+    activeBeds,
   });
   const monthlyPrice = resolveEffectivePrice({
-    plan, cycle: "monthly", couponPct: couponResult?.valid ? couponResult.pct : 0,
+    plan, cycle: "monthly", couponPct: couponResult?.valid ? couponResult.pct : 0, activeBeds,
   });
   const yearlyPrice = resolveEffectivePrice({
-    plan, cycle: "yearly", couponPct: couponResult?.valid ? couponResult.pct : 0,
+    plan, cycle: "yearly", couponPct: couponResult?.valid ? couponResult.pct : 0, activeBeds,
   });
   const yearlyAvailable = yearlyPrice.available;
 
@@ -307,6 +329,18 @@ export default function SubscribeButton({ plan, label, variant = "default", clas
                       {price.source === "override" ? "negotiated rate" : `${price.appliedCouponPct}% off`}
                     </span>
                   </p>
+                )}
+                {/* Bed-fee itemisation: a hospital must see WHY its price is
+                    what it is before authorising the mandate. */}
+                {price.bedBlocks > 0 && (
+                  <div className="text-xs text-muted-foreground mt-1.5 space-y-0.5 border-t border-border/60 pt-1.5">
+                    <p>
+                      Base ({plan.beds_included} beds included): <span className="font-medium text-foreground">{formatINRExact(price.baseInr)}</span>
+                    </p>
+                    <p>
+                      {activeBeds} active beds → {price.bedBlocks} × {plan.bed_block_size ?? 10}-bed block: <span className="font-medium text-foreground">+{formatINRExact(price.bedFeeInr)}</span>
+                    </p>
+                  </div>
                 )}
                 <p className="text-[11px] text-muted-foreground mt-1">Inclusive of 18% GST</p>
               </div>

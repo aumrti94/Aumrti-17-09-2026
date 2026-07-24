@@ -11,28 +11,43 @@ function todayKey(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+/** "22 Jul 2026" — for telling people exactly when writes stop. */
+function formatDay(d: Date): string {
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+}
+
 /**
- * Shows a dismissable sticky banner on the hospital main Dashboard (/dashboard) when:
+ * Shows a sticky banner when:
  *   - Trial has ≤ 7 days left
- *   - Trial has expired
+ *   - Trial has expired (grace window, then read-only)
  *   - Account is suspended or past_due
  *
- * Rendered from AppShell but only visible on /dashboard. Dismissing it hides the
- * banner until the next calendar day (persisted in localStorage).
+ * Two modes:
+ *   - Warning (dismissable, /dashboard only) — writes still work.
+ *   - READ-ONLY (`accessBlocked`) — shown on EVERY route and NOT dismissable. Writes are
+ *     refused by the Supabase fetch guard and, authoritatively, by the DB trigger in
+ *     migration ...163. Hiding that state would leave staff to discover it as a failed
+ *     save mid-consultation.
+ *
  * It renders nothing when the account is in good standing.
  */
 export default function TrialBanner() {
-  const { status, trialDaysLeft, isExpired, isSuspended, isLoading } = useSubscriptionConfig();
+  const { status, trialDaysLeft, isExpired, isSuspended, isLoading, accessBlocked, graceEndsAt, inGrace } =
+    useSubscriptionConfig();
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const [dismissed, setDismissed] = useState(
     () => localStorage.getItem(DISMISS_KEY) === todayKey()
   );
 
-  // Only surface on the hospital main Dashboard, not on every module screen.
-  if (pathname !== "/dashboard") return null;
+  if (isLoading) return null;
 
-  if (isLoading || dismissed) return null;
+  // Warnings stay on the main Dashboard and stay dismissable; a read-only account is
+  // shown everywhere, always.
+  if (!accessBlocked) {
+    if (pathname !== "/dashboard") return null;
+    if (dismissed) return null;
+  }
 
   // Nothing to show for healthy active subscriptions
   if (status === "active") return null;
@@ -50,7 +65,20 @@ export default function TrialBanner() {
   let sub = "";
   let ctaLabel = "View Plan";
 
-  if (isExpired) {
+  if (accessBlocked) {
+    variant = "error";
+    icon = <XCircle size={15} className="shrink-0" />;
+    message = "Your subscription is inactive — the system is read-only.";
+    sub = "Records can still be viewed. Contact support to restore full access.";
+    ctaLabel = "Contact Support";
+  } else if (inGrace && graceEndsAt) {
+    // Say exactly what happens and when, while there is still time to act.
+    variant = "error";
+    icon = <AlertTriangle size={15} className="shrink-0" />;
+    message = "Your trial has expired.";
+    sub = `The system becomes read-only on ${formatDay(graceEndsAt)}. Contact support to activate your subscription.`;
+    ctaLabel = "Contact Support";
+  } else if (isExpired) {
     variant = "error";
     icon = <XCircle size={15} className="shrink-0" />;
     message = "Your trial has expired.";
@@ -111,16 +139,20 @@ export default function TrialBanner() {
       >
         {ctaLabel}
       </button>
-      <button
-        onClick={() => {
-          localStorage.setItem(DISMISS_KEY, todayKey());
-          setDismissed(true);
-        }}
-        className="text-white/70 hover:text-white transition-colors ml-1"
-        aria-label="Dismiss"
-      >
-        <X size={13} />
-      </button>
+      {/* A read-only account must never be dismissable — staff would hide the reason
+          their next save fails. */}
+      {!accessBlocked && (
+        <button
+          onClick={() => {
+            localStorage.setItem(DISMISS_KEY, todayKey());
+            setDismissed(true);
+          }}
+          className="text-white/70 hover:text-white transition-colors ml-1"
+          aria-label="Dismiss"
+        >
+          <X size={13} />
+        </button>
+      )}
     </div>
   );
 }

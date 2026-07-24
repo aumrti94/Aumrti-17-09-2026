@@ -27,6 +27,7 @@ import PendingCollectionsPanel from "@/components/billing/PendingCollectionsPane
 import DiscountApprovalsInbox from "@/components/billing/DiscountApprovalsInbox";
 import RefundApprovalsInbox from "@/components/billing/RefundApprovalsInbox";
 import LeakageDashboard from "@/components/billing/RevenueLeak/LeakageDashboard";
+import { totalOutstanding } from "@/lib/billStatus";
 
 export interface BillRecord {
   id: string;
@@ -478,7 +479,9 @@ const BillingPage: React.FC = () => {
   const todayCollection = bills
     .filter((b) => b.paid_amount > 0)
     .reduce((s, b) => s + b.paid_amount, 0);
-  const pendingAmount = bills.reduce((s, b) => s + b.balance_due, 0);
+  // Refunded bills carry balance_due = total_amount (the refund flow zeroes paid_amount), so
+  // summing the column raw counted money that had been handed BACK as still collectable.
+  const pendingAmount = totalOutstanding(bills);
 
   // Show a stronger day-close reminder after 22:30
   const nowHour = new Date().getHours();

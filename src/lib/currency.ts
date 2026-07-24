@@ -34,6 +34,28 @@ export function formatINRExact(amount: number): string {
 }
 
 /**
+ * Rupees that may legitimately be under ₹1 — AI cost per call, per dictated
+ * encounter, per scanned page.
+ *
+ * formatINRExact rounds to whole rupees, which is right for a bill and wrong
+ * here: an encounter costing ₹0.34 would render as "₹0" and read as free,
+ * which is precisely the number an admin is meant to set pricing from. Falls
+ * back to the standard whole-rupee form at ₹1 and above so a page never mixes
+ * two grouping styles for the same kind of figure.
+ *
+ * Use ONLY for unit costs. Anything a hospital pays uses formatINRExact.
+ */
+export function formatINRPrecise(amount: number): string {
+  const n = Math.abs(amount);
+  if (n === 0) return "₹0";
+  if (n >= 1) return formatINRExact(amount);
+  const sign = amount < 0 ? "-" : "";
+  // 4dp below 1 paisa, else 2dp — enough to distinguish a cheap call from a
+  // free one without printing meaningless precision.
+  return `${sign}₹${n < 0.01 ? n.toFixed(4) : n.toFixed(2)}`;
+}
+
+/**
  * Abbreviated rupees (₹1.5L / ₹24K) — ONLY for chart axis tick labels, where
  * ~6 stacked labels at ~10px must stay narrow enough not to collide.
  *

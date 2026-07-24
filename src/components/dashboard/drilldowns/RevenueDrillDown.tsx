@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
+import { REFUND_PAYMENT_STATUSES } from "@/lib/billStatus";
 
 interface PaymentRow {
   mode: string;
@@ -67,6 +68,9 @@ const RevenueDrillDown: React.FC = () => {
       .from("bills")
       .select("id, bill_number, patient_id, balance_due, bill_type")
       .gt("balance_due", 0)
+      // Refunded bills keep balance_due = total_amount, so they would otherwise head this
+      // "outstanding" list with money that was already returned.
+      .not("payment_status", "in", `(${REFUND_PAYMENT_STATUSES.join(",")})`)
       .gte("bill_date", today)
       .order("balance_due", { ascending: false })
       .limit(5);

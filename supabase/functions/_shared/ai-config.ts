@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { checkAIAllowed } from "./ai-entitlement.ts";
+import { getUsdToInr } from "./platform-rate.ts";
 
 // Thrown by resolveAiConfig when a hospital's "AI Features" master switch (or the
 // per-feature toggle) withholds this call. Distinct from the "no config → null →
@@ -63,6 +64,19 @@ export interface AiConfig {
   apiVersion?: string; // Azure: API version (e.g. 2024-02-01); blank uses the newer /openai/v1 surface
   apiStyle?: "chat_completions" | "responses"; // Azure: "responses" only valid when apiVersion is blank
   azureSurface?: string; // Azure: which Foundry surface — "auto"|"openai"|"anthropic"|"foundry_models"
+  /**
+   * Who to bill this call's cost to. Set by resolveAiConfig (which already
+   * receives both identifiers) so that callAiChat/callAiChatWithUsage/
+   * callAiVision meter automatically.
+   *
+   * Why it lives on the config rather than at each call site: before this,
+   * only ai-proxy and ai-clinical-voice logged cost — the other ten AI edge
+   * functions called providers straight through this module and their spend
+   * was invisible, which made any AI budget meaningless. Attaching the
+   * identity to the config makes metering the default rather than something
+   * each new function has to remember.
+   */
+  meter?: { hospitalId: string; featureKey: string };
 }
 
 // Azure AI Foundry serves different model families through different API surfaces:
@@ -255,6 +269,7 @@ export async function resolveAiConfig(
       azureSurface: keyCfgData?.azure_surface || undefined,
       temperature: Number(cfg.temperature) || 0.3,
       maxTokens: Number(cfg.max_tokens) || defaultMaxTokens,
+      meter: { hospitalId, featureKey },
     };
   }
 
@@ -274,23 +289,34 @@ export async function resolveAiConfig(
     apiKey,
     temperature: Number(cfg.temperature) || 0.3,
     maxTokens: Number(cfg.max_tokens) || defaultMaxTokens,
+    meter: { hospitalId, featureKey },
   };
 }
 
 /**
  * Resolve AI config from env vars only (no hospitalId required).
  * Tries providers in order: openai → claude → gemini.
+ *
+ * `hospitalId`/`featureKey` are optional but should be passed wherever the
+ * caller knows them: this is the `?? resolveAiConfigFromEnv()` fallback that
+ * fires when no DB config exists, and it still spends real money on a platform
+ * key. Omitting them makes that spend unattributable.
  */
-export function resolveAiConfigFromEnv(defaultMaxTokens = 1000): AiConfig | null {
+export function resolveAiConfigFromEnv(
+  defaultMaxTokens = 1000,
+  hospitalId?: string,
+  featureKey?: string,
+): AiConfig | null {
   const priorities = [
     { provider: "openai",     envKey: "OPENAI_API_KEY",     model: DEFAULT_MODELS.openai },
     { provider: "claude",     envKey: "ANTHROPIC_API_KEY",  model: DEFAULT_MODELS.claude },
     { provider: "gemini",     envKey: "GEMINI_API_KEY",     model: DEFAULT_MODELS.gemini },
     { provider: "perplexity", envKey: "PERPLEXITY_API_KEY", model: DEFAULT_MODELS.perplexity },
   ];
+  const meter = hospitalId && featureKey ? { hospitalId, featureKey } : undefined;
   for (const { provider, envKey, model } of priorities) {
     const apiKey = Deno.env.get(envKey);
-    if (apiKey) return { provider, model, apiKey, temperature: 0.3, maxTokens: defaultMaxTokens };
+    if (apiKey) return { provider, model, apiKey, temperature: 0.3, maxTokens: defaultMaxTokens, meter };
   }
   return null;
 }
@@ -339,6 +365,70 @@ export function estimateAiCostUsd(model: string, usage: ChatUsage): number {
     (usage.cacheCreationTokens / 1000) * pricing.cacheWrite +
     (usage.cacheReadTokens / 1000) * pricing.cacheRead
   );
+}
+
+/**
+ * Record one AI call against the hospital that caused it.
+ *
+ * Writes both the raw row (`ai_usage_logs`) and the pre-aggregate
+ * (`ai_cost_daily`, via the same `upsert_ai_cost_daily` RPC ai-proxy uses), so
+ * budget and dashboard queries can read the rollup without scanning raw logs.
+ *
+ * Fire-and-forget by design: metering must never be able to fail a clinical AI
+ * call. A lost log row costs a rounding error in a budget; a thrown error here
+ * would cost a discharge summary.
+ */
+async function recordAiUsage(
+  meter: { hospitalId: string; featureKey: string },
+  provider: string,
+  model: string,
+  usage: ChatUsage,
+  latencyMs?: number,
+): Promise<void> {
+  try {
+    const sb = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+    // Provider rate cards are USD-per-1K-tokens, so the raw figure is computed
+    // in USD and kept for invoice reconciliation. The rupee figure is frozen
+    // alongside it at the rate in force now — everything a human sees, and
+    // every budget comparison, uses the INR value.
+    const costUsd = estimateAiCostUsd(model, usage);
+    const costInr = costUsd * (await getUsdToInr(sb));
+    const cacheHit = usage.cacheReadTokens > 0;
+
+    await sb.from("ai_usage_logs").insert({
+      hospital_id: meter.hospitalId,
+      feature_key: meter.featureKey,
+      provider,
+      model_name: model,
+      tokens_input: usage.tokensInput,
+      tokens_output: usage.tokensOutput,
+      cache_creation_tokens: usage.cacheCreationTokens,
+      cache_read_tokens: usage.cacheReadTokens,
+      cache_hit: cacheHit,
+      estimated_cost_usd: costUsd,
+      estimated_cost_inr: costInr,
+      latency_ms: latencyMs ?? null,
+      success: true,
+    });
+
+    await sb.rpc("upsert_ai_cost_daily", {
+      p_hospital_id:       meter.hospitalId,
+      p_date:              new Date().toISOString().split("T")[0],
+      p_feature_key:       meter.featureKey,
+      p_provider:          provider,
+      p_tokens_input:      usage.tokensInput,
+      p_tokens_output:     usage.tokensOutput,
+      p_cache_read_tokens: usage.cacheReadTokens,
+      p_cache_hit:         cacheHit,
+      p_cost_usd:          costUsd,
+      p_cost_inr:          costInr,
+    });
+  } catch (err) {
+    console.error("AI usage metering failed (non-fatal):", err instanceof Error ? err.message : String(err));
+  }
 }
 
 export interface ChatResult {
@@ -470,7 +560,11 @@ export function parseAzureResponse(
  * text AND token/cache usage, normalized across providers — use this over
  * callAiChat() when the caller logs cost/usage (e.g. to ai_usage_logs).
  */
-export async function callAiChatWithUsage(
+/**
+ * Provider dispatch. Has one return per provider branch, which is exactly why
+ * metering does NOT live here — see the exported wrapper below.
+ */
+async function callAiChatWithUsageRaw(
   config: AiConfig,
   messages: ChatMessage[],
   maxTokens?: number,
@@ -605,10 +699,36 @@ export async function callAiChatWithUsage(
 }
 
 /**
+ * Call the configured AI provider with chat messages, returning the response
+ * text AND normalised token/cache usage.
+ *
+ * Also METERS the call when the config carries a `meter` context — which
+ * resolveAiConfig always sets. Metering sits in this single wrapper rather than
+ * in each of the six provider branches, so adding a provider cannot silently
+ * reintroduce unmetered spend.
+ *
+ * The recording is fire-and-forget and swallows its own errors: a failed log
+ * must never fail the AI call it was measuring.
+ */
+export async function callAiChatWithUsage(
+  config: AiConfig,
+  messages: ChatMessage[],
+  maxTokens?: number,
+  temperature?: number,
+): Promise<ChatResult> {
+  const startedAt = Date.now();
+  const result = await callAiChatWithUsageRaw(config, messages, maxTokens, temperature);
+  if (config.meter) {
+    void recordAiUsage(config.meter, config.provider, config.model, result.usage, Date.now() - startedAt);
+  }
+  return result;
+}
+
+/**
  * Call the configured AI provider with chat messages. Returns the response
  * text only (backward-compatible wrapper — existing callers are unaffected
- * by the usage-tracking addition above). Prefer callAiChatWithUsage() for
- * any new caller that logs cost/usage.
+ * by the usage-tracking addition above). Metering happens inside
+ * callAiChatWithUsage, so plain callAiChat callers are metered too.
  */
 export async function callAiChat(
   config: AiConfig,
@@ -624,13 +744,18 @@ export async function callAiChat(
  * Call the configured AI provider with a vision (image + text) input.
  * Supports openai, gemini, claude, and azure (all Foundry surfaces) providers.
  */
-export async function callAiVision(
+/**
+ * Provider dispatch for vision. Returns content plus usage so the exported
+ * wrapper can meter; metering does not live here for the same reason as chat —
+ * one exit point instead of five.
+ */
+async function callAiVisionRaw(
   config: AiConfig,
   base64Image: string,
   mediaType: string,
   textPrompt: string,
   maxTokens?: number,
-): Promise<string> {
+): Promise<ChatResult> {
   const maxTok = maxTokens ?? config.maxTokens;
 
   if (config.provider === "openai") {
@@ -651,7 +776,7 @@ export async function callAiVision(
     });
     if (!res.ok) throw new Error(`OpenAI vision error ${res.status}`);
     const data = await res.json();
-    return data.choices?.[0]?.message?.content || "";
+    return { content: data.choices?.[0]?.message?.content || "", usage: extractUsage(data, "openai") };
   }
 
   if (config.provider === "gemini") {
@@ -671,7 +796,7 @@ export async function callAiVision(
     });
     if (!res.ok) throw new Error(`Gemini vision error ${res.status}`);
     const data = await res.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    return { content: data.candidates?.[0]?.content?.parts?.[0]?.text || "", usage: extractUsage(data, "gemini") };
   }
 
   if (config.provider === "claude") {
@@ -696,7 +821,7 @@ export async function callAiVision(
     });
     if (!res.ok) throw new Error(`Claude vision error ${res.status}`);
     const data = await res.json();
-    return data.content?.[0]?.text || "";
+    return { content: data.content?.[0]?.text || "", usage: extractUsage(data, "claude") };
   }
 
   if (normalizeProviderKey(config.provider) === "azure") {
@@ -750,9 +875,34 @@ export async function callAiVision(
     const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
     if (!res.ok) throw new Error(`Azure vision error ${res.status}: ${await res.text()}`);
     const data = await res.json();
-    if (surface === "anthropic") return data.content?.[0]?.text || "";
-    return useResponses ? extractResponsesOutputText(data) : (data.choices?.[0]?.message?.content || "");
+    if (surface === "anthropic") {
+      return { content: data.content?.[0]?.text || "", usage: extractUsage(data, "claude") };
+    }
+    const content = useResponses ? extractResponsesOutputText(data) : (data.choices?.[0]?.message?.content || "");
+    return { content, usage: extractUsage(data, "azure") };
   }
 
   throw new Error(`Provider ${config.provider} does not support vision input`);
+}
+
+/**
+ * Call the configured AI provider with a vision (image + text) input.
+ *
+ * Metered like chat when the config carries a `meter` context. Vision is among
+ * the most expensive calls the platform makes, so leaving it unmetered would
+ * understate exactly the spend that matters most.
+ */
+export async function callAiVision(
+  config: AiConfig,
+  base64Image: string,
+  mediaType: string,
+  textPrompt: string,
+  maxTokens?: number,
+): Promise<string> {
+  const startedAt = Date.now();
+  const result = await callAiVisionRaw(config, base64Image, mediaType, textPrompt, maxTokens);
+  if (config.meter) {
+    void recordAiUsage(config.meter, config.provider, config.model, result.usage, Date.now() - startedAt);
+  }
+  return result.content;
 }

@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { ROUTE_TO_MODULE_KEY, CANONICAL_MODULE_KEYS } from "@/lib/moduleKeys";
+import { resolveSubscriptionAccess, type AccessBlockReason } from "@/lib/subscriptionAccess";
+import { resolveEnabledModules } from "@/lib/moduleAccess";
 // Re-exported for the many consumers that import these from this hook.
 export { ROUTE_TO_MODULE_KEY, CANONICAL_MODULE_KEYS };
 
@@ -23,6 +25,11 @@ export interface SubscriptionPlan {
   is_custom_price: boolean;
   badge_text: string | null;
   description: string | null;
+  /** Bed-band pricing (v3) — NULL = bed count never affects this plan's price. */
+  beds_included: number | null;
+  bed_block_size: number | null;
+  price_per_bed_block: number | null;
+  price_per_bed_block_yearly: number | null;
 }
 
 export interface HospitalSubscription {
@@ -53,6 +60,17 @@ export interface SubscriptionConfig {
   isExpired: boolean;
   /** Suspended or payment past due */
   isSuspended: boolean;
+  /**
+   * Writes must be refused — expired past the grace window, suspended or cancelled.
+   * This is the value that is actually ENFORCED (client fetch guard + DB trigger);
+   * isExpired/isSuspended above are display-only. See src/lib/subscriptionAccess.ts.
+   */
+  accessBlocked: boolean;
+  accessReason: AccessBlockReason | null;
+  /** Trial is over but writes still work until this moment. Null when not applicable. */
+  graceEndsAt: Date | null;
+  /** Inside the post-trial grace window (writes allowed, warn loudly). */
+  inGrace: boolean;
   /** Final resolved list of accessible module keys */
   enabledModules: string[];
   /** Override price if set by CEO, otherwise plan price */
@@ -108,6 +126,10 @@ async function fetchSubscriptionConfig(hospitalId: string): Promise<Omit<Subscri
       trialDaysLeft: 30,
       isExpired: false,
       isSuspended: false,
+      accessBlocked: false,
+      accessReason: null,
+      graceEndsAt: null,
+      inGrace: false,
       enabledModules: CANONICAL_MODULE_KEYS, // fully permissive until CEO assigns a plan
       effectiveMonthlyPrice: 0,
       effectiveYearlyPrice: 0,
@@ -123,40 +145,35 @@ async function fetchSubscriptionConfig(hospitalId: string): Promise<Omit<Subscri
   // ── Fetch plan details ──
   const { data: planData } = await (supabase as any)
     .from("subscription_plans")
-    .select("id, name, slug, price_monthly, price_yearly, max_beds, max_staff, storage_included_gb, trial_days, is_custom_price, badge_text, description")
+    .select("id, name, slug, price_monthly, price_yearly, max_beds, max_staff, storage_included_gb, trial_days, is_custom_price, badge_text, description, beds_included, bed_block_size, price_per_bed_block, price_per_bed_block_yearly")
     .eq("id", subscription.plan_id)
     .maybeSingle();
 
   const plan = planData as SubscriptionPlan | null;
 
-  // ── Resolve enabled modules ──
-  // Priority: hospital_feature_overrides > plan_features > ALWAYS_ENABLED
-  const planMap = new Map<string, boolean>(
-    (planFeatures || []).map((f: any) => [f.module_key as string, f.is_enabled as boolean])
-  );
-  const overrideMap = new Map<string, boolean>(
-    (overridesResult.data || []).map((o: any) => [o.module_key as string, o.is_enabled as boolean])
+  // ── Fetch modules granted by ACTIVE purchased add-ons ──
+  // Kept separate from hospital_feature_overrides on purpose: overrides are the
+  // admin-intent surface, add-ons are what the hospital bought. Mixing them
+  // would let an admin edit silently revoke a paid entitlement.
+  const { data: addonRows } = await (supabase as any)
+    .from("hospital_addons")
+    .select("addon_skus(module_keys)")
+    .eq("hospital_id", hospitalId)
+    .eq("status", "active");
+
+  const addonKeys: string[] = (addonRows || []).flatMap(
+    (r: any) => (r.addon_skus?.module_keys as string[] | undefined) ?? []
   );
 
-  const enabledModules: string[] = [];
-  for (const key of CANONICAL_MODULE_KEYS) {
-    if (ALWAYS_ENABLED.has(key)) {
-      enabledModules.push(key);
-      continue;
-    }
-    if (overrideMap.has(key)) {
-      if (overrideMap.get(key)) enabledModules.push(key);
-    } else if (planMap.size === 0) {
-      // No plan_features rows → treat as fully open (legacy hospital)
-      enabledModules.push(key);
-    } else if (planMap.get(key) === true) {
-      enabledModules.push(key);
-    } else if (key === "ai_suite" && planMap.get(key) !== false) {
-      // AI master defaults ON: enabled unless the plan explicitly disables it
-      // (a plan predating this feature has no ai_suite row → AI stays on).
-      enabledModules.push(key);
-    }
-  }
+  // ── Resolve enabled modules ──
+  // Precedence: adminOverride ?? addonGrant ?? planDefault (see moduleAccess.ts).
+  const enabledModules = resolveEnabledModules({
+    canonicalKeys: CANONICAL_MODULE_KEYS,
+    alwaysEnabled: ALWAYS_ENABLED,
+    planRows: (planFeatures || []) as { module_key: string; is_enabled: boolean }[],
+    addonKeys,
+    overrideRows: (overridesResult.data || []) as { module_key: string; is_enabled: boolean }[],
+  });
 
   // ── Resolve pricing ──
   let effectiveMonthlyPrice = plan?.price_monthly ?? 0;
@@ -184,6 +201,9 @@ async function fetchSubscriptionConfig(hospitalId: string): Promise<Omit<Subscri
     subscription.status === "suspended" ||
     subscription.status === "past_due";
 
+  // The enforced decision — mirrored by public.subscription_access_blocked() in the DB.
+  const access = resolveSubscriptionAccess(subscription);
+
   return {
     plan,
     subscription,
@@ -191,6 +211,10 @@ async function fetchSubscriptionConfig(hospitalId: string): Promise<Omit<Subscri
     trialDaysLeft,
     isExpired,
     isSuspended,
+    accessBlocked: access.blocked,
+    accessReason: access.reason,
+    graceEndsAt: access.graceEndsAt,
+    inGrace: access.inGrace,
     enabledModules,
     effectiveMonthlyPrice,
     effectiveYearlyPrice,
@@ -299,6 +323,10 @@ export function useSubscriptionConfig(): SubscriptionConfig {
       trialDaysLeft: null,
       isExpired: false,
       isSuspended: false,
+      accessBlocked: false,
+      accessReason: null,
+      graceEndsAt: null,
+      inGrace: false,
       enabledModules: CANONICAL_MODULE_KEYS,
       effectiveMonthlyPrice: 0,
       effectiveYearlyPrice: 0,
@@ -316,6 +344,12 @@ export function useSubscriptionConfig(): SubscriptionConfig {
       trialDaysLeft: null,
       isExpired: false,
       isSuspended: false,
+      // Fail-open: a transient DB error must never turn a paying hospital read-only.
+      // The DB trigger is the authoritative backstop if this is genuinely an expired tenant.
+      accessBlocked: false,
+      accessReason: null,
+      graceEndsAt: null,
+      inGrace: false,
       enabledModules: CANONICAL_MODULE_KEYS, // fail-open
       effectiveMonthlyPrice: 0,
       effectiveYearlyPrice: 0,

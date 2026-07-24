@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Building2, TrendingUp, Users, AlertTriangle, IndianRupee, RefreshCw, MapPin, Filter } from "lucide-react";
 import { PLATFORM_STATUS_PILL, fmtINR } from "@/lib/platform-utils";
+import { effectiveMonthlyAmount } from "@/lib/platformBilling";
 import { format } from "date-fns";
 
 interface DashStat {
@@ -38,7 +39,7 @@ async function fetchDash(): Promise<DashStat> {
       .is("deleted_at", null)
       .order("created_at", { ascending: false }),
     (supabase as any).from("hospital_subscriptions")
-      .select("hospital_id, status, subscription_plans(name, price_monthly)"),
+      .select("hospital_id, status, billing_cycle, effective_amount_inr, subscription_plans(name, price_monthly)"),
     // Use server-side COUNT(DISTINCT) instead of fetching all rows
     (supabase as any).rpc("platform_activation_funnel"),
   ]);
@@ -50,9 +51,18 @@ async function fetchDash(): Promise<DashStat> {
   const active    = subs.filter((s: any) => s.status === "active").length;
   const trial     = subs.filter((s: any) => s.status === "trial").length;
   const suspended = subs.filter((s: any) => ["suspended", "past_due"].includes(s.status)).length;
+  // MRR comes from what the hospital is ACTUALLY charged, not the plan's list
+  // price. Under bed-band pricing those differ by design (a 250-bed hospital on
+  // Professional pays the base plus 21 bed blocks), so reading price_monthly
+  // would understate MRR for every hospital above its included bed count.
+  // Falls back to list price only for rows predating billing v2.
   const mrr       = subs
     .filter((s: any) => ["active", "trial"].includes(s.status))
-    .reduce((acc: number, s: any) => acc + (Number(s.subscription_plans?.price_monthly) || 0), 0);
+    .reduce((acc: number, s: any) => acc + (
+      s.effective_amount_inr != null
+        ? effectiveMonthlyAmount({ amountInr: s.effective_amount_inr, cycle: s.billing_cycle })
+        : Number(s.subscription_plans?.price_monthly) || 0
+    ), 0);
 
   const recent = hospitals.slice(0, 12).map((h: any) => {
     const sub = subMap.get(h.id) as any;

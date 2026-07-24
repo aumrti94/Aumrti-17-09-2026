@@ -18,6 +18,7 @@ import CollectionCampaignModal from "@/components/billing/CollectionCampaignModa
 import { recordBillPayment } from "@/lib/billPayments";
 import { generatePaymentLink } from "@/lib/paymentLinks";
 import { getCurrentUserRowId } from "@/lib/currentUser";
+import { REFUND_PAYMENT_STATUSES } from "@/lib/billStatus";
 
 interface OutstandingBill {
   id: string;
@@ -109,6 +110,10 @@ const CollectionsTab: React.FC<CollectionsTabProps> = ({ hospitalId }) => {
       .select("id, bill_number, patient_id, bill_date, total_amount, balance_due, bill_type, paid_amount, admission_id, patients(full_name, uhid)")
       .eq("hospital_id", hospitalId)
       .gt("balance_due", 0)
+      // A refunded bill keeps balance_due = total_amount (the refund flow zeroes
+      // paid_amount), so it landed in this collections list and the patient would be
+      // chased for money the hospital had already handed back.
+      .not("payment_status", "in", `(${REFUND_PAYMENT_STATUSES.join(",")})`)
       .order("bill_date", { ascending: true })
       .limit(500);
 

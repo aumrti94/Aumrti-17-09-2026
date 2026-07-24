@@ -7,6 +7,7 @@ import EmptyState from "@/components/EmptyState";
 import type { BillRecord } from "@/pages/billing/BillingPage";
 import { useHospitalContext } from "@/contexts/HospitalContext";
 import { hasActionAccess } from "@/lib/tabPermissions";
+import { billStatusDisplay, isRefundStatus } from "@/lib/billStatus";
 
 const STATUS_FILTERS = [
   { key: "all", label: "All" },
@@ -21,21 +22,6 @@ const DATE_FILTERS = [
   { key: "week", label: "This Week" },
   { key: "month", label: "This Month" },
 ];
-
-const statusBorder: Record<string, string> = {
-  draft: "border-l-muted-foreground",
-  unpaid: "border-l-destructive",
-  partial: "border-l-accent",
-  paid: "border-l-success",
-  refund_pending: "border-l-accent",
-};
-
-const statusBadge: Record<string, { bg: string; text: string; label: string }> = {
-  unpaid: { bg: "bg-destructive/10", text: "text-destructive", label: "Unpaid" },
-  partial: { bg: "bg-accent/10", text: "text-accent", label: "Partial" },
-  paid: { bg: "bg-success/10", text: "text-success", label: "Paid ✓" },
-  refund_pending: { bg: "bg-accent/10", text: "text-accent", label: "Refund" },
-};
 
 interface Props {
   bills: BillRecord[];
@@ -182,7 +168,10 @@ const BillQueue: React.FC<Props> = ({
           // Money collected against a booking with no bill yet. Deliberately styled apart
           // from a bill so nobody reads it as revenue already invoiced.
           const isDepositHeld = bill.bill_status === "deposit_held";
-          const sb = statusBadge[bill.payment_status] || statusBadge.unpaid;
+          const sb = billStatusDisplay(bill.payment_status);
+          // The refund flow rewrites balance_due back up to the full total, so a refunded
+          // bill would otherwise read "₹51,500 due" — money the patient was handed back.
+          const isRefunded = isRefundStatus(bill.payment_status);
           const days = isPendingIPD
             ? Math.max(1, Math.ceil((Date.now() - new Date(bill.bill_date).getTime()) / 86400000))
             : 0;
@@ -195,7 +184,7 @@ const BillQueue: React.FC<Props> = ({
                 "border-l-[3px]",
                 isPendingIPD ? "border-l-accent"
                   : isDepositHeld ? "border-l-teal-500"
-                  : (statusBorder[bill.payment_status] || "border-l-muted-foreground"),
+                  : sb.border,
                 selectedBillId === bill.id
                   ? "bg-primary/5 border-primary"
                   : isPendingIPD
@@ -256,6 +245,12 @@ const BillQueue: React.FC<Props> = ({
                       ? `₹${bill.balance_due.toLocaleString("en-IN")} short`
                       : "Bills on admission"}
                   </span>
+                ) : isRefunded ? (
+                  // No figure quoted: the refunded amount is what was PAID, which is not
+                  // necessarily this bill's total. The exact sum is on the bill's Refunds tab.
+                  <span className={cn("text-[11px]", bill.payment_status === "refunded" ? "text-violet-600" : "text-amber-600")}>
+                    {bill.payment_status === "refunded" ? "Refunded to patient" : "Refund awaiting approval"}
+                  </span>
                 ) : (
                   <span className={cn("text-[11px]", bill.balance_due > 0 ? "text-destructive" : "text-success")}>
                     {bill.balance_due > 0 ? `₹${bill.balance_due.toLocaleString("en-IN")} due` : "Settled"}
@@ -269,7 +264,7 @@ const BillQueue: React.FC<Props> = ({
                 ) : isDepositHeld ? (
                   <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-teal-500/10 text-teal-600">Deposit held</span>
                 ) : (
-                  <span className={cn("text-[10px] px-2 py-0.5 rounded-full font-medium", sb.bg, sb.text)}>{sb.label}</span>
+                  <span className={cn("text-[10px] px-2 py-0.5 rounded-full font-medium", sb.badge)}>{sb.label}</span>
                 )}
               </div>
             </button>

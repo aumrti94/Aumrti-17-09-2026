@@ -169,6 +169,9 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ isMobileOverlay, onClose }) => 
         </div>
       )}
 
+      {/* No brand block here — the logo sits in the header directly above this
+          column, so repeating it only cost vertical space in the nav. */}
+
       {/* Top items */}
       <nav className="flex-shrink-0 flex flex-col gap-1 px-2 pt-3">
         {filterItems(topItems).map(renderItem)}

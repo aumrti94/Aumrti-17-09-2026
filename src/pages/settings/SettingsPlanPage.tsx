@@ -4,7 +4,7 @@ import SettingsPageWrapper from "@/components/settings/SettingsPageWrapper";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Download, Mail, AlertTriangle, Clock, CheckCircle2, XCircle, Loader2, FileText, ExternalLink, Gift, Copy, Check } from "lucide-react";
+import { Download, Mail, AlertTriangle, Clock, CheckCircle2, XCircle, Loader2, FileText, ExternalLink, Gift, Copy, Check, Sparkles } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useSubscriptionConfig } from "@/hooks/useSubscriptionConfig";
 import { useHospitalId } from "@/hooks/useHospitalId";
@@ -13,6 +13,14 @@ import { ALL_MODULES } from "@/lib/modules";
 import SubscribeButton from "@/components/subscription/SubscribeButton";
 import PaymentHistoryTable, { downloadInvoiceDocument } from "@/components/billing/PaymentHistoryTable";
 import UpgradeDialog from "@/components/subscription/UpgradeDialog";
+import { toast } from "sonner";
+import {
+  activeSkus, addonsMonthlyTotal, describeGrant,
+  type AddonSku, type HospitalAddon,
+} from "@/lib/addons";
+import { resolveAiBudgetStatus } from "@/lib/aiBudget";
+import { formatINRExact, formatINRPrecise } from "@/lib/currency";
+import { resolveEncounterAllowance, type EncounterAllowanceStatus } from "@/lib/encounterAllowance";
 
 // Module key → display name map
 const ROUTE_KEY: Record<string, string> = {
@@ -72,7 +80,7 @@ const SettingsPlanPage: React.FC = () => {
     plan, subscription, status,
     trialDaysLeft, isExpired, isSuspended,
     enabledModules, effectiveMonthlyPrice, effectiveYearlyPrice,
-    isLoading,
+    isLoading, refetch,
   } = useSubscriptionConfig();
 
   // Staff count for usage stats
@@ -94,7 +102,7 @@ const SettingsPlanPage: React.FC = () => {
   });
 
   // AI usage this billing cycle (calendar month) — observability only, not
-  // billed yet. Only counts toward ai_included_budget_usd if the plan has
+  // billed yet. Only counts toward ai_included_budget_inr if the plan has
   // one set (NULL for every plan today — see the migration comment).
   const { data: aiUsage } = useQuery({
     queryKey: ["plan-ai-usage", hospitalId],
@@ -104,12 +112,12 @@ const SettingsPlanPage: React.FC = () => {
       monthStart.setHours(0, 0, 0, 0);
       const { data } = await (supabase as any)
         .from("ai_cost_daily")
-        .select("total_cost_usd, total_calls")
+        .select("total_cost_inr, total_calls")
         .eq("hospital_id", hospitalId!)
         .gte("date", monthStart.toISOString().slice(0, 10));
       const rows = data || [];
       return {
-        totalCostUsd: rows.reduce((s: number, r: any) => s + Number(r.total_cost_usd || 0), 0),
+        totalCostInr: rows.reduce((s: number, r: any) => s + Number(r.total_cost_inr || 0), 0),
         totalCalls: rows.reduce((s: number, r: any) => s + Number(r.total_calls || 0), 0),
       };
     },
@@ -117,17 +125,95 @@ const SettingsPlanPage: React.FC = () => {
     staleTime: 5 * 60_000,
   });
 
-  const { data: aiBudget } = useQuery({
-    queryKey: ["plan-ai-budget", plan?.id],
+  // Budget status comes from the hospital_ai_budget_status view, which is the
+  // authority on what counts: it EXCLUDES safety-class AI (drug interactions,
+  // allergy and deterioration alerts) from the cap. Summing ai_cost_daily
+  // directly here would count those and could show a hospital as over budget
+  // because of its safety checks.
+  const { data: budgetRow } = useQuery({
+    queryKey: ["ai-budget-status", hospitalId],
     queryFn: async () => {
       const { data } = await (supabase as any)
-        .from("subscription_plans")
-        .select("ai_included_budget_usd")
-        .eq("id", plan!.id)
+        .from("hospital_ai_budget_status")
+        .select("budget_inr, metered_cost_inr, safety_cost_inr, total_calls")
+        .eq("hospital_id", hospitalId!)
         .maybeSingle();
-      return data?.ai_included_budget_usd as number | null;
+      return data as {
+        budget_inr: number | null; metered_cost_inr: number;
+        safety_cost_inr: number; total_calls: number;
+      } | null;
     },
-    enabled: !!plan?.id,
+    enabled: !!hospitalId,
+    staleTime: 5 * 60_000,
+  });
+
+  // ── Encounter / document allowances + prepaid credits (Phase 4) ──
+  const { data: encUsage, refetch: refetchEncUsage } = useQuery({
+    queryKey: ["encounter-usage", hospitalId],
+    queryFn: async () => {
+      const { data } = await (supabase as any)
+        .from("hospital_encounter_usage")
+        .select("voice_encounters, ocr_documents, voice_encounters_included, ocr_documents_included, encounter_credits, document_credits")
+        .eq("hospital_id", hospitalId!)
+        .maybeSingle();
+      return data as {
+        voice_encounters: number; ocr_documents: number;
+        voice_encounters_included: number | null; ocr_documents_included: number | null;
+        encounter_credits: number; document_credits: number;
+      } | null;
+    },
+    enabled: !!hospitalId,
+    staleTime: 5 * 60_000,
+  });
+
+  const { data: packs = [] } = useQuery({
+    queryKey: ["credit-packs"],
+    queryFn: async () => {
+      const { data } = await (supabase as any)
+        .from("credit_packs")
+        .select("id, slug, name, description, encounters, documents, price_inr")
+        .eq("is_active", true)
+        .order("sort_order");
+      return (data || []) as Array<{
+        id: string; slug: string; name: string; description: string | null;
+        encounters: number; documents: number; price_inr: number;
+      }>;
+    },
+    staleTime: 5 * 60_000,
+  });
+
+  const voiceAllowance = resolveEncounterAllowance({
+    used: encUsage?.voice_encounters,
+    included: encUsage?.voice_encounters_included,
+    creditBalance: encUsage?.encounter_credits,
+  });
+  const scanAllowance = resolveEncounterAllowance({
+    used: encUsage?.ocr_documents,
+    included: encUsage?.ocr_documents_included,
+    creditBalance: encUsage?.document_credits,
+  });
+
+  const [pendingPack, setPendingPack] = React.useState<typeof packs[number] | null>(null);
+  const [packBusy, setPackBusy] = React.useState(false);
+
+  const aiBudgetStatus = resolveAiBudgetStatus({
+    meteredCostInr: budgetRow?.metered_cost_inr,
+    budgetInr: budgetRow?.budget_inr,
+    safetyCostInr: budgetRow?.safety_cost_inr,
+  });
+
+  // Tenant-facing budget display is staged: off until a full cycle of complete
+  // metering data has been reviewed (ten AI functions logged nothing before
+  // Phase 3, so earlier figures understate reality).
+  const { data: meteringLive = false } = useQuery({
+    queryKey: ["flag-ai-metering-live", hospitalId],
+    queryFn: async () => {
+      const { data } = await (supabase as any).rpc("resolve_feature_flag", {
+        p_key: "ai_metering_live", p_hospital_id: hospitalId,
+      });
+      return data === true;
+    },
+    enabled: !!hospitalId,
     staleTime: 5 * 60_000,
   });
 
@@ -179,6 +265,43 @@ const SettingsPlanPage: React.FC = () => {
     staleTime: 5 * 60_000,
   });
 
+  // ── Add-ons (pricing v3 Phase 2) ──
+  // Catalogue + what this hospital already owns. Purchase does NOT go through
+  // Razorpay: an add-on is granted immediately and the subscription amount is
+  // rebound at the next renewal by the webhook reconciler, so buying one is a
+  // confirm-and-write action rather than a checkout.
+  const { data: addonCatalogue = [] } = useQuery({
+    queryKey: ["addon-catalogue"],
+    queryFn: async () => {
+      const { data } = await (supabase as any)
+        .from("addon_skus")
+        .select("id, slug, name, description, price_monthly, price_yearly, module_keys, ai_feature_keys, badge_text, sort_order")
+        .eq("is_active", true)
+        .order("sort_order");
+      return (data || []) as AddonSku[];
+    },
+    staleTime: 5 * 60_000,
+  });
+
+  const { data: myAddons = [], refetch: refetchAddons } = useQuery({
+    queryKey: ["hospital-addons", hospitalId],
+    queryFn: async () => {
+      const { data } = await (supabase as any)
+        .from("hospital_addons")
+        .select("id, addon_sku_id, status, granted_at, billing_starts_at, source, addon_skus(id, slug, name, description, price_monthly, price_yearly, module_keys, ai_feature_keys, sort_order)")
+        .eq("hospital_id", hospitalId!)
+        .eq("status", "active");
+      return (data || []) as HospitalAddon[];
+    },
+    enabled: !!hospitalId,
+    staleTime: 60_000,
+  });
+
+  const ownedSkuIds = new Set(myAddons.map((a) => a.addon_sku_id));
+  const ownedSkus = activeSkus(myAddons);
+  const [pendingAddon, setPendingAddon] = React.useState<AddonSku | null>(null);
+  const [addonBusy, setAddonBusy] = React.useState(false);
+
   // Invoice history
   const { data: invoices = [] } = useQuery({
     queryKey: ["subscription-invoices", hospitalId],
@@ -208,8 +331,18 @@ const SettingsPlanPage: React.FC = () => {
 
   const staffCount = usageData?.staffCount ?? 0;
   const bedsCount = usageData?.bedsCount ?? 0;
-  const maxStaff = plan?.max_staff ?? null;
+  // Staff logins are unlimited on every plan (pricing v3): per-user pricing
+  // incentivises shared logins, which destroy clinical audit attribution.
   const maxBeds  = plan?.max_beds  ?? null;
+
+  // Bed-band pricing: extra beds are BILLED, not blocked, so the meaningful
+  // figure is how many blocks this hospital is paying for — not a cap.
+  const bedsIncluded  = plan?.beds_included ?? null;
+  const bedBlockSize  = plan?.bed_block_size ?? 10;
+  const bedBlockPrice = plan?.price_per_bed_block ?? null;
+  const bedBlocks = bedsIncluded != null && bedBlockPrice != null
+    ? Math.max(0, Math.ceil((bedsCount - bedsIncluded) / (bedBlockSize || 10)))
+    : 0;
 
   // Storage: total_bytes vs plan quota (storage_included_gb; NULL = unlimited)
   const storageBytes = storageUsage?.total_bytes ?? 0;
@@ -222,15 +355,22 @@ const SettingsPlanPage: React.FC = () => {
     {
       label: "Staff Accounts",
       used: staffCount,
-      limit: maxStaff,
-      // limitPct: null limit = unlimited (0%); a 0 limit with any usage = over limit (100%).
-      pct: limitPct(staffCount, maxStaff),
+      // Unlimited on every plan — give every nurse her own login, because the
+      // NABH evidence trail depends on actions being attributable to a person.
+      limit: null,
+      pct: 0,
+      sub: "Unlimited on every plan",
     },
     {
       label: "Registered Beds",
       used: bedsCount,
-      limit: maxBeds,
-      pct: limitPct(bedsCount, maxBeds),
+      // On a bed-banded plan there is no cap to fill, so the bar is not a
+      // "usage vs limit" gauge — it shows what is being billed.
+      limit: bedBlockPrice != null ? null : maxBeds,
+      pct: bedBlockPrice != null ? 0 : limitPct(bedsCount, maxBeds),
+      sub: bedBlockPrice != null
+        ? `${bedsIncluded ?? 0} included · ${bedBlocks} × ${bedBlockSize}-bed block${bedBlocks === 1 ? "" : "s"} billed at ${fmtINR(bedBlockPrice)} each`
+        : undefined,
     },
     {
       label: "Active Modules",
@@ -391,8 +531,56 @@ const SettingsPlanPage: React.FC = () => {
         <section>
           <h2 className="text-sm font-semibold text-foreground mb-1">AI Usage This Cycle</h2>
           <p className="text-xs text-muted-foreground mb-4">
-            Not billed separately today — shown here for visibility as usage-based AI billing is being scoped.
+            {meteringLive && aiBudgetStatus.budgeted
+              ? "Your plan includes an AI allowance. Going over it never interrupts anything — we will just suggest a better-fitting plan."
+              : "Shown for visibility. AI usage is not billed separately."}
           </p>
+
+          {/* Budget bar — only once metering is live AND the plan is metered. */}
+          {meteringLive && aiBudgetStatus.budgeted && (
+            <div className="bg-card border border-border rounded-lg p-4 mb-4">
+              <div className="flex items-baseline justify-between mb-2">
+                <p className="text-xs text-muted-foreground">AI allowance used</p>
+                <p className="text-xs font-medium text-foreground">
+                  {formatINRPrecise(aiBudgetStatus.usedInr)} of {formatINRExact(aiBudgetStatus.budgetInr!)}
+                  <span className="text-muted-foreground font-normal ml-1.5">
+                    ({Math.round(aiBudgetStatus.pctUsed!)}%)
+                  </span>
+                </p>
+              </div>
+              <Progress value={Math.min(100, aiBudgetStatus.pctUsed ?? 0)} className="h-2" />
+
+              {aiBudgetStatus.state !== "ok" && (
+                <div className="mt-3 pt-3 border-t border-border flex items-start gap-2">
+                  <Sparkles size={13} className="text-primary mt-0.5 shrink-0" />
+                  <div className="text-xs">
+                    <p className="text-foreground font-medium">
+                      {aiBudgetStatus.state === "over"
+                        ? "You are using more AI than your plan includes."
+                        : "You are approaching your AI allowance."}
+                    </p>
+                    <p className="text-muted-foreground mt-0.5">
+                      Nothing has been limited or charged. A higher plan or AI Suite Pro would
+                      give you more headroom.
+                    </p>
+                    <button
+                      onClick={() => setUpgradeOpen(true)}
+                      className="text-primary hover:underline font-medium mt-1"
+                    >
+                      See options
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <p className="text-[11px] text-muted-foreground mt-3">
+                Safety features — drug interactions, allergy and deterioration alerts — are never
+                limited and never count toward this allowance
+                {aiBudgetStatus.safetyInr > 0 ? ` (${formatINRPrecise(aiBudgetStatus.safetyInr)} this cycle).` : "."}
+              </p>
+            </div>
+          )}
+
           <div className="grid grid-cols-3 gap-4">
             <div className="bg-card border border-border rounded-lg p-4">
               <p className="text-xs text-muted-foreground">AI Calls</p>
@@ -400,12 +588,12 @@ const SettingsPlanPage: React.FC = () => {
             </div>
             <div className="bg-card border border-border rounded-lg p-4">
               <p className="text-xs text-muted-foreground">Estimated Cost</p>
-              <p className="text-lg font-bold text-foreground mt-1">${(aiUsage?.totalCostUsd ?? 0).toFixed(2)}</p>
+              <p className="text-lg font-bold text-foreground mt-1">{formatINRPrecise(aiUsage?.totalCostInr ?? 0)}</p>
             </div>
             <div className="bg-card border border-border rounded-lg p-4">
               <p className="text-xs text-muted-foreground">Included in Plan</p>
               <p className="text-lg font-bold text-foreground mt-1">
-                {aiBudget != null ? `$${aiBudget.toFixed(2)}` : "Not metered"}
+                {aiBudgetStatus.budgetInr != null ? formatINRExact(aiBudgetStatus.budgetInr) : "Not metered"}
               </p>
             </div>
           </div>
@@ -463,6 +651,288 @@ const SettingsPlanPage: React.FC = () => {
               </div>
             </div>
           </section>
+        )}
+
+        {/* ── Dictation & scanning allowances ── */}
+        {meteringLive && (voiceAllowance.metered || scanAllowance.metered) && (
+          <section>
+            <h2 className="text-sm font-semibold text-foreground mb-1">Dictation &amp; Scanning</h2>
+            <p className="text-xs text-muted-foreground mb-4">
+              Your plan includes a monthly allowance. Beyond it we draw on any credits you
+              hold — and nothing ever stops working mid-clinic.
+            </p>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              {([
+                { label: "Dictated notes", unit: "notes", a: voiceAllowance, credits: encUsage?.encounter_credits ?? 0 },
+                { label: "Documents scanned", unit: "documents", a: scanAllowance, credits: encUsage?.document_credits ?? 0 },
+              ] as Array<{ label: string; unit: string; a: EncounterAllowanceStatus; credits: number }>)
+                .filter((row) => row.a.metered)
+                .map((row) => (
+                  <div key={row.label} className="bg-card border border-border rounded-lg p-4">
+                    <div className="flex items-baseline justify-between mb-2">
+                      <p className="text-xs text-muted-foreground">{row.label}</p>
+                      <p className="text-xs font-medium text-foreground">
+                        {row.a.used} of {row.a.included}
+                        <span className="text-muted-foreground font-normal ml-1.5">this month</span>
+                      </p>
+                    </div>
+                    <Progress value={Math.min(100, row.a.pctUsed ?? 0)} className="h-2" />
+
+                    {row.credits > 0 && (
+                      <p className="text-[11px] text-muted-foreground mt-2">
+                        <span className="text-foreground font-medium">+{row.credits} credits</span> in reserve —
+                        these don&apos;t expire while your subscription is active.
+                      </p>
+                    )}
+
+                    {row.a.drawingCredits && (
+                      <p className="text-[11px] mt-2 text-foreground">
+                        {row.a.creditsLeft >= 0
+                          ? `Monthly allowance used — drawing on your credits (${row.a.creditsLeft} left).`
+                          : `Allowance and credits both used. Nothing has been limited; top up when convenient.`}
+                      </p>
+                    )}
+
+                    {row.a.state === "approaching" && !row.a.drawingCredits && (
+                      <p className="text-[11px] text-muted-foreground mt-2">
+                        Approaching this month&apos;s allowance.
+                      </p>
+                    )}
+                  </div>
+                ))}
+            </div>
+
+            {packs.length > 0 && (
+              <>
+                <p className="text-xs text-muted-foreground mt-4 mb-2">
+                  Top up with credits that carry over — useful for seasonal peaks.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {packs.map((p) => (
+                    <div key={p.id} className="border border-border rounded-lg p-3 flex flex-col">
+                      <p className="text-sm font-semibold text-foreground">{p.name}</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        {p.encounters > 0 ? `${p.encounters} notes` : ""}
+                        {p.encounters > 0 && p.documents > 0 ? " · " : ""}
+                        {p.documents > 0 ? `${p.documents} scans` : ""}
+                      </p>
+                      <div className="flex items-center justify-between mt-3 pt-2 border-t border-border">
+                        <p className="text-sm font-bold text-foreground">{fmtINR(Number(p.price_inr))}</p>
+                        <Button size="sm" variant="outline" onClick={() => setPendingPack(p)}>Buy</Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </section>
+        )}
+
+        {/* Pack purchase confirmation. Same confirm-and-write pattern as add-ons:
+            credits are granted immediately and the charge joins the next
+            renewal, so there is no separate checkout to fail. */}
+        {pendingPack && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setPendingPack(null)}>
+            <div className="bg-card border border-border rounded-2xl w-full max-w-md shadow-2xl p-6" onClick={(e) => e.stopPropagation()}>
+              <p className="text-base font-bold text-foreground">Buy {pendingPack.name}?</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {pendingPack.encounters > 0 ? `${pendingPack.encounters} dictated notes. ` : ""}
+                {pendingPack.documents > 0 ? `${pendingPack.documents} document scans. ` : ""}
+                Available immediately.
+              </p>
+
+              <div className="bg-accent/30 rounded-xl p-4 mt-4 space-y-1.5 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">One-time</span>
+                  <span className="font-medium text-foreground">{fmtINR(Number(pendingPack.price_inr))}</span>
+                </div>
+                <div className="flex justify-between pt-1.5 border-t border-border">
+                  <span className="text-muted-foreground">Added to invoice</span>
+                  <span className="font-medium text-foreground">
+                    {subscription?.current_period_end ? fmtDate(subscription.current_period_end) : "next renewal"}
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-muted-foreground mt-3">
+                Credits do not expire while your subscription is active.
+              </p>
+
+              <div className="flex gap-2 mt-5">
+                <Button variant="outline" className="flex-1" onClick={() => setPendingPack(null)} disabled={packBusy}>
+                  Cancel
+                </Button>
+                <Button
+                  className="flex-1"
+                  disabled={packBusy}
+                  onClick={async () => {
+                    if (!hospitalId || !pendingPack) return;
+                    setPackBusy(true);
+                    try {
+                      // Two grants rather than one: encounters and documents are
+                      // separate balances, and a pack may carry either or both.
+                      if (pendingPack.encounters > 0) {
+                        const { error } = await (supabase as any).rpc("grant_credits", {
+                          p_hospital_id: hospitalId, p_kind: "encounter",
+                          p_qty: pendingPack.encounters,
+                          p_reason: `Purchased ${pendingPack.name}`, p_source: "purchase",
+                        });
+                        if (error) throw error;
+                      }
+                      if (pendingPack.documents > 0) {
+                        const { error } = await (supabase as any).rpc("grant_credits", {
+                          p_hospital_id: hospitalId, p_kind: "document",
+                          p_qty: pendingPack.documents,
+                          p_reason: `Purchased ${pendingPack.name}`, p_source: "purchase",
+                        });
+                        if (error) throw error;
+                      }
+                      toast.success(`${pendingPack.name} added — credits available now.`);
+                      setPendingPack(null);
+                      await refetchEncUsage();
+                    } catch (e: any) {
+                      toast.error(e?.message || "Could not add credits. Please try again.");
+                    } finally {
+                      setPackBusy(false);
+                    }
+                  }}
+                >
+                  {packBusy ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : null}
+                  Confirm
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Add-ons ── */}
+        <section>
+          <h2 className="text-sm font-semibold text-foreground mb-1">Add-ons</h2>
+          <p className="text-xs text-muted-foreground mb-4">
+            Extend your plan without changing tier. Access starts immediately; the charge
+            appears from your next renewal
+            {subscription?.current_period_end ? ` on ${fmtDate(subscription.current_period_end)}` : ""}.
+          </p>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            {addonCatalogue.map((sku) => {
+              const owned = ownedSkuIds.has(sku.id);
+              return (
+                <div
+                  key={sku.id}
+                  className={`rounded-xl border p-4 ${owned ? "border-emerald-300 bg-emerald-50/40 dark:bg-emerald-950/10" : "border-border"}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">{sku.name}</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">{describeGrant(sku)}</p>
+                    </div>
+                    {owned ? (
+                      <Badge variant="secondary" className="text-[10px] shrink-0">
+                        <Check size={10} className="mr-1" /> Active
+                      </Badge>
+                    ) : sku.badge_text ? (
+                      <Badge variant="outline" className="text-[10px] shrink-0">{sku.badge_text}</Badge>
+                    ) : null}
+                  </div>
+
+                  {sku.description && (
+                    <p className="text-xs text-muted-foreground mt-2 leading-relaxed">{sku.description}</p>
+                  )}
+
+                  <div className="flex items-center justify-between mt-3 pt-3 border-t border-border">
+                    <p className="text-sm font-bold text-foreground">
+                      {fmtINR(Number(sku.price_monthly))}
+                      <span className="text-[11px] font-normal text-muted-foreground">/mo</span>
+                    </p>
+                    {!owned && (
+                      <Button size="sm" variant="outline" onClick={() => setPendingAddon(sku)}>
+                        Add
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {ownedSkus.length > 0 && (
+            <p className="text-xs text-muted-foreground mt-3">
+              Add-ons total <span className="font-semibold text-foreground">{fmtINR(addonsMonthlyTotal(ownedSkus))}/month</span>,
+              billed with your subscription. To remove one, contact support.
+            </p>
+          )}
+        </section>
+
+        {/* Purchase confirmation — states the exact renewal date and the new
+            total, because "access now, charge later" is only fair if the
+            customer is told when later is. */}
+        {pendingAddon && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setPendingAddon(null)}>
+            <div className="bg-card border border-border rounded-2xl w-full max-w-md shadow-2xl p-6" onClick={(e) => e.stopPropagation()}>
+              <p className="text-base font-bold text-foreground">Add {pendingAddon.name}?</p>
+              <p className="text-xs text-muted-foreground mt-1">{describeGrant(pendingAddon)} unlocked immediately.</p>
+
+              <div className="bg-accent/30 rounded-xl p-4 mt-4 space-y-1.5 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">This add-on</span>
+                  <span className="font-medium text-foreground">{fmtINR(Number(pendingAddon.price_monthly))}/mo</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Add-ons after this</span>
+                  <span className="font-medium text-foreground">
+                    {fmtINR(addonsMonthlyTotal([...ownedSkus, pendingAddon]))}/mo
+                  </span>
+                </div>
+                <div className="flex justify-between pt-1.5 border-t border-border">
+                  <span className="text-muted-foreground">First charged</span>
+                  <span className="font-medium text-foreground">
+                    {subscription?.current_period_end ? fmtDate(subscription.current_period_end) : "next renewal"}
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-muted-foreground mt-3">
+                Nothing is charged today. Your subscription amount updates at the next renewal.
+              </p>
+
+              <div className="flex gap-2 mt-5">
+                <Button variant="outline" className="flex-1" onClick={() => setPendingAddon(null)} disabled={addonBusy}>
+                  Cancel
+                </Button>
+                <Button
+                  className="flex-1"
+                  disabled={addonBusy}
+                  onClick={async () => {
+                    if (!hospitalId || !pendingAddon) return;
+                    setAddonBusy(true);
+                    try {
+                      const { error } = await (supabase as any).from("hospital_addons").insert({
+                        hospital_id: hospitalId,
+                        addon_sku_id: pendingAddon.id,
+                        status: "active",
+                        source: "self_service",
+                        billing_starts_at: subscription?.current_period_end ?? null,
+                      });
+                      if (error) throw error;
+                      toast.success(`${pendingAddon.name} added — available now.`);
+                      setPendingAddon(null);
+                      await refetchAddons();
+                      await refetch();
+                    } catch (e: any) {
+                      toast.error(e?.message || "Could not add this add-on. Please try again.");
+                    } finally {
+                      setAddonBusy(false);
+                    }
+                  }}
+                >
+                  {addonBusy ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : null}
+                  Confirm
+                </Button>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* ── Active modules ── */}

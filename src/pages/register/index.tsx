@@ -217,14 +217,9 @@ const Register: React.FC = () => {
     <div className="h-screen w-screen overflow-hidden flex bg-background">
       {/* LEFT PANEL */}
       <div className="hidden lg:flex w-[40%] shrink-0 bg-primary flex-col p-10 text-primary-foreground">
-        <div className="flex items-center gap-2.5">
-          <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
-            <rect x="2" y="2" width="28" height="28" rx="6" fill="white" fillOpacity="0.15" />
-            <path d="M14 9h4v14h-4z" fill="white" />
-            <path d="M9 14h14v4H9z" fill="white" />
-          </svg>
-          <span className="font-bold text-lg">Aumrti</span>
-        </div>
+        {/* Aumrti artwork is light-ground, so keep the wordmark here rather than
+            dropping the logo onto this navy panel. */}
+        <span className="font-bold text-lg">Aumrti</span>
 
         <div className="flex-1 flex flex-col justify-center">
           <h2 className="text-[28px] font-bold leading-[1.3]">

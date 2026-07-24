@@ -11,7 +11,8 @@ import { deleteHospitalStream, checkDeletePrerequisites, type DeletePreflightRes
 import { Progress } from "@/components/ui/progress";
 import { FormError } from "@/components/ui/FormError";
 import { PLATFORM_STATUS_PILL } from "@/lib/platform-utils";
-import { formatINRExact } from "@/lib/currency";
+import { formatINRExact, formatINRPrecise } from "@/lib/currency";
+import { activeSkus, addonsMonthlyTotal, describeGrant, type AddonSku, type HospitalAddon } from "@/lib/addons";
 import PaymentHistoryTable from "@/components/billing/PaymentHistoryTable";
 import { logAdminAction } from "@/lib/adminAudit";
 import { startImpersonation } from "@/lib/impersonation";
@@ -122,10 +123,10 @@ const STATUS_PILL = PLATFORM_STATUS_PILL;
 // ── data fetchers ─────────────────────────────────────────────
 
 async function fetchHospitalDetail(id: string) {
-  const [hRes, sRes, overRes, pricRes, plansRes, entRes] = await Promise.all([
+  const [hRes, sRes, overRes, pricRes, plansRes, entRes, skuRes, addonRes, driftRes, aiBudgetRes, encRes] = await Promise.all([
     (supabase as any).from("hospitals").select("*").eq("id", id).maybeSingle(),
     (supabase as any).from("hospital_subscriptions")
-      .select("*, subscription_plans(id,name,slug,price_monthly,price_yearly,max_beds,max_staff,storage_included_gb,trial_days,description)")
+      .select("*, subscription_plans(id,name,slug,price_monthly,price_yearly,max_beds,max_staff,storage_included_gb,trial_days,description,beds_included,bed_block_size,price_per_bed_block,price_per_bed_block_yearly)")
       .eq("hospital_id", id).maybeSingle(),
     (supabase as any).from("hospital_feature_overrides")
       .select("module_key, is_enabled, reason").eq("hospital_id", id),
@@ -135,6 +136,24 @@ async function fetchHospitalDetail(id: string) {
       .select("id, name, slug, price_monthly").eq("is_active", true).order("sort_order"),
     (supabase as any).from("hospital_module_entitlements")
       .select("module_key, tabs, actions").eq("hospital_id", id),
+    (supabase as any).from("addon_skus")
+      .select("id, slug, name, description, price_monthly, price_yearly, module_keys, ai_feature_keys, badge_text, sort_order")
+      .eq("is_active", true).order("sort_order"),
+    (supabase as any).from("hospital_addons")
+      .select("id, addon_sku_id, status, granted_at, billing_starts_at, source, addon_skus(id, slug, name, description, price_monthly, price_yearly, module_keys, ai_feature_keys, sort_order)")
+      .eq("hospital_id", id).eq("status", "active"),
+    // Paid-but-gated: the hospital is charged for an add-on whose module an
+    // admin override has switched off. A billing-integrity bug, so it is
+    // surfaced rather than silently resolved.
+    (supabase as any).from("addon_entitlement_drift")
+      .select("drift_type, addon_name, module_key, detail")
+      .eq("hospital_id", id),
+    (supabase as any).from("hospital_ai_budget_status")
+      .select("budget_inr, metered_cost_inr, safety_cost_inr, pct_used, over_budget, overage_inr")
+      .eq("hospital_id", id).maybeSingle(),
+    (supabase as any).from("hospital_encounter_usage")
+      .select("voice_encounters, ocr_documents, voice_encounters_included, ocr_documents_included, encounter_credits, document_credits, inr_per_encounter")
+      .eq("hospital_id", id).maybeSingle(),
   ]);
   return {
     hospital: hRes.data,
@@ -143,6 +162,19 @@ async function fetchHospitalDetail(id: string) {
     pricing: pricRes.data,
     plans: (plansRes.data || []) as Array<{ id: string; name: string; slug: string; price_monthly: number }>,
     entitlements: (entRes.data || []) as Array<{ module_key: string; tabs: Record<string, boolean>; actions: Record<string, boolean> }>,
+    addonSkus: (skuRes.data || []) as AddonSku[],
+    addons: (addonRes.data || []) as HospitalAddon[],
+    addonDrift: (driftRes.data || []) as Array<{ drift_type: string; addon_name: string; module_key: string; detail: string }>,
+    aiBudget: aiBudgetRes.data as {
+      budget_inr: number | null; metered_cost_inr: number; safety_cost_inr: number;
+      pct_used: number | null; over_budget: boolean; overage_inr: number;
+    } | null,
+    encUsage: encRes.data as {
+      voice_encounters: number; ocr_documents: number;
+      voice_encounters_included: number | null; ocr_documents_included: number | null;
+      encounter_credits: number; document_credits: number;
+      inr_per_encounter: number | null;
+    } | null,
   };
 }
 
@@ -495,6 +527,61 @@ export default function HospitalDetailPage() {
     },
     onSuccess: () => { setPricingError(null); toast.success("Pricing override saved"); invalidate(); },
     onError: (e: any) => { const m = getErrorMessage(e); setPricingError(m); toast.error(m); },
+  });
+
+  // ── Add-ons (pricing v3 Phase 2) ──
+  // Attaching grants access immediately; the subscription amount is rebound at
+  // the next renewal by the webhook reconciler. Cancelling is a soft status
+  // change, never a delete, so the purchase history survives.
+  const attachAddon = useMutation({
+    mutationFn: async (skuId: string) => {
+      const { error } = await (supabase as any).from("hospital_addons").insert({
+        hospital_id: id,
+        addon_sku_id: skuId,
+        status: "active",
+        source: "admin",
+        billing_starts_at: data?.subscription?.current_period_end ?? null,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Add-on attached — billed from the next renewal");
+      invalidate();
+      qc.invalidateQueries({ queryKey: ["subscription-config", id] });
+    },
+    onError: (e: any) => toast.error(getErrorMessage(e)),
+  });
+
+  // Goodwill / support recovery. Every grant writes a ledger row with a reason,
+  // so a credit balance can always be explained rather than just asserted.
+  const grantCredits = useMutation({
+    mutationFn: async (args: { kind: "encounter" | "document"; qty: number; reason: string }) => {
+      const { error } = await (supabase as any).rpc("grant_credits", {
+        p_hospital_id: id,
+        p_kind: args.kind,
+        p_qty: args.qty,
+        p_reason: args.reason,
+        p_source: "admin_grant",
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => { toast.success("Credits granted"); invalidate(); },
+    onError: (e: any) => toast.error(getErrorMessage(e)),
+  });
+
+  const cancelAddon = useMutation({
+    mutationFn: async (rowId: string) => {
+      const { error } = await (supabase as any).from("hospital_addons")
+        .update({ status: "cancelled", cancelled_at: new Date().toISOString() })
+        .eq("id", rowId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Add-on cancelled — removed from the next renewal");
+      invalidate();
+      qc.invalidateQueries({ queryKey: ["subscription-config", id] });
+    },
+    onError: (e: any) => toast.error(getErrorMessage(e)),
   });
 
   if (isLoading) {
@@ -853,8 +940,33 @@ export default function HospitalDetailPage() {
                   {subscription.subscription_plans?.price_yearly != null && (
                     <div><p className="text-muted-foreground">Yearly price</p><p className="text-foreground font-medium">{formatINRExact(Number(subscription.subscription_plans.price_yearly))}/yr</p></div>
                   )}
-                  <div><p className="text-muted-foreground">Bed limit</p><p className="text-foreground">{subscription.subscription_plans?.max_beds ?? "Unlimited"}</p></div>
-                  <div><p className="text-muted-foreground">Staff limit</p><p className="text-foreground">{subscription.subscription_plans?.max_staff ?? "Unlimited"}</p></div>
+                  {/* Bed-banded plans BILL extra beds rather than blocking them,
+                      so "Beds billed" is the meaningful figure; max_beds is only
+                      shown for capped tiers (e.g. Clinic). The staff-limit row was
+                      removed: it was advertised but never trigger-enforced, and
+                      every plan is now unlimited-users by design. */}
+                  {subscription.subscription_plans?.price_per_bed_block != null ? (
+                    <div>
+                      <p className="text-muted-foreground">Beds billed</p>
+                      <p className="text-foreground">
+                        {subscription.subscription_plans.beds_included ?? 0} incl. + {formatINRExact(Number(subscription.subscription_plans.price_per_bed_block))}/{subscription.subscription_plans.bed_block_size ?? 10} beds
+                      </p>
+                    </div>
+                  ) : (
+                    <div><p className="text-muted-foreground">Bed limit</p><p className="text-foreground">{subscription.subscription_plans?.max_beds ?? "Unlimited"}</p></div>
+                  )}
+                  <div><p className="text-muted-foreground">Staff logins</p><p className="text-foreground">Unlimited</p></div>
+                  {/* AI allowance, month to date. Excludes safety-class features,
+                      which are never metered on any plan. */}
+                  <div>
+                    <p className="text-muted-foreground">AI allowance (MTD)</p>
+                    <p className={data?.aiBudget?.over_budget ? "text-amber-600 font-medium" : "text-foreground"}>
+                      {data?.aiBudget?.budget_inr == null
+                        ? "Not metered"
+                        : `${formatINRPrecise(Number(data.aiBudget.metered_cost_inr))} of ${formatINRExact(Number(data.aiBudget.budget_inr))}` +
+                          (data.aiBudget.pct_used != null ? ` (${Math.round(Number(data.aiBudget.pct_used))}%)` : "")}
+                    </p>
+                  </div>
                   <div><p className="text-muted-foreground">Storage</p><p className="text-foreground">{subscription.subscription_plans?.storage_included_gb != null ? `${subscription.subscription_plans.storage_included_gb} GB` : "Unlimited"}</p></div>
                   <div><p className="text-muted-foreground">Plan trial days</p><p className="text-foreground">{subscription.subscription_plans?.trial_days ?? "—"}d</p></div>
                   <div><p className="text-muted-foreground">Signed up</p><p className="text-foreground">{subscription.created_at ? new Date(subscription.created_at).toLocaleDateString("en-IN") : "—"}</p></div>
@@ -1141,6 +1253,141 @@ export default function HospitalDetailPage() {
               <p className="text-[11px] text-muted-foreground">
                 Applied at checkout: the hospital is charged this instead of the plan's list
                 price. A new Razorpay plan is created for the negotiated amount automatically.
+              </p>
+            </div>
+
+            {/* ── Dictation & scanning credits ── */}
+            <div className="border border-border rounded-xl p-4 space-y-3">
+              <p className="text-sm font-semibold text-foreground">Dictation &amp; scanning</p>
+
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <p className="text-muted-foreground">Dictated notes (MTD)</p>
+                  <p className="text-foreground">
+                    {data?.encUsage?.voice_encounters_included == null
+                      ? `${data?.encUsage?.voice_encounters ?? 0} · not metered`
+                      : `${data.encUsage.voice_encounters} of ${data.encUsage.voice_encounters_included}`}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Documents scanned (MTD)</p>
+                  <p className="text-foreground">
+                    {data?.encUsage?.ocr_documents_included == null
+                      ? `${data?.encUsage?.ocr_documents ?? 0} · not metered`
+                      : `${data.encUsage.ocr_documents} of ${data.encUsage.ocr_documents_included}`}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Credits (notes / scans)</p>
+                  <p className="text-foreground">
+                    {data?.encUsage?.encounter_credits ?? 0} / {data?.encUsage?.document_credits ?? 0}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Measured cost / note</p>
+                  <p className="text-foreground">
+                    {data?.encUsage?.inr_per_encounter == null
+                      ? "Not yet measured"
+                      : formatINRPrecise(Number(data.encUsage.inr_per_encounter))}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                {([100, 500] as const).map((qty) => (
+                  <button
+                    key={qty}
+                    onClick={() => grantCredits.mutate({
+                      kind: "encounter", qty,
+                      reason: `Admin goodwill grant of ${qty} dictation credits`,
+                    })}
+                    disabled={grantCredits.isPending}
+                    className="text-[11px] px-2.5 py-1 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors"
+                  >
+                    + {qty} notes
+                  </button>
+                ))}
+                <button
+                  onClick={() => grantCredits.mutate({
+                    kind: "document", qty: 100,
+                    reason: "Admin goodwill grant of 100 scan credits",
+                  })}
+                  disabled={grantCredits.isPending}
+                  className="text-[11px] px-2.5 py-1 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors"
+                >
+                  + 100 scans
+                </button>
+              </div>
+
+              <p className="text-[11px] text-muted-foreground">
+                Credits do not expire while the subscription is active. Every grant is recorded
+                in the credit ledger with a reason.
+              </p>
+            </div>
+
+            {/* ── Add-ons ── */}
+            <div className="border border-border rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-foreground">Add-ons</p>
+                {(() => {
+                  const owned = activeSkus(data?.addons ?? []);
+                  return owned.length > 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      <span className="font-semibold text-foreground">{formatINRExact(addonsMonthlyTotal(owned))}</span>/mo
+                      {" "}on top of the plan
+                    </p>
+                  ) : null;
+                })()}
+              </div>
+
+              {/* Paying for something an override has switched off. */}
+              {(data?.addonDrift ?? []).filter((d) => d.drift_type === "paid_but_gated").map((d, i) => (
+                <div key={i} className="flex items-start gap-2 text-xs bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900 rounded-lg px-3 py-2">
+                  <AlertTriangle size={13} className="text-amber-600 mt-0.5 shrink-0" />
+                  <span className="text-amber-800 dark:text-amber-300">
+                    Paying for <b>{d.addon_name}</b> but module <code>{d.module_key}</code> is disabled by an override.
+                    Either re-enable it or cancel the add-on.
+                  </span>
+                </div>
+              ))}
+
+              <div className="space-y-2">
+                {(data?.addonSkus ?? []).map((sku) => {
+                  const row = (data?.addons ?? []).find((a) => a.addon_sku_id === sku.id);
+                  return (
+                    <div key={sku.id} className="flex items-center justify-between gap-3 border border-border rounded-lg px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-foreground truncate">{sku.name}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {formatINRExact(Number(sku.price_monthly))}/mo · {describeGrant(sku)}
+                          {row?.billing_starts_at ? ` · from ${new Date(row.billing_starts_at).toLocaleDateString("en-IN")}` : ""}
+                        </p>
+                      </div>
+                      {row ? (
+                        <button
+                          onClick={() => cancelAddon.mutate(row.id)}
+                          disabled={cancelAddon.isPending}
+                          className="text-[11px] px-2.5 py-1 rounded-md border border-border text-muted-foreground hover:text-destructive hover:border-destructive transition-colors shrink-0"
+                        >
+                          Cancel
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => attachAddon.mutate(sku.id)}
+                          disabled={attachAddon.isPending}
+                          className="text-[11px] px-2.5 py-1 rounded-md bg-primary text-primary-foreground hover:opacity-90 transition-opacity shrink-0"
+                        >
+                          Attach
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <p className="text-[11px] text-muted-foreground">
+                Access changes immediately; the amount is rebound at the next renewal by the
+                subscription reconciler. Edit SKU prices and what each grants in Plans → Add-ons.
               </p>
             </div>
 

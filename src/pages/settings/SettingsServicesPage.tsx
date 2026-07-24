@@ -31,13 +31,15 @@ const TABS = [
 // generic service_master list, so the "Add Service" drawer does not apply to them.
 const NON_CATALOG_TABS = ["ot", "ipd_beds", "emergency", "specialized", "lab", "radiology", "package", "day_care", "all"];
 
-// Categories already surfaced by a tab of their own. Everything else falls to the
-// "Other" catch-all — that fallback is what keeps a newly-added category from silently
-// disappearing. 'ot' and 'emergency' are here because upsertFixedCharge writes those
-// rows with source_table NULL (they are hospital-authored, not mirrored), so without
+// Categories already surfaced by a tab of their own THAT RENDERS MANUAL SERVICE_MASTER ROWS.
+// Everything else falls to the "Other" catch-all — that fallback is what keeps a newly-added 
+// category from silently disappearing. 'ot' and 'emergency' are here because upsertFixedCharge 
+// writes those rows with source_table NULL (they are hospital-authored, not mirrored), so without
 // them listed the OT and Emergency charges would appear twice.
+// 
+// Removed 'package', 'lab', 'radiology' because their tabs render from module tables, not manual service_master rows.
 const DEDICATED_TAB_CATEGORIES = [
-  "consultation", "procedure", "package", "lab", "radiology", "ot", "emergency",
+  "consultation", "procedure", "ot", "emergency",
 ];
 
 /**

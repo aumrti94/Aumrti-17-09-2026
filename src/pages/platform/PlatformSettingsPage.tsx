@@ -19,13 +19,21 @@ interface PlatformSettings {
   meta_phone_number_id: string | null;
   meta_otp_template: string | null;
   meta_otp_template_lang: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
+  social_linkedin: string | null;
+  social_facebook: string | null;
+  social_instagram: string | null;
+  social_x: string | null;
+  demo_button_url: string | null;
+  demo_button_enabled: boolean;
 }
 
 async function fetchPlatformSettings(): Promise<PlatformSettings | null> {
   // Sensitive column meta_access_token is intentionally NOT selected.
   const { data } = await (supabase as any)
     .from("platform_settings")
-    .select("signup_otp_enabled, meta_phone_number_id, meta_otp_template, meta_otp_template_lang")
+    .select("signup_otp_enabled, meta_phone_number_id, meta_otp_template, meta_otp_template_lang, contact_email, contact_phone, social_linkedin, social_facebook, social_instagram, social_x, demo_button_url, demo_button_enabled")
     .limit(1)
     .maybeSingle();
   return data ?? null;
@@ -144,6 +152,16 @@ export default function PlatformSettingsPage() {
   const [metaToken, setMetaToken] = useState("");
   const [metaTemplate, setMetaTemplate] = useState("");
   const [metaLang, setMetaLang] = useState("en");
+  
+  const [contactEmail, setContactEmail] = useState("");
+  const [contactPhone, setContactPhone] = useState("");
+  const [socialLinkedin, setSocialLinkedin] = useState("");
+  const [socialFacebook, setSocialFacebook] = useState("");
+  const [socialInstagram, setSocialInstagram] = useState("");
+  const [socialX, setSocialX] = useState("");
+  const [demoButtonUrl, setDemoButtonUrl] = useState("");
+  const [demoButtonEnabled, setDemoButtonEnabled] = useState(true);
+
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [oauthError, setOauthError] = useState<string | null>(null);
 
@@ -154,6 +172,14 @@ export default function PlatformSettingsPage() {
     setMetaPhoneId(settings.meta_phone_number_id ?? "");
     setMetaTemplate(settings.meta_otp_template ?? "");
     setMetaLang(settings.meta_otp_template_lang ?? "en");
+    setContactEmail(settings.contact_email ?? "");
+    setContactPhone(settings.contact_phone ?? "");
+    setSocialLinkedin(settings.social_linkedin ?? "");
+    setSocialFacebook(settings.social_facebook ?? "");
+    setSocialInstagram(settings.social_instagram ?? "");
+    setSocialX(settings.social_x ?? "");
+    setDemoButtonUrl(settings.demo_button_url ?? "");
+    setDemoButtonEnabled(settings.demo_button_enabled ?? true);
   }, [settings]);
 
   const credsConfigured = !!(settings?.meta_phone_number_id && settings?.meta_otp_template);
@@ -169,6 +195,14 @@ export default function PlatformSettingsPage() {
         meta_phone_number_id: metaPhoneId.trim() || null,
         meta_otp_template: metaTemplate.trim() || null,
         meta_otp_template_lang: metaLang.trim() || "en",
+        contact_email: contactEmail.trim() || null,
+        contact_phone: contactPhone.trim() || null,
+        social_linkedin: socialLinkedin.trim() || null,
+        social_facebook: socialFacebook.trim() || null,
+        social_instagram: socialInstagram.trim() || null,
+        social_x: socialX.trim() || null,
+        demo_button_url: demoButtonUrl.trim() || null,
+        demo_button_enabled: demoButtonEnabled,
         updated_at: new Date().toISOString(),
         updated_by: user?.id ?? null,
       };
@@ -420,6 +454,112 @@ export default function PlatformSettingsPage() {
               </div>
             </div>
           )}
+        </div>
+
+        {/* Public Landing Page Settings */}
+        <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
+          <div className="px-5 py-3 border-b border-border flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <MessageCircle size={14} className="text-primary" />
+              <p className="text-sm font-semibold text-foreground">Public Landing Page Contact & Demo</p>
+            </div>
+          </div>
+          <div className="p-5 space-y-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs text-muted-foreground">Contact Email</label>
+                <input
+                  type="email"
+                  value={contactEmail}
+                  onChange={(e) => setContactEmail(e.target.value)}
+                  placeholder="contact@aumrti.com"
+                  className="w-full mt-1 h-8 px-3 text-xs bg-background border border-border rounded-lg text-foreground focus:outline-none focus:border-primary"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Contact Phone</label>
+                <input
+                  type="text"
+                  value={contactPhone}
+                  onChange={(e) => setContactPhone(e.target.value)}
+                  placeholder="+91 9876543210"
+                  className="w-full mt-1 h-8 px-3 text-xs bg-background border border-border rounded-lg text-foreground focus:outline-none focus:border-primary"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">LinkedIn URL</label>
+                <input
+                  type="url"
+                  value={socialLinkedin}
+                  onChange={(e) => setSocialLinkedin(e.target.value)}
+                  placeholder="https://linkedin.com/..."
+                  className="w-full mt-1 h-8 px-3 text-xs bg-background border border-border rounded-lg text-foreground focus:outline-none focus:border-primary"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Facebook URL</label>
+                <input
+                  type="url"
+                  value={socialFacebook}
+                  onChange={(e) => setSocialFacebook(e.target.value)}
+                  placeholder="https://facebook.com/..."
+                  className="w-full mt-1 h-8 px-3 text-xs bg-background border border-border rounded-lg text-foreground focus:outline-none focus:border-primary"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Instagram URL</label>
+                <input
+                  type="url"
+                  value={socialInstagram}
+                  onChange={(e) => setSocialInstagram(e.target.value)}
+                  placeholder="https://instagram.com/..."
+                  className="w-full mt-1 h-8 px-3 text-xs bg-background border border-border rounded-lg text-foreground focus:outline-none focus:border-primary"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">X (Twitter) URL</label>
+                <input
+                  type="url"
+                  value={socialX}
+                  onChange={(e) => setSocialX(e.target.value)}
+                  placeholder="https://x.com/..."
+                  className="w-full mt-1 h-8 px-3 text-xs bg-background border border-border rounded-lg text-foreground focus:outline-none focus:border-primary"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Demo Button URL</label>
+                <input
+                  type="url"
+                  value={demoButtonUrl}
+                  onChange={(e) => setDemoButtonUrl(e.target.value)}
+                  placeholder="https://calendly.com/..."
+                  className="w-full mt-1 h-8 px-3 text-xs bg-background border border-border rounded-lg text-foreground focus:outline-none focus:border-primary"
+                />
+              </div>
+              <div className="flex items-center justify-between pt-4">
+                <span className="text-xs text-foreground font-medium">Show Demo Button</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={demoButtonEnabled}
+                  onClick={() => setDemoButtonEnabled((v) => !v)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${demoButtonEnabled ? "bg-emerald-500" : "bg-muted-foreground/30"}`}
+                >
+                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${demoButtonEnabled ? "translate-x-5" : "translate-x-0.5"}`} />
+                </button>
+              </div>
+            </div>
+            <div className="flex justify-end pt-2 border-t border-border mt-4">
+                <button
+                  onClick={() => saveSettings.mutate()}
+                  disabled={saveSettings.isPending}
+                  className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {saveSettings.isPending ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                  Save Settings
+                </button>
+            </div>
+          </div>
         </div>
 
         {/* Social Login (OAuth) */}

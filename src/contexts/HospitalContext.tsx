@@ -10,7 +10,7 @@ import { applyUserOverrides, type UserOverrideBlob } from "@/lib/moduleRegistry"
  * per-hospital overrides win per key and can re-enable a plan-withheld tab.
  */
 async function fetchEntitlement(hospitalId: string): Promise<EntitlementMap | null> {
-  const [hospRes, subRes] = await Promise.all([
+  const [hospRes, subRes, addonRes] = await Promise.all([
     (supabase as any)
       .from("hospital_module_entitlements")
       .select("module_key, tabs, actions")
@@ -20,6 +20,14 @@ async function fetchEntitlement(hospitalId: string): Promise<EntitlementMap | nu
       .select("plan_id")
       .eq("hospital_id", hospitalId)
       .maybeSingle(),
+    // Purchased add-ons (pricing v3 Phase 2). Their AI feature keys are the
+    // `actions` of the ai_suite pseudo-module, so a SKU grant is expressed in
+    // exactly the shape resolveEntitlement already understands.
+    (supabase as any)
+      .from("hospital_addons")
+      .select("addon_skus(ai_feature_keys)")
+      .eq("hospital_id", hospitalId)
+      .eq("status", "active"),
   ]);
 
   const hospRows: any[] = hospRes.data || [];
@@ -34,7 +42,19 @@ async function fetchEntitlement(hospitalId: string): Promise<EntitlementMap | nu
     planRows = planRes.data || [];
   }
 
-  return resolveEntitlement(planRows, hospRows);
+  // Collapse every purchased SKU's AI keys into one grant row: { key: true }.
+  const grantedAiKeys: string[] = (addonRes.data || []).flatMap(
+    (r: any) => (r.addon_skus?.ai_feature_keys as string[] | undefined) ?? [],
+  );
+  const addonRows = grantedAiKeys.length
+    ? [{
+        module_key: "ai_suite",
+        tabs: {},
+        actions: Object.fromEntries(grantedAiKeys.map((k) => [k, true])),
+      }]
+    : [];
+
+  return resolveEntitlement(planRows, hospRows, addonRows);
 }
 
 /**

@@ -2,6 +2,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { decode } from "https://deno.land/std@0.168.0/encoding/base64.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  resolveHospitalFromJwt, recordAsrUsage, estimateAudioSeconds, assumedBitrateKbps,
+} from "../_shared/asr-metering.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -85,6 +88,7 @@ serve(async (req) => {
     formData.append("language_code", language_code === "auto" ? "unknown" : language_code);
     formData.append("with_timestamps", "false");
 
+    const asrStartedAt = Date.now();
     const response = await fetch("https://api.sarvam.ai/speech-to-text", {
       method: "POST",
       headers: {
@@ -103,6 +107,25 @@ serve(async (req) => {
     }
 
     const result = await response.json();
+
+    // Meter the transcription. ASR is billed per audio-minute and was entirely
+    // invisible to ai_usage_logs before this — which meant the cost of a
+    // dictated encounter only ever counted its LLM half. Fire-and-forget: a
+    // metering failure must never cost the clinician their transcript.
+    void (async () => {
+      const hospitalId = await resolveHospitalFromJwt(req, supabaseAdmin);
+      // Sarvam does not return a duration, so it is inferred from byte length
+      // at the bitrate configured in asr_pricing.
+      const bitrate = await assumedBitrateKbps(supabaseAdmin, "sarvam");
+      await recordAsrUsage(supabaseAdmin, {
+        hospitalId,
+        provider: "sarvam",
+        model: model || "saaras:v3",
+        seconds: estimateAudioSeconds(audioBytes.length, bitrate),
+        estimated: true,
+        latencyMs: Date.now() - asrStartedAt,
+      });
+    })();
 
     return new Response(
       JSON.stringify({ transcript: result.transcript || "" }),

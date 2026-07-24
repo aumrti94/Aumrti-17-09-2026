@@ -8,6 +8,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import NotificationCentre from "./NotificationCentre";
+import AumrtiLogo from "@/components/brand/AumrtiLogo";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { hasAccess } from "@/lib/routeRoles";
 import { hasActionAccess } from "@/lib/tabPermissions";
@@ -140,8 +141,11 @@ const AppHeader: React.FC = () => {
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 h-14 bg-card border-b border-border flex items-center px-3 gap-2 sm:px-4 sm:gap-4">
-      {/* Left: hamburger + breadcrumb */}
+      {/* Left: Aumrti mark + hamburger + breadcrumb */}
       <div className="flex items-center gap-2 min-w-0">
+        <Link to="/dashboard" aria-label="Aumrti — go to dashboard" className="shrink-0 hover:opacity-80 transition-opacity">
+          <AumrtiLogo variant="lockup" className="h-9 w-auto max-w-[120px]" />
+        </Link>
         <button
           onClick={handleMenuClick}
           className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-md hover:bg-muted transition-colors active:scale-95"

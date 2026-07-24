@@ -1,7 +1,7 @@
 {
   "name": "Aumrti HMS",
   "short_name": "Aumrti",
-  "description": "Hospital Management System — Premium Clinical Platform",
+  "description": "AI-Native Hospital Operating System",
   "start_url": "/dashboard",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
@@ -12,15 +12,9 @@
   "icons": [
     {
       "src": "/icon-192.svg",
-      "sizes": "192x192",
+      "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
-    },
-    {
-      "src": "/icon-512.svg",
-      "sizes": "512x512",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
     }
   ],
   "categories": ["medical", "health", "productivity"],

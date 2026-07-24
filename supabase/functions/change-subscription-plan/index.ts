@@ -86,7 +86,7 @@ serve(async (req) => {
     // ── Fetch target plan ──────────────────────────────────────────────────
     const { data: newPlan } = await db
       .from("subscription_plans")
-      .select("id, name, slug, price_monthly, price_yearly, razorpay_plan_id, is_custom_price, trial_days")
+      .select("id, name, slug, price_monthly, price_yearly, razorpay_plan_id, is_custom_price, trial_days, beds_included, bed_block_size, price_per_bed_block, price_per_bed_block_yearly")
       .eq("id", new_plan_id)
       .eq("is_active", true)
       .maybeSingle();
@@ -129,7 +129,34 @@ serve(async (req) => {
       ? "yearly"
       : (currentSub?.billing_cycle === "yearly" ? "yearly" : "monthly");
 
-    const price = resolveEffectivePrice({ plan: newPlan, override, cycle, couponPct: discountPct });
+    // Bed-banded pricing (v3): a plan change re-bills against the live
+    // active-bed count via the canonical current_active_beds() RPC (mirrors the
+    // migration-150 enforcement trigger). NULL bed columns = no bed fee.
+    const { data: activeBeds } = await db.rpc("current_active_beds", {
+      p_hospital_id: hospital_id,
+    });
+
+    // Add-ons survive a plan change — they are bought separately from the tier,
+    // so the new mandate must carry them or the hospital keeps the access and
+    // stops paying for it.
+    const { data: addonRows } = await db
+      .from("hospital_addons")
+      .select("addon_skus(price_monthly, price_yearly)")
+      .eq("hospital_id", hospital_id)
+      .eq("status", "active");
+
+    const addonsMonthlyInr = (addonRows ?? []).reduce(
+      (s: number, r: { addon_skus?: { price_monthly?: number | string | null } | null }) =>
+        s + Number(r.addon_skus?.price_monthly ?? 0), 0);
+    const addonsYearlyInr = (addonRows ?? []).reduce(
+      (s: number, r: { addon_skus?: { price_yearly?: number | string | null } | null }) =>
+        s + Number(r.addon_skus?.price_yearly ?? 0), 0);
+
+    const price = resolveEffectivePrice({
+      plan: newPlan, override, cycle, couponPct: discountPct, activeBeds,
+      addonsMonthlyInr,
+      addonsYearlyInr: addonsYearlyInr > 0 ? addonsYearlyInr : null,
+    });
     if (!price.available) {
       return err(price.reason ?? `The ${newPlan.name} plan is not available ${cycle}`);
     }

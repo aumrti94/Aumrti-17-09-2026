@@ -106,6 +106,7 @@ const HousekeepingPage = lazy(() => import("./pages/housekeeping/HousekeepingPag
 const HMISPage = lazy(() => import("./pages/hmis/HMISPage"));
 const DietPage = lazy(() => import("./pages/dietetics/DietPage"));
 const PaymentLandingPage = lazy(() => import("./pages/pay/PaymentLandingPage"));
+const PricingPage = lazy(() => import("./pages/PricingPage"));
 const LMSPage = lazy(() => import("./pages/lms/LMSPage"));
 const CRMPage = lazy(() => import("./pages/crm/CRMPage"));
 const PROPage = lazy(() => import("./pages/pro/PROPage"));
@@ -259,6 +260,7 @@ const App = () => (
         <Routes>
           {/* Public routes */}
           <Route path="/" element={<LandingPage />} />
+          <Route path="/pricing" element={<SuspenseWrap><PricingPage /></SuspenseWrap>} />
           <Route path="/pay/:token" element={<SuspenseWrap><PaymentLandingPage /></SuspenseWrap>} />
           <Route path="/packages/book" element={<SuspenseWrap><PublicBookingPage /></SuspenseWrap>} />
           <Route path="/book/:slug" element={<SuspenseWrap><PublicAppointmentPage /></SuspenseWrap>} />
