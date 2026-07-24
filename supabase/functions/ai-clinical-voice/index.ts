@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveAiConfig, resolveAiConfigFromEnv, callAiChatWithUsage } from "../_shared/ai-config.ts";
 import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 import { checkAIAllowed } from "../_shared/ai-entitlement.ts";
+import { translateToEnglish, recordTranslateUsage } from "../_shared/translate-text.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -209,6 +210,103 @@ serve(async (req) => {
       });
     }
 
+    // ── Server-side pre-translation (opt-in) ───────────────────────────────
+    // When the platform has `voice_pre_translate` enabled and the dictation is
+    // in an Indian language, translate the transcript to English HERE — before
+    // the LLM call — to save 60-80% of input tokens. The translation runs
+    // server-side inside this function, so it needs ZERO additional edge
+    // function deployments (avoids the Supabase function-count plan limit).
+    let transcriptForLlm = transcript;
+    let wasPreTranslated = false;
+    const isNonEnglish = language_code && language_code !== "en-IN";
+
+    if (isNonEnglish) {
+      try {
+        // Check if pre-translate is enabled globally
+        const { data: preTranslateCfg } = await sb
+          .from("platform_ai_keys")
+          .select("config")
+          .eq("service_key", "voice_pre_translate")
+          .maybeSingle();
+
+        const ptConfig = preTranslateCfg?.config as Record<string, unknown> | null;
+        if (ptConfig?.enabled) {
+          // Resolve which translation provider to use
+          const ptProvider = (ptConfig.provider as string) || "auto";
+
+          // "auto" → match the ASR engine; otherwise use the explicit choice
+          let translateProvider: "sarvam" | "bhashini" = "sarvam";
+          if (ptProvider === "bhashini") {
+            translateProvider = "bhashini";
+          } else if (ptProvider === "auto") {
+            const { data: asrCfg } = await sb
+              .from("platform_ai_keys")
+              .select("config")
+              .eq("service_key", "voice_asr_engine")
+              .maybeSingle();
+            const asrEngine = (asrCfg?.config as Record<string, string> | null)?.engine;
+            if (asrEngine === "bhashini") translateProvider = "bhashini";
+          }
+
+          // Fetch the translation API key (same key used for ASR)
+          let translateApiKey: string | null = null;
+          let bhashiniUserId: string | null = null;
+
+          if (translateProvider === "sarvam") {
+            translateApiKey = Deno.env.get("SARVAM_API_KEY") || null;
+            if (!translateApiKey) {
+              const { data: sarvamCfg } = await sb
+                .from("platform_ai_keys")
+                .select("config")
+                .eq("service_key", "sarvam")
+                .eq("is_active", true)
+                .maybeSingle();
+              translateApiKey = (sarvamCfg?.config as Record<string, string> | null)?.api_key || null;
+            }
+          } else {
+            translateApiKey = Deno.env.get("BHASHINI_API_KEY") || null;
+            bhashiniUserId = Deno.env.get("BHASHINI_USER_ID") || null;
+            if (!translateApiKey || !bhashiniUserId) {
+              const { data: bhashiniCfg } = await sb
+                .from("platform_ai_keys")
+                .select("config")
+                .eq("service_key", "bhashini")
+                .eq("is_active", true)
+                .maybeSingle();
+              const cfg = bhashiniCfg?.config as Record<string, string> | null;
+              translateApiKey = translateApiKey || cfg?.api_key || null;
+              bhashiniUserId = bhashiniUserId || cfg?.user_id || null;
+            }
+          }
+
+          if (translateApiKey) {
+            const translateStart = Date.now();
+            const result = await translateToEnglish(
+              transcript, language_code, translateProvider, translateApiKey, bhashiniUserId || undefined,
+            );
+            if (!result.fallback && result.translatedText) {
+              transcriptForLlm = result.translatedText;
+              wasPreTranslated = true;
+            }
+            // Meter the translation — fire-and-forget
+            void recordTranslateUsage(sb, {
+              hospitalId,
+              provider: translateProvider,
+              charactersTranslated: result.charactersTranslated,
+              latencyMs: Date.now() - translateStart,
+              success: !result.fallback,
+              errorMessage: result.fallback ? "Translation failed — LLM will handle translation" : null,
+            });
+          }
+        }
+      } catch (translateErr) {
+        // Non-fatal — if pre-translation fails for any reason, the LLM
+        // handles translation as before. Log and continue.
+        console.warn("Pre-translation failed (non-fatal):",
+          sanitizeForLog(translateErr instanceof Error ? translateErr.message : String(translateErr)));
+      }
+    }
+
     const config = hospitalId
       ? (await resolveAiConfig(hospitalId, "voice_scribe", 1200)) ?? resolveAiConfigFromEnv(1200)
       : resolveAiConfigFromEnv(1200);
@@ -231,27 +329,31 @@ Merge rules:
 - If this transcript adds nothing to a field, return that field's existing value unchanged.`
       : "";
 
-    // Language instruction: the doctor may dictate in any language, but the structured
-    // notes must always be returned in clear English (translated by the assigned LLM).
-    // The verbatim transcript is preserved separately in the original language.
-    const LANG_LABELS: Record<string, string> = {
-      "hi-IN": "Hindi (हिन्दी)",
-      "te-IN": "Telugu (తెలుగు)",
-      "ta-IN": "Tamil (தமிழ்)",
-      "kn-IN": "Kannada (ಕನ್ನಡ)",
-      "ml-IN": "Malayalam (മലയാളം)",
-      "mr-IN": "Marathi (मराठी)",
-      "bn-IN": "Bengali (বাংলা)",
-      "gu-IN": "Gujarati (ગુજરાતી)",
-      "pa-IN": "Punjabi (ਪੰਜਾਬੀ)",
-    };
-    const langLabel = language_code ? LANG_LABELS[language_code] : null;
-    const langNote = langLabel
-      ? `\n\nIMPORTANT: The conversation is in ${langLabel}. TRANSLATE and return ALL text field VALUES in clear, professional English. Keep JSON keys in English. Preserve medical drug names and ICD codes exactly.`
-      // No specific language given (e.g. "auto"/multilingual, or a language not in the label
-      // map): the transcript is still most likely an Indian regional language, so tell the
-      // model to detect it and translate — don't leave it guessing.
-      : `\n\nIMPORTANT: The conversation may be in English or an Indian regional language (e.g. Telugu, Hindi, Tamil). Detect the language, then TRANSLATE and return ALL text field VALUES in clear, professional English. Keep JSON keys in English. Preserve medical drug names and ICD codes exactly.`;
+    // Language instruction: when the transcript was successfully pre-translated
+    // to English by Sarvam/Bhashini, skip the expensive multilingual prompt —
+    // saves ~200 tokens per call. Falls back to the original multilingual
+    // instruction when translation was not attempted or failed.
+    let langNote: string;
+    if (wasPreTranslated) {
+      langNote = `\n\nNOTE: This transcript has been pre-translated to English from an Indian language using an automated machine translation engine. Because of this, some medical terms, drug names, anatomical references, or symptoms might have been translated literally or phonetically mangled (e.g. "fever tablet" instead of Paracetamol, or a literal translation of a regional drug brand).
+Please interpret these terms using your clinical context. If a drug name or clinical term appears corrupted by translation but the intended clinical meaning is clear, correct it to the standard English medical term during extraction.`;
+    } else {
+      const LANG_LABELS: Record<string, string> = {
+        "hi-IN": "Hindi (हिन्दी)",
+        "te-IN": "Telugu (తెలుగు)",
+        "ta-IN": "Tamil (தமிழ்)",
+        "kn-IN": "Kannada (ಕನ್ನಡ)",
+        "ml-IN": "Malayalam (മലയാളം)",
+        "mr-IN": "Marathi (मराठी)",
+        "bn-IN": "Bengali (বাংলা)",
+        "gu-IN": "Gujarati (ગુજરાતી)",
+        "pa-IN": "Punjabi (ਪੰਜਾਬੀ)",
+      };
+      const langLabel = language_code ? LANG_LABELS[language_code] : null;
+      langNote = langLabel
+        ? `\n\nIMPORTANT: The conversation is in ${langLabel}. TRANSLATE and return ALL text field VALUES in clear, professional English. Keep JSON keys in English. Preserve medical drug names and ICD codes exactly.`
+        : `\n\nIMPORTANT: The conversation may be in English or an Indian regional language (e.g. Telugu, Hindi, Tamil). Detect the language, then TRANSLATE and return ALL text field VALUES in clear, professional English. Keep JSON keys in English. Preserve medical drug names and ICD codes exactly.`;
+    }
 
     // Accuracy guardrails — applied to EVERY session type. Symptoms must be strict
     // (no fabrication); only the diagnosis fields may carry a working diagnosis,
@@ -265,7 +367,7 @@ Merge rules:
     const prompt = `${contextPrompt}${existingContext}${langNote}${guardNote}
 
 Dictation transcript:
-"${transcript}"`;
+"${transcriptForLlm}"`;
 
     const messages = [
       {

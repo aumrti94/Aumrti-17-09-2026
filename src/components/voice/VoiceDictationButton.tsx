@@ -151,6 +151,7 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
     }
   }, [sessionType, patientId, selectedLanguage, getExistingDataForCurrentScreen, setPanelState, setIsPanelOpen, setStructuredOutput, setFallbackReason]);
 
+
   const sendChunkToSarvam = useCallback(async (audioBlob: Blob): Promise<string> => {
     const base64 = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();

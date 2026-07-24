@@ -123,6 +123,7 @@ const ED_CHARGE_TYPES = [
 
 // Common item codes used by modules (OT, Dialysis, IPD, etc.) for fallback billing rates.
 const DEFAULT_RATE_SEEDS: { item_code: string; item_name: string; item_type: string; default_rate: number }[] = [
+  { item_code: "registration_fee", item_name: "Registration Fee",     item_type: "registration", default_rate: 0 },
   { item_code: "consultation",     item_name: "OPD Consultation",     item_type: "consultation", default_rate: 500 },
   { item_code: "anaesthesia_fee",  item_name: "Anaesthesia Fee",      item_type: "procedure",    default_rate: 1500 },
   { item_code: "surgery_fee",      item_name: "Surgery / Surgeon Fee", item_type: "procedure",   default_rate: 5000 },

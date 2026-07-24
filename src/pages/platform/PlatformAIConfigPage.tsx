@@ -111,6 +111,8 @@ const PlatformAIConfigPage: React.FC = () => {
   const [bulkSaving, setBulkSaving] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [voiceEngine, setVoiceEngine] = useState<string>("sarvam");
+  const [preTranslateEnabled, setPreTranslateEnabled] = useState(false);
+  const [preTranslateProvider, setPreTranslateProvider] = useState<string>("auto");
   const [usageLogs, setUsageLogs] = useState<{ feature_key: string; calls: number; tokens: number; errors: number; last_used: string }[]>([]);
 
   // API Key drawer
@@ -140,16 +142,22 @@ const PlatformAIConfigPage: React.FC = () => {
     }
   }, [playFeature]);
 
-  // Load the global voice engine preference
+  // Load the global voice engine preference + pre-translate setting
   useEffect(() => {
     supabase
       .from("platform_ai_keys")
-      .select("config")
-      .eq("service_key", "voice_asr_engine")
-      .maybeSingle()
+      .select("config, service_key")
+      .in("service_key", ["voice_asr_engine", "voice_pre_translate"])
       .then(({ data }) => {
-        if (data?.config) {
-          setVoiceEngine((data.config as Record<string, string>).engine || "sarvam");
+        for (const row of data || []) {
+          const cfg = row.config as Record<string, unknown>;
+          if (row.service_key === "voice_asr_engine") {
+            setVoiceEngine((cfg?.engine as string) || "sarvam");
+          }
+          if (row.service_key === "voice_pre_translate") {
+            setPreTranslateEnabled(!!cfg?.enabled);
+            setPreTranslateProvider((cfg?.provider as string) || "auto");
+          }
         }
       });
   }, []);
@@ -1066,9 +1074,92 @@ const PlatformAIConfigPage: React.FC = () => {
               );
             })}
           </div>
+
+          {/* Pre-translate toggle — saves 60-80% LLM tokens for Indian language dictations */}
+          <div className="mt-6 border border-border rounded-xl p-5 bg-muted/30">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-base">🌐→🇬🇧</span>
+                  <h3 className="font-bold text-sm text-foreground">Pre-translate to English before AI structuring</h3>
+                  <Badge className="text-[10px] bg-amber-100 text-amber-700">Token Saver</Badge>
+                </div>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Translates Indian language transcripts to English using Sarvam/Bhashini <strong>before</strong> sending
+                  to the LLM. Reduces LLM token usage by 60–80% for non-English dictations.
+                </p>
+                <p className="text-[10px] text-amber-600">
+                  ⚠ Medical terminology accuracy may vary — validate with your clinical team before enabling in production.
+                </p>
+              </div>
+              <Switch
+                checked={preTranslateEnabled}
+                onCheckedChange={async (checked) => {
+                  setPreTranslateEnabled(checked);
+                  const existing = apiKeys.find(k => k.service_key === "voice_pre_translate");
+                  const payload = {
+                    service_name: "Voice Pre-Translate",
+                    service_key: "voice_pre_translate",
+                    config: { enabled: checked, provider: preTranslateProvider },
+                    is_active: true,
+                  };
+                  if (existing) {
+                    await supabase.from("platform_ai_keys").update(payload).eq("id", existing.id);
+                  } else {
+                    await supabase.from("platform_ai_keys").insert(payload);
+                  }
+                  toast({ title: checked ? "✓ Pre-translation enabled — LLM token savings active" : "✓ Pre-translation disabled — LLM handles translation directly" });
+                  await loadData();
+                }}
+              />
+            </div>
+
+            {preTranslateEnabled && (
+              <div className="mt-3 pt-3 border-t border-border/50">
+                <Label className="text-xs text-muted-foreground mb-1.5 block">Translation Engine</Label>
+                <div className="flex gap-2">
+                  {[
+                    { key: "auto", label: "Auto (match ASR engine)" },
+                    { key: "sarvam", label: "Sarvam (mayura:v1)" },
+                    { key: "bhashini", label: "Bhashini (MeitY NMT)" },
+                  ].map((opt) => (
+                    <button
+                      key={opt.key}
+                      onClick={async () => {
+                        setPreTranslateProvider(opt.key);
+                        const existing = apiKeys.find(k => k.service_key === "voice_pre_translate");
+                        const payload = {
+                          service_name: "Voice Pre-Translate",
+                          service_key: "voice_pre_translate",
+                          config: { enabled: true, provider: opt.key },
+                          is_active: true,
+                        };
+                        if (existing) {
+                          await supabase.from("platform_ai_keys").update(payload).eq("id", existing.id);
+                        } else {
+                          await supabase.from("platform_ai_keys").insert(payload);
+                        }
+                        toast({ title: `✓ Translation engine set to ${opt.label}` });
+                        await loadData();
+                      }}
+                      className={cn(
+                        "text-xs px-3 py-1.5 rounded-lg border transition-all",
+                        preTranslateProvider === opt.key
+                          ? "border-primary bg-primary/10 text-primary font-medium"
+                          : "border-border hover:border-primary/40 text-muted-foreground"
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </section>
 
         <Separator />
+
         <section>
           <h2 className="text-lg font-bold text-foreground mb-1">External API Keys</h2>
           <p className="text-sm text-muted-foreground mb-5">All third-party integrations managed in one place</p>

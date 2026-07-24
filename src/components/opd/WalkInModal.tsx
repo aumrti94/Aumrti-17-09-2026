@@ -152,7 +152,11 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
   // Payment fields
   const [consultationFee, setConsultationFee] = useState(DEFAULT_CONSULTATION_FEE);
   const [baseFee, setBaseFee] = useState(DEFAULT_CONSULTATION_FEE);
-  const [followUpFee, setFollowUpFee] = useState(0);
+  // number = a configured follow-up fee (0 means a FREE follow-up within validity);
+  // null = no follow-up rate configured for this doctor/dept → charge the base fee.
+  // Keeping 0 and null distinct is what stops a free follow-up from silently billing
+  // the full consultation fee (the DB stores null for an empty field, 0 for a typed 0).
+  const [followUpFee, setFollowUpFee] = useState<number | null>(null);
   const [followUpValidityDays, setFollowUpValidityDays] = useState(7);
   const [isFollowUpRate, setIsFollowUpRate] = useState(false);
   const [emergencyFee, setEmergencyFee] = useState(0);
@@ -278,7 +282,7 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
         if (data?.[0]?.fee) {
           setConsultationFee(data[0].fee);
           setBaseFee(data[0].fee);
-          setFollowUpFee(data[0].follow_up_fee || 0);
+          setFollowUpFee(data[0].follow_up_fee ?? null);
           setFollowUpValidityDays(data[0].validity_days || 7);
           setEmergencyFee(data[0].emergency_fee || 0);
           setFeeSource("doctor");
@@ -299,7 +303,7 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
         if (data?.[0]?.fee) {
           setConsultationFee(data[0].fee);
           setBaseFee(data[0].fee);
-          setFollowUpFee(data[0].follow_up_fee || 0);
+          setFollowUpFee(data[0].follow_up_fee ?? null);
           setFollowUpValidityDays(data[0].validity_days || 7);
           setEmergencyFee(data[0].emergency_fee || 0);
           setFeeSource("dept");
@@ -319,7 +323,7 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
       if (data?.[0]?.fee) {
         setConsultationFee(data[0].fee);
         setBaseFee(data[0].fee);
-        setFollowUpFee(data[0].follow_up_fee || 0);
+        setFollowUpFee(data[0].follow_up_fee ?? null);
         setFollowUpValidityDays(data[0].validity_days || 7);
         setEmergencyFee(data[0].emergency_fee || 0);
         setFeeSource("global");
@@ -328,7 +332,7 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
       // 4. Hardcoded fallback
       setConsultationFee(DEFAULT_CONSULTATION_FEE);
       setBaseFee(DEFAULT_CONSULTATION_FEE);
-      setFollowUpFee(0);
+      setFollowUpFee(null);
       setFollowUpValidityDays(7);
       setEmergencyFee(0);
       setFeeSource("default");
@@ -361,7 +365,7 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
         // If the prior visit is inside the validity window, mark this as a follow-up so the
         // visit type/purpose dropdowns and the fee reflect it.
         const daysSince = Math.floor((Date.now() - new Date(t.visit_date).getTime()) / 86400000);
-        if (followUpFee > 0 && daysSince <= followUpValidityDays) {
+        if (followUpFee !== null && daysSince <= followUpValidityDays) {
           setVisitType("followup");
           setVisitPurpose("follow_up");
         }
@@ -400,12 +404,14 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
       // Follow-up rate applies when: a prior visit is within validity, OR the desk marked it a
       // follow-up and there's no prior visit on record (validity can't be evaluated). A prior
       // visit OUTSIDE the validity window is a fresh consultation (full fee), even if marked.
+      // followUpFee !== null (not "> 0") so a configured FREE follow-up (0) still
+      // qualifies and bills ₹0, instead of falling through to the full base fee.
       const qualifiesFollowUp =
-        followUpFee > 0 && (autoWithinValidity || (manualFollowUp && daysSince === null));
+        followUpFee !== null && (autoWithinValidity || (manualFollowUp && daysSince === null));
 
       if (qualifiesFollowUp) {
         if (!cancelled) {
-          setConsultationFee(followUpFee);
+          setConsultationFee(followUpFee ?? baseFee);
           setIsFollowUpRate(true);
           setRevisitDiscount(0);
           setRevisitDiscountNote("");

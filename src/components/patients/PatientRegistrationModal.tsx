@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { X, UserPlus, Loader2, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
+import { X, UserPlus, Loader2, CheckCircle2, XCircle, AlertTriangle, CreditCard, Printer } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getErrorMessage } from "@/lib/errorMessage";
 import { FormError } from "@/components/ui/FormError";
@@ -9,6 +9,8 @@ import ABHASearchPanel from "@/components/patients/ABHASearchPanel";
 import { generatePatientUhid } from "@/lib/patient-records";
 import { getDPDPConsentText } from "@/lib/compliance-checks";
 import AddReferralDoctorModal from "@/components/shared/AddReferralDoctorModal";
+import { getRegistrationFee, createAndPayRegistrationBill } from "@/lib/registrationBill";
+import { printDocument, printHeader } from "@/lib/printUtils";
 
 interface Props {
   onClose: () => void;
@@ -32,6 +34,11 @@ interface Props {
 
 const bloodGroups = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 const genders = ["male", "female", "other"] as const;
+const PAYMENT_MODES = [
+  { value: "cash", label: "💵 Cash" },
+  { value: "upi", label: "📱 UPI" },
+  { value: "card", label: "💳 Card" },
+];
 
 const PatientRegistrationModal: React.FC<Props> = ({ onClose, onSuccess, editPatient }) => {
   const { toast } = useToast();
@@ -43,6 +50,18 @@ const PatientRegistrationModal: React.FC<Props> = ({ onClose, onSuccess, editPat
   const [hospitalIdState, setHospitalIdState] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
+  // Optional registration-fee flow (only reached when a `registration_fee` rate > 0
+  // is configured in Settings → Default Rates). Patient is saved before this step.
+  const [step, setStep] = useState<"details" | "payment" | "receipt">("details");
+  const [submitting, setSubmitting] = useState(false);
+  const [regFee, setRegFee] = useState(0);
+  const [regGst, setRegGst] = useState(0);
+  const [paymentMode, setPaymentMode] = useState("cash");
+  const [paymentRef, setPaymentRef] = useState("");
+  const [newPatientId, setNewPatientId] = useState("");
+  const [newUhid, setNewUhid] = useState("");
+  const [collectedById, setCollectedById] = useState<string | null>(null);
+  const [receiptInfo, setReceiptInfo] = useState<{ billNumber: string; date: string } | null>(null);
   const [abhaVerified, setAbhaVerified] = useState<boolean>(false);
   const [abhaVerifying, setAbhaVerifying] = useState(false);
   const [abhaStatus, setAbhaStatus] = useState<{
@@ -110,13 +129,14 @@ const PatientRegistrationModal: React.FC<Props> = ({ onClose, onSuccess, editPat
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { toast({ title: "Not authenticated", variant: "destructive" }); setSaving(false); return; }
-    const { data: userData } = await supabase.from("users").select("hospital_id").eq("auth_user_id", user.id).maybeSingle();
+    const { data: userData } = await supabase.from("users").select("id, hospital_id").eq("auth_user_id", user.id).maybeSingle();
     if (!userData) {
       toast({ title: "Could not determine hospital", variant: "destructive" });
       setSaving(false);
       return;
     }
     const hospitalId = userData.hospital_id;
+    const collectedUserId = (userData as any).id as string;
 
     let dob = form.dob || null;
     if (!dob && form.age) {
@@ -215,19 +235,89 @@ const PatientRegistrationModal: React.FC<Props> = ({ onClose, onSuccess, editPat
         }
       }
       toast({ title: `Patient registered — ${uhid}` });
-      onSuccess();
+      // Optional registration fee. Driven by the `registration_fee` code in
+      // Settings → Default Rates: rate 0 / unconfigured = hospital does not charge,
+      // so we finish immediately (unchanged behaviour). A non-zero rate opens the
+      // collect-fee step — the patient is already saved, so skipping never loses it.
+      const { rate, gst } = await getRegistrationFee(hospitalId);
+      if (rate > 0 && newPatient) {
+        setNewPatientId(newPatient.id);
+        setNewUhid(uhid);
+        setRegFee(rate);
+        setRegGst(gst);
+        setCollectedById(collectedUserId);
+        setStep("payment");
+      } else {
+        onSuccess();
+      }
     }
+  };
+
+  const handleCollectFee = async () => {
+    setSubmitting(true);
+    setFormError(null);
+    const res = await createAndPayRegistrationBill({
+      hospitalId: hospitalIdState,
+      patientId: newPatientId,
+      amount: regFee,
+      gstPercent: regGst,
+      mode: paymentMode,
+      reference: paymentRef || null,
+      collectedBy: collectedById,
+    });
+    setSubmitting(false);
+    if (!res.ok) {
+      setFormError(res.error || "Could not record payment");
+      toast({ title: "Payment failed", description: res.error, variant: "destructive" });
+      return;
+    }
+    setReceiptInfo({ billNumber: res.billNumber || "", date: new Date().toLocaleDateString("en-IN") });
+    setStep("receipt");
+  };
+
+  const finish = () => onSuccess();
+
+  const handlePrintReceipt = () => {
+    if (!receiptInfo) return;
+    const header = printHeader(hospitalName, "");
+    const body = `
+      ${header}
+      <div style="text-align:center; border-bottom:1px dashed #cbd5e1; padding-bottom:10px; margin-bottom:10px;">
+        <strong style="font-size:16px;">PATIENT REGISTRATION RECEIPT</strong><br/>
+        <small>${receiptInfo.date}</small>
+      </div>
+      <div class="row"><span class="label">Bill No.</span><span class="amount">${receiptInfo.billNumber}</span></div>
+      <div class="row"><span class="label">Patient</span><span class="value">${form.full_name}</span></div>
+      <div class="row"><span class="label">UHID</span><span class="amount">${newUhid}</span></div>
+      <div style="border-top:1px dashed #cbd5e1; padding-top:10px; margin-top:10px;">
+        <div class="row"><span class="label">Registration Fee</span><span class="amount" style="font-size:16px;">₹${regFee.toLocaleString("en-IN")}</span></div>
+        <div class="row"><span class="label">Payment</span><span class="paid">Paid (${paymentMode})</span></div>
+      </div>
+      <style>
+        .row { display: flex; justify-content: space-between; margin-bottom: 6px; }
+        .label { color: #64748b; font-size: 12px; }
+        .value { font-weight: 600; color: #1e293b; text-align: right; }
+        .paid { color: #059669; font-weight: 600; }
+        .amount { font-family: 'JetBrains Mono', monospace; font-weight: 600; }
+      </style>
+      <div style="text-align:center; font-size:11px; color:#94a3b8; margin-top:20px; border-top:1px dashed #cbd5e1; padding-top:10px;">
+        Thank you. Welcome to ${hospitalName}!
+      </div>
+    `;
+    printDocument("Registration Receipt", body, { width: 450, height: 600 });
   };
 
   const inputClass = "w-full h-[38px] px-3 border border-border rounded-lg text-sm bg-background text-foreground focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={step === "details" ? onClose : finish}>
       <div
         className="bg-card rounded-2xl shadow-lg flex flex-col overflow-hidden"
         style={{ width: "min(640px, calc(100vw - 48px))", maxHeight: "calc(100vh - 80px)" }}
         onClick={(e) => e.stopPropagation()}
       >
+        {step === "details" ? (
+        <>
         {/* Header */}
         <div className="flex items-center justify-between px-7 pt-5 pb-3 flex-shrink-0">
           <div>
@@ -533,6 +623,103 @@ const PatientRegistrationModal: React.FC<Props> = ({ onClose, onSuccess, editPat
             {saving ? (editPatient ? "Updating…" : "Registering…") : (editPatient ? "Update Patient →" : "Register Patient →")}
           </button>
         </div>
+        </>
+        ) : step === "payment" ? (
+          /* ══════════ Collect Registration Fee ══════════ */
+          <div className="flex flex-col">
+            <div className="flex items-center justify-between px-7 pt-5 pb-3">
+              <div className="flex items-center gap-2">
+                <CreditCard className="h-5 w-5 text-primary" />
+                <div>
+                  <h2 className="text-lg font-bold text-foreground">Collect Registration Fee</h2>
+                  <p className="text-[12px] text-muted-foreground">Patient registered — {newUhid}</p>
+                </div>
+              </div>
+              <button onClick={finish} className="text-muted-foreground hover:text-foreground p-1"><X size={18} /></button>
+            </div>
+            <div className="px-7 pb-6 flex flex-col gap-4">
+              {/* Patient summary */}
+              <div className="p-3 bg-muted/40 rounded-lg border border-border space-y-1">
+                <div className="flex justify-between text-sm"><span className="text-muted-foreground">Patient</span><span className="font-medium text-foreground">{form.full_name || "—"}</span></div>
+                <div className="flex justify-between text-sm"><span className="text-muted-foreground">UHID</span><span className="font-mono text-foreground">{newUhid}</span></div>
+              </div>
+              {/* Fee — read-only to prevent front-desk manipulation */}
+              <div>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-muted-foreground">Registration Fee (₹)</label>
+                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">Default rate</span>
+                </div>
+                <div className="w-full h-12 px-4 border border-border rounded-lg text-lg font-bold mt-1 flex items-center select-none bg-muted/40 text-foreground">
+                  ₹{regFee.toLocaleString("en-IN")}
+                </div>
+              </div>
+              {/* Payment Mode */}
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Payment Mode</label>
+                <div className="flex gap-2 mt-1.5">
+                  {PAYMENT_MODES.map((m) => (
+                    <button key={m.value} onClick={() => setPaymentMode(m.value)}
+                      className={cn("flex-1 h-11 rounded-lg text-sm font-medium transition-colors",
+                        paymentMode === m.value ? "bg-primary text-primary-foreground shadow" : "bg-muted text-muted-foreground hover:bg-muted/70")}>
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {paymentMode !== "cash" && (
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Reference / Txn ID</label>
+                  <input value={paymentRef} onChange={(e) => setPaymentRef(e.target.value)} placeholder="Transaction reference..." className={inputClass} />
+                </div>
+              )}
+              <FormError message={formError} />
+              <button onClick={handleCollectFee} disabled={submitting}
+                className="w-full h-12 bg-[hsl(222,55%,23%)] text-white rounded-lg text-[14px] font-bold hover:bg-[hsl(222,55%,18%)] active:scale-[0.98] transition-all disabled:opacity-60">
+                {submitting ? "Processing…" : `Pay ₹${regFee.toLocaleString("en-IN")} & Finish →`}
+              </button>
+              <button onClick={finish} disabled={submitting} className="text-xs text-muted-foreground hover:text-foreground mx-auto">
+                Skip / collect later
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* ══════════ Registration Complete (receipt) ══════════ */
+          <div className="flex flex-col">
+            <div className="flex items-center justify-between px-7 pt-5 pb-3">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                <h2 className="text-lg font-bold text-foreground">Registration Complete</h2>
+              </div>
+              <button onClick={finish} className="text-muted-foreground hover:text-foreground p-1"><X size={18} /></button>
+            </div>
+            <div className="px-7 pb-6">
+              <div className="border border-border rounded-lg p-5 bg-card">
+                <div className="text-center border-b border-dashed border-border pb-3 mb-3">
+                  <p className="text-sm font-bold text-foreground">PATIENT REGISTRATION RECEIPT</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">{receiptInfo?.date}</p>
+                </div>
+                <div className="space-y-1.5 text-sm">
+                  <div className="flex justify-between"><span className="text-muted-foreground">Bill No.</span><span className="font-mono font-medium text-foreground">{receiptInfo?.billNumber}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Patient</span><span className="font-medium text-foreground">{form.full_name}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">UHID</span><span className="font-mono text-foreground">{newUhid}</span></div>
+                </div>
+                <div className="border-t border-dashed border-border mt-3 pt-3 space-y-1.5">
+                  <div className="flex justify-between text-sm"><span className="text-muted-foreground">Registration Fee</span><span className="font-bold text-foreground">₹{regFee.toLocaleString("en-IN")}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-muted-foreground">Payment</span><span className="font-medium text-emerald-600">Paid ({paymentMode})</span></div>
+                </div>
+                <div className="border-t border-dashed border-border mt-3 pt-2 text-center">
+                  <p className="text-[10px] text-muted-foreground">Thank you. Welcome to {hospitalName}!</p>
+                </div>
+              </div>
+              <div className="flex gap-3 mt-4">
+                <button onClick={handlePrintReceipt} className="flex-1 h-11 bg-[hsl(222,55%,23%)] text-white rounded-lg text-[13px] font-semibold hover:bg-[hsl(222,55%,18%)] active:scale-[0.98] transition-all flex items-center justify-center gap-2">
+                  <Printer className="h-4 w-4" /> Print Receipt
+                </button>
+                <button onClick={finish} className="flex-1 h-11 bg-muted text-foreground rounded-lg text-[13px] font-semibold hover:bg-muted/70 active:scale-[0.98] transition-all">Done</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
       <div onClick={(e) => e.stopPropagation()}>
         <AddReferralDoctorModal

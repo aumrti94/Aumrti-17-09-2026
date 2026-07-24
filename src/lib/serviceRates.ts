@@ -51,6 +51,7 @@ export async function getRateWithGst(
 /** Common item codes used across modules. Keep in sync with the seed list in SettingsServicesPage. */
 export const SERVICE_RATE_CODES = {
   CONSULTATION: "consultation",
+  REGISTRATION_FEE: "registration_fee",
   ANAESTHESIA_FEE: "anaesthesia_fee",
   SURGERY_FEE: "surgery_fee",
   DIALYSIS_SESSION: "dialysis_session",
