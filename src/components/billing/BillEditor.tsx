@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -114,15 +114,24 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
       .then(({ data }) => setHospitalInfo(data));
   }, [hospitalId]);
 
+  // Read the fields the effects below actually use into locals. The effects then
+  // close over primitives instead of the `bill` object, so they keep re-running
+  // exactly when the bill's identity/status changes — not on every refetch that
+  // hands back a new object with the same contents.
+  const billId = bill?.id;
+  const billType = bill?.bill_type;
+  const billAdmissionId = bill?.admission_id;
+  const billPaymentStatus = bill?.payment_status;
+
   // Fetch admission estimate + net advance balance for IPD bills
   useEffect(() => {
-    if (!bill || bill.bill_type !== "ipd" || !bill.admission_id || !hospitalId) {
+    if (!billId || billType !== "ipd" || !billAdmissionId || !hospitalId) {
       setEstimateData(null); setAdvanceLedger(null); return;
     }
     (supabase as any)
       .from("admission_estimates")
       .select("estimated_days, estimated_amount, deposit_required, remarks")
-      .eq("admission_id", bill.admission_id)
+      .eq("admission_id", billAdmissionId)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle()
@@ -131,8 +140,8 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
     // Admission-scoped, via the shared ledger. This used to query
     // advance_receipts by patient_id, which swept in advances from the
     // patient's OTHER stays and invented a refund that was never owed.
-    fetchAdvanceLedger(bill.admission_id, hospitalId).then(setAdvanceLedger);
-  }, [bill?.id, bill?.admission_id, hospitalId]);
+    fetchAdvanceLedger(billAdmissionId, hospitalId).then(setAdvanceLedger);
+  }, [billId, billType, billAdmissionId, hospitalId]);
 
   // One money computation for the whole editor — header, footer and tabs all
   // read from here so they cannot disagree. Derived from the line items, never
@@ -152,17 +161,23 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
 
   // Auto-reconcile DB when advance + cash fully cover the bill but DB still shows partial/unpaid.
   // This corrects stale balance_due/payment_status written before the fix was in place.
+  // Latest-ref: the parent passes a fresh `onRefresh` every render, and this
+  // effect writes to the DB — re-running it on an unrelated parent render would
+  // issue a duplicate bill update.
+  const onRefreshRef = useRef(onRefresh);
+  useEffect(() => { onRefreshRef.current = onRefresh; });
+
   useEffect(() => {
-    if (!bill || bill.bill_type !== "ipd" || advanceLedger === null) return;
+    if (!billId || billType !== "ipd" || advanceLedger === null) return;
     if (payments.length === 0 && money.netAdvance === 0) return;
-    if (bill.payment_status === "paid" || bill.payment_status === "refunded") return;
+    if (billPaymentStatus === "paid" || billPaymentStatus === "refunded") return;
     if (money.patientPayable > 0 && money.balanceDue === 0) {
       (supabase as any).from("bills").update({
         balance_due: 0,
         payment_status: "paid",
-      }).eq("id", bill.id).then(() => onRefresh());
+      }).eq("id", billId).then(() => onRefreshRef.current());
     }
-  }, [money, advanceLedger, payments, bill?.id, bill?.payment_status]);
+  }, [money, advanceLedger, payments, billId, billType, billPaymentStatus]);
 
   const fetchLineItems = useCallback(async () => {
     if (!bill) return;

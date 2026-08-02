@@ -136,11 +136,20 @@ Provide max 4 anomalies, most critical first. Focus on actionable clinical insig
     setLoading(false);
   };
 
-  // Auto-trigger once when autoRun=true and results are present
+  // Auto-trigger once when autoRun=true and results are present.
+  //
+  // `loading`, `anomalies` and `runDetection` are read through a ref: this effect
+  // WRITES all three (runDetection sets loading and anomalies), so depending on
+  // them would re-enter the effect from its own work. The hasAutoRun latch below
+  // already makes this a one-shot.
+  const autoRunStateRef = useRef({ loading, anomalies, runDetection });
+  useEffect(() => { autoRunStateRef.current = { loading, anomalies, runDetection }; });
+
   useEffect(() => {
-    if (autoRun && !hasAutoRun.current && currentResults.some(r => r.result_value) && !loading && anomalies === null) {
+    const { loading: isLoading, anomalies: found, runDetection: run } = autoRunStateRef.current;
+    if (autoRun && !hasAutoRun.current && currentResults.some(r => r.result_value) && !isLoading && found === null) {
       hasAutoRun.current = true;
-      runDetection();
+      run();
     }
   }, [autoRun, currentResults]);
 

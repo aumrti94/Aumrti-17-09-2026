@@ -205,7 +205,7 @@ const RadiologyReportingWorkspace: React.FC<Props> = ({ order, hospitalId, onSta
     }
 
     setLoading(false);
-  }, [order.id]);
+  }, [order]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 

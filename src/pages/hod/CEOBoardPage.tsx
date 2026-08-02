@@ -180,7 +180,7 @@ const CEOBoardPage: React.FC = () => {
     lastRefresh.current = new Date();
     setLoading(false);
     setRefreshing(false);
-  }, [fetchKPIs, hospitalId, role]);
+  }, [fetchKPIs, hospitalId, role, groupFilter]);
 
   useEffect(() => {
     if (hospitalId && role) load();

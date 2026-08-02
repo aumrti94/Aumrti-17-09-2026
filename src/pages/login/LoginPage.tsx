@@ -136,7 +136,7 @@ const LoginPage: React.FC = () => {
       // AAL satisfied — go to dashboard
       navigate("/dashboard", { replace: true });
     });
-  }, []);
+  }, [navigate]);
 
   useEffect(() => {
     const hostname = window.location.hostname;

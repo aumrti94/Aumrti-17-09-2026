@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -69,9 +69,8 @@ const MHPsychometricTab: React.FC<Props> = ({ patientId, hospitalId, encounterId
   const [saving, setSaving] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
 
-  useEffect(() => { fetchHistory(); }, [patientId]);
 
-  const fetchHistory = async () => {
+  const fetchHistory = useCallback(async () => {
     const { data } = await (supabase as any)
       .from("psychometric_assessments")
       .select("id, assessment_type, total_score, severity, risk_flag, created_at")
@@ -79,7 +78,9 @@ const MHPsychometricTab: React.FC<Props> = ({ patientId, hospitalId, encounterId
       .order("created_at", { ascending: false })
       .limit(20);
     setHistory(data || []);
-  };
+  }, [patientId]);
+
+  useEffect(() => { fetchHistory(); }, [fetchHistory]);
 
   const scale = SCALES.find(s => s.key === activeScale)!;
   const answered = Object.keys(answers).length;

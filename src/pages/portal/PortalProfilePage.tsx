@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { User, Phone, Calendar, Droplets, MapPin, AlertCircle, Users, Edit2, Check, X as XIcon } from "lucide-react";
 import type { PortalSession } from "./PortalLogin";
@@ -31,9 +31,8 @@ const PortalProfilePage: React.FC<{ session: PortalSession }> = ({ session }) =>
   const [emailValue, setEmailValue]   = useState("");
   const [savingEmail, setSavingEmail] = useState(false);
 
-  useEffect(() => { load(); }, [session]);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const { data } = await (supabase as any)
       .from("patients")
       .select("full_name, uhid, phone, email, gender, dob, blood_group, address, allergies")
@@ -60,7 +59,9 @@ const PortalProfilePage: React.FC<{ session: PortalSession }> = ({ session }) =>
     }
 
     setLoading(false);
-  };
+  }, [session]);
+
+  useEffect(() => { load(); }, [load]);
 
   const saveEmail = async () => {
     setSavingEmail(true);

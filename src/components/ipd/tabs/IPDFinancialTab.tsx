@@ -348,7 +348,7 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
         });
       });
     }
-  }, [admissionId, patientId, hospitalId]);
+  }, [admissionId, hospitalId]);
 
   useEffect(() => { load(); }, [load]);
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,17 +23,17 @@ const SchedulesTab: React.FC<Props> = ({ hospitalId }) => {
   const [wardId, setWardId] = useState("");
   const [wards, setWards] = useState<any[]>([]);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     if (!hospitalId) return;
     const { data } = await supabase.from("cleaning_schedules").select("*, wards(name)").eq("hospital_id", hospitalId).eq("is_active", true).order("next_due_at", { ascending: true });
     setSchedules(data || []);
-  };
+  }, [hospitalId]);
 
   useEffect(() => {
     if (!hospitalId) return;
     load();
     supabase.from("wards").select("id, name").eq("hospital_id", hospitalId).then(({ data }) => setWards(data || []));
-  }, [hospitalId]);
+  }, [load, hospitalId]);
 
   const markDone = async (sched: any) => {
     const now = new Date();

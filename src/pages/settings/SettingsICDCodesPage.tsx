@@ -86,16 +86,9 @@ const SettingsICDCodesPage: React.FC = () => {
   // Delete confirm
   const [deleteTarget, setDeleteTarget] = useState<CodeSet | null>(null);
 
-  useEffect(() => {
-    loadSettings();
-    loadCodeSets();
-  }, []);
 
-  useEffect(() => {
-    if (tab === "browse") loadCodes();
-  }, [tab]);
 
-  const loadSettings = async () => {
+  const loadSettings = useCallback(async () => {
     const { data } = await supabase
       .from("hospital_icd_settings")
       .select("*")
@@ -106,18 +99,23 @@ const SettingsICDCodesPage: React.FC = () => {
       setActiveSet(data.active_set);
       setShowCommonFirst(data.show_common_first);
     }
-  };
+  }, [hospitalId]);
 
-  const loadCodeSets = async () => {
+  const loadCodeSets = useCallback(async () => {
     const { data } = await supabase
       .from("icd10_code_sets")
       .select("*")
       .eq("hospital_id", hospitalId)
       .order("created_at", { ascending: true });
     if (data) setCodeSets(data as CodeSet[]);
-  };
+  }, [hospitalId]);
 
-  const loadCodes = async () => {
+  useEffect(() => {
+    loadSettings();
+    loadCodeSets();
+  }, [loadCodeSets, loadSettings]);
+
+  const loadCodes = useCallback(async () => {
     setCodesLoading(true);
     const { data } = await supabase
       .from("icd10_codes")
@@ -127,7 +125,11 @@ const SettingsICDCodesPage: React.FC = () => {
       .limit(1000);
     if (data) setCodes(data as ICDCode[]);
     setCodesLoading(false);
-  };
+  }, [hospitalId]);
+
+  useEffect(() => {
+    if (tab === "browse") loadCodes();
+  }, [loadCodes, tab]);
 
   const saveSettings = async () => {
     setSaving(true);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { useToast } from "@/hooks/use-toast";
@@ -329,12 +329,8 @@ const QIProjectsPage: React.FC = () => {
 
   // ── Loaders ────────────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    if (!hospitalId) return;
-    loadProjects();
-  }, [hospitalId]);
 
-  const loadProjects = async () => {
+  const loadProjects = useCallback(async () => {
     if (!hospitalId) return;
     setLoading(true);
     const { data } = await (supabase as any)
@@ -345,7 +341,12 @@ const QIProjectsPage: React.FC = () => {
       .limit(200);
     setProjects(data || []);
     setLoading(false);
-  };
+  }, [hospitalId]);
+
+  useEffect(() => {
+    if (!hospitalId) return;
+    loadProjects();
+  }, [loadProjects, hospitalId]);
 
   const loadCycles = async (projectId: string) => {
     setCyclesLoading(true);

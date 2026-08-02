@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Calendar, FlaskConical, Receipt, Pill, Download, Video } from "lucide-react";
@@ -21,11 +21,8 @@ const PortalDashboard: React.FC<{ session: PortalSession }> = ({ session }) => {
   const [counts, setCounts] = useState({ appointments: 0, reports: 0, billsDue: 0, prescriptions: 0 });
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
 
-  useEffect(() => {
-    loadDashboard();
-  }, [session]);
 
-  const loadDashboard = async () => {
+  const loadDashboard = useCallback(async () => {
     const pid = session.patientId;
     const hid = session.hospitalId;
     const today = new Date().toISOString().slice(0, 10);
@@ -166,7 +163,11 @@ const PortalDashboard: React.FC<{ session: PortalSession }> = ({ session }) => {
 
     activities.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     setRecentActivity(activities.slice(0, 5));
-  };
+  }, [session]);
+
+  useEffect(() => {
+    loadDashboard();
+  }, [loadDashboard]);
 
   const firstName = session.fullName.split(" ")[0];
 

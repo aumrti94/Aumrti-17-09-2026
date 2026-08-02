@@ -67,7 +67,10 @@ const CarePlansTab: React.FC<Props> = ({ hospitalId }) => {
           bedLabel: `${a.wards?.name || "?"}-${a.beds?.bed_number || "?"}`,
         }));
         setAdmissions(list);
-        if (list.length && !selectedAdm) setSelectedAdm(list[0].id);
+        // Functional form: reads the current selection from React rather than from
+        // the closure, so this fetch does not have to re-run whenever the user
+        // picks a different admission.
+        if (list.length) setSelectedAdm((prev) => prev || list[0].id);
       });
   }, [hospitalId]);
 

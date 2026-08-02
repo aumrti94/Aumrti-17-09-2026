@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { autoChargeService, MODULE_MENTAL_HEALTH } from "@/lib/serviceBilling";
 import { Button } from "@/components/ui/button";
@@ -40,9 +40,8 @@ const MHTherapyTab: React.FC<Props> = ({ patientId, hospitalId }) => {
 
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => { fetchPlans(); }, [patientId]);
 
-  const fetchPlans = async () => {
+  const fetchPlans = useCallback(async () => {
     const { data } = await (supabase as any)
       .from("therapy_plans")
       .select("*")
@@ -50,7 +49,9 @@ const MHTherapyTab: React.FC<Props> = ({ patientId, hospitalId }) => {
       .order("created_at", { ascending: false });
     setPlans(data || []);
     if (data?.[0]) { setSelectedPlan(data[0]); fetchSessions(data[0].id); }
-  };
+  }, [patientId]);
+
+  useEffect(() => { fetchPlans(); }, [fetchPlans]);
 
   const fetchSessions = async (planId: string) => {
     const { data } = await (supabase as any)

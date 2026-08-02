@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { formatINRExact } from "@/lib/currency";
@@ -152,6 +152,51 @@ const AdmitPatientModal: React.FC<Props> = ({
   const [showConsentModal, setShowConsentModal] = useState(false);
   const [consentSigned, setConsentSigned] = useState(false);
 
+
+  useEffect(() => {
+    if (preselectedBedId) { setBedId(preselectedBedId); setWardId(preselectedWardId || ""); setBedLabel(preselectedBedNumber || ""); }
+  }, [preselectedBedId, preselectedWardId, preselectedBedNumber]);
+
+  // Auto-select patient when coming from OPD
+  useEffect(() => {
+    if (!open || !preselectedPatientId || !hospitalId) return;
+    supabase.from("patients")
+      .select("id, full_name, uhid, phone, dob, gender, blood_group, chronic_conditions")
+      .eq("id", preselectedPatientId)
+      .eq("hospital_id", hospitalId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          const p = data as unknown as PatientResult;
+          setSelectedPatient(p);
+          const catToInsurance: Record<string, string> = { pmjay: "pmjay", cghs: "cghs", echs: "echs", esi: "insurance", insurance: "insurance" };
+          if (p.patient_category && catToInsurance[p.patient_category]) setInsuranceType(catToInsurance[p.patient_category]);
+          setStep(2);
+        }
+      });
+  }, [open, preselectedPatientId, hospitalId]);
+
+  const resetForm = useCallback(() => {
+    setStep(estimateOnlyMode ? 3 : 1);
+    setSearch(""); setResults([]); setSearching(false); setSearchedTerm(""); setSelectedPatient(null);
+    setAdmissionType("elective"); setDeptId(""); setDoctorId(""); setDiagnosis("");
+    setInsuranceType("self_pay"); setInsuranceId(""); setExpectedDischarge("");
+    setShowNewPatient(false); setNewName(""); setNewPhone(""); setNewAge(""); setNewGender("male");
+    setAllergyVerified(false); setPatientAllergies(null);
+    setHandoverNotes(""); setHandoverPrefilled(false);
+    setIsMlcAdm(false); setMlcPoliceStation("");
+    setPayerType("cash"); setPayerId(null);
+    setDietaryInstruction("regular");
+    setAdmittedId(null);
+    // Reset to the caller's seed where given (day care seeds the booked procedure's rate),
+    // otherwise to the blank IPD defaults.
+    setEstimatedDays(prefillEstimatedDays ?? 3);
+    setEstimatedAmount(prefillEstimatedAmount != null ? String(prefillEstimatedAmount) : "");
+    setDepositRequired(prefillDepositRequired != null ? String(prefillDepositRequired) : "");
+    setEstimateRemarks(""); setPackageId("");
+    setShowAdvanceModal(false); setEstimateSaved(false);
+  }, [estimateOnlyMode, prefillDepositRequired, prefillEstimatedAmount, prefillEstimatedDays]);
+
   useEffect(() => {
     if (!open) { resetForm(); return; }
     if (!hospitalId) return;
@@ -182,51 +227,7 @@ const AdmitPatientModal: React.FC<Props> = ({
     (supabase as any).from("health_packages").select("id, package_name, price")
       .eq("hospital_id", hospitalId).eq("is_active", true).order("package_name", { ascending: true })
       .then(({ data }: any) => setPackages(data || []));
-  }, [open, hospitalId, preselectedBedId, estimateOnlyMode]);
-
-  useEffect(() => {
-    if (preselectedBedId) { setBedId(preselectedBedId); setWardId(preselectedWardId || ""); setBedLabel(preselectedBedNumber || ""); }
-  }, [preselectedBedId, preselectedWardId, preselectedBedNumber]);
-
-  // Auto-select patient when coming from OPD
-  useEffect(() => {
-    if (!open || !preselectedPatientId || !hospitalId) return;
-    supabase.from("patients")
-      .select("id, full_name, uhid, phone, dob, gender, blood_group, chronic_conditions")
-      .eq("id", preselectedPatientId)
-      .eq("hospital_id", hospitalId)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (data) {
-          const p = data as unknown as PatientResult;
-          setSelectedPatient(p);
-          const catToInsurance: Record<string, string> = { pmjay: "pmjay", cghs: "cghs", echs: "echs", esi: "insurance", insurance: "insurance" };
-          if (p.patient_category && catToInsurance[p.patient_category]) setInsuranceType(catToInsurance[p.patient_category]);
-          setStep(2);
-        }
-      });
-  }, [open, preselectedPatientId, hospitalId]);
-
-  const resetForm = () => {
-    setStep(estimateOnlyMode ? 3 : 1);
-    setSearch(""); setResults([]); setSearching(false); setSearchedTerm(""); setSelectedPatient(null);
-    setAdmissionType("elective"); setDeptId(""); setDoctorId(""); setDiagnosis("");
-    setInsuranceType("self_pay"); setInsuranceId(""); setExpectedDischarge("");
-    setShowNewPatient(false); setNewName(""); setNewPhone(""); setNewAge(""); setNewGender("male");
-    setAllergyVerified(false); setPatientAllergies(null);
-    setHandoverNotes(""); setHandoverPrefilled(false);
-    setIsMlcAdm(false); setMlcPoliceStation("");
-    setPayerType("cash"); setPayerId(null);
-    setDietaryInstruction("regular");
-    setAdmittedId(null);
-    // Reset to the caller's seed where given (day care seeds the booked procedure's rate),
-    // otherwise to the blank IPD defaults.
-    setEstimatedDays(prefillEstimatedDays ?? 3);
-    setEstimatedAmount(prefillEstimatedAmount != null ? String(prefillEstimatedAmount) : "");
-    setDepositRequired(prefillDepositRequired != null ? String(prefillDepositRequired) : "");
-    setEstimateRemarks(""); setPackageId("");
-    setShowAdvanceModal(false); setEstimateSaved(false);
-  };
+  }, [resetForm, hospitalId, open, preselectedBedId, estimateOnlyMode]);
 
   // Fetch patient allergies when selected
   // Seed the estimate fields from the caller on open. resetForm() only runs on close, so a

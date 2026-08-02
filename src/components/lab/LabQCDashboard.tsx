@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { AlertTriangle, CheckCircle2, Plus, XCircle } from "lucide-react";
@@ -42,11 +42,8 @@ const LabQCDashboard: React.FC<Props> = ({ hospitalId }) => {
   const [newMean, setNewMean] = useState("");
   const [newSD, setNewSD] = useState("");
 
-  useEffect(() => {
-    loadEntries();
-  }, [hospitalId]);
 
-  const loadEntries = async () => {
+  const loadEntries = useCallback(async () => {
     const { data } = await (supabase as any)
       .from("lab_qc_entries")
       .select("*")
@@ -54,7 +51,11 @@ const LabQCDashboard: React.FC<Props> = ({ hospitalId }) => {
       .order("recorded_at", { ascending: true })
       .limit(500);
     setEntries(data || []);
-  };
+  }, [hospitalId]);
+
+  useEffect(() => {
+    loadEntries();
+  }, [loadEntries]);
 
   const tests = [...new Set(entries.map(e => e.test_name))];
   const analyzers = [...new Set(entries.map(e => e.analyzer))];

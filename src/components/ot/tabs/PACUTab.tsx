@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { CheckCircle2, AlertTriangle, XCircle, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -88,7 +88,7 @@ const PACUTab: React.FC<Props> = ({ schedule }) => {
   );
   const allRated = Object.values(scores).every((v) => typeof v === "number");
 
-  const loadHistory = async () => {
+  const loadHistory = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from("pacu_assessments" as any)
@@ -101,9 +101,9 @@ const PACUTab: React.FC<Props> = ({ schedule }) => {
       setHistory((data as unknown as PacuRow[]) || []);
     }
     setLoading(false);
-  };
+  }, [schedule.id, toast]);
 
-  useEffect(() => { loadHistory(); }, [schedule.id]);
+  useEffect(() => { loadHistory(); }, [loadHistory]);
 
   const saveScore = async () => {
     if (!allRated) {

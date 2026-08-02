@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,7 +31,7 @@ export default function TodaysCheckupsTab({ onRefreshKPIs }: Props) {
     bp_systolic: "", bp_diastolic: "", pulse: "", spo2: "", temperature: "", height_cm: "", weight_kg: "",
   });
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const today = new Date().toISOString().split("T")[0];
     const { data } = await supabase
       .from("package_bookings")
@@ -40,9 +40,9 @@ export default function TodaysCheckupsTab({ onRefreshKPIs }: Props) {
       .eq("scheduled_date", today)
       .order("created_at");
     setBookings(data || []);
-  };
+  }, [hospitalId]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   const statusColors: Record<string, string> = {
     booked: "bg-slate-100 text-slate-700",

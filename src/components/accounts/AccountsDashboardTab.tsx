@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo, useCallback } from "react";
 import { formatINRCompact } from "@/lib/currency";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -47,10 +47,6 @@ const AccountsDashboardTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
   // narrower period (e.g. "This Month") was selected.
   const [monthlyTrend, setMonthlyTrend] = useState<{ month: string; revenue: number; expenses: number }[]>([]);
 
-  useEffect(() => {
-    if (!hospitalId) return;
-    loadAll();
-  }, [hospitalId, dateRange]);
 
   useEffect(() => {
     if (!hospitalId) return;
@@ -58,7 +54,7 @@ const AccountsDashboardTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hospitalId]);
 
-  const loadAll = async () => {
+  const loadAll = useCallback(async () => {
     const [balances, { data: recent }, { data: arItems }, { data: cashItems }, { count: rulesCount }] = await Promise.all([
       fetchLedgerBalances(hospitalId!, dateRange.start, dateRange.end),
       supabase.from("journal_entries").select("*").eq("hospital_id", hospitalId!).order("created_at", { ascending: false }).limit(10),
@@ -71,7 +67,12 @@ const AccountsDashboardTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
     setArBalances((arItems || []).reduce((s, i) => s + Number(i.debit_amount || 0) - Number(i.credit_amount || 0), 0));
     setCashBalances((cashItems || []).reduce((s, i) => s + Number(i.debit_amount || 0) - Number(i.credit_amount || 0), 0));
     setHasRules((rulesCount ?? 0) > 0);
-  };
+  }, [hospitalId, dateRange]);
+
+  useEffect(() => {
+    if (!hospitalId) return;
+    loadAll();
+  }, [loadAll, hospitalId]);
 
   const loadMonthlyTrend = async () => {
     const months: { label: string; start: string; end: string }[] = [];

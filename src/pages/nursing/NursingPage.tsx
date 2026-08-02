@@ -346,12 +346,14 @@ function calcQSOFASimple(v: ICUPatientRow["vitals"]): number {
   );
 }
 
+// Module scope: a fixed list, so hoisting keeps it out of the hook dependency
+// arrays below and stops it being re-allocated on every render.
+const ICU_BED_CATEGORIES = ["icu", "sicu", "picu", "nicu", "hdu"];
+
 const ICUMonitor: React.FC<{ hospitalId: string }> = ({ hospitalId }) => {
   const [patients, setPatients] = React.useState<ICUPatientRow[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [lastRefresh, setLastRefresh] = React.useState(new Date());
-
-  const ICU_BED_CATEGORIES = ["icu", "sicu", "picu", "nicu", "hdu"];
 
   const fetchICU = React.useCallback(async () => {
     setLoading(true);
@@ -406,7 +408,7 @@ const ICUMonitor: React.FC<{ hospitalId: string }> = ({ hospitalId }) => {
     setPatients(rows);
     setLastRefresh(new Date());
     setLoading(false);
-  }, [hospitalId]);
+  }, []);
 
   React.useEffect(() => { fetchICU(); }, [fetchICU]);
 

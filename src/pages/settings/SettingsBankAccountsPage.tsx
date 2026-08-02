@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import SettingsPageWrapper from "@/components/settings/SettingsPageWrapper";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -33,14 +33,14 @@ const SettingsBankAccountsPage: React.FC = () => {
 
   const hospitalId = localStorage.getItem("hospital_id") || "";
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     const { data } = await supabase.from("bank_accounts").select("*").eq("hospital_id", hospitalId).order("account_name");
     setAccounts((data as BankAccount[]) || []);
     setLoading(false);
-  };
+  }, [hospitalId]);
 
-  useEffect(() => { if (hospitalId) load(); }, [hospitalId]);
+  useEffect(() => { if (hospitalId) load(); }, [load, hospitalId]);
 
   const openAdd = () => { setEditId(null); setForm(emptyForm); setModalOpen(true); };
   const openEdit = (a: BankAccount) => {

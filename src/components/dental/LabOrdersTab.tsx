@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -48,9 +48,8 @@ const LabOrdersTab: React.FC<LabOrdersTabProps> = ({ patientId, hospitalId, user
     expected_date: "", cost: 0, notes: "",
   });
 
-  useEffect(() => { loadOrders(); }, [patientId]);
 
-  const loadOrders = async () => {
+  const loadOrders = useCallback(async () => {
     const { data, error } = await supabase
       .from("dental_lab_orders")
       .select("*")
@@ -59,7 +58,9 @@ const LabOrdersTab: React.FC<LabOrdersTabProps> = ({ patientId, hospitalId, user
       .order("created_at", { ascending: false });
     if (error) { console.error(error); return; }
     setOrders(data || []);
-  };
+  }, [patientId, hospitalId]);
+
+  useEffect(() => { loadOrders(); }, [loadOrders]);
 
   const handleSubmit = async () => {
     if (!form.work_type || !userId) {

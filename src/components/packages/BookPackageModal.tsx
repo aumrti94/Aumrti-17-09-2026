@@ -27,7 +27,7 @@ export default function BookPackageModal({ open, onClose }: Props) {
     supabase.from("health_packages").select("id, package_name, price, package_type, included_tests, included_radiology, included_services")
       .eq("hospital_id", hospitalId).eq("is_active", true).order("display_order")
       .then(({ data }) => setPackages(data || []));
-  }, []);
+  }, [hospitalId]);
 
   const book = async () => {
     if (!patientId || !packageId || !scheduledDate) { toast.error("Please fill all required fields"); return; }

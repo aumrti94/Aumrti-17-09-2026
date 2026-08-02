@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -71,13 +71,23 @@ const PatientsPage: React.FC = () => {
   const PAGE_SIZE = 50;
 
   // Deep-link: auto-open patient by ?id= param
+  // Read the router values through refs: this effect must fire when hospitalId
+  // arrives, not every time the URL changes — and it clears the ?id= param itself,
+  // which would otherwise re-trigger it.
+  const searchParamsRef = useRef(searchParams);
+  const setSearchParamsRef = useRef(setSearchParams);
   useEffect(() => {
-    const patientId = searchParams.get("id");
+    searchParamsRef.current = searchParams;
+    setSearchParamsRef.current = setSearchParams;
+  });
+
+  useEffect(() => {
+    const patientId = searchParamsRef.current.get("id");
     if (!patientId || !hospitalId) return;
     supabase.from("patients").select("*").eq("id", patientId).eq("hospital_id", hospitalId).maybeSingle()
       .then(({ data }) => {
         if (data) setSelectedPatient(data as Patient);
-        setSearchParams({}, { replace: true });
+        setSearchParamsRef.current({}, { replace: true });
       });
   }, [hospitalId]);
 
@@ -133,7 +143,7 @@ const PatientsPage: React.FC = () => {
   useEffect(() => {
     setPage(0);
     fetchPatients();
-  }, [debouncedSearch, filter, hospitalId, showInactive]);
+  }, [debouncedSearch, filter, hospitalId, showInactive, fetchPatients]);
 
   // Live: a patient registered/updated at another desk shows up without a refresh.
   useRealtimeRefetch({
@@ -150,7 +160,7 @@ const PatientsPage: React.FC = () => {
 
   useEffect(() => {
     if (page > 0) fetchPatients(true);
-  }, [page]);
+  }, [page, fetchPatients]);
 
   if (hidLoading) return <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
   if (!hospitalId) return null;

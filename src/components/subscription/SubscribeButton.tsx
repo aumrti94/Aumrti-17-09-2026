@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { useSubscriptionConfig } from "@/hooks/useSubscriptionConfig";
@@ -66,14 +66,8 @@ export default function SubscribeButton({ plan, label, variant = "default", clas
   const couponRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Validate coupon code with debounce
-  useEffect(() => {
-    if (!couponCode.trim()) { setCouponResult(null); return; }
-    if (couponRef.current) clearTimeout(couponRef.current);
-    couponRef.current = setTimeout(() => validateCoupon(couponCode.trim().toUpperCase()), 600);
-    return () => { if (couponRef.current) clearTimeout(couponRef.current); };
-  }, [couponCode]);
 
-  const validateCoupon = async (code: string) => {
+  const validateCoupon = useCallback(async (code: string) => {
     setValidating(true);
     try {
       const { data } = await (supabase as any)
@@ -110,7 +104,14 @@ export default function SubscribeButton({ plan, label, variant = "default", clas
     } finally {
       setValidating(false);
     }
-  };
+  }, [plan.slug]);
+
+  useEffect(() => {
+    if (!couponCode.trim()) { setCouponResult(null); return; }
+    if (couponRef.current) clearTimeout(couponRef.current);
+    couponRef.current = setTimeout(() => validateCoupon(couponCode.trim().toUpperCase()), 600);
+    return () => { if (couponRef.current) clearTimeout(couponRef.current); };
+  }, [validateCoupon, couponCode]);
 
   // Bed-band pricing (v3): the price depends on the live active-bed count, via
   // the same current_active_beds() RPC the edge function bills against — the

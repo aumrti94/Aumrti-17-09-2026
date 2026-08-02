@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -111,11 +111,8 @@ export default function PrakritiTab() {
     searchPatients();
   }, [search, hospitalId]);
 
-  useEffect(() => {
-    if (selectedPatient) loadExisting();
-  }, [selectedPatient]);
 
-  const loadExisting = async () => {
+  const loadExisting = useCallback(async () => {
     if (!selectedPatient || !hospitalId) return;
 
     const { data, error } = await supabase.from("prakriti_assessments").select("*")
@@ -139,7 +136,11 @@ export default function PrakritiTab() {
       setAiSummary("");
     }
     setResponses({});
-  };
+  }, [selectedPatient, hospitalId]);
+
+  useEffect(() => {
+    if (selectedPatient) loadExisting();
+  }, [loadExisting, selectedPatient]);
 
   const vataScore = Object.values(responses).filter((r) => r === "v").length;
   const pittaScore = Object.values(responses).filter((r) => r === "p").length;

@@ -82,7 +82,7 @@ const DialysisPatientsTab: React.FC<Props> = ({ showRegister, onCloseRegister, o
         if (data) setAllPatients(data);
       });
     }
-  }, [showRegister]);
+  }, [showRegister, allPatients.length]);
 
   const register = async () => {
     if (!patientId) { toast({ title: "Select a patient", variant: "destructive" }); return; }

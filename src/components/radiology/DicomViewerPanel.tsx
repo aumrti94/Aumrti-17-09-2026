@@ -121,12 +121,18 @@ const ImageViewer: React.FC<ImageViewerProps> = ({
     }
   }, [isJpeg, meta, frameIndex, wc, ww]);
 
+  // Latest-ref: the parent passes a fresh `onFrameChange` every render, so
+  // depending on it directly would tear down and restart the cine interval each
+  // time — visibly stuttering playback.
+  const onFrameChangeRef = useRef(onFrameChange);
+  useEffect(() => { onFrameChangeRef.current = onFrameChange; });
+
   // Cine playback
   useEffect(() => {
     if (cineRef.current) clearInterval(cineRef.current);
     if (playing && totalFrames > 1) {
       cineRef.current = setInterval(() => {
-        onFrameChange((frameIndex + 1) % totalFrames);
+        onFrameChangeRef.current((frameIndex + 1) % totalFrames);
       }, Math.round(1000 / cineSpeed));
     }
     return () => { if (cineRef.current) clearInterval(cineRef.current); };

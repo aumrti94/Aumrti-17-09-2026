@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import SettingsPageWrapper from "@/components/settings/SettingsPageWrapper";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -57,7 +57,7 @@ const SettingsReportSchedulesPage: React.FC = () => {
     format: "pdf",
   });
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     const hid = await getHospitalId();
     setHospitalId(hid);
@@ -74,9 +74,9 @@ const SettingsReportSchedulesPage: React.FC = () => {
       setSchedules((data || []) as Schedule[]);
     }
     setLoading(false);
-  };
+  }, [toast]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   const handleAdd = async () => {
     if (!hospitalId) return;

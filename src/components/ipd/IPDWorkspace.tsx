@@ -286,8 +286,12 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
   const [consentStatus, setConsentStatus] = React.useState<"loading"|"none"|"valid"|"expired">("loading");
   const [showConsentModal, setShowConsentModal] = React.useState(false);
 
+  // Extracted so the dependency array names a plain identifier the linter can
+  // check statically, rather than a cast expression.
+  const consentAdmissionId = (bed?.admission as any)?.id as string | undefined;
+
   React.useEffect(() => {
-    const admId = (bed?.admission as any)?.id;
+    const admId = consentAdmissionId;
     if (!admId || !hospitalId) { setConsentStatus("none"); return; }
     (supabase as any)
       .from("patient_consents")
@@ -308,7 +312,7 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
           setConsentStatus("valid");
         }
       });
-  }, [(bed?.admission as any)?.id, hospitalId, showConsentModal]);
+  }, [consentAdmissionId, hospitalId, showConsentModal]);
 
   if (!bed) {
     return (

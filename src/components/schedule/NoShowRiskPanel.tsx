@@ -125,7 +125,7 @@ low = <25%, medium = 25-55%, high = >55%`;
       }
     }
     setLoading(false);
-  }, [appointments, hospitalId, date]);
+  }, [appointments, hospitalId, date, toast]);
 
   const sendReminder = async (appt: Appointment) => {
     if (!appt.patient_phone) {

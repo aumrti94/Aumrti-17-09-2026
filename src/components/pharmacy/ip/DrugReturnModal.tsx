@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -74,12 +74,8 @@ const DrugReturnModal: React.FC<Props> = ({
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchItems();
-    fetchPharmacists();
-  }, [admissionId]);
 
-  const fetchItems = async () => {
+  const fetchItems = useCallback(async () => {
     setLoading(true);
     // Join through pharmacy_dispensing to filter by admission
     const { data } = await (supabase as any)
@@ -99,9 +95,9 @@ const DrugReturnModal: React.FC<Props> = ({
       .map((i: any) => ({ ...i, drug_schedule: i.drug_master?.drug_schedule || null }));
     setItems(unreturned);
     setLoading(false);
-  };
+  }, [admissionId, hospitalId]);
 
-  const fetchPharmacists = async () => {
+  const fetchPharmacists = useCallback(async () => {
     // app_role enum has no senior_pharmacist/chief_pharmacist value — querying for them
     // throws (invalid enum literal), which silently emptied this dropdown.
     const { data, error } = await (supabase as any)
@@ -111,7 +107,12 @@ const DrugReturnModal: React.FC<Props> = ({
       .in("role", ["pharmacist", "hospital_admin"]);
     if (error) console.error("fetchPharmacists failed:", error.message);
     setPharmacistUsers(data || []);
-  };
+  }, [hospitalId]);
+
+  useEffect(() => {
+    fetchItems();
+    fetchPharmacists();
+  }, [admissionId, fetchItems, fetchPharmacists]);
 
   const updateLine = (itemId: string, patch: Partial<ReturnLine>) => {
     setLines(prev => ({

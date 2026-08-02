@@ -103,6 +103,11 @@ const IntimationAlert: React.FC<{ admittedAt: string | null; isEmergency: boolea
 };
 
 const PreAuthQueue: React.FC<Props> = ({ initialAdmission, onAdmissionHandled }) => {
+  // Latest-ref: the parent passes a fresh `onAdmissionHandled` every render, and
+  // the effect below must fire only when a new admission arrives.
+  const onAdmissionHandledRef = useRef(onAdmissionHandled);
+  useEffect(() => { onAdmissionHandledRef.current = onAdmissionHandled; });
+
   const [preAuths, setPreAuths] = useState<PreAuth[]>([]);
   const [selected, setSelected] = useState<PreAuth | null>(null);
   const [tpas, setTpas] = useState<TPAConfig[]>([]);
@@ -365,7 +370,7 @@ const PreAuthQueue: React.FC<Props> = ({ initialAdmission, onAdmissionHandled })
       supabase.from("admissions").select("admitted_at").eq("id", initialAdmission.admission_id).maybeSingle()
         .then(({ data }) => { if (data) setAdmittedAt(data.admitted_at); });
     }
-    onAdmissionHandled?.();
+    onAdmissionHandledRef.current?.();
   }, [initialAdmission]); // only re-runs when the incoming admission object changes
 
   // Update selectedTpaConfig when TPA selection changes

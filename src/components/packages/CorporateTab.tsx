@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,17 +33,18 @@ export default function CorporateTab() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState({ company_name: "", contact_person: "", contact_phone: "", contact_email: "", gstin: "", credit_days: 30, negotiated_rate_percent: 0 });
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const { data } = await supabase.from("corporate_accounts").select("*").eq("hospital_id", hospitalId).eq("is_active", true).order("company_name");
     setAccounts(data || []);
-  };
+  }, [hospitalId]);
 
-  const loadPackages = async () => {
+  const loadPackages = useCallback(async () => {
     const { data } = await supabase.from("health_packages").select("id, package_name, price").eq("hospital_id", hospitalId).eq("is_active", true).order("package_name");
     setPackages(data || []);
-  };
+  }, [hospitalId]);
 
-  useEffect(() => { load(); loadPackages(); }, []);
+  useEffect(() => { load(); loadPackages(); }, [load, loadPackages]);
+
 
   const save = async () => {
     if (!form.company_name.trim()) { toast.error("Company name required"); return; }

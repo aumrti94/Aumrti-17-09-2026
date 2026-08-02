@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,9 +18,8 @@ const ReferralPatternAnalyser: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [paretoPercent, setParetoPercent] = useState(0);
 
-  useEffect(() => { analyse(); }, []);
 
-  const analyse = async () => {
+  const analyse = useCallback(async () => {
     setLoading(true);
     // Get referral acquisition data from last 90 days
     const { data: acquisitions } = await supabase
@@ -58,7 +57,9 @@ const ReferralPatternAnalyser: React.FC = () => {
 
     setInactiveReferrers(inactive || []);
     setLoading(false);
-  };
+  }, [hospitalId]);
+
+  useEffect(() => { analyse(); }, [analyse]);
 
   const reEngage = (doc: any) => {
     if (!doc.phone) { toast({ title: "No phone number", variant: "destructive" }); return; }

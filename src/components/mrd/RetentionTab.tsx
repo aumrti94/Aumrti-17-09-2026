@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -14,16 +14,17 @@ const RetentionTab: React.FC<Props> = ({ hospitalId, userId }) => {
   const [schedules, setSchedules] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => { if (hospitalId) fetchSchedules(); }, [hospitalId]);
 
-  const fetchSchedules = async () => {
+  const fetchSchedules = useCallback(async () => {
     if (!hospitalId) return;
     setLoading(true);
     const { data, error } = await (supabase as any).from("retention_schedules").select("*, patients(full_name, uhid)").eq("hospital_id", hospitalId).eq("is_destroyed", false).order("retain_until", { ascending: true }).limit(100);
     if (error) toast.error(error.message);
     setSchedules(data || []);
     setLoading(false);
-  };
+  }, [hospitalId]);
+
+  useEffect(() => { if (hospitalId) fetchSchedules(); }, [fetchSchedules, hospitalId]);
 
   const getRetentionStatus = (retainUntil: string) => {
     const now = new Date();

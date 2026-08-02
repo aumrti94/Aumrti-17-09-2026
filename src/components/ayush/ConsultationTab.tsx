@@ -165,21 +165,22 @@ export default function ConsultationTab({ system, showNew, onShowNewDone }: Prop
 
   const selectedPatient = selectedToken?.patient || null;
 
-  useEffect(() => {
-    if (selectedPatient) loadRecentEncounters();
-  }, [selectedPatient]);
 
   const loadDrugs = async () => {
     const { data } = await supabase.from("ayush_drug_master").select("*").eq("is_active", true).order("drug_name");
     if (data) setDrugs(data);
   };
 
-  const loadRecentEncounters = async () => {
+  const loadRecentEncounters = useCallback(async () => {
     if (!selectedPatient) return;
     const { data } = await supabase.from("ayush_encounters").select("*")
       .eq("patient_id", selectedPatient.id).order("encounter_date", { ascending: false }).limit(10);
     if (data) setRecentEncounters(data);
-  };
+  }, [selectedPatient]);
+
+  useEffect(() => {
+    if (selectedPatient) loadRecentEncounters();
+  }, [loadRecentEncounters, selectedPatient]);
 
   const addDrug = () => {
     setPrescription([...prescription, { drug_name: "", formulation_type: "", dose: "", anupana: "", frequency: "Twice daily", duration: "15 days" }]);

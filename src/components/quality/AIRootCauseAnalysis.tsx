@@ -129,7 +129,7 @@ Conduct a thorough RCA. Respond ONLY with this exact JSON structure:
       toast({ title: "RCA failed", description: err.message, variant: "destructive" });
     }
     setLoading(false);
-  }, [incident, hospitalId, extraContext]);
+  }, [incident, hospitalId, extraContext, toast]);
 
   if (!__aiOn) return null; // AI master or ai_rca feature disabled
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -241,7 +241,14 @@ export default function HospitalDetailPage() {
   // selected value (no "Keep current" placeholder). Re-sync whenever the underlying
   // subscription changes (initial load, or after a save + refetch); the deps stay
   // stable while the admin is mid-edit, so an in-progress selection is never clobbered.
+  // Read `data` through a ref so this stays keyed on the individual subscription
+  // fields below — depending on the object would re-seed the form on every
+  // refetch and clobber an in-progress edit, which the comment above forbids.
+  const dataRef = useRef(data);
+  useEffect(() => { dataRef.current = data; });
+
   useEffect(() => {
+    const data = dataRef.current;
     if (!data) return;
     if (data.subscription) {
       setSelPlan(data.subscription.plan_id || "");

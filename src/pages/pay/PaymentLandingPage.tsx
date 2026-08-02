@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -25,12 +25,8 @@ const PaymentLandingPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    if (!token) return;
-    loadLink();
-  }, [token]);
 
-  const loadLink = async () => {
+  const loadLink = useCallback(async () => {
     const { data, error: err } = await supabase
       .from("payment_links" as any)
       .select("*, bills(bill_number, hospital_id, hospitals(name, logo_url)), patients(full_name), razorpay_link_url")
@@ -64,7 +60,12 @@ const PaymentLandingPage: React.FC = () => {
       razorpay_link_url: d.razorpay_link_url || null,
     });
     setLoading(false);
-  };
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+    loadLink();
+  }, [loadLink, token]);
 
   const handlePay = async () => {
     if (!link) return;

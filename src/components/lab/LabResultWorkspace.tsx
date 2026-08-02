@@ -721,21 +721,30 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
   // never sits with all-'reported' items while still not 'completed' unless auto-verify
   // put it there. Guarded by a ref so it fires at most once per order.
   const autoCompletedRef = React.useRef(false);
+
+  // The body is held in a ref that is refreshed every render, so the effect below
+  // can trigger it while depending only on what should actually re-trigger the
+  // check. This effect writes to the DB and releases a report — re-running it
+  // because `onRefresh` or `finalizeReleasedOrder` got a new identity would mean
+  // a duplicate release.
+  const autoCompleteRunRef = React.useRef<() => Promise<void>>();
+  autoCompleteRunRef.current = async () => {
+    await supabase.from("lab_orders").update({ status: "completed" }).eq("id", order.id);
+    await finalizeReleasedOrder();
+    if (labHospitalId) {
+      logNABHEvidence(labHospitalId, "COP.6", `Order ${orderBarcode || order.id} auto-completed — all items auto-verified`, "compliant");
+    }
+    setAutoRunAnomaly(true);
+    onRefresh();
+    toast({ title: "🤖 Order auto-verified & released", description: "All results were within range and passed auto-verification rules." });
+  };
+
   useEffect(() => {
     if (autoCompletedRef.current) return;
     if (order.status === "completed" || items.length === 0) return;
     if (!items.every(i => i.status === "reported" && i.verification_method === "auto")) return;
     autoCompletedRef.current = true;
-    (async () => {
-      await supabase.from("lab_orders").update({ status: "completed" }).eq("id", order.id);
-      await finalizeReleasedOrder();
-      if (labHospitalId) {
-        logNABHEvidence(labHospitalId, "COP.6", `Order ${orderBarcode || order.id} auto-completed — all items auto-verified`, "compliant");
-      }
-      setAutoRunAnomaly(true);
-      onRefresh();
-      toast({ title: "🤖 Order auto-verified & released", description: "All results were within range and passed auto-verification rules." });
-    })();
+    void autoCompleteRunRef.current?.();
   }, [items, order.status]);
 
   const handlePathologistValidate = async () => {
@@ -877,9 +886,17 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
     i.test_name?.toLowerCase().includes("culture")
   );
 
+  // Read through a ref so this stays keyed on the item's id: it seeds the editable
+  // antibiogram fields when a different micro item is opened, and must not
+  // overwrite the technician's in-progress entry every time `items` is refetched
+  // and `find` returns a new object.
+  const microItemRef = React.useRef(microItem);
+  React.useEffect(() => { microItemRef.current = microItem; });
+
   // Load an existing antibiogram (Phase 6): prefer the structured lab_results row,
   // fall back to the legacy lab_order_items.notes JSON for historical entries.
   useEffect(() => {
+    const microItem = microItemRef.current;
     if (!microItem) return;
     (async () => {
       const { data: lr } = await (supabase as any)

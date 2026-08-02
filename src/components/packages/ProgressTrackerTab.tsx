@@ -23,7 +23,7 @@ export default function ProgressTrackerTab() {
       .order("created_at", { ascending: false })
       .limit(50)
       .then(({ data }) => setBookings(data || []));
-  }, []);
+  }, [hospitalId]);
 
   const generateReport = async (booking: any) => {
     setGenerating(booking.id);

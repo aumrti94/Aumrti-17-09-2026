@@ -23,7 +23,7 @@ export function useCountUp(target: number, duration = 800) {
 
     rafRef.current = requestAnimationFrame(animate);
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
-  }, [target, duration]);
+  }, [target, duration, value]);
 
   return value;
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
@@ -73,11 +73,8 @@ export default function AyushPage() {
     resolveDept();
   }, [hospitalId, system]);
 
-  useEffect(() => {
-    loadKPIs();
-  }, [system]);
 
-  const loadKPIs = async () => {
+  const loadKPIs = useCallback(async () => {
     const today = new Date().toISOString().split("T")[0];
     const [consults, pk, active] = await Promise.all([
       supabase.from("ayush_encounters").select("id", { count: "exact", head: true })
@@ -92,7 +89,11 @@ export default function AyushPage() {
       todayPK: pk.count || 0,
       activePatients: active.count || 0,
     });
-  };
+  }, [system]);
+
+  useEffect(() => {
+    loadKPIs();
+  }, [loadKPIs]);
 
   return (
     <div className="flex flex-col" style={{ height: "calc(100vh - 56px)" }}>

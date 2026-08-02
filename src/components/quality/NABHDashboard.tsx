@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import { cn } from "@/lib/utils";
@@ -64,11 +64,8 @@ const NABHDashboard: React.FC = () => {
   const [raisingCapaFor, setRaisingCapaFor] = useState<string | null>(null);
   const { hospitalId } = useHospitalId();
 
-  useEffect(() => {
-    if (hospitalId) loadData();
-  }, [hospitalId]);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     const [criteriaRes, auditsRes] = await Promise.all([
       supabase.from("nabh_criteria").select("*").eq("hospital_id", hospitalId).order("chapter_code"),
       supabase.from("audit_records").select("*").eq("hospital_id", hospitalId).eq("status", "scheduled").order("scheduled_date").limit(3),
@@ -76,7 +73,11 @@ const NABHDashboard: React.FC = () => {
     setCriteria((criteriaRes.data as any) || []);
     setAudits((auditsRes.data as any) || []);
     setLoading(false);
-  };
+  }, [hospitalId]);
+
+  useEffect(() => {
+    if (hospitalId) loadData();
+  }, [loadData, hospitalId]);
 
   // Chapter aggregation
   const chapters = criteria.reduce<Record<string, { code: string; name: string; scores: number[]; count: number }>>((acc, c) => {

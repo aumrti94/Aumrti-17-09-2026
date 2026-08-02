@@ -89,6 +89,10 @@ interface LangSetting {
   enabled: boolean;
 }
 
+// Module scope: derived purely from the two constants above, so hoisting keeps it
+// out of the hook dependency arrays and stops it being rebuilt every render.
+const allKeys = [...FEATURES.map(f => f.key), ...MODULE_KEYS.map(m => m.key)];
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const SettingsAILanguagePage: React.FC = () => {
@@ -99,7 +103,6 @@ const SettingsAILanguagePage: React.FC = () => {
   const [loading,   setLoading]   = useState(true);
   const [saving,    setSaving]    = useState(false);
 
-  const allKeys = [...FEATURES.map(f => f.key), ...MODULE_KEYS.map(m => m.key)];
 
   useEffect(() => {
     if (!hospitalId) return;

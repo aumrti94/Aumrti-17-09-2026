@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { autoPostJournalEntry } from "@/lib/accounting";
 import { Button } from "@/components/ui/button";
@@ -60,9 +60,8 @@ const TreatmentPlanTab: React.FC<TreatmentPlanTabProps> = ({ patientId, hospital
     tooth_number: "", procedure: "", icd_10_code: "", priority: "soon", cost: 0, sessions: 1, status: "planned",
   });
 
-  useEffect(() => { loadPlan(); }, [patientId]);
 
-  const loadPlan = async () => {
+  const loadPlan = useCallback(async () => {
     const { data } = await supabase
       .from("dental_treatment_plans")
       .select("*")
@@ -76,7 +75,9 @@ const TreatmentPlanTab: React.FC<TreatmentPlanTabProps> = ({ patientId, hospital
       if (Array.isArray(planItems)) setItems(planItems);
       setConsent(data[0].patient_consent || false);
     }
-  };
+  }, [patientId, hospitalId]);
+
+  useEffect(() => { loadPlan(); }, [loadPlan]);
 
   const addItem = () => {
     if (!form.procedure) return;

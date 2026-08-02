@@ -87,12 +87,25 @@ const DiagnosisPanel: React.FC<Props> = ({ encounterId, hospitalId, patientId, u
     })();
   }, [encounterId]);
 
-  // Flush pending diagnoses when encounterId becomes available
+  // Flush pending diagnoses when encounterId becomes available.
+  //
+  // The queue and the writer are read through a ref: this effect CLEARS
+  // pendingDiagnoses, so depending on it would re-enter on its own write and
+  // could save the same diagnosis twice.
+  // Left empty at first render: `saveDiagnosis` is declared further down, so
+  // naming it in the initialiser would be a use-before-declaration. The updater
+  // effect below is declared first, so it always populates this before the
+  // consumer effect runs.
+  const flushRef = useRef<{ pendingDiagnoses: typeof pendingDiagnoses; saveDiagnosis: typeof saveDiagnosis } | null>(null);
+  useEffect(() => { flushRef.current = { pendingDiagnoses, saveDiagnosis }; });
+
   useEffect(() => {
-    if (!encounterId || !hospitalId || pendingDiagnoses.length === 0) return;
+    if (!encounterId || !hospitalId) return;
+    const flush = flushRef.current;
+    if (!flush || flush.pendingDiagnoses.length === 0) return;
     (async () => {
-      for (const d of pendingDiagnoses) {
-        await saveDiagnosis(d, encounterId);
+      for (const d of flush.pendingDiagnoses) {
+        await flush.saveDiagnosis(d, encounterId);
       }
       setPendingDiagnoses([]);
     })();

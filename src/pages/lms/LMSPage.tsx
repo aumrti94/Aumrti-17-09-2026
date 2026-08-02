@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { logNABHEvidence } from '@/lib/nabh-evidence';
@@ -143,9 +143,8 @@ export default function LMSPage() {
     explanation: '',
   });
 
-  useEffect(() => { loadData(); }, []);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
     const userId = user?.id;
@@ -176,7 +175,9 @@ export default function LMSPage() {
     setEnrollments(enrollRes.data || []);
     setCertificates((certRes.data || []) as Certificate[]);
     setLoading(false);
-  };
+  }, [hospitalId]);
+
+  useEffect(() => { loadData(); }, [loadData]);
 
   // Derived data for my view
   const myEnrollments = useMemo(() => {

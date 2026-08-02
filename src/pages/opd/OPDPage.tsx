@@ -79,7 +79,7 @@ const OPDPage: React.FC = () => {
     }
     setTokens((data as unknown as OpdToken[]) || []);
     setLoading(false);
-  }, []);
+  }, [toast]);
 
   const handleDateChange = useCallback((date: string) => {
     setSelectedDate(date);

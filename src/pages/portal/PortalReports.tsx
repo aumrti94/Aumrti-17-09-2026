@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { PortalSession } from "./PortalLogin";
 import { ChevronDown, ChevronUp, Download } from "lucide-react";
@@ -77,8 +77,13 @@ const LabTab: React.FC<{ session: PortalSession }> = ({ session }) => {
   }, [session]);
 
   // Load items on expand
+  // Read the cache through a ref: this effect WRITES items, so depending on it
+  // would re-run the effect on its own write and loop.
+  const itemsRef = useRef(items);
+  useEffect(() => { itemsRef.current = items; });
+
   useEffect(() => {
-    if (!expanded || items[expanded]) return;
+    if (!expanded || itemsRef.current[expanded]) return;
     (async () => {
       const { data } = await supabase
         .from("lab_order_items")
@@ -98,7 +103,7 @@ const LabTab: React.FC<{ session: PortalSession }> = ({ session }) => {
       );
       setItems((prev) => ({ ...prev, [expanded]: enriched }));
     })();
-  }, [expanded]);
+  }, [expanded, session.hospitalId]);
 
   const getStatusBadge = (status: string) => {
     if (status === "completed" || status === "validated" || status === "reported")

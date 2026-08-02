@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import SettingsPageWrapper from "@/components/settings/SettingsPageWrapper";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -32,7 +32,7 @@ const SettingsOTChecklistPage: React.FC = () => {
   const [newItem, setNewItem] = useState("");
   const [bulkPhase, setBulkPhase] = useState<Phase | null>(null);
 
-  const fetchCustomItems = async () => {
+  const fetchCustomItems = useCallback(async () => {
     if (!hospitalId) return;
     const { data } = await (supabase as any)
       .from("ot_checklist_custom_items")
@@ -45,9 +45,9 @@ const SettingsOTChecklistPage: React.FC = () => {
       if (grouped[row.phase as Phase]) grouped[row.phase as Phase].push({ id: row.id, item_text: row.item_text });
     });
     setCustomItems(grouped);
-  };
+  }, [hospitalId]);
 
-  useEffect(() => { fetchCustomItems(); }, [hospitalId]);
+  useEffect(() => { fetchCustomItems(); }, [fetchCustomItems]);
 
   const addCustom = async (phase: Phase) => {
     if (!newItem.trim() || !hospitalId) return;

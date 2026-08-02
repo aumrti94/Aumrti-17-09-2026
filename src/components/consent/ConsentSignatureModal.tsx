@@ -136,7 +136,7 @@ export default function ConsentSignatureModal({
     } finally {
       setSaving(false);
     }
-  }, [template, canSign, patientSig, witnessSig, witnessName, admissionId, edVisitId, patientId, hospitalId, isLast, onAllSigned]);
+  }, [template, canSign, patientSig, witnessSig, witnessName, admissionId, edVisitId, patientId, hospitalId, isLast, onAllSigned, patientName, toast]);
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>

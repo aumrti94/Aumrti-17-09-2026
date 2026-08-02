@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
@@ -213,9 +213,12 @@ const NABHMatrixPage: React.FC = () => {
 
   useEffect(() => { load(); }, [load]);
 
-  // Seed the search box from ?filter=AAC.1 query param (used by NABHBadge links)
+  // Seed the search box from ?filter=AAC.1 query param (used by NABHBadge links).
+  // Captured once so later URL changes cannot overwrite what the user has typed —
+  // the ref keeps this a genuine mount-only read without depending on searchParams.
+  const initialFilterParamRef = useRef(searchParams.get("filter"));
   useEffect(() => {
-    const filterParam = searchParams.get("filter");
+    const filterParam = initialFilterParamRef.current;
     if (filterParam) setSearch(decodeURIComponent(filterParam));
   }, []); // intentionally runs once on mount
 

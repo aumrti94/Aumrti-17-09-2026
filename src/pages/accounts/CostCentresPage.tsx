@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -52,10 +52,6 @@ const CostCentresPage: React.FC = () => {
 
   const dateRange = getDateRange(period);
 
-  useEffect(() => {
-    if (!hospitalId) return;
-    loadData();
-  }, [hospitalId, period]);
 
   useEffect(() => {
     if (!hospitalId) return;
@@ -69,7 +65,7 @@ const CostCentresPage: React.FC = () => {
     setBudgets(saved);
   }, [departments, hospitalId]);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     if (!hospitalId) return;
     setLoading(true);
     const [{ data: depts }, { data: items }] = await Promise.all([
@@ -86,7 +82,12 @@ const CostCentresPage: React.FC = () => {
     setDepartments(depts || []);
     setLineItems(items || []);
     setLoading(false);
-  };
+  }, [hospitalId, dateRange.end, dateRange.start]);
+
+  useEffect(() => {
+    if (!hospitalId) return;
+    loadData();
+  }, [loadData, hospitalId, period]);
 
   const spendByDept = useMemo(() => {
     const map: Record<string, number> = {};

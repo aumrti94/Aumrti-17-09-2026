@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -48,7 +48,7 @@ const AEFIReportingTab: React.FC<Props> = ({ hospitalId }) => {
     action_taken: "",
   });
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const { data } = await (supabase as any)
       .from("vaccination_records")
       .select("id, patients(full_name, phone), vaccine_name, vaccination_date, aefi_description, aefi_severity, created_at")
@@ -57,9 +57,9 @@ const AEFIReportingTab: React.FC<Props> = ({ hospitalId }) => {
       .order("created_at", { ascending: false })
       .limit(100);
     setRecords(data || []);
-  };
+  }, [hospitalId]);
 
-  useEffect(() => { load(); }, [hospitalId]);
+  useEffect(() => { load(); }, [load]);
 
   const save = async () => {
     if (!form.patient_name || !form.vaccine_name || !form.aefi_description) {

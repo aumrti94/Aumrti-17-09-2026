@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,14 +24,15 @@ const CampsTab: React.FC<Props> = ({ hospitalId }) => {
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => { loadCamps(); }, []);
 
-  const loadCamps = async () => {
+  const loadCamps = useCallback(async () => {
     const { data } = await supabase.from("vaccine_camps")
       .select("*").eq("hospital_id", hospitalId)
       .order("camp_date", { ascending: false }).limit(50);
     setCamps(data || []);
-  };
+  }, [hospitalId]);
+
+  useEffect(() => { loadCamps(); }, [loadCamps]);
 
   const handleSave = async () => {
     if (!name || !campDate || !location) { toast.error("Fill required fields"); return; }

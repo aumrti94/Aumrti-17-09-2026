@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -150,8 +150,16 @@ const AppealLetterModal: React.FC<AppealLetterModalProps> = ({
   const { toast } = useToast();
   const canUseAI = planTier !== "manual";
 
+  // Latest-ref for `claim`: this resets the form when the modal opens for a
+  // DIFFERENT claim, keyed on its id. Depending on the object itself would wipe
+  // the user's edits on any refetch that returned an equal object.
+  const claimRef = useRef(claim);
+  useEffect(() => { claimRef.current = claim; });
+  const claimId = claim?.id;
+
   // Reset on open
   useEffect(() => {
+    const claim = claimRef.current;
     if (open && claim) {
       setStep(1);
       setLetter("");
@@ -164,7 +172,7 @@ const AppealLetterModal: React.FC<AppealLetterModalProps> = ({
       // Enrich from DB
       fetchEnrichedData(claim);
     }
-  }, [open, claim?.id]);
+  }, [open, claimId]);
 
   const fetchEnrichedData = async (c: AppealClaim) => {
     try {

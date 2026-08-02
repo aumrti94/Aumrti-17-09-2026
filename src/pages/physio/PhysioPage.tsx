@@ -115,7 +115,7 @@ const PhysioPage: React.FC = () => {
     setSessionsToday(s.count || 0);
     setPendingReferrals(p.count || 0);
     setEquipInUse(e.count || 0);
-  }, []);
+  }, [hospitalId]);
 
   const loadReferrals = useCallback(async () => {
     let q = supabase.from("physio_referrals").select("*").eq("hospital_id", hospitalId).order("created_at", { ascending: false });
@@ -136,7 +136,7 @@ const PhysioPage: React.FC = () => {
     } else {
       setActiveRefList([]);
     }
-  }, [refFilter]);
+  }, [refFilter, hospitalId]);
 
   const loadRefSessions = useCallback(async (refId: string) => {
     const { data } = await supabase.from("physio_sessions").select("*").eq("referral_id", refId).order("session_date", { ascending: false });
@@ -147,35 +147,35 @@ const PhysioPage: React.FC = () => {
     const today = format(new Date(), "yyyy-MM-dd");
     const { data } = await supabase.from("physio_sessions").select("*, patients(full_name, uhid)").eq("hospital_id", hospitalId).eq("session_date", today).order("session_time");
     setSessions(data || []);
-  }, []);
+  }, [hospitalId]);
 
   const loadOutcomes = useCallback(async () => {
     const { data } = await supabase.from("outcome_scores").select("*").eq("hospital_id", hospitalId).order("scored_at", { ascending: false }).limit(100);
     setOutcomes(data || []);
-  }, []);
+  }, [hospitalId]);
 
   const loadEquipment = useCallback(async () => {
     const { data } = await supabase.from("physio_equipment_bookings").select("*").eq("hospital_id", hospitalId).order("start_time", { ascending: false }).limit(50);
     setEquipment(data || []);
-  }, []);
+  }, [hospitalId]);
 
   const loadHEP = useCallback(async () => {
     const { data } = await supabase.from("hep_plans").select("*").eq("hospital_id", hospitalId).eq("is_active", true).order("created_at", { ascending: false }).limit(50);
     setHepPlans(data || []);
-  }, []);
+  }, [hospitalId]);
 
-  useEffect(() => { loadKPIs(); loadReferrals(); }, []);
+  useEffect(() => { loadKPIs(); loadReferrals(); }, [loadKPIs, loadReferrals]);
   useEffect(() => {
     if (tab === "referrals") loadReferrals();
     else if (tab === "sessions") loadSessions();
     else if (tab === "outcomes") loadOutcomes();
     else if (tab === "equipment") loadEquipment();
     else if (tab === "hep") { loadHEP(); loadReferrals(); }
-  }, [tab, refFilter]);
+  }, [tab, refFilter, loadEquipment, loadHEP, loadOutcomes, loadReferrals, loadSessions]);
 
   useEffect(() => {
     if (selectedRef) loadRefSessions(selectedRef.id);
-  }, [selectedRef]);
+  }, [selectedRef, loadRefSessions]);
 
   // Live: new referrals and session updates reflect without a refresh.
   useRealtimeRefetch({

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { X, Search, Plus, Trash2, Package } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { generateBillNumber } from "@/hooks/useBillNumber";
@@ -55,15 +55,15 @@ const EndCaseModal: React.FC<Props> = ({ schedule, onClose, onEnded }) => {
   const [noImplantConfirmed, setNoImplantConfirmed] = useState(false);
   const [implants, setImplants] = useState<OTImplantRow[]>([]);
 
-  const fetchImplants = async () => {
+  const fetchImplants = useCallback(async () => {
     const { data } = await (supabase as any)
       .from("ot_implants")
       .select("id, item_name, manufacturer, lot_number, expiry_date, unit_cost, quantity, cdsco_registration_number, billed, inventory_item_id, stock_deducted")
       .eq("schedule_id", schedule.id)
       .order("created_at");
     setImplants(data || []);
-  };
-  useEffect(() => { fetchImplants(); }, [schedule.id]);
+  }, [schedule.id]);
+  useEffect(() => { fetchImplants(); }, [fetchImplants]);
 
   // Implant add form
   const [draft, setDraft] = useState<DraftImplant>({ ...BLANK_DRAFT });

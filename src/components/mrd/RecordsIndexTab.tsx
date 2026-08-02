@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
@@ -39,9 +39,8 @@ const RecordsIndexTab: React.FC<Props> = ({ hospitalId }) => {
   const [summaryText, setSummaryText] = useState<string>("");
   const [summaryLoading, setSummaryLoading] = useState(false);
 
-  useEffect(() => { if (hospitalId) fetchRecords(); }, [typeFilter, statusFilter, hospitalId]);
 
-  const fetchRecords = async () => {
+  const fetchRecords = useCallback(async () => {
     if (!hospitalId) return;
     setLoading(true);
     let query = (supabase as any).from("medical_records").select("*, patients(full_name, uhid)").eq("hospital_id", hospitalId).order("created_at", { ascending: false }).limit(50);
@@ -51,7 +50,9 @@ const RecordsIndexTab: React.FC<Props> = ({ hospitalId }) => {
     if (error) { toast.error(error.message); setLoading(false); return; }
     setRecords(data || []);
     setLoading(false);
-  };
+  }, [typeFilter, statusFilter, hospitalId]);
+
+  useEffect(() => { if (hospitalId) fetchRecords(); }, [fetchRecords, hospitalId]);
 
   const filtered = records.filter((r) => {
     if (!search) return true;

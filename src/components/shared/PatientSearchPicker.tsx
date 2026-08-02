@@ -41,7 +41,7 @@ const PatientSearchPicker: React.FC<Props> = ({
       });
     }
     if (!value) setDisplayName("");
-  }, [value]);
+  }, [value, displayName]);
 
   useEffect(() => {
     if (selectedLabel) setDisplayName(selectedLabel);

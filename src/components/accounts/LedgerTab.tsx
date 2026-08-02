@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
@@ -26,12 +26,8 @@ const LedgerTab: React.FC<Props> = ({ hospitalId }) => {
   const [selectedAccount, setSelectedAccount] = useState<any>(null);
   const [lineItems, setLineItems] = useState<any[]>([]);
 
-  useEffect(() => {
-    if (!hospitalId) return;
-    loadAccounts();
-  }, [hospitalId]);
 
-  const loadAccounts = async () => {
+  const loadAccounts = useCallback(async () => {
     const { data } = await (supabase as any)
       .from("chart_of_accounts")
       .select("*")
@@ -39,7 +35,12 @@ const LedgerTab: React.FC<Props> = ({ hospitalId }) => {
       .eq("is_active", true)
       .order("code");
     setAccounts(data || []);
-  };
+  }, [hospitalId]);
+
+  useEffect(() => {
+    if (!hospitalId) return;
+    loadAccounts();
+  }, [loadAccounts, hospitalId]);
 
   const loadLedger = async (account: any) => {
     setSelectedAccount(account);

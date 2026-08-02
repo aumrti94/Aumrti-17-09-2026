@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useHospitalId } from "@/hooks/useHospitalId";
@@ -116,14 +116,13 @@ const ClaimsStatus: React.FC<ClaimsStatusProps> = ({ initialFilter = "all" }) =>
   const { toast } = useToast();
   const { hospitalId } = useHospitalId();
 
-  useEffect(() => { loadData(); loadDenialStats(); }, [filter]);
   useEffect(() => {
     if (!hospitalId) return;
     (supabase as any).from("hospital_insurance_settings").select("plan_tier").eq("hospital_id", hospitalId).maybeSingle()
       .then(({ data }: any) => { if (data?.plan_tier) setPlanTier(data.plan_tier); });
   }, [hospitalId]);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     let q = supabase.from("insurance_claims").select("*").order("created_at", { ascending: false });
     if (filter !== "all") q = q.eq("status", filter);
@@ -164,9 +163,9 @@ const ClaimsStatus: React.FC<ClaimsStatusProps> = ({ initialFilter = "all" }) =>
       };
     }));
     setLoading(false);
-  };
+  }, [filter]);
 
-  const loadDenialStats = async () => {
+  const loadDenialStats = useCallback(async () => {
     const { data: logs } = await supabase.from("denial_logs").select("category, denial_reason, claim_id");
     if (!logs?.length) return;
 
@@ -186,7 +185,9 @@ const ClaimsStatus: React.FC<ClaimsStatusProps> = ({ initialFilter = "all" }) =>
       });
       setTopDenialsByTPA(Object.entries(tpaReasons).map(([tpa, reasons]) => ({ tpa, reasons: reasons.slice(0, 3) })));
     }
-  };
+  }, []);
+
+  useEffect(() => { loadData(); loadDenialStats(); }, [loadData, loadDenialStats]);
 
   const printTPAReceipt = (c: Claim) => {
     if (!hospitalId) return;

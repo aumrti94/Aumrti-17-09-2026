@@ -84,7 +84,9 @@ const TrialBalanceTab: React.FC<Props> = ({ hospitalId }) => {
     },
   });
 
-  const rows = data || [];
+  // Memoised: `data || []` produced a fresh array on every render while data was
+  // undefined, which invalidated the useMemo below each time.
+  const rows = useMemo(() => data || [], [data]);
   const grouped = useMemo(() => {
     const g: Record<string, TBRow[]> = {};
     for (const r of rows) {

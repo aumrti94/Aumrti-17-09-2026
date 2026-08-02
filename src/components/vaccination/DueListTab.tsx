@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -23,9 +23,8 @@ const DueListTab: React.FC<Props> = ({ hospitalId }) => {
   const [loading, setLoading] = useState(false);
   const [expandedPatient, setExpandedPatient] = useState<string | null>(null);
 
-  useEffect(() => { loadDue(); }, [filter]);
 
-  const loadDue = async () => {
+  const loadDue = useCallback(async () => {
     setLoading(true);
     const today = new Date().toISOString().split("T")[0];
     let q = supabase.from("vaccination_due")
@@ -48,7 +47,9 @@ const DueListTab: React.FC<Props> = ({ hospitalId }) => {
     if (error) { console.error(error); toast.error("Failed to load due list"); }
     setItems(data || []);
     setLoading(false);
-  };
+  }, [filter, hospitalId]);
+
+  useEffect(() => { loadDue(); }, [loadDue]);
 
   const getDaysOverdue = (dueDate: string) => {
     const diff = Math.floor((Date.now() - new Date(dueDate).getTime()) / 86400000);

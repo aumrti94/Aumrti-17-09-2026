@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -73,14 +73,8 @@ const PreAuthQualityGate: React.FC<Props> = ({ open, onClose, input, onProceed }
   const [overrideAcknowledged, setOverrideAcknowledged] = useState(false);
   const [docCount, setDocCount] = useState(0);
 
-  useEffect(() => {
-    if (open) {
-      setOverrideAcknowledged(false);
-      runChecks();
-    }
-  }, [open]);
 
-  const runChecks = async () => {
+  const runChecks = useCallback(async () => {
     setLoading(true);
     const results: CheckResult[] = [];
 
@@ -307,7 +301,14 @@ const PreAuthQualityGate: React.FC<Props> = ({ open, onClose, input, onProceed }
 
     setChecks(results);
     setLoading(false);
-  };
+  }, [input.admissionId, input.diagnosisCodes, input.estimatedAmount, input.extensionReason, input.firNumber, input.hospitalId, input.intimationSentAt, input.isAccidentCase, input.isExtension, input.mlcNumber, input.notes, input.patientId, input.policyNumber, input.procedureCodes, input.requiredDocuments, input.tpaName]);
+
+  useEffect(() => {
+    if (open) {
+      setOverrideAcknowledged(false);
+      runChecks();
+    }
+  }, [runChecks, open]);
 
   // ── Compute verdict ──────────────────────────────
 

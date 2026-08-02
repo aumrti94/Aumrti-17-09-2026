@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,7 +35,7 @@ const DialysisScheduleTab: React.FC<Props> = ({ showSchedule, onCloseSchedule, o
 
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     const startDate = format(weekStart, "yyyy-MM-dd");
     const endDate = format(addDays(weekStart, 6), "yyyy-MM-dd");
 
@@ -47,9 +47,9 @@ const DialysisScheduleTab: React.FC<Props> = ({ showSchedule, onCloseSchedule, o
     if (mRes.data) setMachines(mRes.data);
     if (sRes.data) setSessions(sRes.data);
     if (pRes.data) setPatients(pRes.data);
-  };
+  }, [weekStart]);
 
-  useEffect(() => { fetchData(); }, [weekStart]);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   const scheduleSession = async () => {
     if (!schedPatient) { toast({ title: "Select a patient", variant: "destructive" }); return; }

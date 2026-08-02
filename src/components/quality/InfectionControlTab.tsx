@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -59,11 +59,8 @@ const InfectionControlTab: React.FC = () => {
   const [haiForm, setHaiForm] = useState({ infection_type: "CAUTI", organism: "", date: new Date().toISOString().split("T")[0], procedure: "", treatment: "yes" });
   const [haiReports, setHaiReports] = useState<HAIReport[]>([]);
 
-  useEffect(() => {
-    if (hospitalId) loadData();
-  }, [hospitalId]);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     if (!hospitalId) return;
     const monthStart = new Date();
     monthStart.setDate(1);
@@ -102,7 +99,11 @@ const InfectionControlTab: React.FC = () => {
       status: h.outcome || "ongoing",
     })));
     setLoading(false);
-  };
+  }, [hospitalId]);
+
+  useEffect(() => {
+    if (hospitalId) loadData();
+  }, [loadData, hospitalId]);
 
   const indicatorByCode = (code: string) => indicators.find((i) => i.indicator_code === code);
   const handHygieneQI = indicatorByCode("hic.hand_hygiene_pct");

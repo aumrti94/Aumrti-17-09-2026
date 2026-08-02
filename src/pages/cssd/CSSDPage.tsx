@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,7 @@ const CSSDPage: React.FC = () => {
   const [showNewCycle, setShowNewCycle] = useState(false);
   const [showIssue, setShowIssue] = useState(false);
 
-  const fetchKpis = async () => {
+  const fetchKpis = useCallback(async () => {
     if (!hospitalId) return;
     const { data: sets } = await supabase.from("instrument_sets").select("status").eq("hospital_id", hospitalId);
     const { data: cycles } = await supabase.from("sterilization_cycles").select("bi_result, status").eq("hospital_id", hospitalId).eq("biological_indicator_used", true);
@@ -36,9 +36,9 @@ const CSSDPage: React.FC = () => {
         pendingBi: cycles?.filter((c: any) => c.bi_result === "pending" && c.status === "in_progress").length || 0,
       });
     }
-  };
+  }, [hospitalId]);
 
-  useEffect(() => { fetchKpis(); }, [hospitalId]);
+  useEffect(() => { fetchKpis(); }, [fetchKpis]);
 
   return (
     <div className="flex flex-col" style={{ height: "calc(100vh - 56px)" }}>

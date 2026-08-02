@@ -115,7 +115,7 @@ const OTPage: React.FC = () => {
     setLoading(false);
   }, [hospitalId, selectedRoomId, selectedDate]);
 
-  useEffect(() => { if (hospitalId) fetchRooms(); }, [hospitalId]);
+  useEffect(() => { if (hospitalId) fetchRooms(); }, [hospitalId, fetchRooms]);
   useEffect(() => { if (hospitalId) fetchSchedules(); }, [hospitalId, selectedRoomId, selectedDate, fetchSchedules]);
 
   // Realtime subscription

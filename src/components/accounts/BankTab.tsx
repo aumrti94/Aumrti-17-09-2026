@@ -73,15 +73,16 @@ const BankTab: React.FC<Props> = ({ hospitalId }) => {
   // Opening balance
   const [openingBalance, setOpeningBalance] = useState<number>(0);
 
+
+  const loadBankAccounts = useCallback(async () => {
+    const { data } = await supabase.from("bank_accounts").select("*").eq("hospital_id", hospitalId!).eq("is_active", true);
+    setBankAccounts(data || []);
+  }, [hospitalId]);
+
   useEffect(() => {
     if (!hospitalId) return;
     loadBankAccounts();
-  }, [hospitalId]);
-
-  const loadBankAccounts = async () => {
-    const { data } = await supabase.from("bank_accounts").select("*").eq("hospital_id", hospitalId!).eq("is_active", true);
-    setBankAccounts(data || []);
-  };
+  }, [loadBankAccounts, hospitalId]);
 
   const loadTransactions = useCallback(async (bankId: string) => {
     setLoading(true);

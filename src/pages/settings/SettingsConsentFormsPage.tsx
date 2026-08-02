@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import SettingsPageWrapper from "@/components/settings/SettingsPageWrapper";
@@ -46,11 +46,8 @@ const SettingsConsentFormsPage: React.FC = () => {
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", consent_type: "treatment", content: "", witness_required: false });
 
-  useEffect(() => {
-    if (hospitalId) loadForms();
-  }, [hospitalId]);
 
-  const loadForms = async () => {
+  const loadForms = useCallback(async () => {
     setLoading(true);
     const { data } = await (supabase as any)
       .from("consent_form_templates")
@@ -59,7 +56,11 @@ const SettingsConsentFormsPage: React.FC = () => {
       .order("sort_order", { ascending: true });
     setForms(data || []);
     setLoading(false);
-  };
+  }, [hospitalId]);
+
+  useEffect(() => {
+    if (hospitalId) loadForms();
+  }, [loadForms, hospitalId]);
 
   const openEdit = (f: ConsentTemplate) => {
     setEditId(f.id);

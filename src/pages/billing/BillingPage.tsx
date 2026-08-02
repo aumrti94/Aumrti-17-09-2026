@@ -193,17 +193,8 @@ const BillingPage: React.FC = () => {
   }, [hospitalId, prevDayISO]);
 
   // Handle discharge billing URL params: /billing?action=new&admission_id=X&type=ipd|daycare
-  useEffect(() => {
-    if (!hospitalId || dischargeBillCreated) return;
-    const action = searchParams.get("action");
-    const admissionId = searchParams.get("admission_id");
-    const billType = searchParams.get("type");
-    if (action === "new" && admissionId && ADMISSION_BILL_TYPES.includes(billType as any)) {
-      createDischargeBill(admissionId);
-    }
-  }, [hospitalId, searchParams, dischargeBillCreated]);
 
-  const createDischargeBill = async (admissionId: string) => {
+  const createDischargeBill = useCallback(async (admissionId: string) => {
     if (!hospitalId) return;
     setDischargeBillCreated(true);
 
@@ -256,7 +247,17 @@ const BillingPage: React.FC = () => {
     setDateFilter("month");
     setSelectedBillId(billId);
     setSearchParams({});
-  };
+  }, [hospitalId, setSearchParams, toast]);
+
+  useEffect(() => {
+    if (!hospitalId || dischargeBillCreated) return;
+    const action = searchParams.get("action");
+    const admissionId = searchParams.get("admission_id");
+    const billType = searchParams.get("type");
+    if (action === "new" && admissionId && ADMISSION_BILL_TYPES.includes(billType as any)) {
+      createDischargeBill(admissionId);
+    }
+  }, [createDischargeBill, dischargeBillCreated, hospitalId, searchParams]);
 
   const fetchBills = useCallback(async () => {
     if (!hospitalId) return;

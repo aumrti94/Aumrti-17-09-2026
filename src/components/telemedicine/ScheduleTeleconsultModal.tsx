@@ -37,7 +37,7 @@ const ScheduleTeleconsultModal: React.FC<Props> = ({ open, onOpenChange, onCreat
     supabase.from("users").select("id, full_name").eq("hospital_id", hospitalId).eq("role", "doctor").then(({ data }) => {
       setDoctors(data || []);
     });
-  }, [open]);
+  }, [open, hospitalId]);
 
   const searchPatients = async (q: string) => {
     setPatientSearch(q);

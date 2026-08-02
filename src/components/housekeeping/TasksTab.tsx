@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,19 +39,19 @@ const TasksTab: React.FC<Props> = ({ hospitalId }) => {
   const [qualityScore, setQualityScore] = useState(3);
   const [notes, setNotes] = useState("");
 
-  const loadTasks = async () => {
+  const loadTasks = useCallback(async () => {
     if (!hospitalId) return;
     let q = supabase.from("housekeeping_tasks").select("*, wards(name), beds(bed_number)").eq("hospital_id", hospitalId).order("created_at", { ascending: false });
     if (wardFilter !== "all") q = q.eq("ward_id", wardFilter);
     const { data } = await q;
     setTasks(data || []);
-  };
+  }, [hospitalId, wardFilter]);
 
   useEffect(() => {
     if (!hospitalId) return;
     loadTasks();
     supabase.from("wards").select("id, name").eq("hospital_id", hospitalId).then(({ data }) => setWards(data || []));
-  }, [hospitalId, wardFilter]);
+  }, [loadTasks, hospitalId]);
 
   const startTask = async (taskId: string) => {
     await supabase.from("housekeeping_tasks").update({ status: "in_progress", started_at: new Date().toISOString() } as any).eq("id", taskId);

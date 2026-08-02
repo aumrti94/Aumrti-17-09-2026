@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -35,16 +35,16 @@ const MaintenanceTab: React.FC<Props> = ({ onRefresh }) => {
   const [saving, setSaving] = useState(false);
   const [schedForm, setSchedForm] = useState({ equipment_id: "", frequency: "monthly", next_due_at: "", checklist: "" });
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const [sRes, eRes] = await Promise.all([
       supabase.from("pm_schedules").select("*, equipment_master(equipment_name, equipment_code, category)").eq("hospital_id", hospitalId).order("next_due_at"),
       supabase.from("equipment_master").select("id, equipment_name, equipment_code, category").eq("hospital_id", hospitalId).eq("is_active", true),
     ]);
     setSchedules(sRes.data || []);
     setEquipment(eRes.data || []);
-  };
+  }, [hospitalId]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   const filtered = schedules.filter((s) => {
     if (filter === "overdue") return s.status === "overdue";

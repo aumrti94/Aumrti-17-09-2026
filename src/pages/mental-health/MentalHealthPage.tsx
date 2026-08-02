@@ -75,7 +75,7 @@ const MentalHealthPage: React.FC = () => {
       .limit(20);
     setPatients(data || []);
     setLoading(false);
-  }, [hospitalId, search]);
+  }, [hospitalId, search, fetchPatients]);
 
   useEffect(() => { if (hospitalId) fetchPatients(); }, [hospitalId, fetchPatients]);
 

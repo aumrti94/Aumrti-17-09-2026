@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -45,13 +45,7 @@ const ClinicalGuidelinePanel: React.FC<Props> = ({
   const [expanded, setExpanded] = useState(true);
   const [acknowledged, setAcknowledged] = useState<string[]>([]);
 
-  useEffect(() => {
-    if (!diagnosis && !icd10Code) return;
-    const t = setTimeout(check, 600);
-    return () => clearTimeout(t);
-  }, [diagnosis, icd10Code]);
-
-  const check = async () => {
+  const check = useCallback(async () => {
     if (!diagnosis && !icd10Code) return;
     setLoading(true);
     const { data } = await supabase.functions.invoke("ai-clinical-guidelines", {
@@ -64,7 +58,13 @@ const ClinicalGuidelinePanel: React.FC<Props> = ({
     });
     setResult(data || null);
     setLoading(false);
-  };
+  }, [diagnosis, icd10Code, hospitalId, patientId, encounterId, encounterData]);
+
+  useEffect(() => {
+    if (!diagnosis && !icd10Code) return;
+    const t = setTimeout(check, 600);
+    return () => clearTimeout(t);
+  }, [diagnosis, icd10Code, check]);
 
   if (loading) {
     return (

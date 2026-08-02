@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -83,11 +83,8 @@ const PayrollTab: React.FC = () => {
   });
   const [showGratuity, setShowGratuity] = useState(false);
 
-  useEffect(() => {
-    if (hospitalId) { loadRuns(); loadStaffOptions(); }
-  }, [selectedMonth, hospitalId]);
 
-  const loadStaffOptions = async () => {
+  const loadStaffOptions = useCallback(async () => {
     if (!hospitalId) return;
     const { data } = await (supabase as any)
       .from("staff_profiles")
@@ -99,9 +96,9 @@ const PayrollTab: React.FC = () => {
       joining_date: s.created_at ? s.created_at.split("T")[0] : null,
       basic_salary: Number(s.basic_salary) || 0,
     })));
-  };
+  }, [hospitalId]);
 
-  const loadRuns = async () => {
+  const loadRuns = useCallback(async () => {
     if (!hospitalId) return;
     const { data } = await (supabase as any)
       .from("payroll_runs")
@@ -109,7 +106,11 @@ const PayrollTab: React.FC = () => {
       .eq("hospital_id", hospitalId)
       .order("created_at", { ascending: false });
     setRuns(data || []);
-  };
+  }, [hospitalId]);
+
+  useEffect(() => {
+    if (hospitalId) { loadRuns(); loadStaffOptions(); }
+  }, [selectedMonth, hospitalId, loadRuns, loadStaffOptions]);
 
   const openRunModal = async () => {
     if (!hospitalId) {

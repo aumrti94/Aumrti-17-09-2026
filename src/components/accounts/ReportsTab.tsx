@@ -79,6 +79,14 @@ const PNL_REVENUE = [
 
 const PNL_OTHER_INCOME = [{ code: "4020", label: "Other Income" }];
 
+// Module scope: depends on nothing in the component, so hoisting keeps it out of
+// every hook's dependency array and stops it being re-allocated each render.
+const TDS_CATEGORIES: Record<string, { section: string; rate: number }> = {
+  professional_fees: { section: "194J", rate: 10 },
+  rent: { section: "194I", rate: 10 },
+  contractors: { section: "194C", rate: 2 },
+};
+
 const PNL_COS = [
   { code: "5010", label: "Pharmacy Purchase - Drugs" },
   { code: "5011", label: "Medical Consumables" },
@@ -212,12 +220,8 @@ const ReportsTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
   const [exporting, setExporting] = useState(false);
   const { toast } = useToast();
 
-  useEffect(() => {
-    if (!hospitalId) return;
-    loadData();
-  }, [hospitalId, dateRange]);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     const [
       { data: accts },
@@ -264,7 +268,12 @@ const ReportsTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
     setJournalEntriesForExport(jeForExport || []);
     setExportLineItems(liForExport || []);
     setLoading(false);
-  };
+  }, [hospitalId, dateRange]);
+
+  useEffect(() => {
+    if (!hospitalId) return;
+    loadData();
+  }, [loadData, hospitalId]);
 
   // ─── Balance helpers ───
   // Two independent maps: `lineItems` (period, entry_date within dateRange) feeds
@@ -454,12 +463,6 @@ Write a 5-point CFO-level financial analysis:
   }), [gstr1Data, dateRange]);
 
   // ─── TDS computed data ───
-  const TDS_CATEGORIES: Record<string, { section: string; rate: number }> = {
-    professional_fees: { section: "194J", rate: 10 },
-    rent: { section: "194I", rate: 10 },
-    contractors: { section: "194C", rate: 2 },
-  };
-
   const tdsData = useMemo(() => {
     return expenseRecords
       .filter((e: any) => TDS_CATEGORIES[e.category])
@@ -675,7 +678,7 @@ ${vouchers}
       toast({ title: "Export failed", description: err.message, variant: "destructive" });
     }
     setExporting(false);
-  }, [includeSales, includeReceipts, includePurchases, includeJournals, tallyBills, tallyPayments, tallyBatches, tallyLedgerMap, journalEntriesForExport, exportLineItems, accounts, hospitalId, dateRange, loadTallyData]);
+  }, [includeSales, includeReceipts, includePurchases, includeJournals, tallyBills, tallyPayments, tallyBatches, tallyLedgerMap, journalEntriesForExport, exportLineItems, accounts, hospitalId, dateRange, loadTallyData, toast]);
 
   // ─── Render helpers ───
   const SectionRow = ({ label, className }: { label: string; className?: string }) => (

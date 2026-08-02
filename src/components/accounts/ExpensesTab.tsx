@@ -65,18 +65,19 @@ const ExpensesTab: React.FC<Props> = ({ hospitalId, dateRange, userId }) => {
     department_id: "",
   });
 
-  useEffect(() => {
-    if (!hospitalId) return;
-    loadExpenses();
-    supabase.from("departments").select("id, name").eq("hospital_id", hospitalId).order("name", { ascending: true }).then(({ data }) => setDepartments(data || []));
-  }, [hospitalId, dateRange]);
 
-  const loadExpenses = async () => {
+  const loadExpenses = useCallback(async () => {
     const { data } = await supabase.from("expense_records").select("*")
       .eq("hospital_id", hospitalId!).gte("expense_date", dateRange.start).lte("expense_date", dateRange.end)
       .order("expense_date", { ascending: false });
     setExpenses(data || []);
-  };
+  }, [hospitalId, dateRange]);
+
+  useEffect(() => {
+    if (!hospitalId) return;
+    loadExpenses();
+    supabase.from("departments").select("id, name").eq("hospital_id", hospitalId).order("name", { ascending: true }).then(({ data }) => setDepartments(data || []));
+  }, [loadExpenses, hospitalId]);
 
   const totalAmount = (Number(form.amount) || 0) + (Number(form.gst_amount) || 0);
   const update = (k: string, v: string) => setForm({ ...form, [k]: v });

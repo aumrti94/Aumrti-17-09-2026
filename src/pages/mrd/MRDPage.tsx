@@ -22,17 +22,6 @@ const MRDPage: React.FC = () => {
   const [hospitalId, setHospitalId] = useState("");
   const [userId, setUserId] = useState("");
 
-  useEffect(() => { init(); }, []);
-
-  const init = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    const { data: userData } = await (supabase as any).from("users").select("id, hospital_id").eq("auth_user_id", user.id).maybeSingle();
-    if (!userData) return;
-    setHospitalId(userData.hospital_id);
-    setUserId(userData.id);
-    fetchKPIs(userData.hospital_id);
-  };
 
   const fetchKPIs = useCallback(async (hid?: string) => {
     const h = hid || hospitalId;
@@ -50,6 +39,19 @@ const MRDPage: React.FC = () => {
       dueDestruction: r4.count || 0,
     });
   }, [hospitalId]);
+
+  const init = useCallback(async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data: userData } = await (supabase as any).from("users").select("id, hospital_id").eq("auth_user_id", user.id).maybeSingle();
+    if (!userData) return;
+    setHospitalId(userData.hospital_id);
+    setUserId(userData.id);
+    fetchKPIs(userData.hospital_id);
+  }, [fetchKPIs]);
+
+  useEffect(() => { init(); }, [init]);
+
 
   const handleNewRequest = () => {
     setActiveTab("requests");

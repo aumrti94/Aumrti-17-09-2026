@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { useToast } from "@/hooks/use-toast";
@@ -192,7 +192,7 @@ const CRMPage: React.FC = () => {
   const [respondingReviewId, setRespondingReviewId] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
 
-  const loadAll = async () => {
+  const loadAll = useCallback(async () => {
     const [d, c, r, s, a] = await Promise.all([
       supabase.from("referral_doctors").select("*").eq("hospital_id", hospitalId).order("total_referrals", { ascending: false }),
       supabase.from("marketing_campaigns").select("*").eq("hospital_id", hospitalId).order("created_at", { ascending: false }),
@@ -221,9 +221,9 @@ const CRMPage: React.FC = () => {
     } else {
       setSegments(s.data);
     }
-  };
+  }, [hospitalId]);
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { loadAll(); }, [loadAll]);
 
   // ─── KPIs ───
   const activeDoctors = doctors.filter(d => d.is_active).length;

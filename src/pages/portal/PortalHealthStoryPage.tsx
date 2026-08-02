@@ -5,7 +5,7 @@
 //
 // SaMD Class A — narrative summary only; no diagnosis or treatment recommendation.
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
 import { usePatientPortal } from "@/hooks/usePatientPortal";
@@ -37,12 +37,8 @@ const PortalHealthStoryPage: React.FC = () => {
   const [recordsLoading, setRecordsLoading] = useState(true);
   const [generatedAt, setGeneratedAt] = useState<Date | null>(null);
 
-  useEffect(() => {
-    if (!patientId || !hospitalId) return;
-    fetchRecords();
-  }, [patientId, hospitalId]);
 
-  const fetchRecords = async () => {
+  const fetchRecords = useCallback(async () => {
     setRecordsLoading(true);
     try {
       const [admRes, rxRes, labRes, procRes] = await Promise.all([
@@ -109,7 +105,12 @@ const PortalHealthStoryPage: React.FC = () => {
     } finally {
       setRecordsLoading(false);
     }
-  };
+  }, [patientId]);
+
+  useEffect(() => {
+    if (!patientId || !hospitalId) return;
+    fetchRecords();
+  }, [fetchRecords, hospitalId, patientId]);
 
   const buildRecordsSummary = (record: HealthRecord): string => {
     const parts: string[] = [];

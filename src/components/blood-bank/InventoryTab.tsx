@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +15,7 @@ const InventoryTab: React.FC<Props> = ({ onRefresh }) => {
   const [groupFilter, setGroupFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("available");
 
-  const fetchUnits = async () => {
+  const fetchUnits = useCallback(async () => {
     let q = supabase.from("blood_units").select("*").order("expiry_at", { ascending: true });
     if (componentFilter !== "all") q = q.eq("component", componentFilter);
     if (groupFilter !== "all") {
@@ -25,9 +25,9 @@ const InventoryTab: React.FC<Props> = ({ onRefresh }) => {
     if (statusFilter !== "all") q = q.eq("status", statusFilter);
     const { data } = await q;
     if (data) setUnits(data);
-  };
+  }, [componentFilter, groupFilter, statusFilter]);
 
-  useEffect(() => { fetchUnits(); }, [componentFilter, groupFilter, statusFilter]);
+  useEffect(() => { fetchUnits(); }, [fetchUnits]);
 
   const expiringUnits = units.filter(u => {
     const hrs = differenceInHours(new Date(u.expiry_at), new Date());

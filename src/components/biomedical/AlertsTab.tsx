@@ -107,7 +107,7 @@ const AlertsTab: React.FC<Props> = ({ onNavigate }) => {
       setAlerts(allAlerts);
     };
     load();
-  }, []);
+  }, [hospitalId]);
 
   const typeColor = (type: string) => {
     if (type.includes("Overdue")) return "destructive";

@@ -194,13 +194,26 @@ const LoginModal: React.FC<Props> = ({ open, onOpenChange }) => {
     }
   };
 
-  // Auto-verify when all 6 digits entered
+  // Auto-verify when all 6 digits entered.
+  //
+  // Everything except the OTP digits is read through refs on purpose. These
+  // effects SUBMIT the code, and `verifyEmailOtp` / `verifyPhoneOtp` are new
+  // function identities on every render — listing them as dependencies would
+  // re-submit the same OTP on each render instead of once, when the last digit
+  // is typed.
+  const otpAutoVerifyRef = useRef({ emailOtpSent, phoneOtpSent, verifyEmailOtp, verifyPhoneOtp });
   useEffect(() => {
-    if (emailOtp.every((d) => d !== "") && emailOtpSent) verifyEmailOtp();
+    otpAutoVerifyRef.current = { emailOtpSent, phoneOtpSent, verifyEmailOtp, verifyPhoneOtp };
+  });
+
+  useEffect(() => {
+    const { emailOtpSent: sent, verifyEmailOtp: verify } = otpAutoVerifyRef.current;
+    if (emailOtp.every((d) => d !== "") && sent) verify();
   }, [emailOtp]);
 
   useEffect(() => {
-    if (phoneOtp.every((d) => d !== "") && phoneOtpSent) verifyPhoneOtp();
+    const { phoneOtpSent: sent, verifyPhoneOtp: verify } = otpAutoVerifyRef.current;
+    if (phoneOtp.every((d) => d !== "") && sent) verify();
   }, [phoneOtp]);
 
   const renderOtpBoxes = (

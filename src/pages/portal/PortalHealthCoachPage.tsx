@@ -5,7 +5,7 @@
 // SaMD Class B — coaching content must not substitute physician advice.
 // Dr. Nalini sign-off required before production rollout of symptom-specific coaching.
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
 import { usePatientPortal } from "@/hooks/usePatientPortal";
@@ -83,17 +83,12 @@ const PortalHealthCoachPage: React.FC = () => {
   const [tipsExpanded, setTipsExpanded] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!patientId || !hospitalId) return;
-    loadContext();
-    loadMessages();
-  }, [patientId, hospitalId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const loadContext = async () => {
+  const loadContext = useCallback(async () => {
     setContextLoading(true);
     try {
       // Get most recent completed admission (discharge)
@@ -153,9 +148,9 @@ const PortalHealthCoachPage: React.FC = () => {
     } finally {
       setContextLoading(false);
     }
-  };
+  }, [patientId]);
 
-  const loadMessages = async () => {
+  const loadMessages = useCallback(async () => {
     const { data } = await supabase
       .from("health_coach_sessions")
       .select("id, role, content, created_at")
@@ -164,7 +159,13 @@ const PortalHealthCoachPage: React.FC = () => {
       .order("created_at", { ascending: true })
       .limit(50);
     if (data) setMessages(data as CoachMessage[]);
-  };
+  }, [patientId, hospitalId]);
+
+  useEffect(() => {
+    if (!patientId || !hospitalId) return;
+    loadContext();
+    loadMessages();
+  }, [patientId, hospitalId, loadContext, loadMessages]);
 
   const saveMessage = async (role: "user" | "assistant", content: string) => {
     if (!patientId || !hospitalId) return;

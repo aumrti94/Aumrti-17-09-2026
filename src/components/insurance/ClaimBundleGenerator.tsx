@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -60,11 +60,8 @@ const ClaimBundleGenerator: React.FC<Props> = ({
     labs: true, radiology: true, consents: false, ot: false, fir_mlc: false,
   });
 
-  useEffect(() => {
-    if (open && admissionId) loadBundle();
-  }, [open, admissionId]);
 
-  const loadBundle = async () => {
+  const loadBundle = useCallback(async () => {
     setLoading(true);
     try {
       const [hospRes, patRes, admRes, billRes, lineRes, preAuthRes, labOrdersRes, radRes, consentRes, otRes] = await Promise.all([
@@ -117,7 +114,11 @@ const ClaimBundleGenerator: React.FC<Props> = ({
     } finally {
       setLoading(false);
     }
-  };
+  }, [admissionId, billId, hospitalId, patientId, toast]);
+
+  useEffect(() => {
+    if (open && admissionId) loadBundle();
+  }, [loadBundle, open, admissionId]);
 
   const fmtDate = (d: string | null | undefined) => d ? new Date(d).toLocaleDateString("en-IN") : "—";
   const fmtDateTime = (d: string | null | undefined) => d ? new Date(d).toLocaleString("en-IN") : "—";

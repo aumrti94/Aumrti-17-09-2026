@@ -23,7 +23,7 @@ const ReportBreakdownModal: React.FC<Props> = ({ open, onClose, onSaved }) => {
   useEffect(() => {
     if (!open) return;
     supabase.from("equipment_master").select("id, equipment_name, equipment_code, category, department_id").eq("hospital_id", hospitalId).eq("is_active", true).then(({ data }) => setEquipment(data || []));
-  }, [open]);
+  }, [open, hospitalId]);
 
   const handleSubmit = async () => {
     if (!form.equipment_id || !form.description.trim()) {

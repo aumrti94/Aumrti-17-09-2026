@@ -427,7 +427,7 @@ const SettingsRolesPage: React.FC = () => {
         };
       });
     },
-    [matrix, selectedRole]
+    [matrix]
   );
 
   /* ── Toggle tab permission ── */

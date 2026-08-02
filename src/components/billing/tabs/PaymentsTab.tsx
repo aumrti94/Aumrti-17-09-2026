@@ -24,6 +24,12 @@ const PaymentsTab: React.FC<Props> = ({ bill, hospitalId, payments, netAdvanceBa
     ? money.balanceDue
     : bill.balance_due;
 
+  // Extracted so the dependency arrays name plain identifiers the linter can
+  // check statically, rather than a cast expression or a whole object.
+  const billId = bill.id;
+  const billAdmissionId = (bill as any).admission_id as string | undefined;
+  const billPaymentStatus = bill.payment_status;
+
   const [showRefundModal, setShowRefundModal] = useState(false);
   // A refund already awaiting approval for this bill. Without this the same
   // bill could have several identical pending requests raised from here.
@@ -33,14 +39,14 @@ const PaymentsTab: React.FC<Props> = ({ bill, hospitalId, payments, netAdvanceBa
 
   useEffect(() => {
     let cancelled = false;
-    fetchOpenRefund({ billId: bill.id, admissionId: (bill as any).admission_id ?? null })
+    fetchOpenRefund({ billId, admissionId: billAdmissionId ?? null })
       .then((r) => {
         if (cancelled) return;
         setOpenRefund(r);
         setRefundLocked(!!r);
       });
     return () => { cancelled = true; };
-  }, [bill.id, (bill as any).admission_id, bill.payment_status]);
+  }, [billId, billAdmissionId, billPaymentStatus]);
 
   return (
     <div className="space-y-6">

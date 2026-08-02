@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -75,7 +75,7 @@ const BookOTModal: React.FC<Props> = ({ rooms, selectedRoomId, selectedDate, pre
   const endTime = addMinutes(form.startTime, form.duration);
   const timeToMin = (t: string) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
 
-  const checkConflict = async () => {
+  const checkConflict = useCallback(async () => {
     const { data } = await supabase
       .from("ot_schedules")
       .select("id, surgery_name, scheduled_start_time, scheduled_end_time")
@@ -93,9 +93,9 @@ const BookOTModal: React.FC<Props> = ({ rooms, selectedRoomId, selectedDate, pre
       });
       setConflict(overlapping ? `⚠️ Room is booked from ${overlapping.scheduled_start_time.slice(0, 5)} to ${overlapping.scheduled_end_time.slice(0, 5)} for ${overlapping.surgery_name}` : null);
     }
-  };
+  }, [form.roomId, form.date, form.startTime, endTime]);
 
-  useEffect(() => { if (form.roomId && form.date && form.startTime) checkConflict(); }, [form.roomId, form.date, form.startTime, form.duration]);
+  useEffect(() => { if (form.roomId && form.date && form.startTime) checkConflict(); }, [checkConflict, form.date, form.roomId, form.startTime]);
 
   const handleSubmit = async () => {
     if (!form.patientId || !form.surgeryName || !form.surgeonId || !form.roomId) {

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import SettingsPageWrapper from "@/components/settings/SettingsPageWrapper";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -41,7 +41,7 @@ const SettingsSupportPage: React.FC = () => {
   const [newCategory, setNewCategory] = useState("other");
   const [newBody, setNewBody] = useState("");
 
-  const loadTickets = async () => {
+  const loadTickets = useCallback(async () => {
     if (!hospitalId) return;
     setLoading(true);
     const { data } = await (supabase as any)
@@ -52,9 +52,9 @@ const SettingsSupportPage: React.FC = () => {
       .order("created_at", { ascending: false });
     setTickets(data || []);
     setLoading(false);
-  };
+  }, [hospitalId]);
 
-  useEffect(() => { loadTickets(); }, [hospitalId]);
+  useEffect(() => { loadTickets(); }, [loadTickets]);
 
   const openTicket = async (t: Ticket) => {
     setSelected(t);

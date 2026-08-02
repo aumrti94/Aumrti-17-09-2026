@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,9 +46,8 @@ const RecordRequestsTab: React.FC<Props> = ({ hospitalId, userId, showNewRequest
   const [nrPurpose, setNrPurpose] = useState("");
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => { if (hospitalId) fetchRequests(); }, [filter, hospitalId]);
 
-  const fetchRequests = async () => {
+  const fetchRequests = useCallback(async () => {
     if (!hospitalId) return;
     setLoading(true);
     let query = (supabase as any).from("record_requests").select("*, patients(full_name, uhid)").eq("hospital_id", hospitalId).order("created_at", { ascending: false }).limit(100);
@@ -57,7 +56,9 @@ const RecordRequestsTab: React.FC<Props> = ({ hospitalId, userId, showNewRequest
     if (error) toast.error(error.message);
     setRequests(data || []);
     setLoading(false);
-  };
+  }, [filter, hospitalId]);
+
+  useEffect(() => { if (hospitalId) fetchRequests(); }, [fetchRequests, hospitalId]);
 
   const searchPatients = async (q: string) => {
     setNrPatientSearch(q);

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { Stethoscope, Phone, ExternalLink, X } from "lucide-react";
@@ -20,7 +20,15 @@ const PatientSummary: React.FC<Props> = ({ token, hospitalId, onClose }) => {
   const [pastVitals, setPastVitals] = useState<VitalRow[]>([]);
   const [pendingLabs, setPendingLabs] = useState<string[]>([]);
 
+  // Latest-ref for `token`: this loads a patient's history keyed on patient_id.
+  // Depending on the token object would refetch on every queue refresh that
+  // returned an equal object.
+  const tokenRef = useRef(token);
+  useEffect(() => { tokenRef.current = token; });
+  const tokenPatientId = token?.patient_id;
+
   useEffect(() => {
+    const token = tokenRef.current;
     if (!token) return;
     (async () => {
       const [{ data }, { data: rxData }] = await Promise.all([
@@ -48,7 +56,7 @@ const PatientSummary: React.FC<Props> = ({ token, hospitalId, onClose }) => {
         setPendingLabs([]);
       }
     })();
-  }, [token?.patient_id]);
+  }, [tokenPatientId]);
 
   if (!token) {
     return (

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { usePatientPortal } from "@/hooks/usePatientPortal";
 import { ChevronDown, ChevronUp, Download, X, Pill } from "lucide-react";
@@ -84,8 +84,13 @@ const LabTab: React.FC<{ patientId: string; hospitalId: string; patientName: str
     })();
   }, [patientId, hospitalId]);
 
+  // Read the cache through a ref: this effect WRITES items, so depending on it
+  // would re-run the effect on its own write and loop.
+  const itemsRef = useRef(items);
+  useEffect(() => { itemsRef.current = items; });
+
   useEffect(() => {
-    if (!expanded || items[expanded]) return;
+    if (!expanded || itemsRef.current[expanded]) return;
     (async () => {
       const { data } = await supabase
         .from("lab_order_items")

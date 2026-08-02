@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -135,10 +135,22 @@ const PlatformAIConfigPage: React.FC = () => {
     loadData();
   }, []);
 
+  // Read through a ref: this effect STARTS the playground run (which sets
+  // playRunning), so depending on it — or on the non-memoised runPlayground —
+  // would re-enter on its own state change and fire the run repeatedly.
+  // Left empty at first render: `runPlayground` is declared further down, so
+  // naming it in the initialiser would be a use-before-declaration. The updater
+  // effect below is declared first, so it always populates this before the
+  // consumer effect runs.
+  const playgroundStateRef = useRef<{ playRunning: boolean; runPlayground: () => void } | null>(null);
+  useEffect(() => { playgroundStateRef.current = { playRunning, runPlayground }; });
+
   useEffect(() => {
-    if (pendingAutoRun.current && !playRunning) {
+    const state = playgroundStateRef.current;
+    if (!state) return;
+    if (pendingAutoRun.current && !state.playRunning) {
       pendingAutoRun.current = false;
-      setTimeout(() => runPlayground(), 200);
+      setTimeout(() => state.runPlayground(), 200);
     }
   }, [playFeature]);
 

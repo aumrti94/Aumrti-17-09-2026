@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { autoChargeService, MODULE_ED, getEdChargeRate, getEdItemRate, recordUnbilledService } from "@/lib/serviceBilling";
 import { useNavigate } from "react-router-dom";
@@ -293,8 +293,17 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
       .then(({ data }) => setOtRooms((data as OTRoom[]) || []));
   }, [hospitalId]);
 
+  // Latest-ref for `visit`: these effects re-seed the form when a DIFFERENT visit
+  // is opened, keyed on its id. Depending on the object itself would re-seed —
+  // wiping in-progress edits — every time a refetch returned an equal object.
+  const visitRef = useRef(visit);
+  useEffect(() => { visitRef.current = visit; });
+  const visitId = visit?.id;
+  const visitTriageCategory = visit?.triage_category;
+
   // Load data when visit changes
   useEffect(() => {
+    const visit = visitRef.current;
     if (!visit) return;
     setComplaint(visit.chief_complaint || "");
     setDiagnosis(visit.working_diagnosis || "");
@@ -306,7 +315,7 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
     setTriageSuggestion(null);
     setDispositionSuggestion(null);
     setInvestigationsSuggested([]);
-  }, [visit?.id]);
+  }, [visitId]);
 
   // Register screen for voice scribe
   useEffect(() => {
@@ -340,9 +349,9 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
         setAmple(prev => ({ ...prev, e: data.history as string }));
       }
 
-      if (data.triage_category && visit) {
+      if (data.triage_category && visitRef.current) {
         const suggested = data.triage_category as string;
-        if (suggested !== visit.triage_category) setTriageSuggestion(suggested);
+        if (suggested !== visitRef.current.triage_category) setTriageSuggestion(suggested);
       }
       if (data.disposition) setDispositionSuggestion(data.disposition as string);
       if (Array.isArray(data.investigations_ordered) && data.investigations_ordered.length > 0) {
@@ -351,7 +360,7 @@ const EmergencyWorkspace: React.FC<Props> = ({ visit, hospitalId, userId, onRefr
     };
     registerScreen("emergency", fillFn);
     return () => unregisterScreen("emergency");
-  }, [registerScreen, unregisterScreen, visit?.triage_category, visit?.id]);
+  }, [registerScreen, unregisterScreen, visitTriageCategory, visitId]);
 
   if (!visit) {
     return (

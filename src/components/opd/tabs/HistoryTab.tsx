@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { ChevronDown, ChevronUp, Printer } from "lucide-react";
@@ -50,8 +50,14 @@ const HistoryTab: React.FC<Props> = ({ token, encounterId }) => {
       .then(({ data }) => setHospitalInfo(data));
   }, [token.hospital_id]);
 
+  // Read through a ref so this stays keyed on patient_id: it re-seeds the editable
+  // list when a DIFFERENT patient is opened, and must not overwrite the user's
+  // edits every time the queue refresh hands back an equal array.
+  const chronicConditionsRef = useRef(token.patient?.chronic_conditions);
+  useEffect(() => { chronicConditionsRef.current = token.patient?.chronic_conditions; });
+
   useEffect(() => {
-    setConditions(token.patient?.chronic_conditions || []);
+    setConditions(chronicConditionsRef.current || []);
   }, [token.patient_id]);
 
   useEffect(() => {

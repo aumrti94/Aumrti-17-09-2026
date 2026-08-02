@@ -58,12 +58,17 @@ function SignaturePad({ onCapture, cleared }: { onCapture: (v: string | null) =>
   const drawing = useRef(false);
   const hasStrokes = useRef(false);
 
+  // Latest-ref: the parent passes a fresh `onCapture` every render, so depending
+  // on it directly would re-clear the pad on every parent render.
+  const onCaptureRef = useRef(onCapture);
+  useEffect(() => { onCaptureRef.current = onCapture; });
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     canvas.getContext("2d")!.clearRect(0, 0, canvas.width, canvas.height);
     hasStrokes.current = false;
-    onCapture(null);
+    onCaptureRef.current(null);
   }, [cleared]);
 
   const pos = (e: React.PointerEvent<HTMLCanvasElement>) => {

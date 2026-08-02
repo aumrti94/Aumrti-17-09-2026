@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
 import { autoChargeService, MODULE_MORTUARY } from "@/lib/serviceBilling";
@@ -157,9 +157,8 @@ export default function MortuaryPage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [policeLetterModal, setPoliceLetterModal] = useState<string | null>(null);
 
-  useEffect(() => { loadAll(); }, []);
 
-  const loadAll = async () => {
+  const loadAll = useCallback(async () => {
     const [a, m, mc, r, d, doc] = await Promise.all([
       supabase.from("mortuary_admissions").select("*").eq("hospital_id", hospitalId).order("admitted_at", { ascending: false }),
       supabase.from("mlc_records").select("*").eq("hospital_id", hospitalId).order("created_at", { ascending: false }),
@@ -192,7 +191,9 @@ export default function MortuaryPage() {
     } else {
       setPatients([]);
     }
-  };
+  }, [hospitalId]);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
 
   const getPatient = (id: string) => patients.find(p => p.id === id);
   const getDoctor = (id: string) => doctors.find(d => d.id === id);

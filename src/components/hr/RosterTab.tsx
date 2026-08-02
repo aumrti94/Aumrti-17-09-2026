@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { ChevronLeft, ChevronRight, Send } from "lucide-react";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import RosterOptimizerPanel from "./RosterOptimizerPanel";
@@ -51,7 +51,9 @@ const RosterTab: React.FC = () => {
   const [openPopover, setOpenPopover] = useState<string | null>(null);
   const [dragData, setDragData] = useState<{ userId: string; fromDate: string; entry: RosterEntry } | null>(null);
 
-  const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+  // Memoised so it keeps a stable identity across renders and can safely sit in
+  // the dependency arrays below.
+  const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
 
   const loadData = useCallback(async () => {
     const dateFrom = format(weekDays[0], "yyyy-MM-dd");
@@ -76,7 +78,7 @@ const RosterTab: React.FC = () => {
     );
     setRoster((rosterRes.data || []) as RosterEntry[]);
     setDepartments(deptRes.data || []);
-  }, [weekStart]);
+  }, [weekDays]);
 
   useEffect(() => { loadData(); }, [loadData]);
 

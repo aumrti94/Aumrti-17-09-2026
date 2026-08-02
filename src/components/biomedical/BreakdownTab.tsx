@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -30,14 +30,14 @@ const BreakdownTab: React.FC<Props> = ({ onRefresh }) => {
     root_cause: "", parts_replaced: "", repair_cost: "",
   });
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const { data } = await supabase.from("breakdown_logs")
       .select("*, equipment_master(equipment_name, equipment_code, category)")
       .eq("hospital_id", hospitalId).order("reported_at", { ascending: false });
     setLogs(data || []);
-  };
+  }, [hospitalId]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   const openUpdate = (log: any) => {
     setUpdating(log);

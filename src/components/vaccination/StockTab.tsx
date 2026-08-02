@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,18 +25,19 @@ const StockTab: React.FC<Props> = ({ hospitalId }) => {
   const [storageLocation, setStorageLocation] = useState("");
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    loadStock();
-    supabase.from("vaccine_master").select("id, vaccine_name, vaccine_code").eq("is_active", true).order("vaccine_name")
-      .then(({ data }) => setVaccines(data || []));
-  }, []);
 
-  const loadStock = async () => {
+  const loadStock = useCallback(async () => {
     const { data } = await supabase.from("vaccine_stock")
       .select("*, vaccine_master(vaccine_name, vaccine_code)")
       .eq("hospital_id", hospitalId).order("expiry_date");
     setStock(data || []);
-  };
+  }, [hospitalId]);
+
+  useEffect(() => {
+    loadStock();
+    supabase.from("vaccine_master").select("id, vaccine_name, vaccine_code").eq("is_active", true).order("vaccine_name")
+      .then(({ data }) => setVaccines(data || []));
+  }, [loadStock]);
 
   const handleSave = async () => {
     if (!vaccineId || !batchNumber || !manufacturer || !expiryDate || !quantity) {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,7 @@ export default function PackagesPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [kpis, setKpis] = useState({ booked: 0, inProgress: 0, completed: 0, revenue: 0 });
 
-  const loadKPIs = async () => {
+  const loadKPIs = useCallback(async () => {
     const today = new Date().toISOString().split("T")[0];
     const [booked, inProgress, completed] = await Promise.all([
       supabase.from("package_bookings").select("id", { count: "exact", head: true })
@@ -39,9 +39,9 @@ export default function PackagesPage() {
       completed: completed.count || 0,
       revenue: 0,
     });
-  };
+  }, [hospitalId]);
 
-  useEffect(() => { loadKPIs(); }, []);
+  useEffect(() => { loadKPIs(); }, [loadKPIs]);
 
   const kpiCards = [
     { label: "Booked Today", value: kpis.booked, icon: CalendarCheck, color: "text-blue-600" },

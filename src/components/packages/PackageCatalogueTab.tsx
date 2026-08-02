@@ -18,7 +18,7 @@ export default function PackageCatalogueTab({ onBook, onCreate }: Props) {
     supabase.from("health_packages").select("*").eq("hospital_id", hospitalId)
       .eq("is_active", true).order("display_order")
       .then(({ data }) => setPackages(data || []));
-  }, []);
+  }, [hospitalId]);
 
   const typeColors: Record<string, string> = {
     basic: "bg-emerald-100 text-emerald-800",

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -15,15 +15,16 @@ export default function PrescriptionsTab({ system }: Props) {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<any>(null);
 
-  useEffect(() => {
-    loadEncounters();
-  }, [system]);
 
-  const loadEncounters = async () => {
+  const loadEncounters = useCallback(async () => {
     const { data } = await supabase.from("ayush_encounters").select("*")
       .eq("system", system).order("encounter_date", { ascending: false }).limit(50);
     if (data) setEncounters(data);
-  };
+  }, [system]);
+
+  useEffect(() => {
+    loadEncounters();
+  }, [loadEncounters]);
 
   const filtered = search
     ? encounters.filter((e) =>

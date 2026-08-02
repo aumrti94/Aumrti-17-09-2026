@@ -65,7 +65,6 @@ const ICDCodingTab: React.FC<Props> = ({ hospitalId, onRefresh }) => {
   // Audit log drawer
   const [auditOpen, setAuditOpen] = useState(false);
 
-  useEffect(() => { if (hospitalId) fetchItems(); }, [filter, hospitalId]);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -75,7 +74,7 @@ const ICDCodingTab: React.FC<Props> = ({ hospitalId, onRefresh }) => {
     });
   }, []);
 
-  const fetchItems = async () => {
+  const fetchItems = useCallback(async () => {
     if (!hospitalId) return;
     setLoading(true);
     let query = (supabase as any).from("icd_codings").select("*").eq("hospital_id", hospitalId).neq("visit_type", "opd").order("created_at", { ascending: false }).limit(100);
@@ -84,7 +83,9 @@ const ICDCodingTab: React.FC<Props> = ({ hospitalId, onRefresh }) => {
     if (error) { toast.error(error.message); setLoading(false); return; }
     setItems(data || []);
     setLoading(false);
-  };
+  }, [filter, hospitalId]);
+
+  useEffect(() => { if (hospitalId) fetchItems(); }, [fetchItems, hospitalId]);
 
   const incrementUseCount = async (code: string) => {
     try {

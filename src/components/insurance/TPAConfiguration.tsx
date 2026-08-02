@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useHospitalId } from "@/hooks/useHospitalId";
@@ -184,9 +184,8 @@ const TPAConfiguration: React.FC = () => {
 
   // ── Load ────────────────────────────────────────────────────────────────────
 
-  useEffect(() => { loadData(); }, [hospitalId]);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     if (!hospitalId) return;
     setLoading(true);
     try {
@@ -215,7 +214,9 @@ const TPAConfiguration: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [hospitalId, toast]);
+
+  useEffect(() => { loadData(); }, [loadData]);
 
   // ── Plan settings save ────────────────────────────────────────────────────
 

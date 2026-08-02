@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -48,9 +48,8 @@ const MHConsultationTab: React.FC<Props> = ({ patientId, hospitalId, onEncounter
   const [encounters, setEncounters] = useState<any[]>([]);
   const [selectedEncounter, setSelectedEncounter] = useState<any | null>(null);
 
-  useEffect(() => { fetchEncounters(); }, [patientId]);
 
-  const fetchEncounters = async () => {
+  const fetchEncounters = useCallback(async () => {
     const { data } = await (supabase as any)
       .from("mental_health_encounters")
       .select("id, encounter_date, diagnosis, risk_level, status, chief_complaint")
@@ -58,7 +57,9 @@ const MHConsultationTab: React.FC<Props> = ({ patientId, hospitalId, onEncounter
       .order("encounter_date", { ascending: false })
       .limit(20);
     setEncounters(data || []);
-  };
+  }, [patientId]);
+
+  useEffect(() => { fetchEncounters(); }, [fetchEncounters]);
 
   const handleSave = async () => {
     if (!chiefComplaint.trim()) { toast.error("Chief complaint is required"); return; }

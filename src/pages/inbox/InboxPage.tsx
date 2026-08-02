@@ -117,10 +117,15 @@ const InboxPage: React.FC = () => {
     return () => { supabase.removeChannel(channel); };
   }, [hospitalId]);
 
+  // Read the list through a ref: this effect also WRITES messages (marking one
+  // read), so depending on the array would re-run it on its own write and loop.
+  const messagesRef = useRef(messages);
+  useEffect(() => { messagesRef.current = messages; });
+
   // ── Load thread when message selected
   useEffect(() => {
     if (!selectedId || !hospitalId) { setThread([]); return; }
-    const sel = messages.find((m) => m.id === selectedId);
+    const sel = messagesRef.current.find((m) => m.id === selectedId);
     if (!sel) return;
 
     const rootId = sel.parent_id || sel.id;

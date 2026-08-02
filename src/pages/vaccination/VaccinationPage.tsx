@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
@@ -27,11 +27,8 @@ const VaccinationPage: React.FC = () => {
   const [showRecordModal, setShowRecordModal] = useState(false);
   const [showCampModal, setShowCampModal] = useState(false);
 
-  useEffect(() => {
-    loadKPIs();
-  }, []);
 
-  const loadKPIs = async () => {
+  const loadKPIs = useCallback(async () => {
     const today = new Date().toISOString().split("T")[0];
     const weekLater = new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0];
 
@@ -53,7 +50,11 @@ const VaccinationPage: React.FC = () => {
       const t = Number(coldRes.data[0].temperature_c);
       setColdChainStatus({ temp: t, ok: t >= 2 && t <= 8 });
     }
-  };
+  }, [hospitalId]);
+
+  useEffect(() => {
+    loadKPIs();
+  }, [loadKPIs]);
 
   if (hospitalLoading || !hospitalId) return <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
   return (

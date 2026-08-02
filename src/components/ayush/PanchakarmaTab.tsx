@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { autoPostJournalEntry } from "@/lib/accounting";
 import { recordServiceCharge } from "@/lib/serviceBilling";
@@ -73,8 +73,13 @@ export default function PanchakarmaTab({ showNew, onShowNewDone }: Props) {
     loadSchedules();
   }, []);
 
+  // Latest-ref: the parent passes a fresh `onShowNewDone` every render, and this
+  // effect must fire only when `showNew` flips — not on every parent render.
+  const onShowNewDoneRef = useRef(onShowNewDone);
+  useEffect(() => { onShowNewDoneRef.current = onShowNewDone; });
+
   useEffect(() => {
-    if (showNew) { setShowModal(true); onShowNewDone(); }
+    if (showNew) { setShowModal(true); onShowNewDoneRef.current(); }
   }, [showNew]);
 
   useEffect(() => {

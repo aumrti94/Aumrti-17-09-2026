@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -52,7 +52,7 @@ const PatientJoinPage: React.FC = () => {
   const [joined, setJoined] = useState(false);
   const [joining, setJoining] = useState(false);
 
-  const fetchSession = async () => {
+  const fetchSession = useCallback(async () => {
     if (!sessionId) return;
     const { data } = await (supabase as any)
       .from("teleconsult_sessions")
@@ -70,11 +70,11 @@ const PatientJoinPage: React.FC = () => {
       }
     }
     setLoading(false);
-  };
+  }, [sessionId]);
 
   useEffect(() => {
     fetchSession();
-  }, [sessionId]);
+  }, [fetchSession]);
 
   // Real-time subscription — auto-open iframe when doctor starts the call
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { GatedTabsTrigger, GatedAction } from "@/components/access/GatedTabsTrigger";
 import { Button } from "@/components/ui/button";
@@ -28,7 +28,7 @@ const IVFPage = () => {
   const [showRegister, setShowRegister] = useState(false);
   const [showStartCycle, setShowStartCycle] = useState(false);
 
-  const loadKPIs = async () => {
+  const loadKPIs = useCallback(async () => {
     if (!hospitalId) return;
     const today = new Date().toISOString().split("T")[0];
     const in30 = new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0];
@@ -54,9 +54,9 @@ const IVFPage = () => {
       embryosStored: stored.count || 0,
       consentExpiring: expiring.count || 0,
     });
-  };
+  }, [hospitalId]);
 
-  useEffect(() => { loadKPIs(); }, [hospitalId]);
+  useEffect(() => { loadKPIs(); }, [loadKPIs]);
 
   const kpiCards = [
     { label: "Active Cycles", value: kpis.activeCycles, color: "text-primary" },

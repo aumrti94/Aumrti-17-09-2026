@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { autoPostJournalEntry } from "@/lib/accounting";
 import { calcGST, roundCurrency } from "@/lib/currency";
@@ -49,23 +49,32 @@ const RecordVaccineTab: React.FC<Props> = ({ hospitalId, onRecorded }) => {
       .then(({ data }) => setVaccines(data || []));
   }, []);
 
-  // Auto-determine dose numbers when patient changes
-  useEffect(() => {
-    if (patientId && selectedVaccines.length > 0) {
-      updateDoseNumbers();
-    }
-  }, [patientId]);
+  // Auto-determine dose numbers when patient changes.
+  //
+  // The list is read through a ref, not a dependency: this function WRITES
+  // selectedVaccines, so depending on the array itself would re-create the
+  // callback on every write and loop. Keyed on the length instead, exactly as the
+  // original effect was.
+  const selectedVaccinesRef = useRef(selectedVaccines);
+  useEffect(() => { selectedVaccinesRef.current = selectedVaccines; });
+  const selectedVaccinesCount = selectedVaccines.length;
 
-  const updateDoseNumbers = async () => {
+  const updateDoseNumbers = useCallback(async () => {
     if (!patientId) return;
-    const updated = await Promise.all(selectedVaccines.map(async (sv) => {
+    const updated = await Promise.all(selectedVaccinesRef.current.map(async (sv) => {
       const { data } = await supabase.from("vaccination_records").select("dose_number")
         .eq("patient_id", patientId).eq("vaccine_id", sv.vaccineId).eq("hospital_id", hospitalId)
         .order("dose_number", { ascending: false }).limit(1);
       return { ...sv, doseNumber: (data?.[0]?.dose_number || 0) + 1 };
     }));
     setSelectedVaccines(updated);
-  };
+  }, [patientId, hospitalId]);
+
+  useEffect(() => {
+    if (patientId && selectedVaccinesCount > 0) {
+      updateDoseNumbers();
+    }
+  }, [patientId, selectedVaccinesCount, updateDoseNumbers]);
 
   const toggleVaccine = async (vaccine: any) => {
     const existing = selectedVaccines.find(sv => sv.vaccineId === vaccine.id);

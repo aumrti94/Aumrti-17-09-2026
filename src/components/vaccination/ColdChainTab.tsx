@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,16 +19,17 @@ const ColdChainTab: React.FC<Props> = ({ hospitalId, onLogged }) => {
   const [saving, setSaving] = useState(false);
   const [logs, setLogs] = useState<any[]>([]);
 
-  useEffect(() => { loadLogs(); }, []);
 
-  const loadLogs = async () => {
+  const loadLogs = useCallback(async () => {
     const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
     const { data } = await supabase.from("cold_chain_log")
       .select("*").eq("hospital_id", hospitalId)
       .gte("recorded_at", sevenDaysAgo)
       .order("recorded_at", { ascending: true });
     setLogs(data || []);
-  };
+  }, [hospitalId]);
+
+  useEffect(() => { loadLogs(); }, [loadLogs]);
 
   const handleLog = async () => {
     const temp = parseFloat(temperature);

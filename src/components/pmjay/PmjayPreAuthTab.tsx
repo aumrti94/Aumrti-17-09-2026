@@ -521,13 +521,21 @@ Return ONLY JSON:
     return "bg-red-50 border-red-100";
   };
 
+  // Read the fields this re-initialisation actually uses, so the effect depends on
+  // those primitives rather than on `selected`'s object identity — it still
+  // re-inits when a different pre-auth is opened, but not on every refetch that
+  // returns an equal object.
+  const selectedId = selected?.id;
+  const selectedSummary = selected?.clinical_summary;
+  const selectedScore = selected?.ai_approval_score;
+
   useEffect(() => {
-    if (selected) {
-      setEditSummary(selected.clinical_summary || "");
-      setScoreData({ score: selected.ai_approval_score, risk: null, recommendation: null });
+    if (selectedId) {
+      setEditSummary(selectedSummary || "");
+      setScoreData({ score: selectedScore, risk: null, recommendation: null });
       setCheckedDocs(REQUIRED_DOCS.map(() => false));
     }
-  }, [selected?.id]);
+  }, [selectedId, selectedSummary, selectedScore]);
 
   if (loading) return <div className="flex items-center justify-center h-full text-muted-foreground text-sm">Loading...</div>;
 

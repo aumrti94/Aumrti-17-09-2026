@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,22 +41,26 @@ const DeathCertificatesTab: React.FC<Props> = ({ hospitalId, showCreate, onClose
   const [certifiedBy, setCertifiedBy] = useState("");
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => { if (hospitalId) init(); }, [hospitalId]);
 
-  const init = async () => {
-    fetchCerts();
-    const { data: docs } = await (supabase as any).from("users").select("id, full_name").eq("hospital_id", hospitalId).eq("role", "doctor").eq("is_active", true);
-    setDoctors(docs || []);
-  };
-
-  const fetchCerts = async () => {
+  // Declared before `init` and memoised: `init` names it in its dependency array,
+  // which is evaluated during render — an unmemoised function there would give
+  // `init` a new identity every render and make the effect below loop.
+  const fetchCerts = useCallback(async () => {
     if (!hospitalId) return;
     setLoading(true);
     const { data, error } = await (supabase as any).from("death_certificates").select("*, patients(full_name, uhid)").eq("hospital_id", hospitalId).order("created_at", { ascending: false });
     if (error) toast.error(error.message);
     setCerts(data || []);
     setLoading(false);
-  };
+  }, [hospitalId]);
+
+  const init = useCallback(async () => {
+    fetchCerts();
+    const { data: docs } = await (supabase as any).from("users").select("id, full_name").eq("hospital_id", hospitalId).eq("role", "doctor").eq("is_active", true);
+    setDoctors(docs || []);
+  }, [hospitalId, fetchCerts]);
+
+  useEffect(() => { if (hospitalId) init(); }, [init, hospitalId]);
 
   const searchPatients = async (q: string) => {
     setPatientSearch(q);

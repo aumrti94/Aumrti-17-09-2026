@@ -324,7 +324,7 @@ const CollectionsTab: React.FC<CollectionsTabProps> = ({ hospitalId, dateRange }
       }
     };
     checkEMIReminders();
-  }, [hospitalId]);
+  }, [hospitalId, toast]);
 
   const sendEMIReminders = async () => {
     setSendingReminders(true);

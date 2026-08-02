@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -28,7 +28,7 @@ const PatientPropensitySection: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState<string | null>(null);
 
-  const scorePatients = async () => {
+  const scorePatients = useCallback(async () => {
     setLoading(true);
     try {
       const cutoff = new Date(Date.now() - 90 * 86400000).toISOString().split("T")[0];
@@ -55,9 +55,9 @@ const PatientPropensitySection: React.FC = () => {
       setPatients(scored.slice(0, 20));
     } catch { setPatients([]); }
     setLoading(false);
-  };
+  }, [hospitalId]);
 
-  useEffect(() => { scorePatients(); }, []);
+  useEffect(() => { scorePatients(); }, [scorePatients]);
 
   const contactPatient = (p: ScoredPatient) => {
     if (!p.phone) { toast({ title: "No phone number", variant: "destructive" }); return; }

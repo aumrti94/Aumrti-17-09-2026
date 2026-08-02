@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -30,11 +30,8 @@ const CaseBundleModal: React.FC<Props> = ({ open, onClose, record, hospitalId })
   const [admissionData, setAdmissionData] = useState<any>(null);
   const [bundleData, setBundleData] = useState<any>({});
 
-  useEffect(() => {
-    if (open && record) fetchBundleData();
-  }, [open, record]);
 
-  const fetchBundleData = async () => {
+  const fetchBundleData = useCallback(async () => {
     setLoading(true);
     const patientId = record.patient_id;
     const visitId = record.visit_id;
@@ -99,7 +96,11 @@ const CaseBundleModal: React.FC<Props> = ({ open, onClose, record, hospitalId })
 
     setDocs(bundleDocs);
     setLoading(false);
-  };
+  }, [record, hospitalId]);
+
+  useEffect(() => {
+    if (open && record) fetchBundleData();
+  }, [fetchBundleData, open, record]);
 
   const toggleDoc = (key: string) => {
     setDocs((prev) => prev.map((d) => d.key === key ? { ...d, checked: !d.checked } : d));

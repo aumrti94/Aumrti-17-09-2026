@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -25,16 +25,16 @@ const CalibrationTab: React.FC<Props> = ({ onRefresh }) => {
     calibrated_by: "", next_due: "", certificate_no: "", result: "pass", observations: "",
   });
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const [rRes, eRes] = await Promise.all([
       supabase.from("calibration_records").select("*, equipment_master(equipment_name, equipment_code)").eq("hospital_id", hospitalId).order("next_due"),
       supabase.from("equipment_master").select("id, equipment_name, equipment_code").eq("hospital_id", hospitalId).eq("is_active", true),
     ]);
     setRecords(rRes.data || []);
     setEquipment(eRes.data || []);
-  };
+  }, [hospitalId]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   const dueColor = (date: string) => {
     const days = differenceInDays(new Date(date), new Date());

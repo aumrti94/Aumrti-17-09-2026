@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -44,19 +44,14 @@ const JournalTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
     setToDate(dateRange.end);
   }, [dateRange]);
 
-  useEffect(() => {
-    if (!hospitalId) return;
-    loadEntries();
-    loadAccounts();
-  }, [hospitalId, fromDate, toDate, typeFilter, accountFilter]);
 
-  const loadAccounts = async () => {
+  const loadAccounts = useCallback(async () => {
     const { data } = await (supabase as any).from("chart_of_accounts").select("id, code, name")
       .eq("hospital_id", hospitalId!).eq("is_active", true).order("code");
     setAccounts(data || []);
-  };
+  }, [hospitalId]);
 
-  const loadEntries = async () => {
+  const loadEntries = useCallback(async () => {
     let query = (supabase as any).from("journal_entries").select("*")
       .eq("hospital_id", hospitalId!)
       .gte("entry_date", fromDate).lte("entry_date", toDate)
@@ -77,7 +72,13 @@ const JournalTab: React.FC<Props> = ({ hospitalId, dateRange }) => {
     }
 
     setEntries(results);
-  };
+  }, [hospitalId, fromDate, toDate, typeFilter, accountFilter]);
+
+  useEffect(() => {
+    if (!hospitalId) return;
+    loadEntries();
+    loadAccounts();
+  }, [hospitalId, fromDate, toDate, typeFilter, accountFilter, loadEntries, loadAccounts]);
 
   const reverseEntry = async (entry: any) => {
     if (!hospitalId || !currentUserId) return;

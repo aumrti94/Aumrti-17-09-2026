@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useHospitalContext } from "@/hooks/useHospitalContext";
@@ -71,7 +71,7 @@ const PathologyCaseWorkspace: React.FC<Props> = ({ caseId, hospitalId, onChanged
       .then(({ data }) => { if (data) { setHospitalName((data as any).name || ""); setNablNumber((data as any).nabl_accreditation_number || ""); } });
   }, [hospitalId]);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const { data } = await (supabase as any)
       .from("pathology_cases")
       .select("*, patients(full_name, uhid, gender, dob)")
@@ -83,9 +83,9 @@ const PathologyCaseWorkspace: React.FC<Props> = ({ caseId, hospitalId, onChanged
       setMicro(data.microscopic_description || "");
       setImpression(data.impression || "");
     }
-  };
+  }, [caseId]);
 
-  useEffect(() => { load(); }, [caseId]);
+  useEffect(() => { load(); }, [load]);
 
   const draftImpression = async () => {
     if (!pcase || !micro.trim()) {

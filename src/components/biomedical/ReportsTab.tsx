@@ -34,7 +34,7 @@ const ReportsTab: React.FC = () => {
       setAerbReport(aerbData || []);
     };
     load();
-  }, []);
+  }, [hospitalId]);
 
   return (
     <div className="flex-1 overflow-auto space-y-6">

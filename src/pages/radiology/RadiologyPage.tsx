@@ -113,7 +113,7 @@ const RadiologyPage: React.FC = () => {
       });
       setOrders(sorted as any);
     }
-  }, [hospitalId, selectedDate]);
+  }, [hospitalId, selectedDate, toast]);
 
   useEffect(() => { fetchHospitalId(); }, [fetchHospitalId]);
   useEffect(() => { if (hospitalId) { fetchModalities(); fetchOrders(); } }, [hospitalId, fetchModalities, fetchOrders]);

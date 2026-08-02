@@ -16,7 +16,7 @@ export default function PackageAnalyticsTab() {
       setStats({ total: total || 0, completed: completed || 0, cancelled: cancelled || 0, topPackage: "—" });
     };
     load();
-  }, []);
+  }, [hospitalId]);
 
   const cards = [
     { label: "Total Bookings", value: stats.total },

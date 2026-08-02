@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -33,11 +33,8 @@ const CollectionCampaignModal: React.FC<Props> = ({ hospitalId, onClose, onCompl
 
   const cutoffDate = new Date(Date.now() - minDays * 86400000).toISOString().split("T")[0];
 
-  useEffect(() => {
-    countMatches();
-  }, [minAmount, minDays, billTypes]);
 
-  const countMatches = async () => {
+  const countMatches = useCallback(async () => {
     let query = supabase
       .from("bills")
       .select("id, balance_due", { count: "exact" })
@@ -53,7 +50,11 @@ const CollectionCampaignModal: React.FC<Props> = ({ hospitalId, onClose, onCompl
     const { count, data } = await query;
     setMatchCount(count || 0);
     setMatchTotal((data || []).reduce((s, b) => s + Number(b.balance_due), 0));
-  };
+  }, [minAmount, billTypes, cutoffDate, hospitalId]);
+
+  useEffect(() => {
+    countMatches();
+  }, [countMatches, minDays]);
 
   const previewMessages = async () => {
     const query = supabase

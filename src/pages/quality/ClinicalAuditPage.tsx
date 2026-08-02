@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
@@ -281,7 +281,14 @@ const ConvertToQIDialog: React.FC<ConvertQIProps> = ({
     start_date: new Date().toISOString().split("T")[0],
   });
 
+  // Read through a ref so this stays keyed on audit.id: it pre-fills the QI form
+  // when a DIFFERENT audit is converted, and must not wipe what the user has typed
+  // every time the audit object is refetched.
+  const auditRef = useRef(audit);
+  useEffect(() => { auditRef.current = audit; });
+
   useEffect(() => {
+    const audit = auditRef.current;
     setF({
       title: audit.title,
       problem_statement: audit.conclusion || audit.objective,
@@ -420,14 +427,8 @@ const ClinicalAuditPage: React.FC = () => {
 
   // ── Loaders ────────────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    if (!hospitalId) return;
-    (supabase as any).from("departments").select("id,name").eq("hospital_id", hospitalId).order("name")
-      .then(({ data }: any) => setDepartments(data || []));
-    loadAudits();
-  }, [hospitalId]);
 
-  const loadAudits = async () => {
+  const loadAudits = useCallback(async () => {
     if (!hospitalId) return;
     setLoading(true);
     const { data } = await (supabase as any)
@@ -435,7 +436,14 @@ const ClinicalAuditPage: React.FC = () => {
       .eq("hospital_id", hospitalId).order("created_at", { ascending: false }).limit(200);
     setAudits(data || []);
     setLoading(false);
-  };
+  }, [hospitalId]);
+
+  useEffect(() => {
+    if (!hospitalId) return;
+    (supabase as any).from("departments").select("id,name").eq("hospital_id", hospitalId).order("name")
+      .then(({ data }: any) => setDepartments(data || []));
+    loadAudits();
+  }, [loadAudits, hospitalId]);
 
   const loadSamples = async (auditId: string) => {
     setSamplesLoading(true);
