@@ -8,6 +8,7 @@ import OTInfoPanel from "@/components/ot/OTInfoPanel";
 import OTOptimizerPanel from "@/components/ot/OTOptimizerPanel";
 import OTCancellationPredictor from "@/components/ot/OTCancellationPredictor";
 import BookOTModal from "@/components/ot/BookOTModal";
+import { formatDateForQuery } from "@/lib/otDates";
 
 export interface OTRoom {
   id: string;
@@ -51,14 +52,6 @@ export interface OTSchedule {
   ot_room?: { name: string; type: string };
   admission?: { is_mlc: boolean | null } | null;
 }
-
-export const formatDateForQuery = (date: Date | string): string => {
-  const d = typeof date === "string" ? new Date(date + (date.includes("T") ? "" : "T00:00:00")) : date;
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
 
 const OTPage: React.FC = () => {
   const { toast } = useToast();

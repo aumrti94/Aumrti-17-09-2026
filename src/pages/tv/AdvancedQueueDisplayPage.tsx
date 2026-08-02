@@ -142,7 +142,7 @@ const AdvancedQueueDisplayPage: React.FC = () => {
   });
 
   useEffect(() => {
-    try { localStorage.setItem("tv_audio_enabled", audioEnabled ? "true" : "false"); } catch {}
+    try { localStorage.setItem("tv_audio_enabled", audioEnabled ? "true" : "false"); } catch { /* storage unavailable (private mode / quota) — preference is not persisted */ }
   }, [audioEnabled]);
 
   // ── Refs ──
@@ -221,7 +221,7 @@ const AdvancedQueueDisplayPage: React.FC = () => {
           try {
             const stored = localStorage.getItem(`tv_lang_${hospitalId}`);
             if (stored && LANG[stored]) return { ...next, announcement_language: stored };
-          } catch {}
+          } catch { /* storage unavailable — fall back to the DB language value */ }
           return next;
         });
       });
@@ -282,7 +282,7 @@ const AdvancedQueueDisplayPage: React.FC = () => {
   // ── Language change (admin only) ─────────────────────────────────────────
   const handleLangChange = useCallback((code: string) => {
     setTVSettings(prev => ({ ...prev, announcement_language: code }));
-    try { localStorage.setItem(`tv_lang_${hospitalId}`, code); } catch {}
+    try { localStorage.setItem(`tv_lang_${hospitalId}`, code); } catch { /* storage unavailable — language override is not persisted */ }
     if (hospitalId) {
       (supabase as any)
         .from("tv_display_settings")

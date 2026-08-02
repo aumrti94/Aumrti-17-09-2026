@@ -266,7 +266,7 @@ const SettingsWardsPage: React.FC = () => {
   const closeDrawer = () => { setDrawerOpen(false); setEditingId(null); };
 
   const toggleTemplate = (i: number) => {
-    setSelectedTemplates((prev) => { const s = new Set(prev); s.has(i) ? s.delete(i) : s.add(i); return s; });
+    setSelectedTemplates((prev) => { const s = new Set(prev); if (s.has(i)) s.delete(i); else s.add(i); return s; });
   };
 
   const typeColor = (t: string) => {

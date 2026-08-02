@@ -17,12 +17,11 @@ import React, { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Link2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isDaycare, pickDefaultAdmission, type ActiveAdmission } from "@/lib/pickDefaultAdmission";
 
-export interface ActiveAdmission {
-  id: string;
-  admission_number: string | null;
-  admission_type: string | null;
-}
+// Type-only re-export: existing importers keep working, and a type export does
+// not trip react-refresh/only-export-components the way a value export does.
+export type { ActiveAdmission };
 
 interface Props {
   hospitalId: string;
@@ -33,24 +32,7 @@ interface Props {
   onChange: (admissionId: string | null) => void;
 }
 
-function isDaycare(a: ActiveAdmission): boolean {
-  return (a.admission_type || "").toLowerCase() === "daycare";
-}
-
-/** PURE. The default pick: an explicitly requested admission, else inpatient over day care, else most recent. */
-export function pickDefaultAdmission(
-  admissions: ActiveAdmission[],
-  preferredId?: string | null
-): ActiveAdmission | null {
-  if (admissions.length === 0) return null;
-  if (preferredId) {
-    const wanted = admissions.find((a) => a.id === preferredId);
-    if (wanted) return wanted;
-  }
-  return admissions.find((a) => !isDaycare(a)) ?? admissions[0];
-}
-
-const AdmissionLinker: React.FC<Props> = ({ hospitalId, patientId, preferredAdmissionId, onChange }) => {
+const AdmissionLinker: React.FC<Props> =({ hospitalId, patientId, preferredAdmissionId, onChange }) => {
   const [admissions, setAdmissions] = useState<ActiveAdmission[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 

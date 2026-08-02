@@ -55,7 +55,7 @@ const COLUMN_MAP: Record<string, Record<string, ColConfig>> = {
       srcColumn: "phone",
       encColumn: "phone_enc",
       hashColumn: "phone_hash",
-      normalise: (v) => v.replace(/[\s\-\(\)]/g, "").replace(/^\+91/, "").replace(/^0/, ""),
+      normalise: (v) => v.replace(/[\s\-()]/g, "").replace(/^\+91/, "").replace(/^0/, ""),
     },
     name: {
       srcColumn: "full_name",
@@ -72,7 +72,7 @@ const COLUMN_MAP: Record<string, Record<string, ColConfig>> = {
       srcColumn: "aadhaar_number",
       encColumn: "aadhaar_enc",
       hashColumn: "aadhaar_hash",
-      normalise: (v) => v.replace(/[\s\-]/g, ""),
+      normalise: (v) => v.replace(/[\s-]/g, ""),
     },
   },
   admissions: {
@@ -80,7 +80,7 @@ const COLUMN_MAP: Record<string, Record<string, ColConfig>> = {
       srcColumn: "emergency_contact_phone",
       encColumn: "ec_phone_enc",
       hashColumn: "ec_phone_hash",
-      normalise: (v) => v.replace(/[\s\-\(\)]/g, "").replace(/^\+91/, "").replace(/^0/, ""),
+      normalise: (v) => v.replace(/[\s\-()]/g, "").replace(/^\+91/, "").replace(/^0/, ""),
     },
   },
   lab_reports: {

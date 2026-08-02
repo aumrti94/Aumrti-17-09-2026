@@ -56,7 +56,7 @@ const CollectionCampaignModal: React.FC<Props> = ({ hospitalId, onClose, onCompl
   };
 
   const previewMessages = async () => {
-    let query = supabase
+    const query = supabase
       .from("bills")
       .select("bill_number, balance_due, bill_date, patients(full_name, phone)")
       .eq("hospital_id", hospitalId)

@@ -62,7 +62,7 @@ const AntibioticStewardshipTab: React.FC = () => {
 
     const admIds = [...new Set(antibiotics.map((m: any) => m.admission_id))];
 
-    let cultureSet = new Set<string>();
+    const cultureSet = new Set<string>();
     if (admIds.length > 0) {
       const { data: labs } = await (supabase as any)
         .from("lab_orders")

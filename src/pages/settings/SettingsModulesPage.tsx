@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
-import { useProductMode } from "@/contexts/ProductModeContext";
+import { useProductMode } from "@/hooks/useProductMode";
 import { useSubscriptionConfig, CANONICAL_MODULE_KEYS } from "@/hooks/useSubscriptionConfig";
 
 const MODULE_METADATA = [

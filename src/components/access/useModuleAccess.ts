@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { hasTabAccess, hasActionAccess, type TabDef } from "@/lib/tabPermissions";
 
 /**
@@ -43,6 +43,5 @@ export function useDefaultVisibleTab(
     if (tabAllowed(moduleKey, current)) return current;
     const firstAllowed = tabDefs.find((t) => tabAllowed(moduleKey, t.key));
     return firstAllowed ? firstAllowed.key : current;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [moduleKey, current, tabDefs, tabAllowed]);
 }

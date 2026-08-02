@@ -1,22 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-
-interface SidebarContextType {
-  collapsed: boolean;
-  setCollapsed: (v: boolean) => void;
-  toggle: () => void;
-  mobileOpen: boolean;
-  setMobileOpen: (v: boolean) => void;
-}
-
-const SidebarContext = createContext<SidebarContextType>({
-  collapsed: false,
-  setCollapsed: () => {},
-  toggle: () => {},
-  mobileOpen: false,
-  setMobileOpen: () => {},
-});
-
-export const useSidebar = () => useContext(SidebarContext);
+import React, { useState, useEffect, useCallback } from "react";
+import { SidebarContext } from "@/hooks/useSidebar";
 
 const STORAGE_KEY = "aumrti_sidebar_collapsed";
 

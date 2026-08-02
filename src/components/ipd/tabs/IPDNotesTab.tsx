@@ -69,7 +69,7 @@ const IPDNotesTab: React.FC<Props> = ({ admissionId, hospitalId, userId, patient
 
   const fetchNotes = React.useCallback(async () => {
     if (!admissionId) return;
-    // @ts-ignore - ipd_nursing_notes is a new table not yet in generated types
+    // ipd_nursing_notes is a new table not yet in generated types — hence the `as any`.
     const { data, error } = await (supabase as any).from("ipd_nursing_notes")
       .select("*, recorder:users!recorded_by(full_name, role)")
       .eq("admission_id", admissionId)
@@ -96,7 +96,7 @@ const IPDNotesTab: React.FC<Props> = ({ admissionId, hospitalId, userId, patient
     if (!draft.trim() || !hospitalId || !userId) return;
     setLoading(true);
     
-    // @ts-ignore - ipd_nursing_notes is a new table
+    // ipd_nursing_notes is a new table not yet in generated types — hence the `as any`.
     const { error } = await (supabase as any).from("ipd_nursing_notes").insert({
       hospital_id: hospitalId,
       admission_id: admissionId,

@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useCredentialGate } from "@/components/hr/useCredentialGate";
 import { cn } from "@/lib/utils";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { hasTabAccess } from "@/lib/tabPermissions";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ import PCPNDTFormModal from "./PCPNDTFormModal";
 import DicomViewerPanel from "./DicomViewerPanel";
 import PaymentPendingDialog from "@/components/shared/PaymentPendingDialog";
 import { checkRadiologyOrderClearance, recordAncillaryOverride } from "@/lib/ancillaryGateChecks";
+import { printDocument, printHeader } from "@/lib/printUtils";
 
 interface Report {
   id: string;
@@ -866,7 +867,6 @@ const RadiologyReportingWorkspace: React.FC<Props> = ({ order, hospitalId, onSta
             )}
             <div className="flex-1" />
             <Button variant="outline" size="sm" className="h-8 text-[12px]" onClick={() => {
-              const { printDocument, printHeader } = require("@/lib/printUtils");
               const patientName = order.patients?.full_name || "Patient";
               const uhid = order.patients?.uhid || "";
               const body = `${printHeader("Radiology Report", order.study_name)}

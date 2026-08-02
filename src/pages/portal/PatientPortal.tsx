@@ -1,6 +1,7 @@
 import React from "react";
 import { Routes, Route, Navigate, useSearchParams } from "react-router-dom";
-import { PatientPortalProvider, usePatientPortal } from "@/contexts/PatientPortalContext";
+import { PatientPortalProvider } from "@/contexts/PatientPortalContext";
+import { usePatientPortal } from "@/hooks/usePatientPortal";
 import PatientPortalLogin from "./PatientPortalLogin";
 import PatientPortalLayout from "./PatientPortalLayout";
 import PortalDashboard from "./PortalDashboard";

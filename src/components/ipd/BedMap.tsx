@@ -6,7 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Plus } from "lucide-react";
 import type { BedData } from "@/pages/ipd/IPDPage";
 import NABHBadge from "@/components/nabh/NABHBadge";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { hasActionAccess } from "@/lib/tabPermissions";
 
 interface Props {

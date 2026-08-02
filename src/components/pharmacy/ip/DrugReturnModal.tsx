@@ -12,7 +12,7 @@ import { processPharmacyReturn, STOCK_ACTIONS, type StockAction } from "@/lib/ph
 import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { hasActionAccess } from "@/lib/tabPermissions";
 
 interface DispensedItem {

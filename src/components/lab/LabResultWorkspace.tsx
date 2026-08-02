@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { cn } from "@/lib/utils";
 import { hasTabAccess } from "@/lib/tabPermissions";
 import { Clock, Save, CheckCircle2, FileText, Printer, MessageSquare, AlertTriangle, Pencil } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { useWhatsAppNotification } from "@/components/whatsapp/WhatsAppNotificationCard";
+import { useWhatsAppNotification } from "@/hooks/useWhatsAppNotification";
 import { sendLabResultReady } from "@/lib/whatsapp-notifications";
 import { printDocument, printHeader } from "@/lib/printUtils";
 import { logRecordAccess } from "@/lib/ims";
@@ -791,7 +791,7 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
     const dateStr = new Date().toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
     const html = `<!DOCTYPE html>
 <html><head><title>Barcode Label</title>
-<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"><\/script>
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{font-family:Arial,sans-serif;width:50mm}
@@ -811,7 +811,7 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
 <script>
   JsBarcode("#bc","${orderBarcode}",{format:"CODE128",width:1.5,height:40,displayValue:true,fontSize:8,margin:2});
   setTimeout(()=>{window.print();window.close();},400);
-<\/script>
+</script>
 </body></html>`;
     const win = window.open("", "_blank", "width=320,height=270,toolbar=0,menubar=0");
     if (win) {

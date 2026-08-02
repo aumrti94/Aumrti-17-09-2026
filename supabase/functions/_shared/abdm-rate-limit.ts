@@ -50,7 +50,12 @@ export async function checkRateLimit(
       return { allowed: true, count: 0 };
     }
 
-    const count = Number(data) ?? 1;
+    // `?? 1` removed — Number() never returns null/undefined, so the fallback was
+    // dead code and this already evaluated to Number(data).
+    // TODO(separate review): a null `data` yields NaN here, and `NaN > maxCount` is
+    // false, so the limiter silently fails open. Correcting that changes live ABDM
+    // behavior and needs its own rollout decision.
+    const count = Number(data);
     if (count > maxCount) {
       const windowEndMs = (windowEpoch + 1) * windowMs;
       const retryAfterSeconds = Math.ceil((windowEndMs - Date.now()) / 1_000);

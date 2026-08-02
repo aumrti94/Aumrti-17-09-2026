@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { usePatientPortal } from "@/contexts/PatientPortalContext";
+import { usePatientPortal } from "@/hooks/usePatientPortal";
 import { ChevronDown, ChevronUp, Download, X, Pill } from "lucide-react";
 
 type Tab = "lab" | "radiology" | "prescriptions";

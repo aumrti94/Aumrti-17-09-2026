@@ -14,11 +14,8 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { ChevronRight, UserPlus, Users, ArrowLeft } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import {
-  usePatientPortal,
-  PatientSummary,
-  PortalHospital,
-} from "@/contexts/PatientPortalContext";
+import { PatientSummary, PortalHospital } from "@/contexts/PatientPortalContext";
+import { usePatientPortal } from "@/hooks/usePatientPortal";
 
 interface Props {
   hospitalId: string | null;

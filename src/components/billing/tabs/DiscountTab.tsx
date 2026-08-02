@@ -73,7 +73,7 @@ const DiscountTab: React.FC<Props> = ({ bill, hospitalId, onRefresh, userRole })
         .limit(1),
     ]);
     if (setting?.value) {
-      try { setRules({ ...DEFAULT_RULES, ...JSON.parse(setting.value) }); } catch {}
+      try { setRules({ ...DEFAULT_RULES, ...JSON.parse(setting.value) }); } catch { /* malformed stored setting — keep DEFAULT_RULES */ }
     }
     setApproval(approvalRows?.[0] || null);
   }, [hospitalId, bill.id]);

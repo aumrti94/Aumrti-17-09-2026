@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { formatINR } from "@/lib/currency";
 import { formatDistanceToNow } from "date-fns";
 import { endOfDayISO, type BillingDateRange } from "@/lib/billingDateRange";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { hasActionAccess } from "@/lib/tabPermissions";
 import { autoPostJournalEntry } from "@/lib/accounting";
 

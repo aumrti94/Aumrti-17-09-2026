@@ -141,7 +141,7 @@ export default function PublicAppointmentPage() {
     setBooking(true);
 
     // Get or create patient
-    let { data: existing } = await (supabase as any)
+    const { data: existing } = await (supabase as any)
       .from("patients")
       .select("id")
       .eq("hospital_id", hospital.id)

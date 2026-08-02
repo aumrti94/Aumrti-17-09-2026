@@ -8,7 +8,7 @@ import { Lock, Plus, X, ListPlus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { supabase } from "@/integrations/supabase/client";
-import { SIGNIN_ITEMS, TIMEOUT_ITEMS, SIGNOUT_ITEMS } from "@/components/ot/tabs/WHOChecklistTab";
+import { SIGNIN_ITEMS, TIMEOUT_ITEMS, SIGNOUT_ITEMS } from "@/lib/whoChecklistItems";
 import BulkPasteAddModal from "@/components/settings/BulkPasteAddModal";
 
 type Phase = "signin" | "timeout" | "signout";

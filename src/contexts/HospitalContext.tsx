@@ -1,4 +1,9 @@
-import React, { createContext, useContext, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { HospitalContext, type HospitalContextValue } from "@/hooks/useHospitalContext";
+
+// Type-only re-export: existing importers keep working, and a type export does
+// not trip react-refresh/only-export-components the way a value export does.
+export type { HospitalContextValue };
 import { supabase } from "@/integrations/supabase/client";
 import { ENTITLEMENT_KEY } from "@/lib/tabPermissions";
 import { resolveEntitlement, type EntitlementMap } from "@/lib/entitlementResolve";
@@ -87,24 +92,6 @@ function applyEntitlement(
   if (entitlement) rest[ENTITLEMENT_KEY] = entitlement;
   return Object.keys(rest).length ? rest : null;
 }
-
-interface HospitalContextValue {
-  hospitalId: string | null;
-  userId: string | null;
-  role: string | null;
-  permissions: Record<string, any> | null;
-  fullName: string | null;
-  loading: boolean;
-}
-
-const HospitalContext = createContext<HospitalContextValue>({
-  hospitalId: null,
-  userId: null,
-  role: null,
-  permissions: null,
-  fullName: null,
-  loading: true,
-});
 
 const CACHE_KEY_PREFIX = "hms_ctx_";
 
@@ -437,6 +424,3 @@ export const HospitalProvider = ({ children }: { children: React.ReactNode }) =>
   );
 };
 
-export const useHospitalContext = (): HospitalContextValue => {
-  return useContext(HospitalContext);
-};

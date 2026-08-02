@@ -1,7 +1,7 @@
 import { ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { Lock } from "lucide-react";
-import { useProductMode } from "@/contexts/ProductModeContext";
+import { useProductMode } from "@/hooks/useProductMode";
 import {
   useSubscriptionConfig,
   getModuleKeyForPath,

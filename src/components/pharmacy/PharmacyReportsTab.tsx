@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
 import { formatCurrency } from "@/lib/currency";
-import { getGroup } from "./ExpiryControlTab";
+import { getGroup } from "@/lib/expiryGroups";
 
 function downloadCSV(filename: string, headers: string[], rows: (string | number)[][]) {
   const csv = [headers, ...rows]

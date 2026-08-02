@@ -142,7 +142,7 @@ const WardNursingBoard: React.FC = () => {
     });
 
     // 6. Fetch Active IVs
-    let ivMap = new Map<string, { name: string; rate: string; end_at: string | null }[]>();
+    const ivMap = new Map<string, { name: string; rate: string; end_at: string | null }[]>();
     try {
       const { data: ivs } = await supabase
         .from("iv_fluids")

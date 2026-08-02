@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { hasTabAccess, hasActionAccess } from "@/lib/tabPermissions";
 import { Stethoscope, Mic, Save, CheckCircle, FlaskConical, Building2, Smartphone, ArrowUpRight, User, X, ScanLine, SendHorizonal, Printer } from "lucide-react";
 import AdmitPatientModal from "@/components/ipd/AdmitPatientModal";
@@ -10,7 +10,7 @@ import OnboardingTour from "@/components/onboarding/OnboardingTour";
 import type { OpdToken } from "@/pages/opd/OPDPage";
 import VoiceDictationButton from "@/components/voice/VoiceDictationButton";
 import ClinicalCalculatorPanel from "@/components/clinical/ClinicalCalculatorPanel";
-import { useVoiceScribe } from "@/contexts/VoiceScribeContext";
+import { useVoiceScribe } from "@/hooks/useVoiceScribe";
 import ComplaintTab from "./tabs/ComplaintTab";
 import VitalsTab from "./tabs/VitalsTab";
 import ExaminationTab from "./tabs/ExaminationTab";

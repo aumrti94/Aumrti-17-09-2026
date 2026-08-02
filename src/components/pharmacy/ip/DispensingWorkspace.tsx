@@ -4,7 +4,7 @@ import { DEFAULT_PHARMACY_GST_PERCENT } from "@/lib/gstRules";
 import { postAncillaryOrderCharges, type AncillaryChargeItem } from "@/lib/ancillaryCharges";
 import { fetchIpdAncillaryPolicy } from "@/lib/ipdAncillaryGate";
 import { checkPharmacyDispenseClearance, recordAncillaryOverride } from "@/lib/ancillaryGateChecks";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import PaymentPendingDialog from "@/components/shared/PaymentPendingDialog";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";

@@ -15,6 +15,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Download, FileText, AlertTriangle, RotateCcw, Loader2 } from "lucide-react";
 import { formatINRExact } from "@/lib/currency";
 import { toast } from "sonner";
+import { downloadInvoiceDocument } from "@/lib/invoiceDownload";
 
 export interface PaymentHistoryRow {
   id: string;
@@ -60,18 +61,6 @@ const TYPE_ICON = {
   payment_attempt: <AlertTriangle size={12} className="text-red-600" />,
   credit_note:     <RotateCcw size={12} className="text-amber-600" />,
 };
-
-export async function downloadInvoiceDocument(row: Pick<PaymentHistoryRow, "pdf_storage_path" | "invoice_number">) {
-  if (!row.pdf_storage_path) return;
-  const { data, error } = await supabase.storage
-    .from("subscription-invoices")
-    .createSignedUrl(row.pdf_storage_path, 300);
-  if (error || !data?.signedUrl) {
-    toast.error("Could not open the invoice. Please try again.");
-    return;
-  }
-  window.open(data.signedUrl, "_blank");
-}
 
 interface Props {
   /** Omit to show activity across all hospitals (platform Revenue view). */

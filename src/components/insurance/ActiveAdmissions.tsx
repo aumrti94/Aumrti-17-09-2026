@@ -244,7 +244,8 @@ const ActiveAdmissions: React.FC<Props> = ({ onNavigate, onNeedsSupplementary })
     const newMode = isManual(row) ? "auto" : "manual";
     setManualModeRows(prev => {
       const next = new Set(prev);
-      newMode === "manual" ? next.add(row.id) : next.delete(row.id);
+      if (newMode === "manual") next.add(row.id);
+      else next.delete(row.id);
       return next;
     });
     if (row.pre_auth_id) {
@@ -320,7 +321,7 @@ const ActiveAdmissions: React.FC<Props> = ({ onNavigate, onNeedsSupplementary })
       .filter(a => (paMap[a.id] as any)?.status === "approved")
       .map(a => a.id);
 
-    let billTotalMap: Record<string, number> = {};
+    const billTotalMap: Record<string, number> = {};
     if (approvedAdmIds.length > 0) {
       const { data: billData } = await (supabase as any)
         .from("bills")
@@ -338,7 +339,7 @@ const ActiveAdmissions: React.FC<Props> = ({ onNavigate, onNeedsSupplementary })
       .map(a => (paMap[a.id] as any)?.id)
       .filter(Boolean);
 
-    let suppMap: Record<string, string> = {};  // parent_pre_auth_id → supplementary_id
+    const suppMap: Record<string, string> = {};  // parent_pre_auth_id → supplementary_id
     if (approvedPaIds.length > 0) {
       const { data: suppData } = await (supabase as any)
         .from("insurance_pre_auth")

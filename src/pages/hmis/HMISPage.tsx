@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { FileText, Bug, Baby, AlertTriangle, Download, Eye, ClipboardList, ChevronDown, CheckCircle2, Loader2, Plus } from "lucide-react";
 import { getHospitalId } from "@/lib/getHospitalId";
+import { printDocument } from "@/lib/printUtils";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -393,7 +394,6 @@ const HMISPage: React.FC = () => {
   };
 
   const printFormF = (record: any) => {
-    const { printDocument } = require("@/lib/printUtils");
     const body = `
       <h2 style="color:#1A2F5A; text-align:center">FORM F</h2>
       <p style="text-align:center; font-size:11px; color:#666">[See Rule 9(1)] — PC-PNDT Act 1994<br/>Record to be maintained by Genetic Counselling Centre / Clinic / Laboratory / Hospital</p>

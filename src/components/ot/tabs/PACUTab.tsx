@@ -103,7 +103,7 @@ const PACUTab: React.FC<Props> = ({ schedule }) => {
     setLoading(false);
   };
 
-  useEffect(() => { loadHistory(); /* eslint-disable-next-line */ }, [schedule.id]);
+  useEffect(() => { loadHistory(); }, [schedule.id]);
 
   const saveScore = async () => {
     if (!allRated) {

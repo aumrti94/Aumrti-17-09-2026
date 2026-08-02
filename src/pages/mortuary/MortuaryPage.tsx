@@ -22,6 +22,7 @@ import { format, differenceInDays } from "date-fns";
 import { Loader2 } from "lucide-react";
 import PatientSearchPicker from "@/components/shared/PatientSearchPicker";
 import PatientRegistrationModal from "@/components/patients/PatientRegistrationModal";
+import { printDocument } from "@/lib/printUtils";
 
 interface MortuaryAdmission {
   id: string;
@@ -907,7 +908,6 @@ export default function MortuaryPage() {
               <div className="flex gap-2">
                 <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(generatePoliceLetter(mlcRecords.find(m => m.id === policeLetterModal)!)); toast.success("Copied to clipboard"); }}>📋 Copy Text</Button>
                 <Button size="sm" variant="outline" onClick={() => {
-                  const { printDocument } = require("@/lib/printUtils");
                   printDocument("Police Intimation Letter", `<pre>${generatePoliceLetter(mlcRecords.find(m => m.id === policeLetterModal)!)}</pre>`);
                 }}>🖨️ Print</Button>
               </div>

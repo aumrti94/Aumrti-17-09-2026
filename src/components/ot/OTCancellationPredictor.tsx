@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { XCircle, Loader2, ShieldAlert, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatDateForQuery } from "@/pages/ot/OTPage";
+import { formatDateForQuery } from "@/lib/otDates";
 
 interface CancellationRisk {
   case_ref: string;

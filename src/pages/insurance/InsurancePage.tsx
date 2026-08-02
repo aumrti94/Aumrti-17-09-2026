@@ -37,6 +37,7 @@ import DenialAnalyticsDashboard from "@/components/insurance/DenialAnalyticsDash
 import HCXClaimsTab from "@/components/insurance/HCXClaimsTab";
 import PaymentReconciliation from "@/components/insurance/PaymentReconciliation";
 import TpaDisputePanel from "@/components/insurance/TpaDisputePanel";
+import { InsurancePlanContext, useInsurancePlan } from "@/hooks/useInsurancePlan";
 
 // ── Plan Context ───────────────────────────────────────────────────────────────
 // Exported so child components can consume it instead of loading settings again.
@@ -45,10 +46,6 @@ interface InsurancePlanCtx {
   planTier:   string;
   hospitalId: string | null;
 }
-export const InsurancePlanContext = createContext<InsurancePlanCtx>({
-  planTier: "manual", hospitalId: null,
-});
-export const useInsurancePlan = () => useContext(InsurancePlanContext);
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 

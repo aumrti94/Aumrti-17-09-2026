@@ -20,7 +20,7 @@ import DiscountTab from "@/components/billing/tabs/DiscountTab";
 import AdvanceApplicationTab from "@/components/billing/tabs/AdvanceApplicationTab";
 import GSTInvoiceModal from "@/components/billing/GSTInvoiceModal";
 import PaymentLinkModal from "@/components/billing/PaymentLinkModal";
-import { useWhatsAppNotification } from "@/components/whatsapp/WhatsAppNotificationCard";
+import { useWhatsAppNotification } from "@/hooks/useWhatsAppNotification";
 import { sendBillGenerated } from "@/lib/whatsapp-notifications";
 import { validateGSTLineItems } from "@/lib/compliance-checks";
 import { autoPostJournalEntry } from "@/lib/accounting";
@@ -31,7 +31,7 @@ import { ADMISSION_BILL_TYPES, isAdmissionBill } from "@/lib/admissionBill";
 import { formatINR } from "@/lib/currency";
 import { computeBillMoney } from "@/lib/billMoney";
 import { fetchAdvanceLedger, type AdvanceLedger } from "@/lib/advanceLedger";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import type { BillRecord } from "@/pages/billing/BillingPage";
 
 interface DiscountApproval {

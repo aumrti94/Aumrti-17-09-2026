@@ -32,7 +32,8 @@ const Step7WhatsApp: React.FC<Props> = ({ hospitalId, hospitalName, onComplete }
   const toggleNotif = (n: string) => {
     setNotifs((prev) => {
       const next = new Set(prev);
-      next.has(n) ? next.delete(n) : next.add(n);
+      if (next.has(n)) next.delete(n);
+      else next.add(n);
       return next;
     });
   };

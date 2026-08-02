@@ -55,7 +55,7 @@ serve(async (req: Request) => {
       const chapter = context_filter?.chapter as string | undefined;
 
       // High and critical risk compliance gaps
-      let gapQuery = sb
+      const gapQuery = sb
         .from("nabh_hospital_compliance")
         .select("status, risk_level, assessor_score, comments, nabh_standards(chapter_code, standard_code, level, description)")
         .eq("hospital_id", hospital_id)

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Microscope } from "lucide-react";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import CollapsiblePanel from "@/components/layout/CollapsiblePanel";
 import { hasTabAccess } from "@/lib/tabPermissions";
 import NABHBadge from "@/components/nabh/NABHBadge";

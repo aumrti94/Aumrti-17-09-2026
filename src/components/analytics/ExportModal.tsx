@@ -8,6 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import type { DateRange } from "@/hooks/useAnalyticsData";
+import { printDocument } from "@/lib/printUtils";
 
 const EXPORT_SCOPES = [
   { id: "current", label: "Current Tab View" },
@@ -53,7 +54,8 @@ const ExportModal: React.FC<ExportModalProps> = ({ open, onOpenChange, range, ac
   const toggleSection = (id: string) => {
     setSections(prev => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
@@ -65,7 +67,6 @@ const ExportModal: React.FC<ExportModalProps> = ({ open, onOpenChange, range, ac
       if (!hospitalId) throw new Error("No hospital");
 
       if (format === "pdf") {
-        const { printDocument } = require("@/lib/printUtils");
         printDocument("Analytics Report", `<h2 style="color:#1A2F5A">Analytics Report</h2><p>Report exported from Aumrti HMS Analytics</p>`);
         toast.success("PDF print dialog opened ✓");
         onOpenChange(false);

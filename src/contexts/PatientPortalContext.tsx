@@ -1,43 +1,14 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import React, { useState, useEffect, ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  PatientPortalContext,
+  type PatientSummary,
+  type PortalHospital,
+} from "@/hooks/usePatientPortal";
 
-export interface PatientSummary {
-  id: string;
-  fullName: string;
-  uhid: string;
-  phone: string | null;
-  email: string | null;
-  dob: string | null;
-  gender: string | null;
-  bloodGroup: string | null;
-  hospitalId: string;
-}
-
-export interface PortalHospital {
-  id: string;
-  name: string;
-  logoUrl: string | null;
-}
-
-interface PatientPortalContextValue {
-  patientId: string | null;
-  hospitalId: string | null;
-  patient: PatientSummary | null;
-  hospital: PortalHospital | null;
-  loading: boolean;
-  activate: (patient: PatientSummary, hospital: PortalHospital) => void;
-  logout: () => Promise<void>;
-}
-
-const PatientPortalContext = createContext<PatientPortalContextValue>({
-  patientId: null,
-  hospitalId: null,
-  patient: null,
-  hospital: null,
-  loading: true,
-  activate: () => {},
-  logout: async () => {},
-});
+// Type-only re-export: existing importers keep working, and a type export does
+// not trip react-refresh/only-export-components the way a value export does.
+export type { PatientSummary, PortalHospital };
 
 const STORAGE_KEY = "ppc_state_v1";
 
@@ -105,4 +76,3 @@ export const PatientPortalProvider: React.FC<{ children: ReactNode }> = ({ child
   );
 };
 
-export const usePatientPortal = () => useContext(PatientPortalContext);

@@ -73,7 +73,7 @@ export function splitAtSentenceBoundary(text: string, maxChars: number = SARVAM_
     // Find the last sentence boundary within the limit.
     const window = remaining.slice(0, maxChars);
     // Indian scripts use "।" (purna viram), English uses "."; also split at "?" "!" and newline.
-    const sentenceEnders = /[।\.\?\!]\s|\n/g;
+    const sentenceEnders = /[।.?!]\s|\n/g;
     let lastBoundary = -1;
     let match: RegExpExecArray | null;
     while ((match = sentenceEnders.exec(window)) !== null) {

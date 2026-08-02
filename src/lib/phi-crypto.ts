@@ -190,7 +190,7 @@ export function getEncryptedPlaceholder(type: PHIFieldType): string {
  *   normalizePhone("09876543210")       // "9876543210"
  */
 export function normalizePhone(phone: string): string {
-  const stripped = phone.replace(/[\s\-\(\)]/g, "").replace(/^\+91/, "").replace(/^0/, "");
+  const stripped = phone.replace(/[\s\-()]/g, "").replace(/^\+91/, "").replace(/^0/, "");
   return stripped;
 }
 
@@ -202,5 +202,5 @@ export function normalizePhone(phone: string): string {
  *   normalizeAadhaar("1234 5678 9012")  // "123456789012"
  */
 export function normalizeAadhaar(aadhaar: string): string {
-  return aadhaar.replace(/[\s\-]/g, "");
+  return aadhaar.replace(/[\s-]/g, "");
 }

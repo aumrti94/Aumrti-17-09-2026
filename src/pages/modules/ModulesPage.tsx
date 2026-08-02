@@ -19,7 +19,7 @@ import {
   getModuleKeyForPath,
   isModuleKeyAllowed,
 } from "@/hooks/useSubscriptionConfig";
-import { useProductMode } from "@/contexts/ProductModeContext";
+import { useProductMode } from "@/hooks/useProductMode";
 
 /** Chip filters: everything, only-what-this-hospital-has, or a single category. */
 type Filter = "All" | "My" | ModuleCategory;

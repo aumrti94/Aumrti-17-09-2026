@@ -1,18 +1,7 @@
 import React from "react";
 import { Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-export const SUPPORTED_LANGUAGES = [
-  { code: "en", label: "English", native: "English" },
-  { code: "hi", label: "Hindi", native: "हिन्दी" },
-  { code: "te", label: "Telugu", native: "తెలుగు" },
-  { code: "ta", label: "Tamil", native: "தமிழ்" },
-  { code: "kn", label: "Kannada", native: "ಕನ್ನಡ" },
-  { code: "ml", label: "Malayalam", native: "മലയാളം" },
-  { code: "mr", label: "Marathi", native: "मराठी" },
-  { code: "gu", label: "Gujarati", native: "ગુજરાતી" },
-  { code: "bn", label: "Bengali", native: "বাংলা" },
-];
+import { SUPPORTED_LANGUAGES } from "@/lib/portalLanguages";
 
 interface Props {
   value: string;

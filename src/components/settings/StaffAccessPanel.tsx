@@ -136,7 +136,8 @@ const StaffAccessPanel: React.FC<Props> = ({ userId, role, staffName }) => {
   const toggleExpand = (mod: string) =>
     setExpanded((prev) => {
       const n = new Set(prev);
-      n.has(mod) ? n.delete(mod) : n.add(mod);
+      if (n.has(mod)) n.delete(mod);
+      else n.add(mod);
       return n;
     });
 

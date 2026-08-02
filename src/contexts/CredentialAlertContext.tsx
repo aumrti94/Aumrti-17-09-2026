@@ -1,32 +1,13 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
+import { CredentialAlertContext, type ExpiringCredential } from "@/hooks/useCredentialAlert";
+
+// Type-only re-export: existing importers keep working, and a type export does
+// not trip react-refresh/only-export-components the way a value export does.
+export type { ExpiringCredential };
 
 const HR_ROLES = ["hr_manager", "super_admin", "hospital_admin"];
-
-export interface ExpiringCredential {
-  id: string;
-  user_id: string;
-  staff_name: string;
-  credential_type: string;
-  name: string | null;
-  expiry_date: string;
-  days_left: number;
-}
-
-interface ContextValue {
-  expiringCount: number;
-  credentials: ExpiringCredential[];
-  loading: boolean;
-  refresh: () => void;
-}
-
-const CredentialAlertContext = createContext<ContextValue>({
-  expiringCount: 0,
-  credentials: [],
-  loading: false,
-  refresh: () => {},
-});
 
 export const CredentialAlertProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { hospitalId, role } = useHospitalId();
@@ -92,4 +73,3 @@ export const CredentialAlertProvider: React.FC<{ children: React.ReactNode }> = 
   );
 };
 
-export const useCredentialAlert = () => useContext(CredentialAlertContext);

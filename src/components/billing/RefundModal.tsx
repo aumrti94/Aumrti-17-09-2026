@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2 } from "lucide-react";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { hasActionAccess } from "@/lib/tabPermissions";
 import { fetchOpenRefund, isDuplicateRefundError, DUPLICATE_REFUND_MESSAGE } from "@/lib/refundRequests";
 

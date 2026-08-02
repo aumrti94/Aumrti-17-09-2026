@@ -175,7 +175,7 @@ export default function SettingsAPIPortalPage() {
                           <span className="text-muted-foreground">
                             {revealedKeys.has(k.id) ? k.key_hash : `${k.key_hash?.slice(0, 12)}${"•".repeat(20)}`}
                           </span>
-                          <button onClick={() => setRevealedKeys(p => { const s = new Set(p); s.has(k.id) ? s.delete(k.id) : s.add(k.id); return s; })} className="text-muted-foreground hover:text-foreground">
+                          <button onClick={() => setRevealedKeys(p => { const s = new Set(p); if (s.has(k.id)) s.delete(k.id); else s.add(k.id); return s; })} className="text-muted-foreground hover:text-foreground">
                             {revealedKeys.has(k.id) ? <EyeOff size={12} /> : <Eye size={12} />}
                           </button>
                           <button onClick={() => copyToClipboard(k.key_hash, k.id)} className="text-muted-foreground hover:text-foreground">

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useCredentialAlert, ExpiringCredential } from "@/contexts/CredentialAlertContext";
+import { useCredentialAlert, type ExpiringCredential } from "@/hooks/useCredentialAlert";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, RefreshCw, Bell, ShieldAlert } from "lucide-react";

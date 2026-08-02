@@ -45,11 +45,12 @@ const AccountsPage: React.FC = () => {
         start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
         end = new Date(now.getFullYear(), now.getMonth(), 0);
         break;
-      case "this_quarter":
+      case "this_quarter": {
         const q = Math.floor(now.getMonth() / 3) * 3;
         start = new Date(now.getFullYear(), q, 1);
         end = now;
         break;
+      }
       case "this_year":
         start = new Date(now.getFullYear(), 3 >= now.getMonth() ? -9 : 3, 1); // April FY start
         end = now;

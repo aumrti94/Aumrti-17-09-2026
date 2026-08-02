@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Scissors, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { hasTabAccess } from "@/lib/tabPermissions";
 import type { OTSchedule } from "@/pages/ot/OTPage";
 import { supabase } from "@/integrations/supabase/client";

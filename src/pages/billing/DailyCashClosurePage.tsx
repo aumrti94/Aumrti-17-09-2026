@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Lock, Unlock, CheckCircle2, AlertTriangle, Clock, ChevronDown, Printer, ShieldAlert } from "lucide-react";
 import { computeDayClosureTotals, groupTotalsByCashier, EMPTY_TOTALS, UNATTRIBUTED_LABEL, type SystemTotals, type CashierBreakdown } from "@/lib/dayClosureTotals";
 import { useModuleAccess } from "@/components/access/useModuleAccess";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { logConfigChange } from "@/lib/ims";
 
 // ─── Types ────────────────────────────────────────────────────────────────────

@@ -271,7 +271,7 @@ export async function decryptPHI(ciphertext: string, hospitalId: string): Promis
 export async function hashPHI(plaintext: string, hospitalId: string): Promise<string> {
   if (!plaintext) return "";
   // Normalise: trim whitespace, lowercase for phone/Aadhaar consistency
-  const normalised = plaintext.trim().toLowerCase().replace(/[\s\-]/g, "");
+  const normalised = plaintext.trim().toLowerCase().replace(/[\s-]/g, "");
   const dek = await loadDEK(hospitalId);
   const data = new TextEncoder().encode(normalised);
   const sig = await crypto.subtle.sign("HMAC", dek.hmacKey, data);

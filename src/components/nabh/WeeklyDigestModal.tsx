@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
+import { DIGEST_ALLOWED_ROLES } from "@/lib/digestRoles";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -128,7 +129,7 @@ const ContextPanel = ({ summary }: { summary: ContextSummary }) => {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-const ALLOWED_ROLES = ["super_admin", "hospital_admin", "medical_superintendent", "quality_head", "quality_manager", "quality_officer"];
+const ALLOWED_ROLES = DIGEST_ALLOWED_ROLES;
 
 const WeeklyDigestModal: React.FC<Props> = ({ open, hospitalId, onClose }) => {
   const { toast } = useToast();
@@ -173,7 +174,7 @@ const WeeklyDigestModal: React.FC<Props> = ({ open, hospitalId, onClose }) => {
         const trimmed = line.trim();
         if (!trimmed) return "<br/>";
         // Section headings are all-caps lines ending with ":"
-        if (/^[A-Z &\/]+:/.test(trimmed)) {
+        if (/^[A-Z &/]+:/.test(trimmed)) {
           return `<h3 style="margin:14px 0 4px;font-size:12px;font-weight:700;color:#1e3a5f;text-transform:uppercase;letter-spacing:.5px">${trimmed}</h3>`;
         }
         return `<p style="margin:0 0 6px;font-size:11px;line-height:1.6">${trimmed}</p>`;
@@ -300,7 +301,7 @@ const WeeklyDigestModal: React.FC<Props> = ({ open, hospitalId, onClose }) => {
                   {result.narrative.split("\n").map((line, idx) => {
                     const trimmed = line.trim();
                     if (!trimmed) return <div key={idx} className="h-2" />;
-                    if (/^[A-Z &\/]+:/.test(trimmed)) {
+                    if (/^[A-Z &/]+:/.test(trimmed)) {
                       const [head, ...rest] = trimmed.split(":");
                       return (
                         <p key={idx} className="text-sm mt-3 mb-1">
@@ -373,5 +374,4 @@ const WeeklyDigestModal: React.FC<Props> = ({ open, hospitalId, onClose }) => {
   );
 };
 
-export { ALLOWED_ROLES as DIGEST_ALLOWED_ROLES };
 export default WeeklyDigestModal;

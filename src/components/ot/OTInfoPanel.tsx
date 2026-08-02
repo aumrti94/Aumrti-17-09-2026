@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { format, isToday, addDays } from "date-fns";
 import type { OTSchedule } from "@/pages/ot/OTPage";
-import { formatDateForQuery } from "@/pages/ot/OTPage";
+import { formatDateForQuery } from "@/lib/otDates";
 import OTUtilizationTab from "@/components/ot/tabs/OTUtilizationTab";
 
 interface Props {

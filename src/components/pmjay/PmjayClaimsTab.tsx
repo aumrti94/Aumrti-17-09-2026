@@ -10,6 +10,7 @@ import { formatDistanceToNow } from "date-fns";
 import { Coins, Bot, Copy, Printer, AlertTriangle, Send } from "lucide-react";
 import { callAI } from "@/lib/aiProvider";
 import { autoPostJournalEntry } from "@/lib/accounting";
+import { printDocument } from "@/lib/printUtils";
 
 interface Claim {
   id: string;
@@ -441,7 +442,6 @@ Hospital letterhead will be added. Just write the body content.`,
               <Copy size={13} className="mr-1" /> Copy
             </Button>
             <Button variant="outline" size="sm" onClick={() => {
-              const { printDocument } = require("@/lib/printUtils");
               printDocument("PMJAY Appeal Letter", `<h2 style="color:#1A2F5A">PMJAY Appeal Letter</h2><pre>${appealText}</pre>`);
             }}>
               <Printer size={13} className="mr-1" /> Print

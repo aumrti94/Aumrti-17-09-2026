@@ -1,23 +1,8 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useHospitalContext } from "./HospitalContext";
-
-interface ProductModeContextValue {
-  productMode: string;
-  enabledModules: string[] | null; // null = all modules (no config saved yet)
-  loadingMode: boolean;
-  isModuleEnabled: (key: string) => boolean;
-  refreshMode: () => void;
-}
-
-const ProductModeContext = createContext<ProductModeContextValue>({
-  productMode: "hospital",
-  enabledModules: null,
-  loadingMode: false,
-  isModuleEnabled: () => true,
-  refreshMode: () => undefined,
-});
+import { useHospitalContext } from "@/hooks/useHospitalContext";
+import { ProductModeContext } from "@/hooks/useProductMode";
 
 const CACHE_PREFIX = "hms_pmode_";
 
@@ -127,4 +112,3 @@ export const ProductModeProvider = ({ children }: { children: React.ReactNode })
   );
 };
 
-export const useProductMode = () => useContext(ProductModeContext);

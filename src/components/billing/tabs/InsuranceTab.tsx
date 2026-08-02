@@ -65,7 +65,7 @@ const InsuranceTab: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
           setAccountHolder(saved.reimbursement_bank.accountHolder || "");
         }
         if (saved.tpa) setAutoLoaded(false); // loaded from saved data, not pre-auth
-      } catch {}
+      } catch { /* unparseable notes JSON — leave fields at their defaults */ }
     }
     // Pre-fill covered amount from bill.insurance_amount if nothing in notes
     if (!bill.notes && bill.insurance_amount > 0) {

@@ -12,6 +12,7 @@ import { recordBillPayment } from "@/lib/billPayments";
 import { printReceiptDoc } from "@/lib/receiptPrint";
 import PaymentLinkModal from "@/components/billing/PaymentLinkModal";
 import type { BillRecord } from "@/pages/billing/BillingPage";
+import { printDocument } from "@/lib/printUtils";
 
 // Razorpay payment method -> this app's payment_mode enum. Unrecognised
 // methods (wallet, emi, ...) fall back to "upi" (always has a seeded
@@ -339,7 +340,6 @@ const PaymentsPage: React.FC = () => {
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={() => {
-            const { printDocument } = require("@/lib/printUtils");
             printDocument("Outstanding Payments Summary", `<h2 style="color:#1A2F5A">Outstanding Payments Summary</h2><p class="label">Generated on ${new Date().toLocaleDateString("en-IN")}</p>`);
           }}>
             <Printer size={14} /> Print Summary

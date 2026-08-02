@@ -450,7 +450,8 @@ const SettingsRolesPage: React.FC = () => {
   const toggleExpand = useCallback((mod: string) => {
     setExpandedModules((prev) => {
       const next = new Set(prev);
-      next.has(mod) ? next.delete(mod) : next.add(mod);
+      if (next.has(mod)) next.delete(mod);
+      else next.add(mod);
       return next;
     });
   }, []);

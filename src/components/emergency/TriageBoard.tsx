@@ -2,7 +2,7 @@ import React from "react";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { EDVisit } from "@/pages/emergency/EmergencyPage";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { hasActionAccess } from "@/lib/tabPermissions";
 import { isReassessmentOverdue } from "@/lib/edSla";
 

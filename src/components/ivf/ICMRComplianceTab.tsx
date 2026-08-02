@@ -30,9 +30,8 @@ interface ArtCycle {
   icmr_submitted: boolean;
 }
 
-interface Props {
-  // Uses hospitalId from hook
-}
+// No props — hospitalId comes from the hook.
+type Props = object;
 
 const ICMRComplianceTab: React.FC<Props> = () => {
   const { toast } = useToast();

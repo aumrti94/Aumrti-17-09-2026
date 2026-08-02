@@ -451,7 +451,7 @@ const AdmitPatientModal: React.FC<Props> = ({
               const { data: svcMatch } = await (supabase as any).from("service_master").select("fee")
                 .eq("hospital_id", hospitalId).ilike("name", `%${diagnosis.split(" ").slice(0, 2).join("%")}%`).limit(1).maybeSingle();
               if (svcMatch?.fee) estimatedAmount = Number(svcMatch.fee);
-            } catch {}
+            } catch { /* best-effort fee lookup — fall through with estimatedAmount 0 */ }
           }
           await (supabase as any).from("insurance_pre_auth").insert({
             hospital_id: hospitalId, patient_id: selectedPatient.id, admission_id: newAdm.id,

@@ -14,30 +14,11 @@
  * This provider adds queue management and auto-sync.
  */
 
-import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { offlineQueue, syncOfflineQueue, type QueuedOperation } from "@/lib/offlineQueue";
 import { useToast } from "@/hooks/use-toast";
-
-interface OfflineSyncState {
-  isOnline:        boolean;
-  pendingCount:    number;
-  syncing:         boolean;
-  lastSyncedAt:    Date | null;
-  enqueueOperation: (op: Omit<QueuedOperation, "id" | "createdAt" | "retries">) => Promise<string>;
-  triggerSync:     () => Promise<void>;
-}
-
-const OfflineSyncContext = createContext<OfflineSyncState>({
-  isOnline:         true,
-  pendingCount:     0,
-  syncing:          false,
-  lastSyncedAt:     null,
-  enqueueOperation: async () => "",
-  triggerSync:      async () => {},
-});
-
-export const useOfflineSync = () => useContext(OfflineSyncContext);
+import { OfflineSyncContext } from "@/hooks/useOfflineSync";
 
 export const OfflineSyncProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isOnline,     setIsOnline]     = useState(navigator.onLine);
@@ -177,38 +158,3 @@ const OfflineSyncBar: React.FC<{
   </div>
 );
 
-/**
- * useOfflineWrite — hook that transparently writes to Supabase when online
- * or queues the operation when offline.
- *
- * Example:
- *   const { write } = useOfflineWrite();
- *   await write({ table: "nursing_vitals", operation: "insert", data: { ... } });
- */
-export function useOfflineWrite() {
-  const { isOnline, enqueueOperation } = useOfflineSync();
-
-  const write = useCallback(
-    async (op: Omit<QueuedOperation, "id" | "createdAt" | "retries">) => {
-      if (isOnline) {
-        // Direct write — fast path
-        if (op.operation === "insert") {
-          const { error } = await supabase.from(op.table as any).insert(op.data as any);
-          if (error) throw new Error(error.message);
-        } else if (op.operation === "update" && op.matchField && op.matchValue !== undefined) {
-          const { error } = await (supabase as any)
-            .from(op.table)
-            .update(op.data)
-            .eq(op.matchField, op.matchValue);
-          if (error) throw new Error(error.message);
-        }
-      } else {
-        // Offline — queue it
-        await enqueueOperation(op);
-      }
-    },
-    [isOnline, enqueueOperation]
-  );
-
-  return { write, isOnline };
-}

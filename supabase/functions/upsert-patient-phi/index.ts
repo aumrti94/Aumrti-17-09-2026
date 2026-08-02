@@ -82,7 +82,7 @@ function maskAddress(a: string): string {
   return words.length <= 2 ? a : `**** ${words.at(-1)}`;
 }
 function normalizePhone(p: string): string {
-  return p.replace(/[\s\-\(\)]/g, "").replace(/^\+91/, "").replace(/^0/, "");
+  return p.replace(/[\s\-()]/g, "").replace(/^\+91/, "").replace(/^0/, "");
 }
 
 // ── Main handler ────────────────────────────────────────────────────────────
@@ -175,7 +175,7 @@ serve(async (req: Request) => {
     }
 
     if (fields.aadhaar) {
-      const norm = fields.aadhaar.replace(/[\s\-]/g, "");
+      const norm = fields.aadhaar.replace(/[\s-]/g, "");
       const [enc, hash] = await Promise.all([
         encryptPHI(norm, hospitalId),
         hashPHI(norm, hospitalId),

@@ -368,7 +368,8 @@ const RetailCart: React.FC<Props> = ({
                 value={discountMode === "percent" ? discountPercent : discountFixed}
                 onChange={e => {
                   const v = parseFloat(e.target.value) || 0;
-                  discountMode === "percent" ? onSetDiscountPercent(Math.min(100, v)) : onSetDiscountFixed(v);
+                  if (discountMode === "percent") onSetDiscountPercent(Math.min(100, v));
+                  else onSetDiscountFixed(v);
                 }}
                 className="w-14 h-6 text-xs text-center p-0"
               />

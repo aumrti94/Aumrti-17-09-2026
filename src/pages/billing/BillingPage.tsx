@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useRealtimeRefetch } from "@/hooks/useRealtimeRefetch";
 import CollapsiblePanel from "@/components/layout/CollapsiblePanel";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { hasTabAccess, hasActionAccess } from "@/lib/tabPermissions";
 import { cn } from "@/lib/utils";
 import { ADMISSION_BILL_TYPES, findOrCreateAdmissionBill } from "@/lib/admissionBill";

@@ -138,17 +138,20 @@ const UnbilledServicesModal: React.FC<Props> = ({ bill, hospitalId, onClose, onA
 
   const togglePharm = (key: string) => {
     const next = new Set(selectedPharm);
-    next.has(key) ? next.delete(key) : next.add(key);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
     setSelectedPharm(next);
   };
   const toggleLab = (key: string) => {
     const next = new Set(selectedLab);
-    next.has(key) ? next.delete(key) : next.add(key);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
     setSelectedLab(next);
   };
   const toggleRad = (key: string) => {
     const next = new Set(selectedRad);
-    next.has(key) ? next.delete(key) : next.add(key);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
     setSelectedRad(next);
   };
 

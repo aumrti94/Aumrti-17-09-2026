@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { useSubscriptionConfig, isModuleKeyAllowed } from "@/hooks/useSubscriptionConfig";
 import { ENTITLEMENT_KEY } from "@/lib/tabPermissions";
 import { setAIEntitlement, clearAIEntitlement } from "@/lib/aiEntitlement";

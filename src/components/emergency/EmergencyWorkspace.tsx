@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { ExternalLink, Mic, FileText, Bot, Loader2, X, FlaskConical, ScanLine } from "lucide-react";
 import AIAttestationModal from "@/components/ai/AIAttestationModal";
 import { printDocument, printHeader } from "@/lib/printUtils";
-import { useVoiceScribe } from "@/contexts/VoiceScribeContext";
+import { useVoiceScribe } from "@/hooks/useVoiceScribe";
 import VoiceDictationButton from "@/components/voice/VoiceDictationButton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel } from "@/components/ui/alert-dialog";

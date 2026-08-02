@@ -5,10 +5,10 @@ import {
   FlaskConical, Pill, Receipt, BarChart3, Inbox, Settings,
   LogOut, HeartPulse, Activity, FolderOpen, X, CalendarDays, Building2, ShieldCheck, Wrench, Users, UserCircle,
 } from "lucide-react";
-import { useCredentialAlert } from "@/contexts/CredentialAlertContext";
-import { useProductMode } from "@/contexts/ProductModeContext";
+import { useCredentialAlert } from "@/hooks/useCredentialAlert";
+import { useProductMode } from "@/hooks/useProductMode";
 import { cn } from "@/lib/utils";
-import { useSidebar } from "./SidebarContext";
+import { useSidebar } from "@/hooks/useSidebar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";

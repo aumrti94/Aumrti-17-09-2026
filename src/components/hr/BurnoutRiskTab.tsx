@@ -130,7 +130,7 @@ const BurnoutRiskTab: React.FC<{ hospitalId: string }> = ({ hospitalId }) => {
         const riskLevel = finalScore >= 70 ? "critical" : finalScore >= 55 ? "high" : finalScore >= 35 ? "medium" : "low";
 
         // AI recommendations only for medium/high/critical
-        let recommendations = null;
+        const recommendations = null;
         let riskFactors: string[] = [];
         if (finalScore >= 35) {
           riskFactors = [

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, Plus, Calendar as CalendarIcon, LayoutGrid, CalendarDays } from "lucide-react";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { hasActionAccess } from "@/lib/tabPermissions";
 import { format, startOfWeek, endOfWeek, addDays, startOfMonth, endOfMonth, isSameDay, isToday, addMonths, subMonths } from "date-fns";
 import { Progress } from "@/components/ui/progress";
@@ -9,7 +9,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { supabase } from "@/integrations/supabase/client";
 import type { OTRoom, OTSchedule } from "@/pages/ot/OTPage";
-import { formatDateForQuery } from "@/pages/ot/OTPage";
+import { formatDateForQuery } from "@/lib/otDates";
 
 interface Props {
   rooms: OTRoom[];

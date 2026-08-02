@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
-import { formatDateForQuery } from "@/pages/ot/OTPage";
+import { formatDateForQuery } from "@/lib/otDates";
 
 interface Props {
   hospitalId: string | null;

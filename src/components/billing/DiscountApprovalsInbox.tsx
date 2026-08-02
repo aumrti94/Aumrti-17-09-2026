@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { formatINR } from "@/lib/currency";
 import { format, formatDistanceToNow } from "date-fns";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { roleLabels, canApproveTier } from "@/lib/appRoles";
 import { endOfDayISO, type BillingDateRange } from "@/lib/billingDateRange";
 

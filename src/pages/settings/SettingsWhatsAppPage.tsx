@@ -143,7 +143,7 @@ interface NotifLog {
 
 /** Normalize phone to E.164. Returns null on invalid input. */
 function sanitizePhone(raw: string): string | null {
-  const cleaned = raw.replace(/[\s\-(). ]/g, "");
+  const cleaned = raw.replace(/[\s\-().\u00A0]/g, "");
   if (!/^\+?\d{10,13}$/.test(cleaned)) return null;
   if (cleaned.startsWith("+")) return cleaned;
   if (/^91\d{10}$/.test(cleaned)) return `+${cleaned}`;

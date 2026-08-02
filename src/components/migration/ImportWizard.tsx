@@ -222,14 +222,14 @@ function parseFlexibleDate(raw: any): string | null {
   };
 
   // Numeric with separators: /, -, . e.g. 28/11/1966, 1966-11-28, 28.11.66
-  const sep = str.match(/^(\d{1,4})[\/\-.](\d{1,2})[\/\-.](\d{1,4})$/);
+  const sep = str.match(/^(\d{1,4})[/\-.](\d{1,2})[/\-.](\d{1,4})$/);
   if (sep) {
-    let [, a, b, c] = sep;
+    const [, a, b, c] = sep;
     if (a.length === 4) {
       const iso = toIso(Number(a), Number(b), Number(c));
       if (iso) return iso;
     } else {
-      let year = c.length === 4 ? Number(c) : (Number(c) > 30 ? 1900 + Number(c) : 2000 + Number(c));
+      const year = c.length === 4 ? Number(c) : (Number(c) > 30 ? 1900 + Number(c) : 2000 + Number(c));
       let day = Number(a), month = Number(b);
       // Disambiguate DD/MM vs MM/DD when one part can't be a month
       if (day > 12 && month <= 12) { /* day/month order confirmed */ }
@@ -395,7 +395,7 @@ const ImportWizard: React.FC<ImportWizardProps> = ({ entityType, onClose, onComp
         }
         if (mapped.patient_category) {
           const validCategories = ["general", "bpl", "cghs", "echs", "pmjay", "esi", "insurance", "medicalaid"];
-          const c = mapped.patient_category.toLowerCase().replace(/[\s\-]/g, "");
+          const c = mapped.patient_category.toLowerCase().replace(/[\s-]/g, "");
           if (!validCategories.includes(c)) err = `Patient Category must be: ${validCategories.join(", ")}`;
           else mapped.patient_category = c;
         }
@@ -429,7 +429,7 @@ const ImportWizard: React.FC<ImportWizardProps> = ({ entityType, onClose, onComp
           pharmacy: "pharmacist", hr: "hr_manager",
         };
         const roleRaw = String(mapped.role).toLowerCase().trim();
-        const roleNorm = roleSynonyms[roleRaw] || roleRaw.replace(/[\s\-]+/g, "_");
+        const roleNorm = roleSynonyms[roleRaw] || roleRaw.replace(/[\s-]+/g, "_");
         if (!validRoles.includes(roleNorm)) err = `Role must be one of: ${validRoles.join(", ")}`;
         else mapped.role = roleNorm;
         // License expiry — any date format
@@ -472,7 +472,7 @@ const ImportWizard: React.FC<ImportWizardProps> = ({ entityType, onClose, onComp
         }
         // Employment type — normalize
         if (!err && mapped.employment_type) {
-          mapped.employment_type = String(mapped.employment_type).toLowerCase().trim().replace(/[\s\-]+/g, "_");
+          mapped.employment_type = String(mapped.employment_type).toLowerCase().trim().replace(/[\s-]+/g, "_");
         }
       } else if (entityType === "services") {
         const rate = parseFloat(mapped.rate);

@@ -1,7 +1,9 @@
 import React, { useRef, useCallback, useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { Mic, MicOff, Loader2, ChevronDown, Zap } from "lucide-react";
-import { useVoiceScribe, SessionType, SUPPORTED_LANGUAGES } from "@/contexts/VoiceScribeContext";
+import { SessionType } from "@/contexts/VoiceScribeContext";
+import { SUPPORTED_LANGUAGES } from "@/lib/voiceScribeLanguages";
+import { useVoiceScribe } from "@/hooks/useVoiceScribe";
 import { supabase } from "@/integrations/supabase/client";
 import { unwrapFunctionError } from "@/lib/invokeError";
 import { joinTranscriptChunks, collapseRepetitionLoops } from "@/lib/transcriptMerge";

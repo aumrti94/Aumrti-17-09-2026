@@ -9,7 +9,7 @@ import { ChevronDown, ChevronUp, Mic, AlertTriangle, FlaskConical, PillBottle, R
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import VoiceDictationButton from "@/components/voice/VoiceDictationButton";
-import { useVoiceScribe } from "@/contexts/VoiceScribeContext";
+import { useVoiceScribe } from "@/hooks/useVoiceScribe";
 import { useNoteTemplates } from "@/hooks/useNoteTemplates";
 import OnboardingTour from "@/components/onboarding/OnboardingTour";
 
@@ -108,7 +108,7 @@ const IPDWardRoundTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pat
   const fetchTemplates = useCallback(async () => {
     if (!hospitalId) return;
     setLoadingTemplates(true);
-    // @ts-ignore - case_sheet_templates is a new table
+    // case_sheet_templates is a new table not yet in generated types — hence the `as any`.
     const { data } = await (supabase as any).from("case_sheet_templates")
       .select("*")
       .eq("hospital_id", hospitalId)

@@ -10,7 +10,7 @@ import BulkPasteAddModal from "@/components/settings/BulkPasteAddModal";
 import { useConfigValues } from "@/hooks/useConfigValues";
 import { cn } from "@/lib/utils";
 import { useSubscriptionConfig, isModuleKeyAllowed } from "@/hooks/useSubscriptionConfig";
-import { useProductMode } from "@/contexts/ProductModeContext";
+import { useProductMode } from "@/hooks/useProductMode";
 import { moduleDepartmentLinks } from "@/lib/moduleDepartments";
 
 const COMMON_DEPTS = [
@@ -175,11 +175,11 @@ const SettingsDepartmentsPage: React.FC = () => {
   const moduleDeptPresent = moduleDeptRows.filter((r) => r.exists);
 
   const toggleCheck = (name: string) => {
-    setCheckedDepts((prev) => { const s = new Set(prev); s.has(name) ? s.delete(name) : s.add(name); return s; });
+    setCheckedDepts((prev) => { const s = new Set(prev); if (s.has(name)) s.delete(name); else s.add(name); return s; });
   };
 
   const toggleModuleCheck = (name: string) => {
-    setCheckedModuleDepts((prev) => { const s = new Set(prev); s.has(name) ? s.delete(name) : s.add(name); return s; });
+    setCheckedModuleDepts((prev) => { const s = new Set(prev); if (s.has(name)) s.delete(name); else s.add(name); return s; });
   };
 
   const typeColor = (t: string) => {

@@ -203,7 +203,7 @@ serve(async (req) => {
 
     // Optionally scope to a single hospital (for manual on-demand invocation)
     let body: { hospital_id?: string } = {};
-    try { body = await req.json(); } catch (_) {}
+    try { body = await req.json(); } catch (_) { /* no/invalid JSON body — run across all hospitals */ }
 
     let hospitalsQuery = sb.from("hospitals").select("id, name").eq("is_active", true);
     if (body.hospital_id) hospitalsQuery = hospitalsQuery.eq("id", body.hospital_id);

@@ -12,7 +12,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { ALL_MODULES } from "@/lib/modules";
 import SubscribeButton from "@/components/subscription/SubscribeButton";
 import AiCreditsCard from "@/components/subscription/AiCreditsCard";
-import PaymentHistoryTable, { downloadInvoiceDocument } from "@/components/billing/PaymentHistoryTable";
+import PaymentHistoryTable from "@/components/billing/PaymentHistoryTable";
+import { downloadInvoiceDocument } from "@/lib/invoiceDownload";
 import UpgradeDialog from "@/components/subscription/UpgradeDialog";
 import { toast } from "sonner";
 import {

@@ -53,7 +53,7 @@ const LeakageScanner: React.FC<Props> = ({ bill, hospitalId, lineItems, onRefres
     try {
       // 1. Lab tests
       if (bill.encounter_id || bill.admission_id) {
-        let labQuery = supabase
+        const labQuery = supabase
           .from("lab_order_items")
           .select("*, lab_test_master(test_name), lab_orders!inner(id, encounter_id, admission_id, hospital_id)")
           .eq("lab_orders.hospital_id", hospitalId)

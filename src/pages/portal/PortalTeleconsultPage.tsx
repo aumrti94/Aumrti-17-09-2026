@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { usePatientPortal } from "@/contexts/PatientPortalContext";
+import { usePatientPortal } from "@/hooks/usePatientPortal";
 import {
   Video, CalendarX, Clock, ChevronRight,
   FileText, Pill, ExternalLink, RefreshCw,

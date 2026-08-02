@@ -19,7 +19,8 @@ import PolicyVerificationPanel, {
   type PlanTier,
   type PolicyVerificationData,
 } from "./PolicyVerificationPanel";
-import ICD10Search, { ProcedureCodeSearch, ICD10_DATA, PROCEDURE_DATA } from "./ICD10Search";
+import ICD10Search, { ProcedureCodeSearch } from "./ICD10Search";
+import { ICD10_DATA, PROCEDURE_DATA } from "@/lib/icd10Data";
 import DocumentChecklist from "./DocumentChecklist";
 import { callAI } from "@/lib/aiProvider";
 import { formatINR } from "@/lib/currency";

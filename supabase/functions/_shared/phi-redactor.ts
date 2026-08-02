@@ -14,7 +14,7 @@ const PHI_RULES: Array<{ pattern: RegExp; replacement: string }> = [
   { pattern: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, replacement: "[EMAIL]" },
   // Encrypted PHI blobs — versioned AES-GCM ciphertext: v{n}:{base64}
   // Redact to prevent large base64 blobs from flooding logs.
-  { pattern: /v\d+:[A-Za-z0-9+\/]{20,}={0,2}/g, replacement: "[PHI-ENCRYPTED]" },
+  { pattern: /v\d+:[A-Za-z0-9+/]{20,}={0,2}/g, replacement: "[PHI-ENCRYPTED]" },
   // JSON string fields that commonly carry PHI — redact the value, keep the key
   {
     pattern: /"(?:patient_name|full_name|guardian_name|father_name|mother_name|spouse_name|name)"\s*:\s*"[^"]+"/g,

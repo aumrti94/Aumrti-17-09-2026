@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { X, Check, Copy, RefreshCw, Loader2, AlertTriangle, Globe, Wand2, ShieldAlert } from "lucide-react";
-import { useVoiceScribe, SUPPORTED_LANGUAGES } from "@/contexts/VoiceScribeContext";
+import { SUPPORTED_LANGUAGES } from "@/lib/voiceScribeLanguages";
+import { useVoiceScribe } from "@/hooks/useVoiceScribe";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { unwrapFunctionError } from "@/lib/invokeError";

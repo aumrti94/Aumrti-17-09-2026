@@ -20,7 +20,8 @@ import {
 } from "lucide-react";
 import EvidenceManager from "@/components/nabh/EvidenceManager";
 import NABHAssistantPanel from "@/components/nabh/NABHAssistantPanel";
-import WeeklyDigestModal, { DIGEST_ALLOWED_ROLES } from "@/components/nabh/WeeklyDigestModal";
+import WeeklyDigestModal from "@/components/nabh/WeeklyDigestModal";
+import { DIGEST_ALLOWED_ROLES } from "@/lib/digestRoles";
 import EvidenceGapsModal from "@/components/nabh/EvidenceGapsModal";
 import { format } from "date-fns";
 

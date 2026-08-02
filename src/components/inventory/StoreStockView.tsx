@@ -55,8 +55,8 @@ const StoreStockView: React.FC<Props> = ({ hospitalId, storeId, storeName }) => 
       .eq("hospital_id", hospitalId)
       .eq("from_store_id", storeId);
     const indentIds = (indents || []).map((i: any) => i.id);
-    let issuedByItem: Record<string, number> = {};
-    let issuedNames: Record<string, string> = {};
+    const issuedByItem: Record<string, number> = {};
+    const issuedNames: Record<string, string> = {};
     if (indentIds.length > 0) {
       const { data: iitems } = await (supabase as any)
         .from("store_indent_items")

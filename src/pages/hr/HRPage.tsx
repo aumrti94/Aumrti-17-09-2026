@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useHospitalId } from "@/hooks/useHospitalId";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { hasTabAccess } from "@/lib/tabPermissions";
 import { Calendar, CheckSquare, Palmtree, DollarSign, Users, FileText, ShieldCheck, AlertTriangle, Award, GraduationCap, Clock, BarChart2, Link2, Calculator, HeartPulse, Star, HeartHandshake, Briefcase, UserMinus, Gavel, FolderArchive } from "lucide-react";
 import NABHBadge from "@/components/nabh/NABHBadge";
@@ -30,7 +30,7 @@ import OffboardingTab from "@/components/hr/OffboardingTab";
 import DisciplinaryGrievanceTab from "@/components/hr/DisciplinaryGrievanceTab";
 import StaffDocumentsTab from "@/components/hr/StaffDocumentsTab";
 import { Button } from "@/components/ui/button";
-import { useCredentialAlert } from "@/contexts/CredentialAlertContext";
+import { useCredentialAlert } from "@/hooks/useCredentialAlert";
 
 const navGroups: { section: string; tabs: { id: string; label: string; icon: React.ElementType }[] }[] = [
   {

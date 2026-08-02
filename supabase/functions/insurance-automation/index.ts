@@ -312,7 +312,7 @@ Return ONLY this JSON (no markdown):
 
   const aiText = await callAIProxy(supabaseUrl, serviceKey, hospital_id, prompt, "pre_auth_ai_fill", 400);
 
-  let updates: Record<string, any> = { ai_pre_auth_generated: true, ai_notes_generated: true };
+  const updates: Record<string, any> = { ai_pre_auth_generated: true, ai_notes_generated: true };
 
   if (aiText) {
     try {

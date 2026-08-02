@@ -36,7 +36,7 @@ Return ONLY a JSON object with this exact structure:
   "systemic_examination": "SYSTEM-BY-SYSTEM examination as a BULLET LIST — one finding per line. Systemic means findings for a named body system: cardiovascular (S1 S2, murmurs), respiratory (air entry, crepitations, wheeze), per-abdomen (soft, tender, organomegaly), central nervous system, or local examination of a specific site (e.g. a rash, a joint, a wound). Put a finding here ONLY if a system or site was named. Empty string if none.",
   "diagnosis": "the diagnosis ONLY IF it was explicitly spoken in the conversation, else empty string — do not infer your own",
   "icd_suggestion": "ICD-10 code for a diagnosis that was actually spoken, else empty string",
-  "suggested_diagnosis": "OPTIONAL. Your OWN most likely working diagnosis inferred from the symptoms described, when the doctor did NOT state one. This is a SUGGESTION for the doctor to confirm — it is kept separate from \"diagnosis\" above, which records only what was actually said. Empty string if the findings are too non-specific to support one.",
+  "suggested_diagnosis": "OPTIONAL. Your OWN most likely working diagnosis inferred from the symptoms described, when the doctor did NOT state one. This is a SUGGESTION for the doctor to confirm — it is kept separate from "diagnosis" above, which records only what was actually said. Empty string if the findings are too non-specific to support one.",
   "suggested_icd": "ICD-10 code for suggested_diagnosis, else empty string",
   "diagnosis_basis": "one short sentence naming the findings that led to suggested_diagnosis, else empty string",
   "plan": "management plan as a BULLET LIST — one action per line",

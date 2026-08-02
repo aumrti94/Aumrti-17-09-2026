@@ -1,4 +1,4 @@
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { supabase } from "@/integrations/supabase/client";
 
 // Reads from the app-level HospitalContext — zero extra RPCs after first login.

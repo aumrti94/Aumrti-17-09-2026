@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Printer } from "lucide-react";
+import { printDocument } from "@/lib/printUtils";
 
 interface Props {
   hospitalId: string;
@@ -94,7 +95,6 @@ const PharmacyNDPSTab: React.FC<Props> = ({ hospitalId }) => {
             <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-8 w-36 text-xs" />
           </div>
           <Button variant="outline" size="sm" className="text-xs" onClick={() => {
-            const { printDocument } = require("@/lib/printUtils");
             const rows = records.map((r: any, i: number) => `<tr><td>${i + 1}</td><td>${r.drug_name}</td><td>${r.schedule}</td><td>${r.quantity}</td><td>${r.running_balance}</td><td>${new Date(r.transaction_date).toLocaleDateString("en-IN")}</td></tr>`).join("");
             printDocument("NDPS Register", `<h2 style="color:#1A2F5A">NDPS Register</h2><p style="font-size:11px;color:#64748b">${dateFrom} to ${dateTo}</p><table><tr><th>#</th><th>Drug</th><th>Schedule</th><th>Qty</th><th>Balance</th><th>Date</th></tr>${rows}</table>`);
           }}>

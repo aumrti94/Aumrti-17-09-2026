@@ -57,7 +57,8 @@ const CustomReportBuilder: React.FC<{ range: DateRange }> = ({ range }) => {
   const toggleMetric = (m: string) => {
     setSelectedMetrics(prev => {
       const next = new Set(prev);
-      next.has(m) ? next.delete(m) : next.add(m);
+      if (next.has(m)) next.delete(m);
+      else next.add(m);
       return next;
     });
   };

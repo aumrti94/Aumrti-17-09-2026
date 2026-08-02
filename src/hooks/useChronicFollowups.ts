@@ -40,7 +40,7 @@ export function useChronicFollowups(hospitalId: string | null) {
     }
 
     const patientIds = data.map((d: any) => d.patient_id).filter(Boolean);
-    let bookedPatientIds = new Set<string>();
+    const bookedPatientIds = new Set<string>();
     
     if (patientIds.length > 0) {
       const { data: appts } = await (supabase as any)

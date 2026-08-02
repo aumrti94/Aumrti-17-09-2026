@@ -9,7 +9,7 @@ import WardStats from "@/components/ipd/WardStats";
 import AdmitPatientModal from "@/components/ipd/AdmitPatientModal";
 import BedReservationModal from "@/components/ipd/BedReservationModal";
 import BedDemandForecastPanel from "@/components/ipd/BedDemandForecastPanel";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import CollapsiblePanel from "@/components/layout/CollapsiblePanel";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";

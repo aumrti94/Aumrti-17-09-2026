@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useLocation, useNavigate, Link } from "react-router-dom";
 import { Menu, Search, Wifi, WifiOff, Moon, Sun, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useSidebar } from "./SidebarContext";
+import { useSidebar } from "@/hooks/useSidebar";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { supabase } from "@/integrations/supabase/client";
@@ -12,7 +12,7 @@ import AumrtiLogo from "@/components/brand/AumrtiLogo";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { hasAccess } from "@/lib/routeRoles";
 import { hasActionAccess } from "@/lib/tabPermissions";
-import { useOfflineSync } from "@/contexts/OfflineSyncContext";
+import { useOfflineSync } from "@/hooks/useOfflineSync";
 import {
   DropdownMenu,
   DropdownMenuContent,

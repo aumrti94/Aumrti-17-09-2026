@@ -99,6 +99,7 @@ function parseResultsFromRaw(raw: string, protocol: string): ParsedObservation[]
     const lines = raw.replace(/\r/g, "\n").split("\n");
     for (const line of lines) {
       if (!line.startsWith("\x02R") && !line.startsWith("R")) continue;
+      // eslint-disable-next-line no-control-regex -- \x02 is the ASTM STX frame delimiter
       const f = line.replace(/^\x02/, "").split("|");
       if (f[0]?.charAt(1) !== "R") continue;
       const codeParts = (f[2] || "").split("^");

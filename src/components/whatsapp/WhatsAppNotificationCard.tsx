@@ -108,27 +108,3 @@ const WhatsAppNotificationCard: React.FC<Props> = ({ patientName, notificationTy
 
 export default WhatsAppNotificationCard;
 
-// Hook for easy usage in any module
-export function useWhatsAppNotification() {
-  const [notification, setNotification] = useState<{
-    patientName: string;
-    type: string;
-    waUrl: string;
-  } | null>(null);
-
-  const show = useCallback((patientName: string, type: string, waUrl: string) => {
-    setNotification({ patientName, type, waUrl });
-  }, []);
-
-  const card = notification ? (
-    <WhatsAppNotificationCard
-      patientName={notification.patientName}
-      notificationType={notification.type}
-      waUrl={notification.waUrl}
-      onSend={() => setNotification(null)}
-      onSkip={() => setNotification(null)}
-    />
-  ) : null;
-
-  return { show, card };
-}

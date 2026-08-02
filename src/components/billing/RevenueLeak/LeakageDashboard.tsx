@@ -372,7 +372,8 @@ const LeakageDashboard: React.FC<LeakageDashboardProps> = ({ dateRange }) => {
   const toggleExpand = (module: string) => {
     setExpanded(prev => {
       const n = new Set(prev);
-      n.has(module) ? n.delete(module) : n.add(module);
+      if (n.has(module)) n.delete(module);
+      else n.add(module);
       return n;
     });
   };

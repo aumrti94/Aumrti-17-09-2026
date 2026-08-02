@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { AlertTriangle, Mic } from "lucide-react";
-import { useVoiceScribe } from "@/contexts/VoiceScribeContext";
+import { useVoiceScribe } from "@/hooks/useVoiceScribe";
 import VoiceDictationButton from "@/components/voice/VoiceDictationButton";
 import OnboardingTour from "@/components/onboarding/OnboardingTour";
 import { checkVitalsThresholds, calculateNEWS2, vitalSeverityClass } from "@/lib/vitalsAlerts";

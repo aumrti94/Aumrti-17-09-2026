@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Receipt, Plus, IndianRupee, Search, X, CalendarDays } from "lucide-react";
 import EmptyState from "@/components/EmptyState";
 import type { BillRecord } from "@/pages/billing/BillingPage";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { hasActionAccess } from "@/lib/tabPermissions";
 import { billStatusDisplay, isRefundStatus } from "@/lib/billStatus";
 import { BILLING_DATE_PRESETS } from "@/lib/billingDateRange";

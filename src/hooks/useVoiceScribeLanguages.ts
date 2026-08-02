@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { SUPPORTED_LANGUAGES, type LanguageOption } from "@/contexts/VoiceScribeContext";
+import { type LanguageOption } from "@/contexts/VoiceScribeContext";
+import { SUPPORTED_LANGUAGES } from "@/lib/voiceScribeLanguages";
 
 // Maps 2-char codes stored in ai_language_settings → IETF codes used by SUPPORTED_LANGUAGES
 const SETTINGS_TO_IETF: Record<string, string> = {

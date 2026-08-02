@@ -14,7 +14,7 @@
 
 /** Normalise a word for overlap comparison only — never for output. */
 const norm = (w: string): string =>
-  w.toLowerCase().replace(/[.,!?;:।॥"'`()\[\]{}—–-]/g, "");
+  w.toLowerCase().replace(/[.,!?;:।॥"'`()[\]{}—–-]/g, "");
 
 /**
  * Append `next` to `prev`, removing the duplicated overlap region if there is one.

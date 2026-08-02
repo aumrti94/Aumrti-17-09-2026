@@ -1087,10 +1087,10 @@ const IntegrationsHubPage: React.FC = () => {
     setTallyCount(talCnt);
     setStatuses({
       lab:       labCnt > 0                           ? "connected" : "not_configured",
-      pacs:      !!pacsRes.data                       ? "connected" : "not_configured",
+      pacs:      pacsRes.data                       ? "connected" : "not_configured",
       payment:   settingsMap.payment_gateway?.active  ? "connected" : "not_configured",
       tally:     talCnt > 0                           ? "connected" : "not_configured",
-      messaging: !!waRes.data                         ? "connected" : "not_configured",
+      messaging: waRes.data                         ? "connected" : "not_configured",
       abdm:      settingsMap.abdm?.enabled            ? "connected" : "not_configured",
     });
   }, [hospitalId]);

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { useRealtimeRefetch } from "@/hooks/useRealtimeRefetch";
 import { useToast } from "@/hooks/use-toast";
 import { logNABHEvidence } from "@/lib/nabh-evidence";

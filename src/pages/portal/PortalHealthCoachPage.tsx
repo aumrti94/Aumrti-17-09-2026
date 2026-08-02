@@ -8,7 +8,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "@/lib/aiProvider";
-import { usePatientPortal } from "@/contexts/PatientPortalContext";
+import { usePatientPortal } from "@/hooks/usePatientPortal";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";

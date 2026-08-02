@@ -25,6 +25,7 @@ import { Switch } from "@/components/ui/switch";
 import { format } from "date-fns";
 import { Plus, ClipboardList, Calendar, BarChart3, Dumbbell, FileText, Activity, CheckCircle, Clock, User, Printer, MessageSquare, Loader2 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer } from "recharts";
+import { printDocument } from "@/lib/printUtils";
 
 const MODALITIES = ["UST", "IFT", "TENS", "SWD", "Traction", "Exercise", "Manual Therapy", "Hot Pack", "Cold Pack", "Wax Bath", "Hydrotherapy", "Balance Training"];
 
@@ -355,7 +356,6 @@ const PhysioPage: React.FC = () => {
   };
 
   const printSessionReport = (s: any) => {
-    const { printDocument } = require("@/lib/printUtils");
     const patient = (s as any).patients;
     const body = `
       <h2 style="color:#1A2F5A">Physiotherapy Session Report</h2>

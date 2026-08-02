@@ -31,7 +31,8 @@ const Step6Payments: React.FC<Props> = ({ hospitalId, onComplete }) => {
   const toggleSet = (set: Set<string>, item: string, setter: React.Dispatch<React.SetStateAction<Set<string>>>) => {
     setter((prev) => {
       const next = new Set(prev);
-      next.has(item) ? next.delete(item) : next.add(item);
+      if (next.has(item)) next.delete(item);
+      else next.add(item);
       return next;
     });
   };

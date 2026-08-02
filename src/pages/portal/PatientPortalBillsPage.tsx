@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { Download, Receipt, AlertCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { usePatientPortal } from "@/contexts/PatientPortalContext";
+import { usePatientPortal } from "@/hooks/usePatientPortal";
 import { printBillById } from "@/lib/billPrint";
 
 // ── types ─────────────────────────────────────────────────────────────────────

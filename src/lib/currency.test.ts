@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatINRExact, formatINRCompact } from "./currency";
+import { formatINRExact, formatINRCompact, formatINRPrecise } from "./currency";
 
 /**
  * Currency display regression suite.
@@ -63,5 +63,37 @@ describe("formatINRCompact — axis ticks only", () => {
 
   it("keeps the sign on negative values", () => {
     expect(formatINRCompact(-23700)).toBe("-₹23.7K");
+  });
+});
+
+describe("formatINRPrecise — unit costs that may fall under ₹1", () => {
+  it("does not round a sub-rupee unit cost away to zero", () => {
+    // The reason this formatter exists: formatINRExact rounds to whole rupees, so
+    // a ₹0.34 AI encounter rendered as "₹0" and read as free — and that is the
+    // exact number an admin sets pricing from.
+    expect(formatINRExact(0.34)).toBe("₹0");
+    expect(formatINRPrecise(0.34)).toBe("₹0.34");
+  });
+
+  it("uses 4dp below one paisa, 2dp from one paisa up to ₹1", () => {
+    expect(formatINRPrecise(0.0034)).toBe("₹0.0034");
+    expect(formatINRPrecise(0.009)).toBe("₹0.0090");
+    expect(formatINRPrecise(0.01)).toBe("₹0.01");   // boundary: 2dp starts here
+    expect(formatINRPrecise(0.5)).toBe("₹0.50");
+  });
+
+  it("hands off to the whole-rupee form at ₹1 and above, so a page never mixes styles", () => {
+    expect(formatINRPrecise(1)).toBe("₹1");
+    expect(formatINRPrecise(1500)).toBe(formatINRExact(1500));
+    expect(formatINRPrecise(1500)).toBe("₹1,500");
+  });
+
+  it("treats zero as a plain ₹0 rather than ₹0.0000", () => {
+    expect(formatINRPrecise(0)).toBe("₹0");
+  });
+
+  it("keeps the sign on negative unit costs", () => {
+    expect(formatINRPrecise(-0.5)).toBe("-₹0.50");
+    expect(formatINRPrecise(-0.0034)).toBe("-₹0.0034");
   });
 });

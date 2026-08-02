@@ -11,6 +11,7 @@ import { AlertTriangle, Download, RefreshCw, Trash2, ShieldAlert } from "lucide-
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
+import { getGroup, type ExpiryGroup } from "@/lib/expiryGroups";
 
 const WASTE_CATEGORIES = [
   { value: "yellow",    label: "Yellow — Human/animal anatomical waste" },
@@ -33,20 +34,7 @@ interface BatchRow {
   supplier_name: string | null;
 }
 
-export type ExpiryGroup = "expired" | "critical" | "warning" | "ok";
 type ActiveFilter = ExpiryGroup | "all" | "quarantined";
-
-export function getGroup(expiryDate: string): ExpiryGroup {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const expiry = new Date(expiryDate);
-  expiry.setHours(0, 0, 0, 0);
-  const daysLeft = Math.ceil((expiry.getTime() - today.getTime()) / 86400000);
-  if (daysLeft < 0) return "expired";
-  if (daysLeft <= 30) return "critical";
-  if (daysLeft <= 90) return "warning";
-  return "ok";
-}
 
 function daysLeft(expiryDate: string): number {
   const today = new Date();

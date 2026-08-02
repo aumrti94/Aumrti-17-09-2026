@@ -584,7 +584,8 @@ const PayrollRunTab: React.FC = () => {
                   className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/30 cursor-pointer"
                   onClick={() => setExpanded(prev => {
                     const n = new Set(prev);
-                    n.has(s.id) ? n.delete(s.id) : n.add(s.id);
+                    if (n.has(s.id)) n.delete(s.id);
+                    else n.add(s.id);
                     return n;
                   })}
                 >

@@ -18,7 +18,7 @@ import {
   resolveOrderBarcode,
 } from "@/lib/labSamples";
 import { recordAncillaryOverride } from "@/lib/ancillaryGateChecks";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import PaymentPendingDialog from "@/components/shared/PaymentPendingDialog";
 import PatientIdentityConfirmDialog from "./PatientIdentityConfirmDialog";
 import OnboardingTour from "@/components/onboarding/OnboardingTour";
@@ -134,7 +134,7 @@ const CollectionWorkstation: React.FC<Props> = ({ hospitalId, admittedOnly = fal
     const dateStr = new Date().toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
     const html = `<!DOCTYPE html>
 <html><head><title>Barcode Label</title>
-<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"><\/script>
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{font-family:Arial,sans-serif;width:50mm}
@@ -153,7 +153,7 @@ const CollectionWorkstation: React.FC<Props> = ({ hospitalId, admittedOnly = fal
 <script>
   JsBarcode("#bc","${barcodeValue}",{format:"CODE128",width:1.5,height:40,displayValue:true,fontSize:8,margin:2});
   setTimeout(()=>{window.print();window.close();},400);
-<\/script>
+</script>
 </body></html>`;
     const win = window.open("", "_blank", "width=320,height=270,toolbar=0,menubar=0");
     if (win) { win.document.write(html); win.document.close(); }

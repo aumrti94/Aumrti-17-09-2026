@@ -12,17 +12,7 @@ import type { PaymentRecord } from "@/components/billing/BillEditor";
 import { recordBillPayment } from "@/lib/billPayments";
 import { isAdmissionBill } from "@/lib/admissionBill";
 import type { BillMoney } from "@/lib/billMoney";
-
-export const PAYMENT_MODES = [
-  { value: "cash", label: "💵 Cash" },
-  { value: "upi", label: "📱 UPI" },
-  { value: "card", label: "💳 Card" },
-  { value: "net_banking", label: "🌐 Net Banking" },
-  { value: "cheque", label: "💳 Cheque" },
-  { value: "insurance", label: "🏥 Insurance" },
-  { value: "pmjay", label: "🏥 PMJAY / Govt Scheme" },
-  { value: "advance_adjust", label: "🔄 Advance Adjust" },
-];
+import { PAYMENT_MODES } from "@/lib/paymentModes";
 
 interface PayRow {
   mode: string;

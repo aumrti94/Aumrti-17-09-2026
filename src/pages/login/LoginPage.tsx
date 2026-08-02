@@ -6,7 +6,8 @@ import { Mail, Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
 import { getErrorMessage } from "@/lib/errorMessage";
 import ForgotPasswordModal from "./ForgotPasswordModal";
 import MFAEnrollmentModal from "@/components/auth/MFAEnrollmentModal";
-import MFAVerifyModal, { isTrustedDevice } from "@/components/auth/MFAVerifyModal";
+import MFAVerifyModal from "@/components/auth/MFAVerifyModal";
+import { isTrustedDevice } from "@/lib/trustedDevice";
 import { isPlatformAdmin } from "@/lib/postAuthRoute";
 import AumrtiLogo from "@/components/brand/AumrtiLogo";
 

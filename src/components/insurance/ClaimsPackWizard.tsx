@@ -197,7 +197,7 @@ const ClaimsPackWizard: React.FC<Props> = ({ open, onClose, onCreated }) => {
 
       // Also find existing bill for each admission
       const admIds = (data || []).map((a: any) => a.id);
-      let billMap: Record<string, string> = {};
+      const billMap: Record<string, string> = {};
       if (admIds.length > 0) {
         const { data: bills } = await supabase
           .from("bills")

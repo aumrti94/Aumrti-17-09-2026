@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { Link, useNavigate } from "react-router-dom";
 import { Video, ChevronLeft, ChevronRight, CalendarDays, X, Search } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { hasActionAccess } from "@/lib/tabPermissions";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { pickDefaultAdmission, type ActiveAdmission } from "./AdmissionLinker";
+import { type ActiveAdmission } from "./AdmissionLinker";
+import { pickDefaultAdmission } from "@/lib/pickDefaultAdmission";
 
 const ipd: ActiveAdmission = { id: "ipd-1", admission_number: "IPD-1", admission_type: "elective" };
 const ipd2: ActiveAdmission = { id: "ipd-2", admission_number: "IPD-2", admission_type: "emergency" };
