@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { callAI } from "@/lib/aiProvider";
+import { prepareDocumentInput } from "@/lib/documentAI";
 import { useToast } from "@/hooks/use-toast";
 import {
   ShieldCheck,
@@ -159,27 +160,18 @@ const PolicyVerificationPanel: React.FC<Props> = ({
 
     setAiLoading(true);
     try {
-      let docContent = "";
-
-      if (file.type.startsWith("image/")) {
-        // Encode as base64 so a vision-capable model can read it
-        const b64 = await new Promise<string>((res, rej) => {
-          const reader = new FileReader();
-          reader.onload = () => res(reader.result as string);
-          reader.onerror = rej;
-          reader.readAsDataURL(file);
-        });
-        docContent = `[ATTACHED IMAGE: ${file.name}]\nBase64 data URI (first 200 chars): ${b64.substring(0, 200)}`;
-      } else {
-        // For text-based PDFs, FileReader.text() extracts the embedded text stream
-        const raw = await file.text();
-        // Strip binary noise from PDF containers; keep printable ASCII + newlines
-        docContent = raw.startsWith("%PDF")
-          ? raw.replace(/[^\x20-\x7E\n\r\t]/g, " ").replace(/\s{3,}/g, " ").substring(0, 5000)
-          : raw.substring(0, 5000);
+      // Images and PDFs go to the model as real multimodal attachments; DOCX and
+      // text files are extracted client-side. Previously this shipped the first
+      // 200 chars of a base64 data URI inside a text prompt — the model saw no
+      // document at all and simply invented policy numbers.
+      const { attachments, inlineText, error: prepError } = await prepareDocumentInput(file);
+      if (prepError) {
+        toast({ title: "Could not read the file", description: prepError, variant: "destructive" });
+        return;
       }
 
       const prompt = `You are an expert insurance document parser for Indian health insurance policies (IRDAI-regulated).
+${attachments ? "The policy document is attached — read it directly." : "The document text is provided below."}
 Extract the following fields from the document. Return ONLY a valid JSON object — no markdown, no explanation:
 {
   "insurer_name":        { "value": "<string>",      "confidence": <0.0–1.0> },
@@ -191,15 +183,15 @@ Extract the following fields from the document. Return ONLY a valid JSON object 
   "co_payment_percent":  { "value": "<number_only>", "confidence": <0.0–1.0> },
   "room_rent_limit":     { "value": "<number_only>", "confidence": <0.0–1.0> }
 }
-Use empty string and 0 confidence for any field not found.
-
-Document:
-${docContent}`;
+Use empty string and 0 confidence for any field not found.${
+        inlineText ? `\n\nDocument:\n${inlineText.substring(0, 12000)}` : ""
+      }`;
 
       const result = await callAI({
         featureKey: "document_ocr",
         hospitalId,
         prompt,
+        attachments,
         maxTokens: 700,
       });
 
@@ -448,7 +440,7 @@ ${docContent}`;
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="application/pdf,image/*"
+                accept="application/pdf,image/jpeg,image/png,image/webp,image/gif,.docx,text/plain"
                 className="hidden"
                 onChange={handleFileChange}
               />

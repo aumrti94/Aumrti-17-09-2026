@@ -10,6 +10,10 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
+// acknowledged_by is users.id, not auth.uid() — same helper the other alert
+// panels use. This import was missing, so dismissing an alert threw a
+// ReferenceError before it could write.
+import { getCurrentUserRowId } from "@/lib/currentUser";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -17,8 +21,10 @@ interface QIAlert {
   id: string;
   alert_message: string;
   severity: string;
-  ward_name: string | null;   // indicator key, e.g. "avg_los"
-  bed_number: string | null;  // JSON: { label, current, baseline, deviation_pct, unit }
+  indicator_code: string | null;      // e.g. "aac.ip_alos_days"
+  metric_json: MetricMeta | null;     // { label, current, baseline, deviation_pct, unit }
+  ward_name: string | null;           // legacy mirror of indicator_code
+  bed_number: string | null;          // legacy mirror of metric_json, as a JSON string
   created_at: string;
 }
 
@@ -39,19 +45,33 @@ const DISMISS_ROLES = [
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const INDICATOR_ICONS: Record<string, string> = {
-  avg_los:             "🛏️",
-  readmission_48h_pct: "🔄",
-  lab_tat_breach_pct:  "🧪",
-  ot_cancellation_pct: "🔪",
-  capa_overdue_pct:    "⏰",
-  infection_rate:      "🦠",
+// Keyed by the NABH chapter prefix of indicator_code, so a new indicator in an
+// existing chapter needs no change here.
+const CHAPTER_ICONS: Record<string, string> = {
+  aac: "🛏️",
+  cop: "🩺",
+  mom: "💊",
+  pre: "🤝",
+  hic: "🦠",
+  rom: "🏛️",
+  fms: "🏢",
+  hrm: "👥",
+  ims: "📁",
+  qps: "🎯",
 };
 
-function parseMeta(raw: string | null): MetricMeta | null {
-  if (!raw) return null;
-  try { return JSON.parse(raw) as MetricMeta; } catch { return null; }
+const indicatorIcon = (code: string | null): string =>
+  CHAPTER_ICONS[(code ?? "").split(".")[0]] ?? "📊";
+
+/** Prefers the first-class column; falls back to the legacy JSON-in-text mirror. */
+function readMeta(alert: QIAlert): MetricMeta | null {
+  if (alert.metric_json && typeof alert.metric_json === "object") return alert.metric_json;
+  if (!alert.bed_number) return null;
+  try { return JSON.parse(alert.bed_number) as MetricMeta; } catch { return null; }
 }
+
+const readIndicatorKey = (alert: QIAlert): string | null =>
+  alert.indicator_code ?? alert.ward_name;
 
 function DeviationChip({ pct }: { pct: number }) {
   const abs = Math.abs(pct);
@@ -80,7 +100,7 @@ interface DismissModalProps {
 
 const DismissModal: React.FC<DismissModalProps> = ({ alert, onConfirm, onCancel, saving }) => {
   const [note, setNote] = useState("");
-  const meta = parseMeta(alert.bed_number);
+  const meta = readMeta(alert);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -91,7 +111,7 @@ const DismissModal: React.FC<DismissModalProps> = ({ alert, onConfirm, onCancel,
         </div>
 
         <div className="bg-muted/40 rounded-lg p-3 text-sm space-y-1">
-          <p className="font-medium">{meta?.label ?? alert.ward_name?.replace(/_/g, " ")}</p>
+          <p className="font-medium">{meta?.label ?? readIndicatorKey(alert)?.replace(/[_.]/g, " ")}</p>
           {meta && (
             <p className="text-xs text-muted-foreground">
               Current: <strong>{meta.current}{meta.unit}</strong> · Baseline: {meta.baseline}{meta.unit} ·{" "}
@@ -159,7 +179,7 @@ const NABHQIAlertCard: React.FC<Props> = ({ hospitalId, role }) => {
     if (!hospitalId) return;
     const { data } = await (supabase as any)
       .from("clinical_alerts")
-      .select("id, alert_message, severity, ward_name, bed_number, created_at")
+      .select("id, alert_message, severity, indicator_code, metric_json, ward_name, bed_number, created_at")
       .eq("hospital_id", hospitalId)
       .eq("alert_type", "nabh_qi_anomaly")
       .eq("is_acknowledged", false)
@@ -220,7 +240,7 @@ const NABHQIAlertCard: React.FC<Props> = ({ hospitalId, role }) => {
         config_area: "nabh_qi_alert_dismissal",
         item_id: dismissTarget.id,
         changed_by: user?.id ?? null,
-        old_value: { alert_message: dismissTarget.alert_message, indicator: dismissTarget.ward_name },
+        old_value: { alert_message: dismissTarget.alert_message, indicator: readIndicatorKey(dismissTarget) },
         new_value: { is_acknowledged: true, action_note: note },
         reason: note,
       });
@@ -269,8 +289,8 @@ const NABHQIAlertCard: React.FC<Props> = ({ hospitalId, role }) => {
         {expanded && (
           <div className="divide-y divide-amber-100 dark:divide-amber-800/40">
             {alerts.map(alert => {
-              const meta = parseMeta(alert.bed_number);
-              const icon = INDICATOR_ICONS[alert.ward_name ?? ""] ?? "📊";
+              const meta = readMeta(alert);
+              const icon = indicatorIcon(readIndicatorKey(alert));
               const isHigh = alert.severity === "high";
 
               return (
@@ -285,7 +305,7 @@ const NABHQIAlertCard: React.FC<Props> = ({ hospitalId, role }) => {
                   <div className="flex-1 min-w-0 space-y-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-xs font-bold text-foreground">
-                        {meta?.label ?? alert.ward_name?.replace(/_/g, " ") ?? "QI Indicator"}
+                        {meta?.label ?? readIndicatorKey(alert)?.replace(/[_.]/g, " ") ?? "QI Indicator"}
                       </span>
                       {meta && <DeviationChip pct={meta.deviation_pct} />}
                       <Badge

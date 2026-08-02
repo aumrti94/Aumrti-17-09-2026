@@ -12,6 +12,7 @@ import {
 } from "../_shared/ai-config.ts";
 import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 import { checkAIAllowed } from "../_shared/ai-entitlement.ts";
+import { getUsdToInr } from "../_shared/platform-rate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -604,6 +605,10 @@ serve(async (req: Request) => {
     // Skip for a throwaway admin connection test (probe) — no real usage to bill.
     if (!probe) (async () => {
       try {
+        // Freeze the rupee cost at the current FX rate — everything humans see
+        // and the wallet draw-down use INR, not USD.
+        const costInr = costUsd * (await getUsdToInr(adminClient));
+
         await adminClient.from("ai_usage_logs").insert({
           hospital_id: hospitalId,
           feature_key: fKey,
@@ -615,6 +620,7 @@ serve(async (req: Request) => {
           cache_read_tokens: cacheReadTokens,
           cache_hit: cacheHit,
           estimated_cost_usd: costUsd,
+          estimated_cost_inr: costInr,
           latency_ms: latencyMs,
           success: true,
           patient_id: patientId || null,
@@ -632,6 +638,14 @@ serve(async (req: Request) => {
           p_cache_read_tokens: cacheReadTokens,
           p_cache_hit:         cacheHit,
           p_cost_usd:          costUsd,
+          p_cost_inr:          costInr,
+        });
+
+        // Draw the overage above the plan's included allowance from the wallet.
+        await adminClient.rpc("debit_ai_wallet_for_usage", {
+          p_hospital_id: hospitalId,
+          p_feature_key: fKey,
+          p_cost_inr:    costInr,
         });
       } catch (logErr) {
         console.warn("ai-proxy: failed to log usage:", logErr);

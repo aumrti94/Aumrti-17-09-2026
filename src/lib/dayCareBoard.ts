@@ -39,3 +39,26 @@ export function dayCareStatusFilter(tab: DayCareTab): string[] {
 export function dayCareSortAscending(tab: DayCareTab): boolean {
   return tab === "scheduled";
 }
+
+/**
+ * PURE. The IST date window the board queries for a tab, given the picked date.
+ *
+ * Every tab but Active is a LOG of things that happened on a date, so both ends are pinned.
+ *
+ * Active is not a log — it is who is in the unit right now. Pinning its lower bound to the
+ * picked date hid the case this whole flow exists for: a patient admitted yesterday and never
+ * discharged is still active today, but showed up only if staff happened to page back to
+ * yesterday. They vanished from Today and the stay stayed open indefinitely. So Active is
+ * open-ended below: everyone still admitted, up to the end of the picked day.
+ *
+ * `from: null` means "no lower bound" — the caller omits the .gte().
+ */
+export function dayCareDateRange(
+  tab: DayCareTab,
+  isoDate: string
+): { from: string | null; to: string } {
+  return {
+    from: tab === "active" ? null : `${isoDate}T00:00:00+05:30`,
+    to: `${isoDate}T23:59:59+05:30`,
+  };
+}

@@ -13,6 +13,15 @@ interface Diagnosis {
   icd10_description: string;
   is_primary: boolean;
   diagnosis_type: "working" | "confirmed" | "differential" | "chronic" | "comorbid";
+  /**
+   * The AI inferred this from the symptoms; nobody said it aloud.
+   *
+   * Such an entry is NEVER primary and is excluded from ICD coding and billing until the
+   * doctor accepts it, so an unreviewed machine inference can't end up on a coded record.
+   */
+  is_ai_suggested?: boolean;
+  /** Findings the model cited for a suggestion — shown so the doctor can judge it. */
+  ai_basis?: string;
 }
 
 interface IcdResult {
@@ -28,7 +37,7 @@ interface Props {
   userId: string | null;
   onPrimaryChange: (diagnosis: string, icd10_code: string) => void;
   /** Voice/AI-extracted diagnosis to inject as a working diagnosis chip. nonce changes per apply. */
-  seedDiagnosis?: { text: string; icd10_code: string; nonce: number } | null;
+  seedDiagnosis?: { text: string; icd10_code: string; nonce: number; isAiSuggested?: boolean; basis?: string } | null;
 }
 
 const DIAG_TYPES: { value: Diagnosis["diagnosis_type"]; label: string; color: string }[] = [
@@ -41,6 +50,7 @@ const DIAG_TYPES: { value: Diagnosis["diagnosis_type"]; label: string; color: st
 
 const DiagnosisPanel: React.FC<Props> = ({ encounterId, hospitalId, patientId, userId, onPrimaryChange, seedDiagnosis }) => {
   const [diagnoses, setDiagnoses] = useState<Diagnosis[]>([]);
+  const [diagnosesLoaded, setDiagnosesLoaded] = useState(false);
   const [showAddRow, setShowAddRow] = useState(false);
   const [pendingDiagnoses, setPendingDiagnoses] = useState<Diagnosis[]>([]);
   const [showDiagManager, setShowDiagManager] = useState(false);
@@ -62,14 +72,18 @@ const DiagnosisPanel: React.FC<Props> = ({ encounterId, hospitalId, patientId, u
 
   // Load existing diagnoses when encounterId is available
   useEffect(() => {
-    if (!encounterId) return;
+    if (!encounterId) { setDiagnosesLoaded(true); return; }
     (async () => {
       const { data } = await (supabase as any)
         .from("opd_diagnoses")
-        .select("id, diagnosis_text, icd10_code, icd10_description, is_primary, diagnosis_type")
+        .select("id, diagnosis_text, icd10_code, icd10_description, is_primary, diagnosis_type, is_ai_suggested")
         .eq("encounter_id", encounterId)
         .order("created_at");
       if (data) setDiagnoses(data);
+      // Gates the voice/AI seed below. The seed effect used to race this load and decide
+      // dedupe and is_primary against an empty list, so a seeded diagnosis could duplicate
+      // an existing one or wrongly claim primary.
+      setDiagnosesLoaded(true);
     })();
   }, [encounterId]);
 
@@ -143,6 +157,7 @@ const DiagnosisPanel: React.FC<Props> = ({ encounterId, hospitalId, patientId, u
       icd10_description: d.icd10_description || null,
       is_primary: d.is_primary,
       diagnosis_type: d.diagnosis_type,
+      is_ai_suggested: d.is_ai_suggested === true,
       created_by: userId || null,
     };
     if (d.id) {
@@ -155,7 +170,10 @@ const DiagnosisPanel: React.FC<Props> = ({ encounterId, hospitalId, patientId, u
   }, [hospitalId, patientId, userId]);
 
   const syncPrimary = (list: Diagnosis[]) => {
-    const primary = list.find(d => d.is_primary) || list.find(d => d.diagnosis_type === "confirmed") || list[0];
+    // AI suggestions are excluded from every fallback: the primary diagnosis flows into the
+    // encounter record, ICD coding and billing, so an unreviewed inference must never reach it.
+    const human = list.filter(d => !d.is_ai_suggested);
+    const primary = human.find(d => d.is_primary) || human.find(d => d.diagnosis_type === "confirmed") || human[0];
     if (primary) onPrimaryChange(primary.diagnosis_text, primary.icd10_code);
     else onPrimaryChange("", "");
   };
@@ -199,20 +217,51 @@ const DiagnosisPanel: React.FC<Props> = ({ encounterId, hospitalId, patientId, u
   const lastSeedNonce = useRef<number | null>(null);
   useEffect(() => {
     if (!seedDiagnosis || !seedDiagnosis.text.trim()) return;
+    // Wait for the DB load, otherwise dedupe and is_primary are decided against an
+    // empty list while the real diagnoses are still in flight.
+    if (!diagnosesLoaded) return;
     if (lastSeedNonce.current === seedDiagnosis.nonce) return;
     lastSeedNonce.current = seedDiagnosis.nonce;
     const text = seedDiagnosis.text.trim();
     const cur = diagnosesRef.current;
     if (cur.some(d => d.diagnosis_text.trim().toLowerCase() === text.toLowerCase())) return;
+    const aiSuggested = seedDiagnosis.isAiSuggested === true;
     void addDiagnosis({
       diagnosis_text: text,
       icd10_code: seedDiagnosis.icd10_code || "",
       icd10_description: "",
-      is_primary: cur.length === 0,
+      // An AI suggestion is NEVER primary, even on an otherwise empty list — the primary
+      // diagnosis drives coding and billing and must be a human decision.
+      is_primary: aiSuggested ? false : cur.length === 0,
       diagnosis_type: "working",
+      is_ai_suggested: aiSuggested,
+      ai_basis: seedDiagnosis.basis || "",
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seedDiagnosis]);
+  }, [seedDiagnosis, diagnosesLoaded]);
+
+  /** Doctor accepts an AI suggestion: it becomes an ordinary diagnosis. */
+  const acceptSuggestion = async (idx: number) => {
+    const d = diagnoses[idx];
+    if (!d?.is_ai_suggested) return;
+    if (d.id) {
+      await (supabase as any).from("opd_diagnoses")
+        .update({ is_ai_suggested: false }).eq("id", d.id);
+    }
+    setDiagnoses(prev => {
+      const next = prev.map((x, i) => (i === idx ? { ...x, is_ai_suggested: false } : x));
+      // Only now can it be primary, and only if nothing else already is.
+      if (!next.some(x => x.is_primary && !x.is_ai_suggested)) {
+        next[idx] = { ...next[idx], is_primary: true };
+        if (next[idx].id) {
+          void (supabase as any).from("opd_diagnoses")
+            .update({ is_primary: true }).eq("id", next[idx].id);
+        }
+      }
+      syncPrimary(next);
+      return next;
+    });
+  };
 
   const handleRemove = async (idx: number) => {
     const d = diagnoses[idx];
@@ -275,19 +324,39 @@ const DiagnosisPanel: React.FC<Props> = ({ encounterId, hospitalId, patientId, u
                 key={i}
                 className={cn(
                   "flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-medium",
-                  ti.color
+                  // An unconfirmed AI suggestion reads as provisional, not as a diagnosis
+                  // the doctor has made.
+                  d.is_ai_suggested
+                    ? "bg-violet-50 text-violet-700 border-violet-300 border-dashed"
+                    : ti.color
                 )}
+                title={d.is_ai_suggested && d.ai_basis ? `AI suggestion — based on: ${d.ai_basis}` : undefined}
               >
-                <button
-                  onClick={() => handleSetPrimary(i)}
-                  title={d.is_primary ? "Primary diagnosis" : "Set as primary"}
-                  className={cn("flex-shrink-0 transition-colors", d.is_primary ? "text-amber-500" : "text-slate-300 hover:text-amber-400")}
-                >
-                  <Star size={10} fill={d.is_primary ? "currentColor" : "none"} />
-                </button>
+                {d.is_ai_suggested ? (
+                  // No star: a suggestion cannot be made primary without being accepted first.
+                  <span className="flex-shrink-0 text-[9px] font-bold uppercase tracking-wide opacity-80">AI</span>
+                ) : (
+                  <button
+                    onClick={() => handleSetPrimary(i)}
+                    title={d.is_primary ? "Primary diagnosis" : "Set as primary"}
+                    className={cn("flex-shrink-0 transition-colors", d.is_primary ? "text-amber-500" : "text-slate-300 hover:text-amber-400")}
+                  >
+                    <Star size={10} fill={d.is_primary ? "currentColor" : "none"} />
+                  </button>
+                )}
                 <span>{d.diagnosis_text}</span>
                 {d.icd10_code && <span className="font-mono opacity-70">({d.icd10_code})</span>}
-                <span className="opacity-60 capitalize">[{d.diagnosis_type}]</span>
+                {d.is_ai_suggested ? (
+                  <button
+                    onClick={() => acceptSuggestion(i)}
+                    className="ml-0.5 px-1.5 rounded-full bg-violet-600 text-white text-[9px] font-semibold hover:bg-violet-700"
+                    title="Confirm this diagnosis. Until confirmed it is not coded or billed."
+                  >
+                    Confirm
+                  </button>
+                ) : (
+                  <span className="opacity-60 capitalize">[{d.diagnosis_type}]</span>
+                )}
                 <button onClick={() => handleRemove(i)} className="ml-0.5 opacity-50 hover:opacity-100">
                   <X size={10} />
                 </button>

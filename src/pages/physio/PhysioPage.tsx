@@ -7,6 +7,7 @@ import { postCharge } from "@/lib/chargePosting";
 import OutcomeTrajectoryPredictor from "@/components/physio/OutcomeTrajectoryPredictor";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
+import { useRealtimeRefetch } from "@/hooks/useRealtimeRefetch";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -174,6 +175,14 @@ const PhysioPage: React.FC = () => {
   useEffect(() => {
     if (selectedRef) loadRefSessions(selectedRef.id);
   }, [selectedRef]);
+
+  // Live: new referrals and session updates reflect without a refresh.
+  useRealtimeRefetch({
+    tables: ["physio_referrals", "physio_sessions"],
+    hospitalId,
+    onChange: () => { loadKPIs(); loadReferrals(); if (tab === "sessions") loadSessions(); },
+    channelName: "physio",
+  });
 
   // Accept referral
   const acceptReferral = async (id: string) => {

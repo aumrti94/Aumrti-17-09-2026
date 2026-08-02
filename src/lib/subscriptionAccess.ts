@@ -21,20 +21,25 @@
  * ability to read its own medical records over a billing dispute.
  */
 
-/** Days after `trial_ends_at` during which writes still work (escalating banner only). */
+/**
+ * Default grace/buffer in days. The live value is configurable from
+ * /platform → Payments (platform_billing_settings.access_grace_days) and is
+ * threaded in via the `graceDays` argument; this constant is the fallback used
+ * when the config has not loaded (and in the DB mirror's COALESCE).
+ */
 export const SUBSCRIPTION_GRACE_DAYS = 3;
 
 const DAY_MS = 86_400_000;
 
-export type AccessBlockReason = "trial_expired" | "suspended" | "cancelled";
+export type AccessBlockReason = "trial_expired" | "suspended" | "cancelled" | "past_due";
 
 export interface SubscriptionAccess {
   /** True = every write must be refused. */
   blocked: boolean;
   reason: AccessBlockReason | null;
-  /** When writes stop (trial only); null when already blocked or not applicable. */
+  /** When writes stop (trial or past_due); null when already blocked or not applicable. */
   graceEndsAt: Date | null;
-  /** True while the trial is over but the grace window has not closed yet. */
+  /** True while past the due date/trial end but the buffer has not closed yet. */
   inGrace: boolean;
 }
 
@@ -42,6 +47,8 @@ export interface SubscriptionAccess {
 export interface SubscriptionAccessInput {
   status: string;
   trial_ends_at?: string | null;
+  /** When the last renewal failed (status went past_due). Anchors the buffer. */
+  past_due_since?: string | null;
 }
 
 const ALLOWED: SubscriptionAccess = { blocked: false, reason: null, graceEndsAt: null, inGrace: false };
@@ -49,29 +56,32 @@ const ALLOWED: SubscriptionAccess = { blocked: false, reason: null, graceEndsAt:
 /**
  * PURE. Decide whether writes are allowed.
  *
- * Rules:
- *   trial      → blocked once now > trial_ends_at + SUBSCRIPTION_GRACE_DAYS
+ * Rules (`graceDays` defaults to SUBSCRIPTION_GRACE_DAYS; the live value comes
+ * from /platform → Payments):
+ *   trial      → blocked once now > trial_ends_at + graceDays
  *   suspended  → blocked immediately (suspension already followed a grace/dunning window)
  *   cancelled  → blocked immediately
- *   past_due   → ALLOWED; the dunning path (dunning-processor → trial-lifecycle-cron)
- *                suspends it after 7 days, and suspension blocks. Blocking here too would
- *                cut a hospital off on day 1 of a late payment.
+ *   past_due   → blocked once now > past_due_since + graceDays; a failed renewal
+ *                keeps writing for the buffer, then goes read-only. No anchor
+ *                (past_due_since null) → allowed until the webhook stamps it.
  *   active     → allowed
  *   no row     → allowed (onboarding — matches the fail-open in useSubscriptionConfig)
  *
- * Deliberately date-driven rather than status-driven for trials: `trial-lifecycle-cron` is
- * what flips an expired trial to `suspended`, and it demonstrably has not always run. An
- * enforcement rule that depends on a cron having fired is not an enforcement rule.
+ * Deliberately date-driven rather than status-driven: the crons that flip
+ * trial/past_due to `suspended` demonstrably have not always run. An enforcement
+ * rule that depends on a cron having fired is not an enforcement rule.
  *
  * Fail-open everywhere: a missing row, an unparseable date or an unknown status all allow.
  */
 export function resolveSubscriptionAccess(
   sub: SubscriptionAccessInput | null | undefined,
   now: Date = new Date(),
+  graceDays: number = SUBSCRIPTION_GRACE_DAYS,
 ): SubscriptionAccess {
   if (!sub) return ALLOWED;
 
   const status = String(sub.status || "").toLowerCase();
+  const graceMs = (Number.isFinite(graceDays) ? graceDays : SUBSCRIPTION_GRACE_DAYS) * DAY_MS;
 
   if (status === "suspended") return { blocked: true, reason: "suspended", graceEndsAt: null, inGrace: false };
   if (status === "cancelled") return { blocked: true, reason: "cancelled", graceEndsAt: null, inGrace: false };
@@ -81,7 +91,7 @@ export function resolveSubscriptionAccess(
     const endsAt = new Date(sub.trial_ends_at).getTime();
     if (!Number.isFinite(endsAt)) return ALLOWED;
 
-    const graceEndsAt = new Date(endsAt + SUBSCRIPTION_GRACE_DAYS * DAY_MS);
+    const graceEndsAt = new Date(endsAt + graceMs);
     if (now.getTime() > graceEndsAt.getTime()) {
       return { blocked: true, reason: "trial_expired", graceEndsAt, inGrace: false };
     }
@@ -91,6 +101,18 @@ export function resolveSubscriptionAccess(
       graceEndsAt,
       inGrace: now.getTime() > endsAt,
     };
+  }
+
+  if (status === "past_due") {
+    if (!sub.past_due_since) return ALLOWED; // no anchor yet — webhook stamps it
+    const dueAt = new Date(sub.past_due_since).getTime();
+    if (!Number.isFinite(dueAt)) return ALLOWED;
+
+    const graceEndsAt = new Date(dueAt + graceMs);
+    if (now.getTime() > graceEndsAt.getTime()) {
+      return { blocked: true, reason: "past_due", graceEndsAt, inGrace: false };
+    }
+    return { blocked: false, reason: null, graceEndsAt, inGrace: true };
   }
 
   return ALLOWED;

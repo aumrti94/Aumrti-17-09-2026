@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { Constants } from "@/integrations/supabase/types";
 import { useCapacityCheck } from "@/hooks/useCapacityCheck";
+import { getWardNursingRates, setWardNursingRate } from "@/lib/wardNursingRate";
 
 const wardTypes = Constants.public.Enums.ward_type;
 
@@ -29,7 +30,7 @@ const SettingsWardsPage: React.FC = () => {
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: "", type: "general", total_beds: "10", rate_per_day: "", bed_prefix: "", bed_start: "1" });
+  const [form, setForm] = useState({ name: "", type: "general", total_beds: "10", rate_per_day: "", nursing_rate_per_day: "", bed_prefix: "", bed_start: "1", gst_applicable: false, gst_percent: "0" });
   const [selectedTemplates, setSelectedTemplates] = useState<Set<number>>(new Set());
   const [templateBeds, setTemplateBeds] = useState<Record<number, string>>({});
   const [managingWard, setManagingWard] = useState<{ id: string; name: string } | null>(null);
@@ -38,10 +39,19 @@ const SettingsWardsPage: React.FC = () => {
   const { data: wards, isLoading } = useQuery({
     queryKey: ["settings-wards"],
     queryFn: async () => {
-      const { data, error } = await (supabase as any).from("wards").select("id, name, type, total_beds, is_active, rate_per_day").order("name");
+      const { data, error } = await (supabase as any).from("wards").select("id, name, type, total_beds, is_active, rate_per_day, gst_applicable, gst_percent").order("name");
       if (error) throw error;
       return data;
     },
+  });
+
+  // Fetched separately, never folded into the ward select above: on a database that has
+  // not had migration 20261011000091 applied, naming the column takes the WHOLE query
+  // down (PostgREST 42703) and this page renders "no wards configured" over a full ward
+  // list. See lib/wardNursingRate.ts.
+  const { data: nursingRates } = useQuery({
+    queryKey: ["settings-ward-nursing-rates"],
+    queryFn: getWardNursingRates,
   });
 
   const { data: bedStats } = useQuery({
@@ -78,11 +88,15 @@ const SettingsWardsPage: React.FC = () => {
     return data.hospital_id;
   };
 
-  const createWardWithBeds = async (hid: string, name: string, type: string, bedCount: number, ratePerDay?: number, bedPrefix?: string, bedStart?: number) => {
+  const createWardWithBeds = async (hid: string, name: string, type: string, bedCount: number, ratePerDay?: number, bedPrefix?: string, bedStart?: number, gstApplicable?: boolean, gstPercent?: number, nursingRatePerDay?: number) => {
     const wardPayload: any = { hospital_id: hid, name, type: type as any, total_beds: bedCount };
     if (ratePerDay && ratePerDay > 0) wardPayload.rate_per_day = ratePerDay;
+    if (gstApplicable) { wardPayload.gst_applicable = true; wardPayload.gst_percent = gstPercent || 0; }
     const { data: ward, error } = await supabase.from("wards").insert(wardPayload).select("id").maybeSingle();
     if (error) throw error;
+    // Separate write — a deployment without the nursing-rate column must still be able to
+    // create wards. setWardNursingRate reports failure instead of throwing.
+    if (nursingRatePerDay && nursingRatePerDay > 0) await setWardNursingRate(ward.id, nursingRatePerDay);
     const prefix = bedPrefix?.trim() || name.replace(/[^A-Za-z]/g, "").substring(0, 3).toUpperCase();
     const start = bedStart || 1;
     const padLen = String(start + bedCount - 1).length < 2 ? 2 : String(start + bedCount - 1).length;
@@ -101,6 +115,8 @@ const SettingsWardsPage: React.FC = () => {
       const beds = parseInt(form.total_beds);
       if (!beds || beds <= 0) throw new Error("Bed count must be at least 1.");
       const rate = parseFloat(form.rate_per_day) || 0;
+      // Blank stays 0 — nursing is bundled into room rent unless the hospital opts in.
+      const nursingRate = parseFloat(form.nursing_rate_per_day) || 0;
       // Check bed capacity before creating new ward with beds
       if (!editingId) {
         const capacity = await checkBedCapacity(beds);
@@ -110,18 +126,25 @@ const SettingsWardsPage: React.FC = () => {
           );
         }
       }
+      const gstPercent = form.gst_applicable ? (parseFloat(form.gst_percent) || 0) : 0;
       if (editingId) {
-        const updatePayload: any = { name: form.name, type: form.type as any, total_beds: beds, rate_per_day: rate };
+        const updatePayload: any = {
+          name: form.name, type: form.type as any, total_beds: beds, rate_per_day: rate,
+          gst_applicable: form.gst_applicable, gst_percent: gstPercent,
+        };
         const { error } = await supabase.from("wards").update(updatePayload).eq("id", editingId);
         if (error) throw error;
+        // Separate, non-fatal write — see createWardWithBeds.
+        await setWardNursingRate(editingId, nursingRate);
       } else {
-        await createWardWithBeds(hid, form.name, form.type, beds, rate, form.bed_prefix, parseInt(form.bed_start) || 1);
+        await createWardWithBeds(hid, form.name, form.type, beds, rate, form.bed_prefix, parseInt(form.bed_start) || 1, form.gst_applicable, gstPercent, nursingRate);
       }
     },
     onSuccess: () => {
       toast({ title: `Ward ${editingId ? "updated" : `added with ${form.total_beds} beds`}` });
       qc.invalidateQueries({ queryKey: ["settings-wards"] });
       qc.invalidateQueries({ queryKey: ["settings-bed-stats"] });
+      qc.invalidateQueries({ queryKey: ["settings-ward-nursing-rates"] });
       closeDrawer();
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -227,10 +250,16 @@ const SettingsWardsPage: React.FC = () => {
   const openDrawer = (ward?: any) => {
     if (ward) {
       setEditingId(ward.id);
-      setForm({ name: ward.name, type: ward.type, total_beds: String(ward.total_beds), rate_per_day: ward.rate_per_day ? String(ward.rate_per_day) : "", bed_prefix: "", bed_start: "1" });
+      setForm({
+        name: ward.name, type: ward.type, total_beds: String(ward.total_beds),
+        rate_per_day: ward.rate_per_day ? String(ward.rate_per_day) : "",
+        nursing_rate_per_day: nursingRates?.[ward.id] ? String(nursingRates[ward.id]) : "",
+        bed_prefix: "", bed_start: "1",
+        gst_applicable: !!ward.gst_applicable, gst_percent: String(ward.gst_percent ?? "0"),
+      });
     } else {
       setEditingId(null);
-      setForm({ name: "", type: "general", total_beds: "10", rate_per_day: "", bed_prefix: "", bed_start: "1" });
+      setForm({ name: "", type: "general", total_beds: "10", rate_per_day: "", nursing_rate_per_day: "", bed_prefix: "", bed_start: "1", gst_applicable: false, gst_percent: "0" });
     }
     setDrawerOpen(true);
   };
@@ -514,6 +543,40 @@ const SettingsWardsPage: React.FC = () => {
                 <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Rate Per Day (₹)</label>
                 <Input type="number" min={0} value={form.rate_per_day} onChange={(e) => setForm({ ...form, rate_per_day: e.target.value })} placeholder="e.g. 1500" className="h-10" />
                 <p className="text-[11px] text-muted-foreground mt-1">Per-day room charge for billing</p>
+              </div>
+              <div>
+                <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Nursing Charge Per Day (₹)</label>
+                <Input type="number" min={0} value={form.nursing_rate_per_day} onChange={(e) => setForm({ ...form, nursing_rate_per_day: e.target.value })} placeholder="Leave blank if included in room rate" className="h-10" />
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Billed automatically for every day of stay in this ward. Leave blank for CGHS,
+                  ESI, PM-JAY and TPA patients — those schemes require nursing to be included in
+                  the room rent, and a separate line is deducted by the payer.
+                </p>
+              </div>
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={form.gst_applicable} onChange={(e) => setForm({ ...form, gst_applicable: e.target.checked })}
+                    className="h-4 w-4 rounded border-input" />
+                  <span className="text-sm text-foreground">Custom GST %</span>
+                </label>
+                {form.gst_applicable ? (
+                  <>
+                    <Input
+                      type="number" min={0} max={100} step="0.01"
+                      value={form.gst_percent}
+                      onChange={(e) => setForm({ ...form, gst_percent: e.target.value })}
+                      placeholder="e.g. 5"
+                      className="h-10 mt-2"
+                    />
+                    <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-2 mt-1.5">
+                      Overrides the automatic GST rule (ICU exempt; 5% above ₹5,000/day, else 0%) for this ward's room charges. Only turn this on if you have a specific reason to bill GST differently for this ward.
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    GST follows the automatic rule: ICU/NICU/PICU exempt; other wards 5% above ₹5,000/day, else 0%.
+                  </p>
+                )}
               </div>
               {!editingId && (
                 <>

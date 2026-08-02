@@ -27,6 +27,8 @@ import AnaesthesiaSheet from "@/components/specialty/AnaesthesiaSheet";
 import OphthalmologySheet from "@/components/specialty/OphthalmologySheet";
 import { sendWhatsApp } from "@/lib/whatsapp-send";
 import { isRadiologyKeyword } from "@/lib/investigationSync";
+import { resolveDrugStock, calcDrugQuantity } from "@/lib/drugStock";
+import { loadOrderCatalogue, resolveOrders } from "@/lib/orderCatalogue";
 import { printDocument, printHeader } from "@/lib/printUtils";
 import { logRecordAccess } from "@/lib/ims";
 import { translateText, getHospitalLanguages, ALL_PATIENT_LANGUAGES, buildBilingualHtml } from "@/lib/translateUtils";
@@ -36,6 +38,8 @@ interface Props {
   hospitalId: string | null;
   userId: string | null;
   onTokenUpdate: () => void;
+  /** Optimistic in-place token update — avoids a full queue refetch for simple status changes. */
+  onTokenPatch?: (tokenId: string, patch: Partial<OpdToken>) => void;
   showPatientDetails?: boolean;
   onTogglePatientDetails?: () => void;
 }
@@ -66,6 +70,19 @@ export interface PrescriptionData {
   is_signed: boolean;
 }
 
+/**
+ * Whether this hospital can actually supply the item.
+ *
+ *   in_stock     resolved to a catalogue row AND (for drugs) batches on hand.
+ *                Auto-selected and eligible for the normal billing flow.
+ *   not_stocked  a real item, but this hospital does not stock/offer it. It STAYS on the
+ *                prescription so it prints and the patient still gets it — badged for
+ *                outside purchase and excluded from auto-billing. Never silently dropped.
+ *   unresolved   not matched to any catalogue row yet, or matching failed. Treated exactly
+ *                like not_stocked for billing; never assumed available.
+ */
+export type OrderAvailability = "in_stock" | "not_stocked" | "unresolved";
+
 export interface DrugEntry {
   drug_name: string;
   dose: string;
@@ -76,18 +93,29 @@ export interface DrugEntry {
   quantity: string;
   is_stat: boolean;
   is_ndps?: boolean;
+  availability?: OrderAvailability;
+  /** drug_master.id once resolved. */
+  catalogue_id?: string;
+  /** Units on hand across non-expired, active batches. */
+  stock_qty?: number;
 }
 
 export interface LabOrder {
   test_name: string;
   urgency: string;
   clinical_indication: string;
+  availability?: OrderAvailability;
+  /** lab_test_master.id (or lab_test_groups.id for a panel) once resolved. */
+  catalogue_id?: string;
 }
 
 export interface RadiologyOrder {
   study_name: string;
   urgency: string;
   clinical_indication: string;
+  availability?: OrderAvailability;
+  /** radiology_study_master.id once resolved. */
+  catalogue_id?: string;
 }
 
 const emptyEncounter: EncounterData = {
@@ -111,7 +139,7 @@ const BASE_TABS = [
   { key: "history", label: "History" },
 ] as const;
 
-const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onTokenUpdate, showPatientDetails, onTogglePatientDetails }) => {
+const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onTokenUpdate, onTokenPatch, showPatientDetails, onTogglePatientDetails }) => {
   const { toast } = useToast();
   const { registerScreen, unregisterScreen } = useVoiceScribe();
   const { permissions, role } = useHospitalContext();
@@ -120,7 +148,11 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
   const [prescription, setPrescription] = useState<PrescriptionData>(emptyPrescription);
   const [encounterId, setEncounterId] = useState<string | null>(null);
   const [prescriptionId, setPrescriptionId] = useState<string | null>(null);
-  const [diagnosisSeed, setDiagnosisSeed] = useState<{ text: string; icd10_code: string; nonce: number } | null>(null);
+  // `isAiSuggested` distinguishes a diagnosis the doctor SPOKE from one the model inferred.
+  // A suggestion is seeded as non-primary and stays out of coding and billing until confirmed.
+  const [diagnosisSeed, setDiagnosisSeed] = useState<{
+    text: string; icd10_code: string; nonce: number; isAiSuggested?: boolean; basis?: string;
+  } | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
@@ -207,32 +239,69 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
   encounterRef.current = encounter;
   prescriptionRef.current = prescription;
 
+  // Voice scribe applies through these rather than raw setState.
+  //
+  // fillFn used to call setEncounter/setPrescription directly, which skips isDirtyRef and
+  // never arms the 2 s autosave — so an applied dictation lived in React state only and was
+  // LOST if the doctor navigated away before touching another field or hitting Save.
+  // Held in refs because fillFn is registered once (stable deps) while the updaters are
+  // defined further down the component.
+  const updateEncounterRef = useRef<((p: Partial<EncounterData>) => void) | null>(null);
+  const updatePrescriptionRef = useRef<((p: Partial<PrescriptionData>) => void) | null>(null);
+  const enrichVoiceOrdersRef = useRef<((added: {
+    drugs: DrugEntry[]; labOrders: LabOrder[]; radOrders: RadiologyOrder[];
+  }) => Promise<void>) | null>(null);
+
   // Register fill function for voice scribe
   useEffect(() => {
     const fillFn = (data: Record<string, unknown>) => {
-      const enc = encounterRef.current;
-      const rx = prescriptionRef.current;
-      // Fill encounter fields
-      setEncounter((prev) => ({
-        ...prev,
-        chief_complaint: (data.chief_complaint as string) || prev.chief_complaint,
-        history_of_present_illness: (data.history_of_present_illness as string) || prev.history_of_present_illness,
-        examination_notes: (data.examination_findings as string) || prev.examination_notes,
-        diagnosis: (data.diagnosis as string) || prev.diagnosis,
-        icd10_code: (data.icd_suggestion as string) || prev.icd10_code,
-        soap_plan: (data.plan as string) || prev.soap_plan,
-        follow_up_notes: (data.follow_up as string) || prev.follow_up_notes,
-      }));
-      // Seed diagnosis into the DiagnosisPanel so it appears as a working chip
-      if (typeof data.diagnosis === "string" && data.diagnosis.trim()) {
+      const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+
+      // Only fields the model actually returned are patched, so an omitted key never
+      // blanks what the doctor already typed.
+      const encPatch: Partial<EncounterData> = {};
+      if (str(data.chief_complaint)) encPatch.chief_complaint = str(data.chief_complaint);
+      if (str(data.history_of_present_illness)) encPatch.history_of_present_illness = str(data.history_of_present_illness);
+      if (str(data.examination_findings)) encPatch.examination_notes = str(data.examination_findings);
+      // Systemic Examination / Clinical Notes. No AI key mapped here before — the UI has
+      // two examination boxes and the schema had one, so this box could never be filled.
+      if (str(data.systemic_examination)) encPatch.soap_objective = str(data.systemic_examination);
+      if (str(data.diagnosis)) encPatch.diagnosis = str(data.diagnosis);
+      if (str(data.icd_suggestion)) encPatch.icd10_code = str(data.icd_suggestion);
+      if (str(data.plan)) encPatch.soap_plan = str(data.plan);
+      if (str(data.follow_up)) encPatch.follow_up_notes = str(data.follow_up);
+
+      // updateEncounter (NOT setEncounter) so isDirtyRef is set and the 2 s autosave arms.
+      // Applying voice used to leave the note in React state only — navigate away before
+      // touching another field and the whole dictation was lost.
+      if (Object.keys(encPatch).length > 0) updateEncounterRef.current?.(encPatch);
+
+      // Seed the DiagnosisPanel. A SPOKEN diagnosis is authoritative; an AI-inferred one is
+      // offered separately as an unconfirmed suggestion — never primary, and not coded or
+      // billed until the doctor accepts it.
+      const spoken = str(data.diagnosis);
+      const suggested = str(data.suggested_diagnosis);
+      if (spoken) {
         setDiagnosisSeed({
-          text: data.diagnosis,
-          icd10_code: (data.icd_suggestion as string) || "",
+          text: spoken,
+          icd10_code: str(data.icd_suggestion),
           nonce: Date.now(),
+          isAiSuggested: false,
+        });
+      } else if (suggested) {
+        setDiagnosisSeed({
+          text: suggested,
+          icd10_code: str(data.suggested_icd),
+          nonce: Date.now(),
+          isAiSuggested: true,
+          basis: str(data.diagnosis_basis),
         });
       }
-      // Fill prescription
-      const drugs = ((data.prescription as DrugEntry[]) || []).map((d) => ({
+
+      // Prescriptions and orders land immediately as "unresolved", then an async pass
+      // matches them to this hospital's catalogue and stock (see enrichVoiceOrders).
+      // Filling first keeps the UI instant; enrichment only adds badges and quantities.
+      const drugs: DrugEntry[] = ((data.prescription as DrugEntry[]) || []).map((d) => ({
         drug_name: d.drug_name || "",
         dose: d.dose || "",
         route: d.route || "Oral",
@@ -241,25 +310,53 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
         instructions: d.instructions || "",
         quantity: "",
         is_stat: false,
+        availability: "unresolved",
       }));
+
       const isRadiology = (name: string) =>
         radStudyNamesRef.current.has(name.toLowerCase()) ||
         isRadiologyKeyword(name);
 
-      const labOrders: { test_name: string; urgency: string; clinical_indication: string }[] = [];
-      const radOrders: { study_name: string; urgency: string; clinical_indication: string }[] = [];
+      const labOrders: LabOrder[] = [];
+      const radOrders: RadiologyOrder[] = [];
       ((data.investigations as string[]) || []).forEach((name) => {
-        if (isRadiology(name)) radOrders.push({ study_name: name, urgency: "routine", clinical_indication: "" });
-        else labOrders.push({ test_name: name, urgency: "routine", clinical_indication: "" });
+        if (isRadiology(name)) radOrders.push({ study_name: name, urgency: "routine", clinical_indication: "", availability: "unresolved" });
+        else labOrders.push({ test_name: name, urgency: "routine", clinical_indication: "", availability: "unresolved" });
       });
 
       if (drugs.length > 0 || labOrders.length > 0 || radOrders.length > 0) {
-        setPrescription((prev) => ({
-          ...prev,
-          drugs: [...prev.drugs, ...drugs],
-          lab_orders: [...prev.lab_orders, ...labOrders],
-          radiology_orders: [...prev.radiology_orders, ...radOrders],
-        }));
+        const prev = prescriptionRef.current;
+
+        // Append only what isn't already on the prescription. A follow-up dictation re-sends
+        // the whole conversation, so the model legitimately re-emits items it already gave us
+        // (and can repeat one within a single response). This used to be a blind append, which
+        // put the same test/drug on the printed prescription two or more times.
+        const norm = (s: string) => s.trim().toLowerCase();
+        const keepNew = <T,>(incoming: T[], existing: Set<string>, nameOf: (item: T) => string): T[] => {
+          const out: T[] = [];
+          for (const item of incoming) {
+            const key = norm(nameOf(item) || "");
+            if (!key || existing.has(key)) continue;
+            existing.add(key); // also collapses repeats within this same batch
+            out.push(item);
+          }
+          return out;
+        };
+
+        const newDrugs = keepNew(drugs, new Set(prev.drugs.map((d) => norm(d.drug_name))), (d) => d.drug_name);
+        const newLabs = keepNew(labOrders, new Set(prev.lab_orders.map((l) => norm(l.test_name))), (l) => l.test_name);
+        const newRads = keepNew(radOrders, new Set(prev.radiology_orders.map((r) => norm(r.study_name))), (r) => r.study_name);
+
+        if (newDrugs.length > 0 || newLabs.length > 0 || newRads.length > 0) {
+          // updatePrescription for the same autosave reason as updateEncounter above.
+          updatePrescriptionRef.current?.({
+            drugs: [...prev.drugs, ...newDrugs],
+            lab_orders: [...prev.lab_orders, ...newLabs],
+            radiology_orders: [...prev.radiology_orders, ...newRads],
+          });
+          // Enrich only the newly added rows — the existing ones already went through this.
+          void enrichVoiceOrdersRef.current?.({ drugs: newDrugs, labOrders: newLabs, radOrders: newRads });
+        }
       }
       // Follow-up now lands reliably in encounter.follow_up_notes (set above),
       // so it is no longer dropped when there are no drugs/orders.
@@ -274,6 +371,9 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
       if (enc.chief_complaint?.trim()) data.chief_complaint = enc.chief_complaint;
       if (enc.history_of_present_illness?.trim()) data.history_of_present_illness = enc.history_of_present_illness;
       if (enc.examination_notes?.trim()) data.examination_findings = enc.examination_notes;
+      // Was omitted entirely, so a follow-up recording had no idea what was already in the
+      // systemic-examination box and merging it was impossible by construction.
+      if (enc.soap_objective?.trim()) data.systemic_examination = enc.soap_objective;
       if (enc.diagnosis?.trim()) data.diagnosis = enc.diagnosis;
       if (enc.icd10_code?.trim()) data.icd_suggestion = enc.icd10_code;
       if (enc.soap_plan?.trim()) data.plan = enc.soap_plan;
@@ -353,9 +453,11 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
     })();
   }, [token, hospitalId, userId]);
 
-  // Auto-save encounter
-  const autoSaveEncounter = useCallback(async (data: EncounterData) => {
-    if (!token || !hospitalId || !userId) return;
+  // Auto-save encounter. Returns the encounter id (existing or newly created) so
+  // callers that must act on a saved encounter — e.g. handleComplete — can proceed
+  // immediately instead of waiting for the setEncounterId state update to land.
+  const autoSaveEncounter = useCallback(async (data: EncounterData): Promise<string | null> => {
+    if (!token || !hospitalId || !userId) return null;
     setSaving(true);
     setSaved(false);
     try {
@@ -380,11 +482,13 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
         updated_at: new Date().toISOString(),
       };
 
+      let savedId: string | null = encounterId;
       if (encounterId) {
         await supabase.from("opd_encounters").update(payload as never).eq("id", encounterId);
       } else {
         const { data: newEnc } = await supabase.from("opd_encounters").insert([payload] as never).select("id").maybeSingle();
         if (newEnc) {
+          savedId = newEnc.id;
           setEncounterId(newEnc.id);
           // Backfill encounter_id into the single walk-in bill for this token.
           // Fetch the most recent unlinked bill first (PostgREST UPDATE has no LIMIT),
@@ -412,21 +516,26 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
       setSaved(true);
       isDirtyRef.current = false;
       setTimeout(() => setSaved(false), 2000);
+      return savedId;
     } catch (err) {
       console.error("Auto-save error:", err);
+      return null;
     } finally {
       setSaving(false);
     }
   }, [token, hospitalId, userId, encounterId]);
 
 
-  // Auto-save prescription
-  const autoSavePrescription = useCallback(async (data: PrescriptionData) => {
-    if (!token || !hospitalId || !userId || !encounterId) return;
+  // Auto-save prescription. `encounterIdOverride` lets a caller that just created the
+  // encounter pass its id directly — the `encounterId` state captured in this callback is
+  // still stale within the same tick, which would otherwise silently skip the save.
+  const autoSavePrescription = useCallback(async (data: PrescriptionData, encounterIdOverride?: string) => {
+    const targetEncounterId = encounterIdOverride ?? encounterId;
+    if (!token || !hospitalId || !userId || !targetEncounterId) return;
     try {
       const payload = {
         hospital_id: hospitalId,
-        encounter_id: encounterId,
+        encounter_id: targetEncounterId,
         patient_id: token.patient_id,
         doctor_id: userId,
         prescription_date: new Date().toISOString().split("T")[0],
@@ -482,6 +591,7 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
       return next;
     });
   }, [autoSaveEncounter]);
+  updateEncounterRef.current = updateEncounter;
 
   const handlePrintPrescription = () => {
     if (!token || !hospitalInfo) {
@@ -590,12 +700,104 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
       return next;
     });
   }, [autoSaveEncounter, autoSavePrescription, encounter]);
+  updatePrescriptionRef.current = updatePrescription;
+
+  /**
+   * Match voice-added orders to this hospital's catalogue and stock, after they are already
+   * on screen.
+   *
+   * Runs asynchronously so applying a dictation stays instant — this only adds catalogue
+   * ids, quantities, the NDPS flag and availability badges. Nothing is ever REMOVED here:
+   * a drug the hospital does not stock stays on the prescription so it still prints and the
+   * patient can buy it outside; it is simply marked so nobody expects the pharmacy to
+   * dispense it and auto-billing skips it.
+   */
+  const enrichVoiceOrders = useCallback(async (added: {
+    drugs: DrugEntry[]; labOrders: LabOrder[]; radOrders: RadiologyOrder[];
+  }) => {
+    if (!hospitalId) return;
+    try {
+      const [stock, catalogue] = await Promise.all([
+        added.drugs.length ? resolveDrugStock(hospitalId, added.drugs.map(d => d.drug_name)) : Promise.resolve(new Map()),
+        (added.labOrders.length || added.radOrders.length) ? loadOrderCatalogue(hospitalId) : Promise.resolve(null),
+      ]);
+
+      const prev = prescriptionRef.current;
+      const addedDrugNames = new Set(added.drugs.map(d => d.drug_name));
+      const addedLabNames = new Set(added.labOrders.map(l => l.test_name));
+      const addedRadNames = new Set(added.radOrders.map(r => r.study_name));
+
+      const nextDrugs = prev.drugs.map((d) => {
+        if (!addedDrugNames.has(d.drug_name) || d.availability !== "unresolved") return d;
+        const hit = stock.get(d.drug_name);
+        if (!hit) return { ...d, availability: "unresolved" as const };
+        return {
+          ...d,
+          // Canonical catalogue spelling, so the pharmacy screen and the bill agree.
+          drug_name: hit.drug_name,
+          catalogue_id: hit.drug_id,
+          // Voice-added drugs never carried this, so the NDPS badge and dual-verification
+          // warning silently failed to fire on dictated controlled substances.
+          is_ndps: hit.is_ndps,
+          stock_qty: hit.total_stock,
+          availability: hit.total_stock > 0 ? ("in_stock" as const) : ("not_stocked" as const),
+          quantity: d.quantity || calcDrugQuantity(d.dose, d.frequency, d.duration_days),
+        };
+      });
+
+      let nextLabs = prev.lab_orders;
+      let nextRads = prev.radiology_orders;
+
+      if (catalogue) {
+        const resolvedLabs = resolveOrders([...addedLabNames], catalogue, isRadiologyKeyword);
+        const resolvedRads = resolveOrders([...addedRadNames], catalogue, isRadiologyKeyword);
+        const byDictated = new Map([...resolvedLabs, ...resolvedRads].map(r => [r.dictated, r]));
+
+        // A name first routed by keyword can turn out to be the other kind once matched
+        // against the real catalogue, so rebuild both lists together.
+        const keepLabs: LabOrder[] = [];
+        const keepRads: RadiologyOrder[] = [];
+
+        for (const l of prev.lab_orders) {
+          const r = addedLabNames.has(l.test_name) && l.availability === "unresolved"
+            ? byDictated.get(l.test_name) : null;
+          if (!r) { keepLabs.push(l); continue; }
+          if (r.kind === "radiology") {
+            keepRads.push({ study_name: r.name, urgency: l.urgency, clinical_indication: l.clinical_indication, availability: "in_stock", catalogue_id: r.catalogueId ?? undefined });
+          } else {
+            keepLabs.push({ ...l, test_name: r.name, catalogue_id: r.catalogueId ?? undefined, availability: r.offered ? "in_stock" : "not_stocked" });
+          }
+        }
+        for (const rad of prev.radiology_orders) {
+          const r = addedRadNames.has(rad.study_name) && rad.availability === "unresolved"
+            ? byDictated.get(rad.study_name) : null;
+          if (!r) { keepRads.push(rad); continue; }
+          if (r.kind === "lab" || r.kind === "lab_group") {
+            keepLabs.push({ test_name: r.name, urgency: rad.urgency, clinical_indication: rad.clinical_indication, availability: "in_stock", catalogue_id: r.catalogueId ?? undefined });
+          } else {
+            keepRads.push({ ...rad, study_name: r.name, catalogue_id: r.catalogueId ?? undefined, availability: r.offered ? "in_stock" : "not_stocked" });
+          }
+        }
+        nextLabs = keepLabs;
+        nextRads = keepRads;
+      }
+
+      updatePrescriptionRef.current?.({
+        drugs: nextDrugs, lab_orders: nextLabs, radiology_orders: nextRads,
+      });
+    } catch (err) {
+      // Enrichment is an upgrade, never a requirement — the orders are already on screen.
+      console.warn("Voice order enrichment failed (non-fatal):", err);
+    }
+  }, [hospitalId]);
+  enrichVoiceOrdersRef.current = enrichVoiceOrders;
 
   // Add a lab test (used by the Clinical Guidance recommended-investigations chips)
   const addLabOrder = useCallback((name: string) => {
     if (!name.trim()) return;
     setPrescription((prev) => {
-      if (prev.lab_orders.some((l) => l.test_name === name)) return prev;
+      // Case-insensitive so "Fever Profile" can't be added alongside "fever profile".
+      if (prev.lab_orders.some((l) => l.test_name.trim().toLowerCase() === name.trim().toLowerCase())) return prev;
       const next = { ...prev, lab_orders: [...prev.lab_orders, { test_name: name, urgency: "routine", clinical_indication: "" }] };
       isDirtyRef.current = true;
       if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -606,16 +808,68 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
 
   const handleStartConsultation = async () => {
     if (!token) return;
-    await supabase.from("opd_tokens").update({
+    const now = new Date().toISOString();
+
+    // Flip the UI immediately. A full refetch here re-ran auth + user + queue queries
+    // before anything on screen changed, which read as the page "refreshing" on click.
+    // The realtime opd_tokens subscription in OPDPage reconciles with the server anyway.
+    onTokenPatch?.(token.id, { status: "in_consultation", consultation_start_at: now } as Partial<OpdToken>);
+
+    const { error } = await supabase.from("opd_tokens").update({
       status: "in_consultation",
-      called_at: new Date().toISOString(),
-      consultation_start_at: new Date().toISOString(),
+      called_at: now,
+      consultation_start_at: now,
     }).eq("id", token.id);
-    onTokenUpdate();
+
+    if (error) {
+      // Roll the optimistic change back so the button doesn't lie about the real state.
+      onTokenPatch?.(token.id, { status: token.status, consultation_start_at: token.consultation_start_at } as Partial<OpdToken>);
+      toast({ title: "Could not start the consultation", description: error.message, variant: "destructive" });
+      return;
+    }
+
+    // No onTokenPatch available (older caller) — fall back to the refetch path.
+    if (!onTokenPatch) onTokenUpdate();
   };
 
-  const handleComplete = async () => {
-    if (!encounterId) return;
+  /**
+   * Reopens a finalized consultation. Same-day follow-through is routine — the patient
+   * goes for labs/imaging and comes back with reports — and a completed token previously
+   * showed no action at all, stranding the doctor with no way back in.
+   * Re-completing is safe: the consultation fee is guarded by opd_encounters.consultation_billed,
+   * the bill line by its source_dedupe_key, and the MRD row by an existence check.
+   */
+  const handleResumeConsultation = async () => {
+    if (!token) return;
+
+    onTokenPatch?.(token.id, { status: "in_consultation", consultation_end_at: null } as Partial<OpdToken>);
+
+    const { error } = await supabase.from("opd_tokens").update({
+      status: "in_consultation",
+      consultation_end_at: null,
+    }).eq("id", token.id);
+
+    if (error) {
+      onTokenPatch?.(token.id, { status: token.status, consultation_end_at: token.consultation_end_at } as Partial<OpdToken>);
+      toast({ title: "Could not reopen the consultation", description: error.message, variant: "destructive" });
+      return;
+    }
+
+    if (!onTokenPatch) onTokenUpdate();
+    toast({
+      title: "Consultation reopened",
+      description: "Review the reports, then Complete again when you're done.",
+    });
+  };
+
+  /**
+   * Finalizes a consultation once its encounter row is guaranteed to exist.
+   * `encounterId` is a parameter (deliberately shadowing the state of the same name) so
+   * every step below acts on the just-saved encounter instead of a stale closure value —
+   * on a brand-new consultation the state hasn't updated yet when this runs.
+   */
+  const finalizeConsultation = async (encounterId: string) => {
+    if (!token) return;
 
     // Soft reminder if doctor has pending lab/radiology orders in the prescription JSON.
     // Lab/Radiology orders are created through the billing flow (New Lab Order / New Radiology Order)
@@ -632,14 +886,7 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
       });
     }
 
-    setFinalizing(true);
-    if (!encounter.chief_complaint.trim()) {
-      toast({ title: "Chief complaint is required", variant: "destructive" });
-      setFinalizing(false);
-      return;
-    }
-    await autoSaveEncounter(encounter);
-    if (encounterId) await autoSavePrescription(prescription);
+    await autoSavePrescription(prescription, encounterId);
     isDirtyRef.current = false;
     await supabase.from("opd_tokens").update({
       status: "completed",
@@ -866,6 +1113,34 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
     toast({ title: `Consultation complete for ${token.patient?.full_name || "patient"}` });
   };
 
+  const handleComplete = async () => {
+    if (!token) return;
+
+    // Validated up front so the doctor always gets feedback. This check used to sit behind
+    // an `if (!encounterId) return;` guard, which made Complete a silent no-op on any
+    // consultation where nothing had been typed (and so nothing auto-saved) yet.
+    if (!encounter.chief_complaint.trim()) {
+      toast({ title: "Chief complaint is required", variant: "destructive" });
+      return;
+    }
+
+    setFinalizing(true);
+    try {
+      // Save first so a brand-new consultation has a real encounter row to finalize.
+      const savedEncounterId = await autoSaveEncounter(encounter);
+      if (!savedEncounterId) {
+        toast({ title: "Could not save the consultation", description: "Please try again.", variant: "destructive" });
+        return;
+      }
+      await finalizeConsultation(savedEncounterId);
+    } catch (err) {
+      console.error("Complete consultation error:", err);
+      toast({ title: "Could not complete the consultation", description: "Please try again.", variant: "destructive" });
+    } finally {
+      setFinalizing(false);
+    }
+  };
+
   const handleSendWhatsApp = async () => {
     if (!token?.patient?.phone) {
       toast({ title: "Patient phone number not available", variant: "destructive" });
@@ -934,14 +1209,33 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
         {/* Right actions */}
         <div className="flex items-center gap-2 flex-shrink-0">
           <span className="text-xs bg-blue-50 text-[#1A2F5A] px-2 py-0.5 rounded font-medium">{token.token_number}</span>
-          {token.status === "waiting" && (
+          {/* "called" (patient called into the room but not yet started) also lands here —
+              it previously matched no branch, leaving the header with no action at all. */}
+          {(token.status === "waiting" || token.status === "called") && (
             <button onClick={handleStartConsultation} className="text-xs bg-[#1A2F5A] text-white px-3 py-1.5 rounded-md font-semibold hover:bg-[#152647] active:scale-[0.97] transition-all">
               ▶ Start Consultation
             </button>
           )}
-          {token.status === "in_consultation" && (
-            <button onClick={handleComplete} className="text-xs bg-emerald-500 text-white px-3 py-1.5 rounded-md font-semibold hover:bg-emerald-600 active:scale-[0.97] transition-all">
-              ✓ Complete
+          {/* Single finalize action for the consultation. Carries the `complete_and_bill`
+              permission that used to gate the separate bottom-bar "Complete & Bill" button —
+              completing a consultation is what creates the consultation charge. */}
+          {token.status === "in_consultation" && hasActionAccess("opd", "complete_and_bill", permissions, role) && (
+            <button
+              onClick={handleComplete}
+              disabled={finalizing}
+              className="text-xs bg-emerald-500 text-white px-3 py-1.5 rounded-md font-semibold hover:bg-emerald-600 active:scale-[0.97] transition-all disabled:opacity-50 disabled:pointer-events-none"
+            >
+              {finalizing ? "Completing…" : "✓ Complete"}
+            </button>
+          )}
+          {/* Reopen a finalized visit — for the patient who returns the same day with reports. */}
+          {token.status === "completed" && hasActionAccess("opd", "complete_and_bill", permissions, role) && (
+            <button
+              onClick={handleResumeConsultation}
+              title="Reopen this consultation to review reports and finalize again"
+              className="text-xs border border-[#1A2F5A] text-[#1A2F5A] px-3 py-1.5 rounded-md font-semibold hover:bg-[#1A2F5A]/5 active:scale-[0.97] transition-all"
+            >
+              ↻ Resume Consultation
             </button>
           )}
           {token && (
@@ -1058,11 +1352,8 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
         <button onClick={() => autoSaveEncounter(encounter)} className="text-xs text-slate-600 border border-slate-200 px-3 py-1.5 rounded-md hover:bg-slate-50 flex items-center gap-1.5 active:scale-[0.97] transition-all">
           <Save className="h-3.5 w-3.5" /> Save Draft
         </button>
-        {hasActionAccess("opd", "complete_and_bill", permissions, role) && (
-          <button onClick={handleComplete} className="text-xs bg-[#1A2F5A] text-white px-4 py-1.5 rounded-md font-semibold hover:bg-[#152647] flex items-center gap-1.5 active:scale-[0.97] transition-all">
-            <CheckCircle className="h-3.5 w-3.5" /> Complete & Bill
-          </button>
-        )}
+        {/* "Complete & Bill" removed — it duplicated the header's Complete button
+            (same handleComplete, which already creates the consultation charge). */}
         <VoiceDictationButton sessionType="opd_consultation" patientId={token.patient_id} size="sm" />
         <ClinicalCalculatorPanel onInsertToNote={(text) => {
           window.dispatchEvent(new CustomEvent("insert-clinical-note", { detail: text }));

@@ -5,6 +5,8 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { IndianRupee, Percent } from "lucide-react";
+import { APP_ROLES } from "@/lib/appRoles";
+import { cn } from "@/lib/utils";
 
 const SettingsApprovalsPage: React.FC = () => {
   const { toast } = useToast();
@@ -15,10 +17,22 @@ const SettingsApprovalsPage: React.FC = () => {
   const [t1Pct, setT1Pct] = useState(5);
   const [t2Amount, setT2Amount] = useState(2000);
   const [t2Pct, setT2Pct] = useState(15);
+  // Roles authorized to approve each tier (Tier 1 needs none). Admin / Super Admin always
+  // retain override authority (see DISCOUNT_OVERRIDE_ROLES) — not shown here.
+  const [t2Roles, setT2Roles] = useState<string[]>(["billing_executive"]);
+  const [t3Roles, setT3Roles] = useState<string[]>(["cfo"]);
 
   const [restrictedAbx, setRestrictedAbx] = useState(true);
   const [bloodTx, setBloodTx] = useState(true);
   const [lama, setLama] = useState(true);
+
+  const toggleRole = (
+    tier: string[],
+    setter: React.Dispatch<React.SetStateAction<string[]>>,
+    role: string
+  ) => {
+    setter(tier.includes(role) ? tier.filter((r) => r !== role) : [...tier, role]);
+  };
 
   useEffect(() => {
     (async () => {
@@ -37,6 +51,8 @@ const SettingsApprovalsPage: React.FC = () => {
         if (rules.t1_pct != null) setT1Pct(rules.t1_pct);
         if (rules.t2_amount != null) setT2Amount(rules.t2_amount);
         if (rules.t2_pct != null) setT2Pct(rules.t2_pct);
+        if (Array.isArray(rules.t2_roles)) setT2Roles(rules.t2_roles);
+        if (Array.isArray(rules.t3_roles)) setT3Roles(rules.t3_roles);
       }
     })();
   }, []);
@@ -44,7 +60,11 @@ const SettingsApprovalsPage: React.FC = () => {
   const handleSave = async () => {
     if (!hospitalId) return;
     setSaving(true);
-    const rules = { t1_amount: t1Amount, t1_pct: t1Pct, t2_amount: t2Amount, t2_pct: t2Pct };
+    const rules = {
+      t1_amount: t1Amount, t1_pct: t1Pct,
+      t2_amount: t2Amount, t2_pct: t2Pct,
+      t2_roles: t2Roles, t3_roles: t3Roles,
+    };
     await (supabase as any).from("hospital_settings").upsert(
       { hospital_id: hospitalId, key: "discount_approval_rules", value: JSON.stringify(rules) },
       { onConflict: "hospital_id,key" }
@@ -116,17 +136,63 @@ const SettingsApprovalsPage: React.FC = () => {
                   </div>
                 </div>
               </div>
+              <div className="mt-4">
+                <label className="text-[11px] text-amber-600 font-medium block mb-1.5">Who can approve this tier</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {APP_ROLES.map((r) => (
+                    <button
+                      key={r.value}
+                      type="button"
+                      onClick={() => toggleRole(t2Roles, setT2Roles, r.value)}
+                      className={cn(
+                        "text-[11px] px-2.5 py-1 rounded-full border transition-colors",
+                        t2Roles.includes(r.value)
+                          ? "bg-amber-500 text-white border-amber-500"
+                          : "bg-white text-amber-700 border-amber-200 hover:bg-amber-100"
+                      )}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+                {t2Roles.length === 0 && (
+                  <p className="text-[11px] text-red-600 mt-1.5">Select at least one role, or only Admin/Super Admin will be able to approve.</p>
+                )}
+              </div>
             </div>
 
             <div className="bg-red-50 border border-red-200 rounded-xl px-5 py-4">
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-red-100 text-red-700">Tier 3</span>
-                <span className="text-sm font-semibold text-red-800">CFO / Admin approval</span>
+                <span className="text-sm font-semibold text-red-800">High-value approval</span>
               </div>
-              <p className="text-xs text-red-700">
-                Discounts exceeding Tier 2 (above ₹{t2Amount.toLocaleString("en-IN")} or {t2Pct}%) require CFO or Administrator sign-off.
-                No additional configuration needed.
+              <p className="text-xs text-red-700 mb-3">
+                Discounts exceeding Tier 2 (above ₹{t2Amount.toLocaleString("en-IN")} or {t2Pct}%) require sign-off from a role below.
               </p>
+              <div>
+                <label className="text-[11px] text-red-600 font-medium block mb-1.5">Who can approve this tier</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {APP_ROLES.map((r) => (
+                    <button
+                      key={r.value}
+                      type="button"
+                      onClick={() => toggleRole(t3Roles, setT3Roles, r.value)}
+                      className={cn(
+                        "text-[11px] px-2.5 py-1 rounded-full border transition-colors",
+                        t3Roles.includes(r.value)
+                          ? "bg-red-500 text-white border-red-500"
+                          : "bg-white text-red-700 border-red-200 hover:bg-red-100"
+                      )}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+                {t3Roles.length === 0 && (
+                  <p className="text-[11px] text-red-600 mt-1.5">Select at least one role, or only Admin/Super Admin will be able to approve.</p>
+                )}
+              </div>
+              <p className="text-[11px] text-red-500 mt-3">Admin and Super Admin can always approve any tier.</p>
             </div>
 
           </div>

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,13 +10,17 @@ import { useToast } from "@/hooks/use-toast";
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Bumped by the parent to refresh the calendar, mirroring FileIncidentModal.onFiled. */
+  onScheduled?: () => void;
+  /** Prefills the date when opened from a calendar day. */
+  initialDate?: string;
 }
 
 const auditTypes = ["internal", "external", "nabh_surveillance", "nabh_accreditation", "peer", "unannounced"];
 
 const nabhChapters = ["AAC", "COP", "MOM", "HIC", "CQI", "ROM", "FMS", "HRM", "MRD", "PRE"];
 
-const ScheduleAuditModal: React.FC<Props> = ({ open, onOpenChange }) => {
+const ScheduleAuditModal: React.FC<Props> = ({ open, onOpenChange, onScheduled, initialDate }) => {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
@@ -26,6 +30,11 @@ const ScheduleAuditModal: React.FC<Props> = ({ open, onOpenChange }) => {
     auditor_name: "",
     chapters: [] as string[],
   });
+
+  // Adopt the clicked calendar day each time the dialog opens.
+  useEffect(() => {
+    if (open && initialDate) setForm((f) => ({ ...f, scheduled_date: initialDate }));
+  }, [open, initialDate]);
 
   const toggleChapter = (ch: string) => {
     setForm((f) => ({
@@ -45,22 +54,32 @@ const ScheduleAuditModal: React.FC<Props> = ({ open, onOpenChange }) => {
       const userId = userData.user?.id;
       if (!userId) { toast({ title: "Not authenticated", variant: "destructive" }); setSaving(false); return; }
 
-      const { data: userProfile } = await supabase.from("users").select("hospital_id").eq("auth_user_id", userId).maybeSingle();
+      // `id` as well as `hospital_id`: audit_records.created_by references
+      // public.users(id), which is NOT auth.uid() — the two diverged when
+      // auth_user_id was introduced (migration 20260322111223) and staff rows are
+      // now created with their own generated uuid. Passing the auth uid here
+      // failed the foreign key on every insert.
+      const { data: userProfile } = await supabase.from("users").select("id, hospital_id").eq("auth_user_id", userId).maybeSingle();
       if (!userProfile) { toast({ title: "User profile not found", variant: "destructive" }); setSaving(false); return; }
 
-      await supabase.from("audit_records").insert({
+      // supabase-js resolves with { data, error } instead of throwing, so this
+      // must be destructured — a bare await let the failure through and the
+      // success toast below always ran.
+      const { error } = await supabase.from("audit_records").insert({
         hospital_id: userProfile.hospital_id,
         audit_title: form.audit_title,
         audit_type: form.audit_type,
         scheduled_date: form.scheduled_date,
         auditor_name: form.auditor_name || null,
         chapters_covered: form.chapters,
-        created_by: userId,
+        created_by: userProfile.id,
       });
+      if (error) throw error;
 
       toast({ title: "Audit scheduled" });
       onOpenChange(false);
       setForm({ audit_title: "", audit_type: "internal", scheduled_date: "", auditor_name: "", chapters: [] });
+      onScheduled?.();
     } catch (err: any) {
       toast({ title: "Error scheduling audit", description: err.message, variant: "destructive" });
     } finally {

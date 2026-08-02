@@ -63,6 +63,31 @@ const statusStyles: Record<string, string> = {
   cancelled: "bg-slate-50 border-slate-200 opacity-50",
 };
 
+// ── Queue status filters ─────────────────────────────────────────────────────
+// Every token maps to exactly one bucket, so the chip counts always add up to
+// "All" and a patient can never fall through the cracks. Tokens re-bucket
+// automatically as their status changes — the list is derived from `tokens`,
+// so no refetch or remount is involved.
+type StatusFilter = "all" | "queue" | "in_consultation" | "completed" | "other";
+
+const QUEUE_STATUSES = ["waiting", "called"];
+
+/** Unknown/edge statuses land in "other" so nothing is ever hidden from the queue. */
+function bucketOf(status: string): Exclude<StatusFilter, "all"> {
+  if (QUEUE_STATUSES.includes(status)) return "queue";
+  if (status === "in_consultation") return "in_consultation";
+  if (status === "completed") return "completed";
+  return "other";
+}
+
+const STATUS_FILTERS: { key: StatusFilter; label: string; dot: string; active: string }[] = [
+  { key: "all",             label: "All",             dot: "bg-slate-400",   active: "bg-slate-800 text-white border-slate-800" },
+  { key: "queue",           label: "In Queue",        dot: "bg-amber-500",   active: "bg-amber-500 text-white border-amber-500" },
+  { key: "in_consultation", label: "In Consultation", dot: "bg-blue-500",    active: "bg-blue-500 text-white border-blue-500" },
+  { key: "completed",       label: "Completed",       dot: "bg-emerald-500", active: "bg-emerald-500 text-white border-emerald-500" },
+  { key: "other",           label: "Other",           dot: "bg-slate-400",   active: "bg-slate-500 text-white border-slate-500" },
+];
+
 function getWaitMinutes(createdAt: string): string {
   const diff = Math.floor((Date.now() - new Date(createdAt).getTime()) / 60000);
   if (diff < 1) return "< 1 min";
@@ -91,6 +116,7 @@ const TokenQueue: React.FC<Props> = ({ tokens, selectedTokenId, onSelectToken, h
   const [doctors, setDoctors] = useState<{ id: string; full_name: string }[]>([]);
   const [activeDept, setActiveDept] = useState<string>("all");
   const [activeDoctor, setActiveDoctor] = useState<string>("all");
+  const [activeStatus, setActiveStatus] = useState<StatusFilter>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [showModal, setShowModal] = useState(false);
   const [predictions, setPredictions] = useState<Record<string, NoShowPrediction>>({});
@@ -169,7 +195,10 @@ const TokenQueue: React.FC<Props> = ({ tokens, selectedTokenId, onSelectToken, h
     setReminderSending(null);
   };
 
-  const filtered = useMemo(() => {
+  // Everything except the status filter. Status counts are derived from this so the
+  // chips reflect the current department / doctor / search context rather than the
+  // whole day's queue.
+  const scoped = useMemo(() => {
     let list = [...tokens];
     if (activeDept !== "all") list = list.filter((t) => t.department_id === activeDept);
     if (activeDoctor !== "all") list = list.filter((t) => t.doctor_id === activeDoctor);
@@ -185,6 +214,21 @@ const TokenQueue: React.FC<Props> = ({ tokens, selectedTokenId, onSelectToken, h
         t.department?.name?.toLowerCase().includes(q)
       );
     }
+    return list;
+  }, [tokens, activeDept, activeDoctor, searchQuery]);
+
+  const statusCounts = useMemo(() => {
+    const counts: Record<StatusFilter, number> = {
+      all: scoped.length, queue: 0, in_consultation: 0, completed: 0, other: 0,
+    };
+    for (const t of scoped) counts[bucketOf(t.status)]++;
+    return counts;
+  }, [scoped]);
+
+  const filtered = useMemo(() => {
+    const list = activeStatus === "all"
+      ? [...scoped]
+      : scoped.filter((t) => bucketOf(t.status) === activeStatus);
     // Order within each status: emergency (URG) first, then appointment patients by their
     // scheduled time, then walk-ins FIFO by creation.
     list.sort((a, b) => {
@@ -200,9 +244,9 @@ const TokenQueue: React.FC<Props> = ({ tokens, selectedTokenId, onSelectToken, h
       return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
     });
     return list;
-  }, [tokens, activeDept, activeDoctor, searchQuery]);
+  }, [scoped, activeStatus]);
 
-  const hasActiveFilter = activeDept !== "all" || activeDoctor !== "all" || !!searchQuery.trim();
+  const hasActiveFilter = activeDept !== "all" || activeDoctor !== "all" || !!searchQuery.trim() || activeStatus !== "all";
 
   // Date navigation helpers
   const goToPrevDay = () => {
@@ -282,10 +326,6 @@ const TokenQueue: React.FC<Props> = ({ tokens, selectedTokenId, onSelectToken, h
       setCallNextLoading(false);
     }
   }, [hospitalId, filtered, callNextLoading, onTokenCreated]);
-
-  const waitingCount = tokens.filter((t) => t.status === "waiting").length;
-  const inRoomCount = tokens.filter((t) => t.status === "in_consultation").length;
-  const doneCount = tokens.filter((t) => t.status === "completed").length;
 
   // No-show analytics
   const highRiskCount = Object.values(predictions).filter(p => p.risk_score >= 70).length;
@@ -385,7 +425,7 @@ const TokenQueue: React.FC<Props> = ({ tokens, selectedTokenId, onSelectToken, h
               </Select>
               {hasActiveFilter && (
                 <button
-                  onClick={() => { setActiveDept("all"); setActiveDoctor("all"); setSearchQuery(""); }}
+                  onClick={() => { setActiveDept("all"); setActiveDoctor("all"); setSearchQuery(""); setActiveStatus("all"); }}
                   className="h-7 w-7 flex items-center justify-center rounded border border-slate-200 hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors shrink-0"
                   title="Clear all filters"
                 >
@@ -399,12 +439,31 @@ const TokenQueue: React.FC<Props> = ({ tokens, selectedTokenId, onSelectToken, h
           </div>
         </div>
 
-        {/* Stats bar */}
-        <div className="flex-shrink-0 h-8 bg-slate-50 border-b border-slate-100 flex items-center gap-4 px-4">
-          <span className="text-[11px] text-amber-500 font-medium">● {waitingCount} Waiting</span>
-          <span className="text-[11px] text-blue-500 font-medium">● {inRoomCount} In Room</span>
-          <span className="text-[11px] text-emerald-500 font-medium">✓ {doneCount} Done</span>
-          <div className="ml-auto" />
+        {/* Status filter chips — click to narrow the list. Patients re-bucket on their
+            own as statuses change, since this is derived from the live token list. */}
+        <div className="flex-shrink-0 bg-slate-50 border-b border-slate-100 flex items-center gap-1 px-2 py-1.5 overflow-x-auto">
+          {STATUS_FILTERS.map((f) => {
+            const count = statusCounts[f.key];
+            const isActive = activeStatus === f.key;
+            // Keep "Other" out of the way until it actually has something in it.
+            if (f.key === "other" && count === 0 && !isActive) return null;
+            return (
+              <button
+                key={f.key}
+                onClick={() => setActiveStatus(f.key)}
+                aria-pressed={isActive}
+                className={cn(
+                  "flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap border transition-colors active:scale-[0.97]",
+                  isActive ? f.active : "border-transparent text-slate-500 hover:bg-slate-100"
+                )}
+              >
+                <span className={cn("h-1.5 w-1.5 rounded-full", isActive ? "bg-white/80" : f.dot)} />
+                {f.label}
+                <span className={cn("tabular-nums", isActive ? "text-white/90" : "text-slate-400")}>{count}</span>
+              </button>
+            );
+          })}
+          <div className="ml-auto pl-2" />
           <NABHBadge standardCodes={["AAC.1", "AAC.2", "AAC.3"]} />
         </div>
 
@@ -413,13 +472,25 @@ const TokenQueue: React.FC<Props> = ({ tokens, selectedTokenId, onSelectToken, h
           {loading
             ? Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-lg" />)
             : filtered.length === 0 ? (
-              <EmptyState
-                icon="🏥"
-                title="No patients in queue"
-                description="Walk-in patients and appointments will appear here"
-                actionLabel={hasActionAccess("opd", "register_walkin", permissions, role) ? "Register Walk-in" : undefined}
-                onAction={hasActionAccess("opd", "register_walkin", permissions, role) ? () => setShowModal(true) : undefined}
-              />
+              activeStatus !== "all" ? (
+                // Empty because of the chosen status filter, not because the queue is empty —
+                // say so, and offer a way back rather than a misleading "no patients" message.
+                <EmptyState
+                  icon="🔍"
+                  title={`No patients ${STATUS_FILTERS.find((f) => f.key === activeStatus)?.label.toLowerCase()}`}
+                  description="Patients move here automatically as their status changes."
+                  actionLabel="Show all patients"
+                  onAction={() => setActiveStatus("all")}
+                />
+              ) : (
+                <EmptyState
+                  icon="🏥"
+                  title="No patients in queue"
+                  description="Walk-in patients and appointments will appear here"
+                  actionLabel={hasActionAccess("opd", "register_walkin", permissions, role) ? "Register Walk-in" : undefined}
+                  onAction={hasActionAccess("opd", "register_walkin", permissions, role) ? () => setShowModal(true) : undefined}
+                />
+              )
             ) : filtered.map((token) => {
               const isSelected = token.id === selectedTokenId;
               const pred = predictions[token.id];

@@ -214,8 +214,16 @@ const IPDDeviceTab: React.FC<Props> = ({ admissionId, hospitalId, userId, patien
   const saveBundleChecklist = async () => {
     if (!hospitalId || !patientId || !bundleDevice || !bundleKey) return;
     setBundleSaving(true);
-    const elementsStr: Record<string, string> = {};
-    Object.entries(bundleElements).forEach(([k, v]) => { elementsStr[k] = String(v); });
+
+    // This used to send elements as "true"/"false" STRINGS and no compliance_pct at
+    // all, on the assumption the database computed it. Nothing did — every row this
+    // tab wrote landed with compliance_pct NULL, which the IPC dashboard then read as
+    // 100% and the NABH quality collector read as 0%.
+    const keys = Object.keys(BUNDLE_ELEMENTS[bundleKey]);
+    const elements: Record<string, boolean> = {};
+    keys.forEach(k => { elements[k] = bundleElements[k] === true; });
+    const met = keys.filter(k => elements[k]).length;
+    const compliancePct = keys.length > 0 ? Math.round((met / keys.length) * 100) : null;
 
     const { error } = await (supabase as any).from("ipc_bundle_checklists").insert({
       hospital_id: hospitalId,
@@ -226,14 +234,20 @@ const IPDDeviceTab: React.FC<Props> = ({ admissionId, hospitalId, userId, patien
       bundle_type: bundleType,
       checklist_date: new Date().toISOString().split("T")[0],
       completed_by: userId ?? null,
-      elements: elementsStr,
+      elements,
+      compliance_pct: compliancePct,
     });
     setBundleSaving(false);
     if (error) { toast({ title: "Failed to save checklist", description: error.message, variant: "destructive" }); return; }
 
-    toast({ title: "Bundle checklist saved" });
+    toast({
+      title: compliancePct == null ? "Bundle checklist saved" : `Bundle checklist saved — ${compliancePct}%`,
+      description: compliancePct != null && compliancePct < 100
+        ? "One or more elements were not met — review with the care team."
+        : undefined,
+    });
     setBundleOpen(false);
-    load(); // refresh to get compliance_pct from DB
+    load();
   };
 
   const deviceDays = (device: DeviceUsage): number => {

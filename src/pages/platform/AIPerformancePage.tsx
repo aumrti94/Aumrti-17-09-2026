@@ -9,6 +9,7 @@ import {
 import { Zap, TrendingDown, IndianRupee, Activity, CheckCircle2, AlertCircle } from "lucide-react";
 import { RECHARTS_TOOLTIP_STYLE } from "@/lib/platform-utils";
 import { formatINRPrecise, formatINRCompact } from "@/lib/currency";
+import AiWalletsPanel from "@/components/subscription/AiWalletsPanel";
 
 // ─── types ────────────────────────────────────────────────────────────────────
 interface DailyRow {
@@ -485,6 +486,8 @@ export default function AIPerformancePage() {
           </table>
         )}
       </div>
+
+      <AiWalletsPanel />
     </div>
   );
 }

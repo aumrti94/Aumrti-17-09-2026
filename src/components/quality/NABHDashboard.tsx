@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { PieChart, Pie, Cell, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, Sparkles, Loader2 } from "lucide-react";
 import { callAI } from "@/lib/aiProvider";
 import { useAIFeature } from "@/hooks/useAIFeature";
+import { useHospitalId } from "@/hooks/useHospitalId";
 
 interface Criterion {
   id: string;
@@ -37,6 +38,10 @@ const scoreColor = (pct: number) => {
   return "hsl(142, 71%, 45%)";
 };
 
+// Criterion scoring and banding now live in SQL (public.qi_attainment /
+// public.qi_band_status) so the dashboard and the stored compliance_status
+// cannot drift apart. src/lib/qualityIndicators.ts mirrors them for the UI.
+
 const statusBadge = (status: string) => {
   switch (status) {
     case "compliant": return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
@@ -56,22 +61,17 @@ const NABHDashboard: React.FC = () => {
   const [aiMapping, setAiMapping] = useState(false);
   const [aiMappingResult, setAiMappingResult] = useState<string | null>(null);
   const [selectedChapter, setSelectedChapter] = useState<string | null>(null);
-  const [hospitalId, setHospitalId] = useState<string | undefined>(undefined);
+  const [raisingCapaFor, setRaisingCapaFor] = useState<string | null>(null);
+  const { hospitalId } = useHospitalId();
 
   useEffect(() => {
-    loadData();
-    (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data } = await supabase.from("users").select("hospital_id").eq("auth_user_id", user.id).maybeSingle();
-      if (data) setHospitalId(data.hospital_id);
-    })();
-  }, []);
+    if (hospitalId) loadData();
+  }, [hospitalId]);
 
   const loadData = async () => {
     const [criteriaRes, auditsRes] = await Promise.all([
-      supabase.from("nabh_criteria").select("*").order("chapter_code"),
-      supabase.from("audit_records").select("*").eq("status", "scheduled").order("scheduled_date").limit(3),
+      supabase.from("nabh_criteria").select("*").eq("hospital_id", hospitalId).order("chapter_code"),
+      supabase.from("audit_records").select("*").eq("hospital_id", hospitalId).eq("status", "scheduled").order("scheduled_date").limit(3),
     ]);
     setCriteria((criteriaRes.data as any) || []);
     setAudits((auditsRes.data as any) || []);
@@ -105,58 +105,80 @@ const NABHDashboard: React.FC = () => {
     : [];
   const selectedChapterInfo = selectedChapter ? chapters[selectedChapter] : null;
 
-  // Trend data (mock for now — 6 months)
-  const trendData = Array.from({ length: 6 }, (_, i) => ({
-    month: new Date(Date.now() - (5 - i) * 30 * 86400000).toLocaleString("default", { month: "short" }),
-    score: Math.max(0, overallScore - (5 - i) * Math.floor(Math.random() * 5)),
-  }));
-
-  const autoEvidence = [
-    { text: "Patient registration records collected", count: criteria.filter((c) => c.chapter_code === "AAC" && c.auto_collected).length, criterion: "AAC.1" },
-    { text: "Care protocols verified", count: criteria.filter((c) => c.chapter_code === "COP" && c.auto_collected).length, criterion: "COP.2" },
-    { text: "Medication dispensing verified", count: criteria.filter((c) => c.chapter_code === "MOM" && c.auto_collected).length, criterion: "MOM.3" },
-    { text: "Records management checked", count: criteria.filter((c) => c.chapter_code === "MRD" && c.auto_collected).length, criterion: "MRD.1" },
+  // There is no score-history table, so there is no honest trend to draw here.
+  // What the data does support is assessment coverage — how much of the standard
+  // has actually been looked at, which is the question before an accreditation
+  // visit. Buckets are mutually exclusive: compliance_status is a single enum.
+  const coverage = [
+    { label: "Compliant",     count: criteria.filter((c) => c.compliance_status === "compliant").length,           color: "hsl(142, 71%, 45%)" },
+    { label: "Partial",       count: criteria.filter((c) => c.compliance_status === "partially_compliant").length, color: "hsl(38, 92%, 50%)" },
+    { label: "Non-compliant", count: nonCompliant.length,                                                          color: "hsl(var(--destructive))" },
+    { label: "Not assessed",  count: criteria.filter((c) => c.compliance_status === "not_assessed").length,        color: "hsl(var(--muted-foreground))" },
   ];
 
+  // Live counts, not hardcoded labels. The previous version rendered four fixed
+  // strings with green ticks — two of them (COP.2, MOM.3) had no collector behind
+  // them at all, so they claimed evidence that was never gathered.
+  const autoScored = criteria.filter((c) => c.auto_collected);
+  const autoByChapter = Object.entries(
+    autoScored.reduce<Record<string, number>>((acc, c) => {
+      acc[c.chapter_code] = (acc[c.chapter_code] || 0) + 1;
+      return acc;
+    }, {}),
+  ).sort((a, b) => b[1] - a[1]);
+
+  // Runs the whole indicator engine, then scores every criterion that has a
+  // mapped indicator. Criteria with no indicator stay not_assessed by design.
   const runAutoCollection = async () => {
+    if (!hospitalId) return;
     setCollecting(true);
     try {
-      const { count: patientCount } = await supabase
-        .from("patients")
-        .select("id", { count: "exact", head: true });
+      const periodStart = new Date();
+      periodStart.setDate(1);
+      const { data, error } = await (supabase as any).rpc("run_quality_indicator_collection", {
+        p_hospital_id: hospitalId,
+        p_period_start: periodStart.toISOString().slice(0, 10),
+      });
+      if (error) throw error;
 
-      if (patientCount && patientCount > 0) {
-        await supabase
-          .from("nabh_criteria")
-          .update({ compliance_status: "compliant", compliance_score: 100, auto_collected: true, last_assessed: new Date().toISOString().split("T")[0] })
-          .eq("criterion_number", "AAC.1");
-      }
-
-      const { data: admData } = await supabase
-        .from("admissions")
-        .select("discharge_summary_done")
-        .eq("status", "discharged");
-
-      if (admData && admData.length > 0) {
-        const completed = admData.filter((a) => a.discharge_summary_done).length;
-        const pct = Math.round((completed / admData.length) * 100);
-        await supabase
-          .from("nabh_criteria")
-          .update({
-            compliance_score: pct,
-            compliance_status: pct >= 80 ? "compliant" : pct >= 50 ? "partially_compliant" : "non_compliant",
-            auto_collected: true,
-            last_assessed: new Date().toISOString().split("T")[0],
-          })
-          .eq("criterion_number", "MRD.1");
-      }
-
-      toast({ title: "Auto-collection complete", description: "NABH criteria updated from system data" });
+      toast({
+        title: "Auto-collection complete",
+        description: `${data ?? 0} indicators collected from source modules; criteria rescored`,
+      });
       loadData();
-    } catch {
-      toast({ title: "Error during auto-collection", variant: "destructive" });
+    } catch (e: any) {
+      toast({
+        title: "Error during auto-collection",
+        description: e?.message,
+        variant: "destructive",
+      });
     } finally {
       setCollecting(false);
+    }
+  };
+
+  const raiseCAPA = async (criterion: Criterion) => {
+    if (!hospitalId) return;
+    setRaisingCapaFor(criterion.id);
+    try {
+      const { error } = await (supabase as any).from("capa_records").insert({
+        hospital_id: hospitalId,
+        capa_number: `CAPA-${Date.now().toString(36).toUpperCase()}`,
+        trigger_type: "nabh_gap",
+        trigger_ref_id: criterion.id,
+        problem_statement: `${criterion.criterion_number} — ${criterion.criterion_text}`,
+        status: "open",
+        due_date: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
+      });
+      if (error) throw error;
+      toast({
+        title: "CAPA raised",
+        description: `Tracking ${criterion.criterion_number} in the CAPA tab`,
+      });
+    } catch (e: any) {
+      toast({ title: "Could not raise CAPA", description: e?.message, variant: "destructive" });
+    } finally {
+      setRaisingCapaFor(null);
     }
   };
 
@@ -172,17 +194,27 @@ const NABHDashboard: React.FC = () => {
         { count: labOrdersToday },
         { count: incidentCount },
         { count: capaOpen },
-        { data: labTAT },
+        { data: tatRows },
       ] = await Promise.all([
-        supabase.from("patients").select("id", { count: "exact", head: true }),
-        supabase.from("admissions").select("id", { count: "exact", head: true }).eq("status", "active"),
-        supabase.from("lab_orders").select("id", { count: "exact", head: true }).eq("order_date", today),
-        (supabase as any).from("incident_reports").select("id", { count: "exact", head: true }).eq("status", "open"),
-        (supabase as any).from("capa_actions").select("id", { count: "exact", head: true }).eq("status", "open"),
-        supabase.from("lab_orders").select("order_date, order_time, updated_at").eq("status", "completed").limit(50).order("order_date", { ascending: false }),
+        supabase.from("patients").select("id", { count: "exact", head: true }).eq("hospital_id", hospitalId),
+        supabase.from("admissions").select("id", { count: "exact", head: true }).eq("hospital_id", hospitalId).eq("status", "active"),
+        supabase.from("lab_orders").select("id", { count: "exact", head: true }).eq("hospital_id", hospitalId).eq("order_date", today),
+        (supabase as any).from("incident_reports").select("id", { count: "exact", head: true }).eq("hospital_id", hospitalId).eq("status", "open"),
+        // capa_actions does not exist; the real table is capa_records.
+        (supabase as any).from("capa_records").select("id", { count: "exact", head: true }).eq("hospital_id", hospitalId).eq("status", "open"),
+        // Read the measured TAT instead of inventing one. The old version queried
+        // lab_orders.updated_at (a column that does not exist) and then fed the
+        // model the literal string "within acceptable range" regardless.
+        (supabase as any)
+          .from("quality_indicators_current")
+          .select("value, unit")
+          .eq("hospital_id", hospitalId)
+          .eq("indicator_code", "cop.lab_tat_avg_hrs")
+          .maybeSingle(),
       ]);
 
-      const avgTAT = labTAT && labTAT.length > 0 ? "within acceptable range" : "no data";
+      const avgTAT =
+        tatRows?.value != null ? `${Number(tatRows.value).toFixed(1)} hours average` : "not yet measured";
       const nonCompliantCount = criteria.filter((c) => c.compliance_status === "non_compliant").length;
       const partialCount = criteria.filter((c) => c.compliance_status === "partially_compliant").length;
 
@@ -339,29 +371,52 @@ Return a brief assessment (max 150 words) covering:
           </>
         ) : (
           <>
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Compliance Trend</p>
-            <div className="h-[140px] mb-4">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={trendData}>
-                  <XAxis dataKey="month" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
-                  <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={30} />
-                  <Tooltip contentStyle={{ fontSize: 11 }} />
-                  <Area type="monotone" dataKey="score" stroke="hsl(var(--primary))" fill="hsl(var(--primary) / 0.15)" strokeWidth={2} />
-                </AreaChart>
-              </ResponsiveContainer>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Assessment Coverage</p>
+            <div className="mb-4">
+              <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted">
+                {coverage.map((b) => (
+                  b.count > 0 && (
+                    <div
+                      key={b.label}
+                      className="h-full"
+                      style={{ width: `${(b.count / criteria.length) * 100}%`, backgroundColor: b.color }}
+                      title={`${b.label}: ${b.count}`}
+                    />
+                  )
+                ))}
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1">
+                {coverage.map((b) => (
+                  <div key={b.label} className="flex items-center gap-1.5 text-[10px]">
+                    <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: b.color }} />
+                    <span className="text-muted-foreground">{b.label}</span>
+                    <span className="ml-auto font-semibold text-foreground">{b.count}</span>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Auto-Evidence Collected</p>
-            <div className="space-y-2 mb-4">
-              {autoEvidence.map((ev, i) => (
-                <div key={i} className="flex items-start gap-2 text-xs">
-                  <span className="text-green-500 mt-0.5">✓</span>
-                  <div>
-                    <span className="text-foreground">{ev.text}</span>
-                    <span className="ml-1 text-muted-foreground">— {ev.criterion}</span>
+            <p className="text-[11px] text-muted-foreground mb-2">
+              <span className="font-semibold text-foreground">{autoScored.length}</span> of {criteria.length} criteria
+              auto-scored from quality indicators; {criteria.length - autoScored.length} require manual assessment.
+            </p>
+            <div className="space-y-1.5 mb-4">
+              {autoByChapter.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  Nothing auto-scored yet — run auto-collection to score criteria from module data.
+                </p>
+              ) : (
+                autoByChapter.map(([code, count]) => (
+                  <div key={code} className="flex items-center gap-2 text-xs">
+                    <span className="text-green-500">✓</span>
+                    <span className="text-foreground font-medium">{code}</span>
+                    <span className="text-muted-foreground">
+                      — {count} criteri{count === 1 ? "on" : "a"} scored from module data
+                    </span>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
 
             <Button size="sm" variant="outline" onClick={runAutoCollection} disabled={collecting} className="w-full">
@@ -384,8 +439,14 @@ Return a brief assessment (max 150 words) covering:
               <div key={c.id} className="bg-destructive/5 rounded-lg p-2.5 text-xs">
                 <div className="font-medium text-foreground">{c.criterion_number}</div>
                 <p className="text-muted-foreground line-clamp-2 mt-0.5">{c.criterion_text}</p>
-                <Button size="sm" variant="ghost" className="h-6 text-[10px] mt-1 text-destructive hover:text-destructive">
-                  Raise CAPA
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 text-[10px] mt-1 text-destructive hover:text-destructive"
+                  disabled={raisingCapaFor === c.id}
+                  onClick={() => raiseCAPA(c)}
+                >
+                  {raisingCapaFor === c.id ? "Raising…" : "Raise CAPA"}
                 </Button>
               </div>
             ))}

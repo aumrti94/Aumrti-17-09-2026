@@ -3,11 +3,11 @@ import { generateBillNumber } from "@/hooks/useBillNumber";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useRealtimeRefetch } from "@/hooks/useRealtimeRefetch";
 import CollapsiblePanel from "@/components/layout/CollapsiblePanel";
 import { useHospitalContext } from "@/contexts/HospitalContext";
 import { hasTabAccess, hasActionAccess } from "@/lib/tabPermissions";
 import { cn } from "@/lib/utils";
-import { autoPullAdmissionCharges as autoPullAdmissionChargesUtil } from "@/lib/ipdBilling";
 import { ADMISSION_BILL_TYPES, findOrCreateAdmissionBill } from "@/lib/admissionBill";
 import { buildDepositHoldings } from "@/lib/depositHoldings";
 import {
@@ -23,6 +23,12 @@ import BillEditor from "@/components/billing/BillEditor";
 import NewBillModal from "@/components/billing/NewBillModal";
 import AdvanceReceiptModal from "@/components/billing/AdvanceReceiptModal";
 import CollectionsTab from "@/components/billing/tabs/CollectionsTab";
+import BillingDateFilterBar from "@/components/billing/BillingDateFilterBar";
+import { resolveBillingDateRange, type BillingDatePreset } from "@/lib/billingDateRange";
+import { computeAccrual, rangeContainsToday } from "@/lib/liveAdmissionAccrual";
+import { resolveRoomRateFallback } from "@/lib/ipdBilling";
+import { bundlesNursingIntoRoom } from "@/lib/payerTypes";
+import { getWardNursingRates } from "@/lib/wardNursingRate";
 import PendingCollectionsPanel from "@/components/billing/PendingCollectionsPanel";
 import DiscountApprovalsInbox from "@/components/billing/DiscountApprovalsInbox";
 import RefundApprovalsInbox from "@/components/billing/RefundApprovalsInbox";
@@ -57,7 +63,53 @@ export interface BillRecord {
   created_at: string;
   is_mlc?: boolean;
   payer_type?: string | null;
+  /** The patient is still admitted, so this bill is still growing. See lib/liveAdmissionAccrual.ts. */
+  is_live_admission?: boolean;
+  /** Days of stay so far. */
+  live_days?: number;
+  /** Room + nursing accrued but not yet posted to the bill. Display only — never billed from here. */
+  live_unbilled_amount?: number;
 }
+
+/** The shared `bills` row shape every query on this page selects. */
+const BILL_SELECT =
+  "*, patients!inner(full_name, uhid, phone, abha_id), admission:admissions(is_mlc, payer_type)";
+
+/**
+ * One row → BillRecord mapping, shared by the bill-queue fetch and the single-bill
+ * fetch that opens the editor straight from an IPD discharge link. Keeping it in one
+ * place means the directly-fetched bill is byte-identical to the queued one, so the
+ * modal doesn't flicker or change shape when the queue catches up.
+ */
+const mapBillRow = (b: any): BillRecord => ({
+  id: b.id,
+  bill_number: b.bill_number,
+  patient_id: b.patient_id,
+  patient_name: b.patients?.full_name || "Unknown",
+  uhid: b.patients?.uhid || "",
+  encounter_id: b.encounter_id,
+  admission_id: b.admission_id,
+  bill_type: b.bill_type,
+  bill_date: b.bill_date,
+  bill_status: b.bill_status,
+  subtotal: Number(b.subtotal) || 0,
+  discount_percent: Number(b.discount_percent) || 0,
+  discount_amount: Number(b.discount_amount) || 0,
+  gst_amount: Number(b.gst_amount) || 0,
+  total_amount: Number(b.total_amount) || 0,
+  advance_received: Number(b.advance_received) || 0,
+  insurance_amount: Number(b.insurance_amount) || 0,
+  patient_payable: Number(b.patient_payable) || 0,
+  paid_amount: Number(b.paid_amount) || 0,
+  balance_due: Number(b.balance_due) || 0,
+  payment_status: b.payment_status,
+  notes: b.notes,
+  irn: b.irn || null,
+  irn_generated_at: b.irn_generated_at || null,
+  created_at: b.created_at,
+  is_mlc: (b.admission as any)?.is_mlc || false,
+  payer_type: (b.admission as any)?.payer_type || (b as any).payer_type || null,
+});
 
 const BILLING_TABS = [
   { key: "bills", label: "Bills" },
@@ -77,6 +129,11 @@ const BillingPage: React.FC = () => {
   const [prevDayClosed, setPrevDayClosed] = useState<boolean | null>(null);
   const [bills, setBills] = useState<BillRecord[]>([]);
   const [selectedBillId, setSelectedBillId] = useState<string | null>(null);
+  // The bill fetched directly by id when arriving from an IPD discharge link, so the
+  // editor can open on ONE round trip instead of waiting for the whole queue query.
+  // Also the only way a brand-new ₹0 draft is reachable at all: fetchBills filters
+  // `.gt("total_amount", 0)`, so such a bill never appears in `bills`.
+  const [directBill, setDirectBill] = useState<BillRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [showNewBill, setShowNewBill] = useState(false);
   const [showAdvance, setShowAdvance] = useState(false);
@@ -87,6 +144,11 @@ const BillingPage: React.FC = () => {
   const [patientSearch, setPatientSearch] = useState("");
   const [dischargeBillCreated, setDischargeBillCreated] = useState(false);
   const [activeTab, setActiveTab] = useState("bills");
+  // Resolved once here so every tab filters on exactly the same window.
+  const sharedDateRange = React.useMemo(
+    () => resolveBillingDateRange(dateFilter as BillingDatePreset, startDate, endDate),
+    [dateFilter, startDate, endDate],
+  );
   const [pendingDiscountCount, setPendingDiscountCount] = useState(0);
   const [pendingRefundCount, setPendingRefundCount] = useState(0);
 
@@ -151,7 +213,10 @@ const BillingPage: React.FC = () => {
       .eq("id", admissionId)
       .maybeSingle();
 
-    if (!admission) return;
+    if (!admission) {
+      setDischargeBillCreated(false);
+      return;
+    }
 
     // Resolve (or create) the admission's bill by its own type. Previously this hardcoded
     // bill_type='ipd' both when looking up and when creating, so opening Billing for a day
@@ -169,74 +234,42 @@ const BillingPage: React.FC = () => {
       { paymentStatuses: [] },
     );
 
-    await autoPullAdmissionCharges(billId, admissionId);
+    // NOTE: the admission charge sweep is deliberately NOT awaited here. It is a
+    // 60-120 round-trip job, and awaiting it kept the editor dialog shut for 5-10
+    // seconds behind a blank screen. BillEditor owns that sweep now and runs it
+    // after mount, so the modal paints immediately and line items stream in.
+    //
+    // Fetch just this one bill so the dialog can open without waiting for the queue
+    // query (and so a ₹0 draft, excluded by fetchBills' total_amount filter, opens
+    // at all).
+    const { data: billRow } = await supabase
+      .from("bills")
+      .select(BILL_SELECT)
+      .eq("id", billId)
+      .maybeSingle();
+    if (billRow) setDirectBill(mapBillRow(billRow));
 
-    if (isNew) toast({ title: "Discharge bill created with auto-pulled charges" });
+    if (isNew) toast({ title: "Discharge bill created" });
     // Widen the date filter so bills created on previous days (multi-day stays) are visible.
-    // Changing dateFilter triggers fetchBills automatically via useCallback deps.
+    // Changing dateFilter triggers fetchBills automatically via useCallback deps. This is
+    // now only about the queue behind the modal — it no longer gates the modal itself.
     setDateFilter("month");
     setSelectedBillId(billId);
     setSearchParams({});
-  };
-
-  const autoPullAdmissionCharges = async (billId: string, admissionId: string) => {
-    if (!hospitalId) return;
-    const result = await autoPullAdmissionChargesUtil(billId, admissionId, hospitalId);
-    if (!result.ok) {
-      toast({
-        title: "Failed to pull some admission charges",
-        description: result.error || "Bill totals could not be updated",
-        variant: "destructive",
-      });
-      return;
-    }
-    if (result.usedFallbackRate) {
-      toast({
-        title: "Using fallback rates",
-        description: "Some service rates are not configured. Set them in Settings → Service Rates.",
-      });
-    }
   };
 
   const fetchBills = useCallback(async () => {
     if (!hospitalId) return;
     setLoading(true);
 
-    let dateStart: string;
-    const now = new Date();
-    const todayStr = now.toISOString().slice(0, 10);
-
-    switch (dateFilter) {
-      case "yesterday": {
-        const y = new Date(now);
-        y.setDate(y.getDate() - 1);
-        dateStart = y.toISOString().slice(0, 10);
-        break;
-      }
-      case "week": {
-        const w = new Date(now);
-        w.setDate(w.getDate() - 7);
-        dateStart = w.toISOString().slice(0, 10);
-        break;
-      }
-      case "month": {
-        const m = new Date(now);
-        m.setMonth(m.getMonth() - 1);
-        dateStart = m.toISOString().slice(0, 10);
-        break;
-      }
-      case "custom":
-        dateStart = startDate || todayStr;
-        break;
-      default:
-        dateStart = todayStr;
-    }
-
-    const dateEnd = dateFilter === "custom" ? (endDate || dateStart) : todayStr;
+    // Same resolver every other tab uses, so all tabs describe the same window.
+    // (It also fixes a UTC/IST off-by-one: the old inline `toISOString().slice(0,10)`
+    // resolved "today" to yesterday for anyone working before 05:30 IST.)
+    const { start: dateStart, end: dateEnd } = sharedDateRange;
 
     let query = supabase
       .from("bills")
-      .select("*, patients!inner(full_name, uhid, phone, abha_id), admission:admissions(is_mlc, payer_type)")
+      .select(BILL_SELECT)
       .eq("hospital_id", hospitalId)
       .gt("total_amount", 0)
       .order("created_at", { ascending: false });
@@ -263,35 +296,7 @@ const BillingPage: React.FC = () => {
       return;
     }
 
-    const realBills: BillRecord[] = (data || []).map((b: any) => ({
-      id: b.id,
-      bill_number: b.bill_number,
-      patient_id: b.patient_id,
-      patient_name: b.patients?.full_name || "Unknown",
-      uhid: b.patients?.uhid || "",
-      encounter_id: b.encounter_id,
-      admission_id: b.admission_id,
-      bill_type: b.bill_type,
-      bill_date: b.bill_date,
-      bill_status: b.bill_status,
-      subtotal: Number(b.subtotal) || 0,
-      discount_percent: Number(b.discount_percent) || 0,
-      discount_amount: Number(b.discount_amount) || 0,
-      gst_amount: Number(b.gst_amount) || 0,
-      total_amount: Number(b.total_amount) || 0,
-      advance_received: Number(b.advance_received) || 0,
-      insurance_amount: Number(b.insurance_amount) || 0,
-      patient_payable: Number(b.patient_payable) || 0,
-      paid_amount: Number(b.paid_amount) || 0,
-      balance_due: Number(b.balance_due) || 0,
-      payment_status: b.payment_status,
-      notes: b.notes,
-      irn: b.irn || null,
-      irn_generated_at: b.irn_generated_at || null,
-      created_at: b.created_at,
-      is_mlc: (b.admission as any)?.is_mlc || false,
-      payer_type: (b.admission as any)?.payer_type || (b as any).payer_type || null,
-    }));
+    const realBills: BillRecord[] = (data || []).map(mapBillRow);
 
     // "Has a bill" must consider BOTH admission bill types. Checking only 'ipd' meant a day
     // care patient with a perfectly good daycare bill still showed as "Pending IPD — click
@@ -313,15 +318,19 @@ const BillingPage: React.FC = () => {
       .not("admission_id", "is", null);
     (existingIpd || []).forEach((b: any) => admissionsWithBills.add(b.admission_id));
 
+    // Active admissions, fetched once and used twice below: for the virtual "Pending IPD"
+    // rows (admissions with no bill yet) and for the live accrual on admissions that do
+    // have one. Hoisted out of the statusFilter branch it used to sit in so the live-bill
+    // pass can rely on it whatever status is selected.
+    const { data: activeAdms } = await supabase
+      .from("admissions")
+      .select("id, admitted_at, admission_number, patient_id, ward_id, is_mlc, payer_type, patients!inner(full_name, uhid), wards(rate_per_day), beds!admissions_bed_id_fkey(bed_category)")
+      .eq("hospital_id", hospitalId)
+      .eq("status", "active");
+
     // Find active admissions WITHOUT a bill — surface as virtual "Pending IPD" rows
     let virtualBills: BillRecord[] = [];
     if (statusFilter === "all" || statusFilter === "unpaid") {
-      const { data: activeAdms } = await supabase
-        .from("admissions")
-        .select("id, admitted_at, admission_number, patient_id, is_mlc, payer_type, patients!inner(full_name, uhid)")
-        .eq("hospital_id", hospitalId)
-        .eq("status", "active");
-
       virtualBills = (activeAdms || [])
         .filter((a: any) => !admissionsWithBills.has(a.id))
         .map((a: any) => ({
@@ -446,13 +455,109 @@ const BillingPage: React.FC = () => {
       }
     }
 
-    setBills([...virtualBills, ...depositRows, ...realBills]);
+    // ── Bills of patients who are still admitted ──────────────────────────────────────
+    //
+    // These are filtered out of `realBills` by bill_date the day after admission, which is
+    // wrong twice over: the charge is still growing (room and nursing are per-day), and an
+    // admitted patient with NO bill yet stays visible in every period as a virtual row. So
+    // the same patient vanished from "Today" for no reason but the existence of a draft.
+    //
+    // Pulled in for any window that contains today, and left out of historical windows —
+    // "Yesterday" must not report a figure that changes tomorrow. Search mode already
+    // ignores dates entirely, so it needs none of this.
+    let liveBills: BillRecord[] = [];
+    let datedBills = realBills;
+    const activeAdmById = new Map<string, any>((activeAdms || []).map((a: any) => [a.id, a]));
+
+    if (!patientSearch.trim() && rangeContainsToday(sharedDateRange) && activeAdmById.size > 0) {
+      const alreadyListed = new Set(realBills.map((b) => b.id));
+      let liveQuery = supabase
+        .from("bills")
+        .select(BILL_SELECT)
+        .eq("hospital_id", hospitalId)
+        .gt("total_amount", 0)
+        .in("admission_id", [...activeAdmById.keys()]);
+      // The status filter still applies — asking for "Paid" must not force unpaid live
+      // bills back into the list.
+      if (statusFilter !== "all") liveQuery = liveQuery.eq("payment_status", statusFilter);
+
+      const { data: liveRaw } = await liveQuery;
+      liveBills = (liveRaw || []).map(mapBillRow).filter((b) => !alreadyListed.has(b.id));
+
+      // Everything belonging to a patient who is still admitted gets the accrual, whether
+      // the date filter had already caught it or the pass above pulled it back in. Marking
+      // only the latter would leave a bill dated today looking settled while the bill next
+      // to it, for a patient admitted a week earlier, showed as accruing.
+      const accruing = [...datedBills.filter((b) => activeAdmById.has(b.admission_id as string)), ...liveBills];
+
+      if (accruing.length > 0) {
+        // Two extra round trips for the whole list, not per patient: the room lines already
+        // billed (so we only project days that have NOT been charged), and the per-ward
+        // nursing rates.
+        const [roomLinesRes, nursingRates] = await Promise.all([
+          (supabase as any)
+            .from("bill_line_items")
+            .select("bill_id, quantity, unit_rate")
+            .in("bill_id", accruing.map((b) => b.id))
+            .eq("item_type", "room_charge"),
+          getWardNursingRates(),
+        ]);
+        const roomLineByBill = new Map<string, any>(
+          (roomLinesRes?.data || []).map((r: any) => [r.bill_id, r])
+        );
+
+        const annotate = (b: BillRecord): BillRecord => {
+          const adm = activeAdmById.get(b.admission_id as string);
+          if (!adm) return b;
+          const roomLine = roomLineByBill.get(b.id);
+          // Prefer the rate the room line was actually billed at, so the projection agrees
+          // with what the sweep will post; fall back to the same resolver the IPD ledger
+          // estimate uses when nothing has been billed yet.
+          const roomRate = Number(roomLine?.unit_rate) > 0
+            ? Number(roomLine.unit_rate)
+            : resolveRoomRateFallback(adm.wards?.rate_per_day, adm.beds?.bed_category);
+          // Nursing is bundled into room rent for scheme/TPA payers — the same rule the
+          // sweep applies, so the projection never promises a line that won't be billed.
+          const nursingRate = bundlesNursingIntoRoom(adm.payer_type)
+            ? 0
+            : (nursingRates?.[adm.ward_id] || 0);
+
+          const accrual = computeAccrual({
+            admittedAt: adm.admitted_at,
+            billedDays: Number(roomLine?.quantity) || 0,
+            roomRate,
+            nursingRate,
+          });
+
+          return {
+            ...b,
+            is_live_admission: true,
+            live_days: accrual.accruedDays,
+            live_unbilled_amount: accrual.unbilledAmount,
+          };
+        };
+
+        datedBills = datedBills.map(annotate);
+        liveBills = liveBills.map(annotate);
+      }
+    }
+
+    setBills([...virtualBills, ...liveBills, ...depositRows, ...datedBills]);
     setLoading(false);
-  }, [hospitalId, statusFilter, dateFilter, startDate, endDate, patientSearch]);
+  }, [hospitalId, statusFilter, sharedDateRange, patientSearch]);
 
   useEffect(() => {
     fetchBills();
   }, [fetchBills]);
+
+  // Live updates: refetch the bills queue on any change to bills, payments, discounts,
+  // or IPD advances/deposits — plus tab-focus/reconnect fallback inside the hook.
+  useRealtimeRefetch({
+    tables: ["bills", "bill_payments", "bill_discount_approvals", "advance_receipts", "ipd_advances", "admissions"],
+    hospitalId,
+    onChange: fetchBills,
+    channelName: "billing-bills",
+  });
 
   useEffect(() => {
     if (!hospitalId) return;
@@ -474,7 +579,11 @@ const BillingPage: React.FC = () => {
       .then(({ count }: any) => setPendingRefundCount(count || 0));
   }, [hospitalId]);
 
-  const selectedBill = bills.find((b) => b.id === selectedBillId) || null;
+  // The queue copy wins once it arrives (it is the one fetchBills keeps fresh); the
+  // directly-fetched copy carries the modal until then.
+  const selectedBill =
+    bills.find((b) => b.id === selectedBillId) ||
+    (directBill?.id === selectedBillId ? directBill : null);
 
   const todayCollection = bills
     .filter((b) => b.paid_amount > 0)
@@ -558,6 +667,25 @@ const BillingPage: React.FC = () => {
         )}
       </div>
 
+      {/* One period for every tab. Bills keeps its own copy of these controls inside
+          BillQueue (it also has a patient-search mode that bypasses dates), so the bar is
+          shown for the tabs that previously had no date filter at all. */}
+      {activeTab !== "bills" && (
+        <BillingDateFilterBar
+          preset={dateFilter as BillingDatePreset}
+          startDate={startDate}
+          endDate={endDate}
+          onPresetChange={(p) => setDateFilter(p)}
+          onStartDateChange={setStartDate}
+          onEndDateChange={setEndDate}
+          inactiveNote={
+            activeTab === "approvals" || activeTab === "refund_approvals"
+              ? "Pending items always show, whatever the period — only decided history is filtered"
+              : undefined
+          }
+        />
+      )}
+
       {activeTab === "bills" ? (
         <div className="flex-1 overflow-hidden flex">
           <OnboardingTour tourKey="billing_intro" />
@@ -603,16 +731,17 @@ const BillingPage: React.FC = () => {
           </div>
         </div>
       ) : activeTab === "collections" ? (
-        hospitalId && <CollectionsTab hospitalId={hospitalId} />
+        hospitalId && <CollectionsTab hospitalId={hospitalId} dateRange={sharedDateRange} />
       ) : activeTab === "leakage" ? (
         <div className="flex-1 overflow-y-auto">
-          <LeakageDashboard />
+          <LeakageDashboard dateRange={sharedDateRange} />
         </div>
       ) : activeTab === "approvals" ? (
         <div className="flex-1 overflow-hidden">
           {hospitalId && (
             <DiscountApprovalsInbox
               hospitalId={hospitalId}
+              dateRange={sharedDateRange}
               onBillSelect={(billId) => {
                 setActiveTab("bills");
                 setSelectedBillId(billId);
@@ -626,6 +755,7 @@ const BillingPage: React.FC = () => {
           {hospitalId && (
             <RefundApprovalsInbox
               hospitalId={hospitalId}
+              dateRange={sharedDateRange}
               onBillSelect={(billId) => {
                 setActiveTab("bills");
                 setSelectedBillId(billId);
@@ -636,12 +766,12 @@ const BillingPage: React.FC = () => {
         </div>
       ) : (
         <div className="flex-1 overflow-auto p-4">
-          <PendingCollectionsPanel />
+          <PendingCollectionsPanel dateRange={sharedDateRange} />
         </div>
       )}
 
       {/* ── Bill Editor Modal ── */}
-      <Dialog open={!!selectedBillId && !!selectedBill} onOpenChange={(open) => { if (!open) setSelectedBillId(null); }}>
+      <Dialog open={!!selectedBillId && !!selectedBill} onOpenChange={(open) => { if (!open) { setSelectedBillId(null); setDirectBill(null); } }}>
         <DialogContent className="max-w-[96vw] w-[1400px] h-[92vh] p-0 gap-0 flex flex-col overflow-hidden [&>button.absolute]:hidden">
           {/* Close button row */}
           <div className="flex-shrink-0 flex items-center justify-between px-4 py-2 border-b border-border bg-muted/40">
@@ -657,7 +787,7 @@ const BillingPage: React.FC = () => {
               )}
             </div>
             <button
-              onClick={() => setSelectedBillId(null)}
+              onClick={() => { setSelectedBillId(null); setDirectBill(null); }}
               className="h-7 w-7 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
             >
               <X size={16} />

@@ -20,6 +20,7 @@
 // rather than introducing a shared Razorpay helper.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getRazorpaySubscriptionKeys } from "../_shared/platform-razorpay-config.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -31,11 +32,11 @@ serve(async (req) => {
 
   try {
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    const keyId = Deno.env.get("RAZORPAY_SUBSCRIPTION_KEY_ID");
-    const keySecret = Deno.env.get("RAZORPAY_SUBSCRIPTION_KEY_SECRET");
+    // Razorpay keys: /platform-configured row first, env vars as fallback.
+    const { keyId, keySecret } = await getRazorpaySubscriptionKeys(admin);
 
     if (!keyId || !keySecret) {
-      return new Response(JSON.stringify({ error: "RAZORPAY_SUBSCRIPTION_KEY_ID/SECRET not configured" }), {
+      return new Response(JSON.stringify({ error: "Razorpay keys not configured. Add them in /platform → Payments." }), {
         status: 500, headers: { ...CORS, "Content-Type": "application/json" },
       });
     }

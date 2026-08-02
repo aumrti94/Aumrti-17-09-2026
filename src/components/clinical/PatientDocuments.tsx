@@ -5,6 +5,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Upload, FileText, Eye, Copy, Loader2, Image, FileCheck, Trash2 } from "lucide-react";
 import { analyzeDocument } from "@/lib/documentAI";
+import { resolveStorageUrl, storagePathFromPublicUrl, BUCKETS } from "@/lib/storageUrls";
+
+const BUCKET = BUCKETS.patientDocuments;
 
 interface Doc {
   id: string;
@@ -87,17 +90,16 @@ const PatientDocuments: React.FC<Props> = ({ patientId, hospitalId, userId }) =>
     setUploading(true);
 
     try {
-      // Upload to storage
+      // Upload to storage. The bucket is private (20261010000010), so we store
+      // the object path and mint a signed URL at view time — never a public URL.
       const path = `${hospitalId}/${patientId}/${Date.now()}_${selectedFile.name}`;
       const { data: uploadData, error: uploadErr } = await supabase.storage
-        .from("patient-documents")
+        .from(BUCKET)
         .upload(path, selectedFile);
 
       if (uploadErr) throw uploadErr;
 
-      const fileUrl = supabase.storage
-        .from("patient-documents")
-        .getPublicUrl(uploadData.path).data.publicUrl;
+      const storedPath = uploadData.path;
 
       // Real content analysis — reads the ACTUAL document (image / PDF / DOCX / text),
       // not a truncated base64 string. Maps common id-proof types onto our labels.
@@ -130,17 +132,25 @@ const PatientDocuments: React.FC<Props> = ({ patientId, hospitalId, userId }) =>
       }
       setAnalysing(false);
 
-      // Insert record
-      await (supabase as any).from("patient_documents").insert({
+      // Insert record. If this fails (e.g. the validate_patient_document_type
+      // trigger rejects an unmapped type) the uploaded object would otherwise
+      // be stranded in the bucket with nothing pointing at it — clean it up.
+      const { error: insertErr } = await (supabase as any).from("patient_documents").insert({
         hospital_id: hospitalId,
         patient_id: patientId,
         document_name: docName,
         document_type: docType,
-        file_url: fileUrl,
+        file_url: storedPath,
         ocr_text: ocrText,
         ocr_summary: ocrSummary,
         uploaded_by: userId,
       });
+
+      if (insertErr) {
+        // Best-effort — a failed cleanup shouldn't mask the real error.
+        try { await supabase.storage.from(BUCKET).remove([storedPath]); } catch { /* ignore */ }
+        throw insertErr;
+      }
 
       toast({ title: "Document uploaded successfully ✓" });
       setSelectedFile(null);
@@ -164,14 +174,11 @@ const PatientDocuments: React.FC<Props> = ({ patientId, hospitalId, userId }) =>
     if (!window.confirm(`Delete "${doc.document_name}"? This permanently removes the document and its extracted text.`)) return;
     setDeletingId(doc.id);
     try {
-      // Remove the stored file (best-effort — derive the storage path from the
-      // public URL; a failure here shouldn't block deleting the DB record).
-      const marker = "/patient-documents/";
-      const idx = doc.file_url.indexOf(marker);
-      if (idx >= 0) {
-        const path = decodeURIComponent(doc.file_url.slice(idx + marker.length));
-        await supabase.storage.from("patient-documents").remove([path]);
-      }
+      // Remove the stored file (best-effort — a failure here shouldn't block
+      // deleting the DB record). Rows written before the bucket was made
+      // private hold a full public URL; newer ones hold a bare path.
+      const path = storagePathFromPublicUrl(BUCKET, doc.file_url) ?? doc.file_url;
+      if (path) await supabase.storage.from(BUCKET).remove([path]);
 
       // Delete the database row — this is the authoritative removal.
       const { error } = await (supabase as any)
@@ -273,7 +280,14 @@ const PatientDocuments: React.FC<Props> = ({ patientId, hospitalId, userId }) =>
                     variant="ghost"
                     size="icon"
                     className="h-7 w-7"
-                    onClick={() => window.open(doc.file_url, "_blank", "noopener,noreferrer")}
+                    onClick={async () => {
+                      try {
+                        const url = await resolveStorageUrl(BUCKET, doc.file_url);
+                        window.open(url, "_blank", "noopener,noreferrer");
+                      } catch (err: any) {
+                        toast({ title: "Could not open document", description: err?.message, variant: "destructive" });
+                      }
+                    }}
                     title="View document"
                   >
                     <Eye size={12} />

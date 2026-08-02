@@ -4,8 +4,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useHospitalId } from "@/hooks/useHospitalId";
-import { ArrowLeft, Plus, X, Building2, Trash2, Blocks, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, Plus, X, Building2, Trash2, Blocks, CheckCircle2, ListPlus } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import BulkPasteAddModal from "@/components/settings/BulkPasteAddModal";
 import { useConfigValues } from "@/hooks/useConfigValues";
 import { cn } from "@/lib/utils";
 import { useSubscriptionConfig, isModuleKeyAllowed } from "@/hooks/useSubscriptionConfig";
@@ -31,6 +32,7 @@ const SettingsDepartmentsPage: React.FC = () => {
   const [form, setForm] = useState({ name: "", type: "clinical" as string, head_doctor_id: "", dept_code: "" });
   const [checkedDepts, setCheckedDepts] = useState<Set<string>>(new Set());
   const [checkedModuleDepts, setCheckedModuleDepts] = useState<Set<string>>(new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const { enabledModules } = useSubscriptionConfig();
   const { isModuleEnabled } = useProductMode();
@@ -197,14 +199,36 @@ const SettingsDepartmentsPage: React.FC = () => {
             <p className="text-xs text-muted-foreground">Settings › Departments</p>
           </div>
         </div>
-        <button onClick={() => openDrawer()} className="flex items-center gap-1.5 bg-[hsl(222,55%,23%)] text-white px-4 py-2 rounded-lg text-sm font-medium hover:opacity-90 active:scale-[0.97]">
-          <Plus size={14} /> Add Department
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setBulkOpen(true)} className="flex items-center gap-1.5 border border-border text-foreground px-4 py-2 rounded-lg text-sm font-medium hover:bg-muted active:scale-[0.97]">
+            <ListPlus size={14} /> Bulk Add
+          </button>
+          <button onClick={() => openDrawer()} className="flex items-center gap-1.5 bg-[hsl(222,55%,23%)] text-white px-4 py-2 rounded-lg text-sm font-medium hover:opacity-90 active:scale-[0.97]">
+            <Plus size={14} /> Add Department
+          </button>
+        </div>
       </div>
 
+      <BulkPasteAddModal
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        title="Bulk Add Departments"
+        columns={[{ key: "name", label: "Department Name", required: true }]}
+        existingKeys={new Set([...existingNames].map((n) => n.toLowerCase()))}
+        onSubmit={async (rows) => {
+          try {
+            await bulkAdd.mutateAsync(rows.map((r) => r.name.trim()));
+          } catch (e: any) {
+            return { error: e.message };
+          }
+        }}
+      />
+
+      {/* SCROLLABLE CONTENT */}
+      <div className="flex-1 overflow-y-auto">
       {/* QUICK ADD BANNER */}
       {showBanner && (
-        <div className="flex-shrink-0 mx-6 mt-3 bg-amber-50 border border-amber-200 rounded-lg p-4">
+        <div className="mx-6 mt-3 bg-amber-50 border border-amber-200 rounded-lg p-4">
           <p className="text-[13px] text-amber-800 font-medium mb-3">Add departments so OPD and IPD have options to show</p>
           <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mb-3">
             {availableCommon.map((name) => (
@@ -224,7 +248,7 @@ const SettingsDepartmentsPage: React.FC = () => {
 
       {/* MODULE-DERIVED DEPARTMENTS */}
       {!isLoading && moduleDeptRows.length > 0 && (
-        <div className="flex-shrink-0 mx-6 mt-3 bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div className="mx-6 mt-3 bg-blue-50 border border-blue-200 rounded-lg p-4">
           <div className="flex items-center gap-2 mb-1">
             <Blocks size={15} className="text-blue-700" />
             <p className="text-[13px] text-blue-900 font-medium">Departments for the modules you run</p>
@@ -276,7 +300,7 @@ const SettingsDepartmentsPage: React.FC = () => {
       )}
 
       {/* TABLE */}
-      <div className="flex-1 overflow-y-auto">
+      <div>
         {!isLoading && (departments?.length ?? 0) === 0 && !showBanner ? (
           <div className="flex flex-col items-center justify-center h-full gap-3">
             <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center"><Building2 size={24} className="text-muted-foreground" /></div>
@@ -332,6 +356,7 @@ const SettingsDepartmentsPage: React.FC = () => {
             </tbody>
           </table>
         )}
+      </div>
       </div>
 
       {/* DRAWER */}

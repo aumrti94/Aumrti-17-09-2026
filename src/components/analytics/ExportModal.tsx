@@ -137,13 +137,16 @@ const ExportModal: React.FC<ExportModalProps> = ({ open, onOpenChange, range, ac
       }
 
       if (sections.has("quality") && (scope !== "current" || activeTab === "quality")) {
-        const { data: qi } = await supabase.from("quality_indicators")
-          .select("indicator_name, value, target, unit, category, period")
+        const { data: qi } = await (supabase as any).from("quality_indicators_current")
+          .select("indicator_code, indicator_name, nabh_chapter, numerator, denominator, value, target, benchmark, unit, category, period, period_start, auto_calculated, notes")
           .eq("hospital_id", hospitalId);
 
-        const ws = XLSX.utils.json_to_sheet((qi || []).map(q => ({
-          Indicator: q.indicator_name, Value: q.value, Target: q.target,
-          Unit: q.unit, Category: q.category, Period: q.period,
+        const ws = XLSX.utils.json_to_sheet(((qi as any[]) || []).map(q => ({
+          Code: q.indicator_code, Indicator: q.indicator_name, Chapter: q.nabh_chapter,
+          Numerator: q.numerator, Denominator: q.denominator,
+          Value: q.value, Target: q.target, Benchmark: q.benchmark,
+          Unit: q.unit, Category: q.category, Period: q.period, "Period start": q.period_start,
+          Source: q.auto_calculated ? "Auto" : "Manual", Notes: q.notes,
         })));
         XLSX.utils.book_append_sheet(wb, ws, "Quality");
       }

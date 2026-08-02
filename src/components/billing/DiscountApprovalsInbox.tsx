@@ -1,11 +1,15 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useRealtimeRefetch } from "@/hooks/useRealtimeRefetch";
 import { CheckCircle2, XCircle, Clock, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatINR } from "@/lib/currency";
 import { format, formatDistanceToNow } from "date-fns";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
+import { useHospitalContext } from "@/contexts/HospitalContext";
+import { roleLabels, canApproveTier } from "@/lib/appRoles";
+import { endOfDayISO, type BillingDateRange } from "@/lib/billingDateRange";
 
 interface ApprovalRow {
   id: string;
@@ -13,6 +17,7 @@ interface ApprovalRow {
   discount_pct: number;
   reason: string;
   required_approver_role: string;
+  required_approver_roles: string[] | null;
   requested_at: string;
   status: string;
   bill_id: string;
@@ -24,17 +29,16 @@ interface ApprovalRow {
 interface Props {
   hospitalId: string;
   onBillSelect?: (billId: string) => void;
+  /** Shared Billing period. Applies to decided history only — never to pending items. */
+  dateRange?: BillingDateRange;
 }
 
-const ROLE_LABELS: Record<string, string> = {
-  billing_supervisor: "Billing Supervisor",
-  cfo: "CFO / Finance",
-  admin: "Administrator",
-  none: "Auto-approved",
-};
-
-const DiscountApprovalsInbox: React.FC<Props> = ({ hospitalId, onBillSelect }) => {
+const DiscountApprovalsInbox: React.FC<Props> = ({ hospitalId, onBillSelect, dateRange }) => {
+  // Primitive deps — see PendingCollectionsPanel.
+  const rangeStart = dateRange?.start;
+  const rangeEnd = dateRange?.end;
   const { toast } = useToast();
+  const { role: userRole } = useHospitalContext();
   const [approvals, setApprovals] = useState<ApprovalRow[]>([]);
   const [filter, setFilter] = useState<"pending" | "all">("pending");
   const [loading, setLoading] = useState(false);
@@ -50,7 +54,14 @@ const DiscountApprovalsInbox: React.FC<Props> = ({ hospitalId, onBillSelect }) =
       .select("*, bill:bills(bill_number, total_amount, bill_type, patient_id, patients!bills_patient_id_fkey(full_name, uhid)), requester:users!bill_discount_approvals_requested_by_fkey(full_name)")
       .eq("hospital_id", hospitalId)
       .order("requested_at", { ascending: false });
-    if (filter === "pending") q = q.eq("status", "pending");
+    if (filter === "pending") {
+      q = q.eq("status", "pending");
+      // Deliberately NOT date-filtered: a request still awaiting a decision must stay
+      // visible whatever period is selected, or it silently ages out of the inbox and
+      // never gets actioned. The date range applies only to decided history below.
+    } else if (rangeStart && rangeEnd) {
+      q = q.gte("requested_at", rangeStart).lte("requested_at", endOfDayISO(rangeEnd));
+    }
     const { data } = await q;
     setApprovals(
       (data || []).map((r: any) => ({
@@ -59,9 +70,17 @@ const DiscountApprovalsInbox: React.FC<Props> = ({ hospitalId, onBillSelect }) =
       }))
     );
     setLoading(false);
-  }, [hospitalId, filter]);
+  }, [hospitalId, filter, rangeStart, rangeEnd]);
 
   useEffect(() => { fetchApprovals(); }, [fetchApprovals]);
+
+  // Live: new discount requests and approve/reject actions appear without a refresh.
+  useRealtimeRefetch({
+    tables: ["bill_discount_approvals"],
+    hospitalId,
+    onChange: fetchApprovals,
+    channelName: "discount-approvals-inbox",
+  });
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -195,7 +214,7 @@ const DiscountApprovalsInbox: React.FC<Props> = ({ hospitalId, onBillSelect }) =
                   </div>
                   <div>
                     <p className="text-muted-foreground">Required Approver</p>
-                    <p className="font-medium">{ROLE_LABELS[row.required_approver_role] || row.required_approver_role}</p>
+                    <p className="font-medium">{roleLabels(row.required_approver_roles ?? [row.required_approver_role])}</p>
                   </div>
                   <div>
                     <p className="text-muted-foreground">Requested By</p>
@@ -234,6 +253,12 @@ const DiscountApprovalsInbox: React.FC<Props> = ({ hospitalId, onBillSelect }) =
                         Open Bill →
                       </button>
                     )}
+                    {/* Only a role authorized for this tier may act — mirrors the DB trigger. */}
+                    {!canApproveTier(userRole, row.required_approver_roles ?? [row.required_approver_role]) ? (
+                      <span className="text-[11px] text-amber-700 font-medium ml-auto">
+                        Awaiting {roleLabels(row.required_approver_roles ?? [row.required_approver_role])}
+                      </span>
+                    ) : (
                     <div className="flex gap-2 ml-auto">
                       {rejectingId !== row.id ? (
                         <button
@@ -265,6 +290,7 @@ const DiscountApprovalsInbox: React.FC<Props> = ({ hospitalId, onBillSelect }) =
                         </button>
                       )}
                     </div>
+                    )}
                   </div>
                 )}
               </div>

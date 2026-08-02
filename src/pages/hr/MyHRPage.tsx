@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { differenceInDays, format } from "date-fns";
 import { UserCircle, CalendarCheck, Palmtree, DollarSign, FolderArchive, ClipboardCheck, Loader2, ArrowLeft, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { openStoredFile, BUCKETS } from "@/lib/storageUrls";
 
 type Me = { id: string; full_name: string; role: string; hospital_id: string };
 
@@ -262,7 +263,18 @@ const MyHRPage: React.FC = () => {
                 <FolderArchive className="h-4 w-4 text-muted-foreground" />
                 <span className="flex-1 capitalize font-medium">{d.doc_type?.replace(/_/g, " ")}</span>
                 {d.expiry_date && <span className="text-muted-foreground">exp {d.expiry_date}</span>}
-                <a href={d.file_url} target="_blank" rel="noopener noreferrer" className="text-primary"><ExternalLink className="h-4 w-4" /></a>
+                <button
+                  type="button"
+                  className="text-primary"
+                  title="Open document"
+                  onClick={async () => {
+                    if (!(await openStoredFile(BUCKETS.hospitalPrivate, d.file_url))) {
+                      toast({ title: "Could not open document", variant: "destructive" });
+                    }
+                  }}
+                >
+                  <ExternalLink className="h-4 w-4" />
+                </button>
               </div>
             ))}
             {docs.length === 0 && <p className="text-xs text-muted-foreground">No documents on file. Contact HR to upload.</p>}

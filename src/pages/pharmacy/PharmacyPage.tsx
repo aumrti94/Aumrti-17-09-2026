@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useRealtimeRefetch } from "@/hooks/useRealtimeRefetch";
 import { hasTabAccess, hasActionAccess } from "@/lib/tabPermissions";
 import { Pill, ShoppingCart, Package, ClipboardList, BarChart3, Bell, Plus, RotateCcw, CalendarX2, PackageSearch, ArrowRightLeft, Store } from "lucide-react";
 import NABHBadge from "@/components/nabh/NABHBadge";
@@ -82,6 +83,14 @@ const PharmacyPage: React.FC = () => {
 
   useEffect(() => { fetchHospitalId(); }, [fetchHospitalId]);
   useEffect(() => { if (hospitalId) { fetchAlertCount(); fetchStores(); } }, [hospitalId, fetchAlertCount, fetchStores]);
+
+  // Live: the stock-alert badge stays current as alerts are raised/acknowledged.
+  useRealtimeRefetch({
+    tables: ["pharmacy_stock_alerts"],
+    hospitalId,
+    onChange: fetchAlertCount,
+    channelName: "pharmacy-alerts",
+  });
 
   const handleModeChange = (m: PharmacyMode) => {
     setMode(m);

@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Banknote, Smartphone, CreditCard, Building2, Printer, MessageSquare, FileText, RotateCcw, Check, Loader2 } from "lucide-react";
+import { Banknote, Smartphone, CreditCard, Building2, Printer, MessageSquare, RotateCcw, Check, Loader2 } from "lucide-react";
 import type { CartItem } from "./RetailCart";
 import { findPatientByPhone } from "@/lib/patient-records";
 import { autoPostJournalEntry } from "@/lib/accounting";
@@ -19,6 +19,7 @@ const PRESETS = [100, 200, 500, 1000];
 
 interface ReceiptData {
   dispensingNumber: string;
+  billId: string | null;
   items: CartItem[];
   subtotal: number;
   discountAmount: number;
@@ -146,6 +147,7 @@ const RetailPayment: React.FC<Props> = ({
         bill_date: new Date().toISOString().split("T")[0],
         subtotal,
         gst_amount: gstAmount,
+        discount_amount: discountAmount,
         total_amount: netTotal,
         patient_payable: netTotal,
         paid_amount: netTotal,
@@ -153,7 +155,7 @@ const RetailPayment: React.FC<Props> = ({
         payment_status: "paid",
         bill_status: "final",
         created_by: userData.id,
-      }).select("id").maybeSingle();
+      } as any).select("id").maybeSingle();
       if (billErr2) console.error("Pharmacy bill insert failed:", billErr2.message);
 
       if (pharmBill) {
@@ -164,6 +166,32 @@ const RetailPayment: React.FC<Props> = ({
           amount: netTotal,
           received_by: userData.id,
         });
+
+        // Post itemised bill_line_items so the shared structured bill (printBillById) shows
+        // every drug. unit_price is GST-INCLUSIVE (MRP), so GST is extracted OUT of the line
+        // total and the bill-level discount_amount carries the sale discount — this makes the
+        // printed Total Payable reconcile exactly to netTotal (= subtotal − discount).
+        const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+        const lineItemRows = billableItems.map((item) => {
+          const gross = item.unit_price * item.qty;
+          const gst = item.gst_percent > 0 ? gross * (item.gst_percent / (100 + item.gst_percent)) : 0;
+          return {
+            hospital_id: hospitalId,
+            bill_id: pharmBill.id,
+            description: item.batch_number ? `${item.drug_name} (Batch ${item.batch_number})` : item.drug_name,
+            item_type: "pharmacy",
+            unit_rate: item.unit_price,
+            quantity: item.qty,
+            taxable_amount: r2(gross - gst),
+            gst_percent: item.gst_percent,
+            gst_amount: r2(gst),
+            total_amount: r2(gross),
+            source_module: "pharmacy_retail",
+          };
+        });
+        if (lineItemRows.length > 0) {
+          await (supabase as any).from("bill_line_items").insert(lineItemRows);
+        }
       }
 
       // Insert items and deduct stock (skip out-of-stock placeholders)
@@ -233,6 +261,7 @@ const RetailPayment: React.FC<Props> = ({
 
       setReceipt({
         dispensingNumber: dispNum,
+        billId: pharmBill?.id ?? null,
         items: billableItems,
         subtotal,
         discountAmount,
@@ -273,18 +302,16 @@ const RetailPayment: React.FC<Props> = ({
     await sendWhatsApp({ hospitalId, phone: `91${customerPhone.replace(/\D/g, "")}`, message: msg });
   };
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
     if (!receipt) return;
-    const { printDocument } = require("@/lib/printUtils");
-    const rows = receipt.items.map((i: any, idx: number) => `<tr><td>${idx + 1}</td><td>${i.drug_name}</td><td style="text-align:center">${i.qty}</td><td style="text-align:right">₹${(i.unit_price * i.qty).toFixed(0)}</td></tr>`).join("");
-    const body = `<h2 style="color:#1A2F5A">Pharmacy Receipt</h2>
-      <div class="row"><span class="label">Receipt:</span><span>${receipt.dispensingNumber}</span></div>
-      <div class="row"><span class="label">Date:</span><span>${receipt.date}</span></div>
-      ${(receipt as any).patientName ? `<div class="row"><span class="label">Patient:</span><span>${(receipt as any).patientName}</span></div>` : ""}
-      <table><tr><th>#</th><th>Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Amount</th></tr>${rows}</table>
-      <div class="total-row"><span>Total</span><span class="amount">₹${receipt.netTotal.toFixed(0)}</span></div>
-      <div class="row"><span class="label">Payment:</span><span>${receipt.paymentMode.toUpperCase()}</span></div>`;
-    printDocument(`Receipt ${receipt.dispensingNumber}`, body);
+    if (!receipt.billId) {
+      toast({ title: "No bill to print for this sale", variant: "destructive" });
+      return;
+    }
+    // Print the shared structured bill (same template as every other module).
+    const { printBillById } = await import("@/lib/billPrint");
+    const ok = await printBillById(receipt.billId, hospitalId);
+    if (!ok) toast({ title: "Could not open the bill for printing", variant: "destructive" });
   };
 
   // Receipt view
@@ -350,10 +377,7 @@ const RetailPayment: React.FC<Props> = ({
           >
             <MessageSquare size={14} className="mr-1" /> WhatsApp
           </Button>
-          <Button variant="outline" size="sm" className="text-xs h-9" onClick={handlePrint}>
-            <FileText size={14} className="mr-1" /> GST Invoice
-          </Button>
-          <Button size="sm" className="text-xs h-9" onClick={onSaleComplete}>
+          <Button size="sm" className="text-xs h-9 col-span-2" onClick={onSaleComplete}>
             <RotateCcw size={14} className="mr-1" /> New Sale
           </Button>
         </div>

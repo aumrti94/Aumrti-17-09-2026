@@ -1,9 +1,14 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { resolveAiConfig, resolveAiConfigFromEnv, callAiChatWithUsage } from "../_shared/ai-config.ts";
+import {
+  resolveAiConfig, resolveAiConfigFromEnv, callAiChatWithUsage, callAiAudio,
+  callAiChatStream, supportsStreaming, recordAiUsage,
+} from "../_shared/ai-config.ts";
 import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 import { checkAIAllowed } from "../_shared/ai-entitlement.ts";
 import { translateToEnglish, recordTranslateUsage } from "../_shared/translate-text.ts";
+import { loadHospitalLexicon, repairTranscript } from "../_shared/medical-lexicon.ts";
+import { evaluateSafety, logSafetyFlags } from "../_shared/safety-guard.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -27,9 +32,13 @@ Return ONLY a JSON object with this exact structure:
 {
   "chief_complaint": "the presenting complaints/symptoms the patient actually stated, comma-separated, with duration if mentioned",
   "history_of_present_illness": "history based strictly on what was said — as a BULLET LIST (see FORMATTING): one point per line for each symptom, duration, severity and any aggravating/relieving factor the patient actually mentioned; do not pad with assumptions",
-  "examination_findings": "clinical examination findings as a BULLET LIST — one finding per line",
+  "examination_findings": "GENERAL examination as a BULLET LIST — one finding per line. General means the whole-patient survey: consciousness, build/nourishment, febrile or afebrile, pallor, icterus, cyanosis, clubbing, oedema, lymphadenopathy, and vital signs spoken aloud.",
+  "systemic_examination": "SYSTEM-BY-SYSTEM examination as a BULLET LIST — one finding per line. Systemic means findings for a named body system: cardiovascular (S1 S2, murmurs), respiratory (air entry, crepitations, wheeze), per-abdomen (soft, tender, organomegaly), central nervous system, or local examination of a specific site (e.g. a rash, a joint, a wound). Put a finding here ONLY if a system or site was named. Empty string if none.",
   "diagnosis": "the diagnosis ONLY IF it was explicitly spoken in the conversation, else empty string — do not infer your own",
   "icd_suggestion": "ICD-10 code for a diagnosis that was actually spoken, else empty string",
+  "suggested_diagnosis": "OPTIONAL. Your OWN most likely working diagnosis inferred from the symptoms described, when the doctor did NOT state one. This is a SUGGESTION for the doctor to confirm — it is kept separate from \"diagnosis\" above, which records only what was actually said. Empty string if the findings are too non-specific to support one.",
+  "suggested_icd": "ICD-10 code for suggested_diagnosis, else empty string",
+  "diagnosis_basis": "one short sentence naming the findings that led to suggested_diagnosis, else empty string",
   "plan": "management plan as a BULLET LIST — one action per line",
   "prescription": [
     {
@@ -48,7 +57,7 @@ Return ONLY a JSON object with this exact structure:
 }
 
 FORMATTING (readability):
-- For history_of_present_illness, examination_findings, plan and follow_up: return a BULLET LIST, NOT a paragraph. Put each distinct clinical point on its own line, beginning with "• " (a bullet character followed by one space). Separate lines with a newline (\n).
+- For history_of_present_illness, examination_findings, systemic_examination, plan and follow_up: return a BULLET LIST, NOT a paragraph. Put each distinct clinical point on its own line, beginning with "• " (a bullet character followed by one space). Separate lines with a newline (\n).
 - Keep each bullet short and specific (one symptom / finding / action per bullet).
 - If only one point exists, return a single "• " line. If the field is empty, return an empty string (no bullet).
 - chief_complaint stays a single comma-separated line (do NOT bullet it).
@@ -138,6 +147,42 @@ Return ONLY a JSON object:
 For vitals_detected, extract numeric values only (e.g. from "BP 120/80" extract bp_systolic:"120", bp_diastolic:"80").
 If a field cannot be extracted, use empty string or empty array.`,
 
+  // IPDWorkspace.tsx passes sessionType="ipd_workspace". Until now there was no entry
+  // here, so every inpatient dictation silently fell through to the OPD prompt — which
+  // frames the audio as a doctor↔patient conversation and asks for a chief complaint,
+  // neither of which fits a ward doctor dictating orders for an admitted patient.
+  // The fields below mirror exactly what IPDWorkspace's fill function consumes.
+  ipd_workspace: `You are a clinical documentation AI for an Indian hospital. This is a doctor dictating ORDERS for an ALREADY-ADMITTED inpatient at the bedside — medications to start or change, investigations to send, and advice for the nursing staff. It is a dictation of instructions, NOT a consultation with a patient.
+
+The dictation may mix English with an Indian language and uses standard Indian clinical shorthand (OD/BD/TDS/QID/HS/SOS/STAT, IV/IM/PO/SC, CBC/LFT/RFT/CUE/HbA1c, USG/CECT/HRCT).
+
+Return ONLY a JSON object with this exact structure:
+{
+  "prescription": [
+    {
+      "drug_name": "drug name with strength",
+      "dose": "dose",
+      "route": "Oral/IV/IM/SC/NG",
+      "frequency": "OD/BD/TDS/QID/SOS/STAT/HS",
+      "duration": "number of days",
+      "instructions": "special instructions if any"
+    }
+  ],
+  "investigations": ["exact Indian test/study names, e.g. CBC, LFT, KFT, Urine R/M, USG Abdomen, Chest X-ray"],
+  "plan": "management plan as a BULLET LIST — one action per line, beginning with '• '",
+  "advice_notes": "instructions for the ward nurses as a BULLET LIST — one per line, beginning with '• '",
+  "follow_up": "review/monitoring instructions as a BULLET LIST — one per line, beginning with '• '",
+  "confidence": 0.85,
+  "reasoning": "One sentence explaining the confidence level and any ambiguity"
+}
+
+Rules:
+- Include a drug ONLY if it was explicitly spoken. Do NOT list routine medications that were not mentioned.
+- Record the route and frequency exactly as dictated; do not normalise BD into "twice daily".
+- Radiology and laboratory orders both go into "investigations" — the host screen routes them.
+- Monitoring instructions ("watch urine output", "repeat sugars 6th hourly") belong in "advice_notes".
+- If a field cannot be extracted, use an empty string or an empty array.`,
+
   nursing_note: `You are a clinical documentation AI. This is a nursing note dictated by a nurse.
 
 Return ONLY a JSON object:
@@ -178,6 +223,17 @@ serve(async (req) => {
     // AI entitlement floor — enforce the hospital's "AI Features" master switch (and the
     // per-feature voice_scribe toggle) server-side, before any provider call. Mirrors the
     // browser callAI() gate, which a direct invoke of this function would otherwise bypass.
+    // Started BEFORE the entitlement gate so the catalogue read overlaps it, the
+    // translation and the config resolution. It is a plain read with no side effects, so
+    // a dangling promise on the 403 path is harmless.
+    const lexiconPromise = hospitalId
+      ? loadHospitalLexicon(sb, hospitalId).catch((lexErr) => {
+          console.warn("Lexicon load failed (non-fatal):",
+            sanitizeForLog(lexErr instanceof Error ? lexErr.message : String(lexErr)));
+          return null;
+        })
+      : Promise.resolve(null);
+
     const gate = await checkAIAllowed(sb, hospitalId, "voice_scribe");
     if (!gate.allowed) {
       return new Response(JSON.stringify({ error: gate.reason }), {
@@ -185,23 +241,102 @@ serve(async (req) => {
       });
     }
 
-    const { transcript, context_type, existing_data, language_code, patient_id } = await req.json();
+    const {
+      transcript, context_type, existing_data, language_code, patient_id,
+      // Set by the client when Sarvam Saaras already returned English (mode="translate").
+      // Without it this function would pay for a SECOND translation of text that is
+      // already English — the mayura round-trip below is billed per character.
+      pre_translated_by,
+      // Rescue tier (see below): re-hear ONE bad segment instead of restructuring.
+      rescue_only, rescue_audio_base64, rescue_media_type, rescue_prior_text,
+    } = await req.json();
+
+    // ── Tier-2 audio rescue ────────────────────────────────────────────────
+    // Sarvam is cheap and handles the great majority of a dictation, so it stays the
+    // default path. But when a segment scores badly there is nothing a text-only model
+    // can do: if the ASR turned a drug name into phonetic mush, the information is gone
+    // from the transcript entirely. Re-hearing THAT segment with a multimodal model is
+    // the only way to recover it — and doing it only for the ~10% that scored badly is
+    // what keeps the token saving of the cheap path intact.
+    //
+    // Metered under its own feature key so the expensive tier is separable from the
+    // cheap one in ai_usage_logs. Best-effort throughout: if the configured provider
+    // cannot take audio at all (most cannot — see callAiAudio), the caller keeps its
+    // original result and the doctor is never blocked.
+    if (rescue_only) {
+      if (!rescue_audio_base64) {
+        return new Response(JSON.stringify({ error: "rescue_audio_base64 is required" }), {
+          status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const rescueConfig = hospitalId
+        ? (await resolveAiConfig(hospitalId, "voice_scribe_rescue", 800, { entitlement: gate })) ?? resolveAiConfigFromEnv(800)
+        : resolveAiConfigFromEnv(800);
+      if (!rescueConfig) {
+        return new Response(JSON.stringify({ corrected_text: null, reason: "no_provider" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      let hints = "";
+      if (hospitalId) {
+        try {
+          const lex = await loadHospitalLexicon(sb, hospitalId);
+          const probe = repairTranscript(rescue_prior_text || "", lex);
+          if (probe.suggestions.length > 0) {
+            hints = `\n\nThis hospital's catalogue contains these similar terms, which may be what was said: ${
+              probe.suggestions.slice(0, 10).flatMap(s => s.candidates).join(", ")}`;
+          }
+        } catch { /* hints are optional */ }
+      }
+
+      const rescuePrompt = `You are correcting a speech-to-text transcript of an Indian doctor's clinical dictation. An automatic speech recogniser produced the text below, but it is not trained on medical vocabulary and has likely mangled drug names, investigation names and clinical terms.
+
+Listen to the audio and return a CORRECTED English transcript of what was actually said.
+
+Rules:
+- Return ONLY the corrected transcript text. No JSON, no commentary, no preamble.
+- Correct medical terms, drug names and investigation names to their standard English spelling.
+- Do NOT add, invent or infer any clinical content that is not spoken in the audio.
+- If a passage is genuinely inaudible, omit it rather than guessing.
+- Translate to English if the audio is in an Indian language.
+
+What the speech recogniser produced:
+"${rescue_prior_text || ""}"${hints}`;
+
+      try {
+        const corrected = await callAiAudio(
+          rescueConfig, rescue_audio_base64, rescue_media_type || "audio/webm", rescuePrompt, 800,
+        );
+        return new Response(JSON.stringify({ corrected_text: corrected?.trim() || null }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      } catch (rescueErr) {
+        console.warn("Audio rescue unavailable (non-fatal):",
+          sanitizeForLog(rescueErr instanceof Error ? rescueErr.message : String(rescueErr)));
+        return new Response(JSON.stringify({ corrected_text: null, reason: "unsupported" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
 
     // Fetch the patient's known allergies/current medications (if any) up
     // front, server-side — so the safety-guard call below has real patient
     // context rather than trusting a client-supplied list. Best-effort: a
     // missing/failed lookup must not block transcription from proceeding.
-    let patientAllergies: string[] = [];
-    let patientCurrentMeds: string[] = [];
-    if (patient_id) {
-      const { data: aiContext } = await sb
-        .from("patient_ai_context")
-        .select("known_allergies, current_medications")
-        .eq("patient_id", patient_id)
-        .maybeSingle();
-      patientAllergies = aiContext?.known_allergies || [];
-      patientCurrentMeds = aiContext?.current_medications || [];
-    }
+    // Started here but NOT awaited until the safety check actually needs it, so this DB
+    // round trip overlaps the translation, lexicon, config resolution and LLM call instead
+    // of adding its latency to theirs.
+    const patientContextPromise = patient_id
+      ? sb.from("patient_ai_context")
+          .select("known_allergies, current_medications")
+          .eq("patient_id", patient_id)
+          .maybeSingle()
+          .then(({ data }: { data: { known_allergies?: string[]; current_medications?: string[] } | null }) => ({
+            allergies: data?.known_allergies || [],
+            meds: data?.current_medications || [],
+          }), () => ({ allergies: [] as string[], meds: [] as string[] }))
+      : Promise.resolve({ allergies: [] as string[], meds: [] as string[] });
 
     if (!transcript?.trim()) {
       return new Response(JSON.stringify({ error: "Transcript is required" }), {
@@ -217,10 +352,12 @@ serve(async (req) => {
     // server-side inside this function, so it needs ZERO additional edge
     // function deployments (avoids the Supabase function-count plan limit).
     let transcriptForLlm = transcript;
-    let wasPreTranslated = false;
+    // When Saaras ran with mode="translate" the text ALREADY arrived in English, so the
+    // "pre-translated" prompt branch applies without spending anything to get there.
+    let wasPreTranslated = pre_translated_by === "sarvam_saaras";
     const isNonEnglish = language_code && language_code !== "en-IN";
 
-    if (isNonEnglish) {
+    if (isNonEnglish && !wasPreTranslated) {
       try {
         // Check if pre-translate is enabled globally
         const { data: preTranslateCfg } = await sb
@@ -307,9 +444,44 @@ serve(async (req) => {
       }
     }
 
-    const config = hospitalId
-      ? (await resolveAiConfig(hospitalId, "voice_scribe", 1200)) ?? resolveAiConfigFromEnv(1200)
-      : resolveAiConfigFromEnv(1200);
+    // ── Deterministic medical-vocabulary repair (ZERO tokens) ──────────────
+    // Sarvam/Bhashini are not trained on medical vocabulary, so they reliably mangle
+    // exactly the words the note depends on ("paracetamol" -> "para seta mall"). The
+    // hospital already knows every term it stocks; matching against its own catalogue
+    // fixes the bulk of that damage before the LLM is involved, for free and auditably.
+    // Strictly best-effort: a lexicon failure must never cost a clinician their note.
+    let repairs: { from: string; to: string; score: number; source: string }[] = [];
+    let termSuggestions: { from: string; candidates: string[]; score: number }[] = [];
+    let lexiconHitRate: number | null = null;
+
+    // Loading the catalogue and resolving the provider have no dependency on one another,
+    // but used to be awaited back to back — the doctor waited for the sum instead of the max.
+    // `gate` is threaded into resolveAiConfig so checkAIAllowed is not re-run: it already ran
+    // above, and re-running it cost 4 more serial queries to re-answer the same boolean.
+    const [lexiconResult, resolvedConfig] = await Promise.all([
+      lexiconPromise,
+      hospitalId
+        ? resolveAiConfig(hospitalId, "voice_scribe", 1200, { entitlement: gate })
+        : Promise.resolve(null),
+    ]);
+
+    if (lexiconResult) {
+      try {
+        const repaired = repairTranscript(transcriptForLlm, lexiconResult);
+        transcriptForLlm = repaired.repairedText;
+        repairs = repaired.repairs;
+        termSuggestions = repaired.suggestions;
+        lexiconHitRate = repaired.lexiconHitRate;
+        if (repairs.length > 0) {
+          console.log(`medical-lexicon: applied ${repairs.length} repair(s)`);
+        }
+      } catch (lexErr) {
+        console.warn("Lexicon repair failed (non-fatal):",
+          sanitizeForLog(lexErr instanceof Error ? lexErr.message : String(lexErr)));
+      }
+    }
+
+    const config = resolvedConfig ?? resolveAiConfigFromEnv(1200);
 
     if (!config) {
       return new Response(JSON.stringify({ error: "No AI provider configured. Please go to Settings → API Hub and add an AI provider (OpenAI, Claude, or Gemini)." }), {
@@ -335,8 +507,9 @@ Merge rules:
     // instruction when translation was not attempted or failed.
     let langNote: string;
     if (wasPreTranslated) {
-      langNote = `\n\nNOTE: This transcript has been pre-translated to English from an Indian language using an automated machine translation engine. Because of this, some medical terms, drug names, anatomical references, or symptoms might have been translated literally or phonetically mangled (e.g. "fever tablet" instead of Paracetamol, or a literal translation of a regional drug brand).
-Please interpret these terms using your clinical context. If a drug name or clinical term appears corrupted by translation but the intended clinical meaning is clear, correct it to the standard English medical term during extraction.`;
+      // Short form. The old version spent ~200 tokens describing, in prose, damage the
+      // lexicon pass has now already repaired deterministically.
+      langNote = `\n\nNOTE: This transcript arrived in English from an Indic speech engine, so some medical terms may still be phonetically mangled. Where the intended clinical meaning is clear, correct the term to standard English medical terminology.`;
     } else {
       const LANG_LABELS: Record<string, string> = {
         "hi-IN": "Hindi (हिन्दी)",
@@ -361,10 +534,24 @@ Please interpret these terms using your clinical context. If a drug name or clin
     const guardNote = `\n\nACCURACY RULES (most important):
 - Use ONLY the doctor↔patient conversation as your source. NEVER invent, infer, assume, exaggerate, add, or "recommend" anything that was not actually spoken.
 - For chief_complaint, history_of_present_illness and examination_findings: record ONLY symptoms/findings/values a speaker EXPLICITLY states. A clinical fact stated inside a question or an answer STILL counts — capture it (e.g. doctor "since when the fever?" + patient "3 days" → fever × 3 days). Only ignore PURE social pleasantries, filler, and unclear/garbled audio — never turn those into clinical findings. Preserve the EXACT anatomical location (e.g. lower back / waist must NOT become "abdomen"). If a symptom is genuinely ambiguous, leave it out.
-- For "diagnosis" and "icd_suggestion": EXTRACT-ONLY. Fill these ONLY if a diagnosis is explicitly spoken in the conversation (by the doctor or patient). If no diagnosis is stated, leave BOTH empty ("" and ""). Do NOT derive, infer, or suggest a diagnosis of your own from the symptoms — no AI-generated working diagnosis.
-- confidence: base it on how much was actually extractable. If few or no clinical facts could be captured, set confidence to 0.3 or lower and explain in "reasoning" what was missing or unclear. Do NOT report high confidence for an empty or near-empty result.`;
+- For "examination_findings" vs "systemic_examination": general whole-patient survey goes in the first, findings for a NAMED system or site go in the second. Never put the same finding in both. If the doctor examined nothing, leave both empty rather than inventing a normal examination.
+- For "diagnosis" and "icd_suggestion": EXTRACT-ONLY. Fill these ONLY if a diagnosis is explicitly spoken in the conversation (by the doctor or patient). If no diagnosis is stated, leave BOTH empty ("" and ""). Do NOT put your own inference here — this pair records what was actually SAID.
+- For "suggested_diagnosis" / "suggested_icd" / "diagnosis_basis": this is where your OWN clinical inference belongs, and ONLY here. Offer one when the described findings genuinely support a most-likely working diagnosis and the doctor did not state one. It is presented to the doctor as an unconfirmed suggestion, so it must be defensible from the findings you cite in "diagnosis_basis" — leave all three empty rather than guessing from thin or non-specific symptoms. Never repeat a diagnosis that was actually spoken (that belongs in "diagnosis").
+- confidence: base it on how much was actually extractable. If few or no clinical facts could be captured, set confidence to 0.3 or lower and explain in "reasoning" what was missing or unclear. Do NOT report high confidence for an empty or near-empty result.
+- ALSO return "field_confidence": an object scoring how confident you are in EACH field you filled — keys "chief_complaint", "history_of_present_illness", "examination_findings", "systemic_examination", "diagnosis", "plan", "follow_up", "prescription", "investigations", values 0-1. Use null for any field the dictation never covered. A field left empty because NOTHING WAS SAID about it must be null, NOT a low number — "not dictated" and "misheard" are different things and are shown differently to the doctor.`;
 
-    const prompt = `${contextPrompt}${existingContext}${langNote}${guardNote}
+    // Terms the deterministic pass matched but was not confident enough to rewrite.
+    // Offered as context, never as an instruction — the model may use clinical
+    // judgement to pick one, or ignore the list entirely.
+    const termNote = termSuggestions.length > 0
+      ? `\n\nPOSSIBLE MEDICAL TERMS: the speech engine may have mangled these. Each entry lists what was heard and the closest matches from this hospital's own catalogue. Use one ONLY if the clinical context supports it; otherwise ignore it.\n${
+          termSuggestions.slice(0, 15)
+            .map(s => `- heard "${s.from}" → ${s.candidates.join(" | ")}`)
+            .join("\n")
+        }`
+      : "";
+
+    const prompt = `${contextPrompt}${existingContext}${langNote}${guardNote}${termNote}
 
 Dictation transcript:
 "${transcriptForLlm}"`;
@@ -376,6 +563,94 @@ Dictation transcript:
       },
       { role: "user" as const, content: prompt },
     ];
+
+    /**
+     * Turn the model's raw text into the response payload: de-fence, parse, safety-check.
+     * Shared by the buffered and streaming paths so the two can never diverge on what a
+     * completed note contains.
+     */
+    const buildPayload = async (raw: string) => {
+      const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+      const structured: Record<string, unknown> = JSON.parse(cleaned);
+
+      let safetyCheck: { safe: boolean; flags: unknown[] } | null = null;
+      try {
+        const prescriptionList = Array.isArray((structured as any).prescription) ? (structured as any).prescription : [];
+        const { allergies, meds } = await patientContextPromise;
+        safetyCheck = evaluateSafety(
+          {
+            prescriptions: prescriptionList.map((rx: any) => ({ drug: rx.drug_name, dose: rx.dose })),
+            diagnosis: (structured as any).diagnosis || "",
+            investigations: Array.isArray((structured as any).investigations) ? (structured as any).investigations : [],
+          },
+          { known_allergies: allergies, current_medications: meds },
+        );
+        if (safetyCheck.flags.length > 0 && hospitalId) {
+          void logSafetyFlags(sb, {
+            hospitalId, patientId: patient_id || null,
+            featureKey: "ai-clinical-voice", flags: safetyCheck.flags as never,
+          });
+        }
+      } catch (safetyErr) {
+        console.error("safety evaluation failed (non-fatal):",
+          sanitizeForLog(safetyErr instanceof Error ? safetyErr.message : String(safetyErr)));
+      }
+
+      return {
+        structured,
+        context_type,
+        safety_check: safetyCheck,
+        repairs,
+        lexicon_hit_rate: lexiconHitRate,
+        transcript_used: transcriptForLlm,
+        pre_translated: wasPreTranslated,
+      };
+    };
+
+    // ── Streaming path ─────────────────────────────────────────────────────
+    // A ~1200-token note is 10-20 s of generation, and the doctor saw one spinner for all
+    // of it. When the client asks for SSE and the provider can stream, deltas go out as
+    // they arrive so the form fills field by field.
+    //
+    // The client ALWAYS retains the buffered path as a fallback, and so does this function:
+    // an unsupported provider simply falls through to it below. A stream that breaks after
+    // it starts is reported as an `error` event, and the client re-requests buffered.
+    const wantsStream = req.headers.get("accept")?.includes("text/event-stream");
+    if (wantsStream && supportsStreaming(config)) {
+      const encoder = new TextEncoder();
+      const streamStartedAt = Date.now();
+      const body = new ReadableStream({
+        async start(controller) {
+          const send = (obj: unknown) =>
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
+          try {
+            const { content, usage } = await callAiChatStream(
+              config, messages, (delta) => send({ type: "delta", text: delta }), 1200, 0.2,
+            );
+            // Metered here rather than inside the stream helper, so a streamed call is
+            // billed exactly like a buffered one.
+            if (config.meter) {
+              void recordAiUsage(config.meter, config.provider, config.model, usage, Date.now() - streamStartedAt);
+            }
+            send({ type: "done", ...(await buildPayload(content)) });
+          } catch (streamErr) {
+            console.error("stream failed:",
+              sanitizeForLog(streamErr instanceof Error ? streamErr.message : String(streamErr)));
+            send({ type: "error", error: streamErr instanceof Error ? streamErr.message : "stream failed" });
+          } finally {
+            controller.close();
+          }
+        },
+      });
+      return new Response(body, {
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        },
+      });
+    }
 
     const aiCallStartedAt = Date.now();
     let rawContent: string;
@@ -411,51 +686,17 @@ Dictation transcript:
     }
     console.log("AI raw response (first 500):", sanitizeForLog(rawContent.substring(0, 500)));
 
-    const cleaned = rawContent.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-    console.log("Cleaned content:", sanitizeForLog(cleaned.substring(0, 300)));
-
-    let structured: Record<string, unknown>;
+    let payload: Awaited<ReturnType<typeof buildPayload>>;
     try {
-      structured = JSON.parse(cleaned);
+      payload = await buildPayload(rawContent);
     } catch (parseErr) {
-      console.error("JSON parse error:", parseErr, "Content was:", sanitizeForLog(cleaned.substring(0, 200)));
+      console.error("JSON parse error:", parseErr, "Content was:", sanitizeForLog(rawContent.substring(0, 200)));
       throw new Error("Failed to parse AI response as JSON");
     }
 
-    // Run extracted prescriptions/diagnosis through ai-safety-guard (allergy
-    // cross-reactivity, dose limits, controlled-substance flags) before this
-    // reaches a clinician. Best-effort — a safety-guard failure must never
-    // block the transcription itself from returning.
-    // patient_context is populated from patient_ai_context above when the
-    // caller supplies patient_id — allergy-cross-reactivity checks now fire
-    // whenever the host screen knows which patient this recording is for.
-    let safetyCheck: { safe: boolean; flags: unknown[] } | null = null;
-    try {
-      const prescriptionList = Array.isArray((structured as any).prescription) ? (structured as any).prescription : [];
-      const { data: safetyData, error: safetyErr } = await sb.functions.invoke("ai-safety-guard", {
-        body: {
-          feature_key: "ai-clinical-voice",
-          ai_output: {
-            prescriptions: prescriptionList.map((rx: any) => ({ drug: rx.drug_name, dose: rx.dose })),
-            diagnosis: (structured as any).diagnosis || "",
-          },
-          patient_context: {
-            known_allergies: patientAllergies,
-            current_medications: patientCurrentMeds,
-          },
-          hospital_id: hospitalId,
-          patient_id: patient_id || null,
-        },
-      });
-      if (!safetyErr && safetyData) safetyCheck = safetyData as { safe: boolean; flags: unknown[] };
-    } catch (safetyGuardErr) {
-      console.error(
-        "ai-safety-guard call failed:",
-        sanitizeForLog(safetyGuardErr instanceof Error ? safetyGuardErr.message : String(safetyGuardErr))
-      );
-    }
-
-    return new Response(JSON.stringify({ structured, context_type, safety_check: safetyCheck }), {
+    // buildPayload already ran the in-process safety evaluation and assembled every signal
+    // the panel needs (repairs, lexicon hit rate, the text the model actually read).
+    return new Response(JSON.stringify(payload), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {

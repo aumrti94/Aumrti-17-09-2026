@@ -17,12 +17,14 @@ import {
   ChevronDown,
   ChevronRight,
   Layers,
+  ListPlus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import BulkPasteAddModal from "@/components/settings/BulkPasteAddModal";
 import { logConfigChange } from "@/lib/ims";
 import { MODULE_TABS, MODULE_ACTIONS, parseModuleTabs, parseModuleActions } from "@/lib/tabPermissions";
 import { Zap } from "lucide-react";
@@ -39,23 +41,9 @@ type ModuleKey = string;
 const ACTIONS = ["view", "create", "edit", "delete", "approve", "export"] as const;
 type Action = (typeof ACTIONS)[number];
 
-/* Valid app_role enum values — role_permissions.role_name MUST match users.role enum */
-const VALID_APP_ROLES: { value: string; label: string }[] = [
-  { value: "super_admin",       label: "Super Admin" },
-  { value: "hospital_admin",    label: "Admin" },
-  { value: "doctor",            label: "Doctor" },
-  { value: "nurse",             label: "Nurse" },
-  { value: "receptionist",      label: "Reception" },
-  { value: "pharmacist",        label: "Pharmacist" },
-  { value: "lab_tech",          label: "Lab Tech" },
-  { value: "lab_technician",    label: "Lab Technician" },
-  { value: "radiologist",       label: "Radiologist" },
-  { value: "accountant",        label: "Accountant" },
-  { value: "billing_executive", label: "Billing Executive" },
-  { value: "billing_staff",     label: "Billing Staff" },
-  { value: "hr_manager",        label: "HR Manager" },
-  { value: "cfo",               label: "CFO" },
-];
+/** Derive a role_name slug from a free-text role label, e.g. "Senior Nurse" -> "senior_nurse". */
+const slugifyRoleName = (label: string) =>
+  label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 
 const ROLE_COLORS: Record<string, string> = {
   super_admin: "hsl(var(--primary))",
@@ -220,8 +208,10 @@ const SettingsRolesPage: React.FC = () => {
   const [editLabel, setEditLabel] = useState("");
   const [previewRole, setPreviewRole] = useState<RolePermission | null>(null);
   const [createPickerOpen, setCreatePickerOpen] = useState(false);
-  const [pickerRole, setPickerRole] = useState<string>("");
   const [pickerLabel, setPickerLabel] = useState<string>("");
+  const [pickerStartFrom, setPickerStartFrom] = useState<string>("");
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkStartFrom, setBulkStartFrom] = useState<string>("");
   const [changeReason, setChangeReason] = useState("");
   const [closureDropdownOpen, setClosureDropdownOpen] = useState(false);
 
@@ -327,23 +317,33 @@ const SettingsRolesPage: React.FC = () => {
     onError: () => toast({ title: "Failed to update access", variant: "destructive" }),
   });
 
-  /* ── Create role: pick from valid app_role enum so users.role stays compatible ── */
+  /* ── Create role: free-text name, optionally seeded from an existing role's permissions ── */
   const createMutation = useMutation({
     mutationFn: async () => {
       if (!hospitalId) throw new Error("No hospital");
-      if (!pickerRole) throw new Error("Please pick a role");
+      const label = pickerLabel.trim();
+      if (!label) throw new Error("Please enter a role name");
+      const roleName = slugifyRoleName(label);
+      if (!roleName) throw new Error("Please enter a valid role name");
+      if (roles.some((r) => r.role_name === roleName)) {
+        throw new Error("A role with this name already exists");
+      }
+      const startFrom = pickerStartFrom ? roles.find((r) => r.id === pickerStartFrom) : null;
       const { data, error } = await supabase
         .from("role_permissions")
         .insert({
           hospital_id: hospitalId,
-          role_name: pickerRole,
-          role_label: pickerLabel || pickerRole,
+          role_name: roleName,
+          role_label: label,
           is_system_role: false,
-          permissions: {},
+          permissions: startFrom?.permissions ?? {},
         } as any)
         .select()
         .maybeSingle();
-      if (error) throw error;
+      if (error) {
+        if ((error as any).code === "23505") throw new Error("A role with this name already exists");
+        throw error;
+      }
       return data;
     },
     onSuccess: (data: any) => {
@@ -351,13 +351,40 @@ const SettingsRolesPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["settings-custom-roles"] });
       setSelectedRoleId(data.id);
       setCreatePickerOpen(false);
-      setPickerRole("");
       setPickerLabel("");
+      setPickerStartFrom("");
       toast({ title: "Role created" });
     },
     onError: (e: any) =>
       toast({ title: "Failed to create role", description: e.message, variant: "destructive" }),
   });
+
+  /* ── Bulk create roles: one free-text label per line, all seeded from the same base role ── */
+  const bulkCreate = async (bulkRows: Record<string, string>[]) => {
+    if (!hospitalId) return { error: "No hospital" };
+    const startFrom = bulkStartFrom ? roles.find((r) => r.id === bulkStartFrom) : null;
+    const existingNames = new Set(roles.map((r) => r.role_name));
+    const payload: any[] = [];
+    for (const r of bulkRows) {
+      const label = r.label.trim();
+      const roleName = slugifyRoleName(label);
+      if (!roleName || existingNames.has(roleName)) continue;
+      existingNames.add(roleName);
+      payload.push({
+        hospital_id: hospitalId,
+        role_name: roleName,
+        role_label: label,
+        is_system_role: false,
+        permissions: startFrom?.permissions ?? {},
+      });
+    }
+    if (payload.length === 0) return { error: "No new roles to add" };
+    const { error } = await supabase.from("role_permissions").insert(payload as any);
+    if (error) return { error: error.message };
+    queryClient.invalidateQueries({ queryKey: ["role-permissions"] });
+    queryClient.invalidateQueries({ queryKey: ["settings-custom-roles"] });
+    setBulkStartFrom("");
+  };
 
   /* ── Delete role ── */
   const deleteMutation = useMutation({
@@ -457,6 +484,10 @@ const SettingsRolesPage: React.FC = () => {
       if (!prev) return prev;
       const next = { ...prev };
       for (const mod of MODULES) {
+        // A plan-locked module's row is disabled for individual clicks (see the Switch
+        // below) — bulk presets must respect the same lock, or they'd silently grant
+        // access to modules the hospital's plan doesn't include.
+        if (!isEntitled(mod.key)) continue;
         const isClinical = clinicalKeys.has(mod.key);
         const isFinance = financeKeys.has(mod.key);
         let grant: "full" | "view" | "none" = "none";
@@ -478,12 +509,14 @@ const SettingsRolesPage: React.FC = () => {
 
   const toggleAllRow = () => {
     if (!matrix) return;
-    const allOn = MODULES.every((m) => ACTIONS.every((a) => matrix[m.key][a]));
+    const entitledModules = MODULES.filter((m) => isEntitled(m.key));
+    const allOn = entitledModules.every((m) => ACTIONS.every((a) => matrix[m.key][a]));
     const val = !allOn;
     setMatrix((prev) => {
       if (!prev) return prev;
       const next = { ...prev };
-      for (const mod of MODULES) {
+      // Same lock as above — only touch modules the plan actually includes.
+      for (const mod of entitledModules) {
         next[mod.key] = { view: val, create: val, edit: val, delete: val, approve: val, export: val };
       }
       return next;
@@ -556,50 +589,69 @@ const SettingsRolesPage: React.FC = () => {
             </button>
             <span className="text-sm font-bold text-foreground">Roles</span>
           </div>
-          <Button size="sm" variant="default" className="h-7 text-xs gap-1" onClick={() => setCreatePickerOpen(true)} disabled={roles.length >= 15}>
+          <select
+            value={bulkStartFrom}
+            onChange={(e) => setBulkStartFrom(e.target.value)}
+            className="h-7 rounded-md border border-border bg-background px-1.5 text-[11px]"
+            title="Base permissions for bulk-created roles"
+          >
+            <option value="">Bulk: blank perms</option>
+            {roles.map((r) => (
+              <option key={r.id} value={r.id}>Bulk: start from {r.role_label}</option>
+            ))}
+          </select>
+          <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setBulkOpen(true)}>
+            <ListPlus size={12} /> Bulk Create
+          </Button>
+          <Button size="sm" variant="default" className="h-7 text-xs gap-1" onClick={() => setCreatePickerOpen(true)}>
             <Plus size={12} /> Create
           </Button>
         </div>
+
+        <BulkPasteAddModal
+          open={bulkOpen}
+          onOpenChange={setBulkOpen}
+          title="Bulk Create Roles"
+          description={bulkStartFrom
+            ? `Fill in a row per role — all will start from "${roles.find((r) => r.id === bulkStartFrom)?.role_label}"'s permissions`
+            : "Fill in a row per role — all will start with blank permissions"}
+          columns={[{ key: "label", label: "Role Name", required: true }]}
+          existingKeys={new Set(roles.map((r) => r.role_label.toLowerCase()))}
+          onSubmit={bulkCreate}
+        />
 
         {/* ── Create Role picker modal ── */}
         {createPickerOpen && (
           <div className="fixed inset-0 z-[120] bg-black/50 flex items-center justify-center p-4" onClick={() => setCreatePickerOpen(false)}>
             <div className="bg-card border border-border rounded-xl p-6 w-full max-w-md shadow-xl" onClick={(e) => e.stopPropagation()}>
-              <h3 className="text-base font-bold text-foreground mb-1">Customise Permissions for a Role</h3>
+              <h3 className="text-base font-bold text-foreground mb-1">Create a Role</h3>
               <p className="text-xs text-muted-foreground mb-4">
-                Choose one of the system roles to override its default permissions for this hospital.
+                Give the role a name of your choice. You can start from an existing role's permissions and customise from there.
               </p>
-              <label className="text-xs font-medium text-foreground block mb-1">Role</label>
-              <select
-                value={pickerRole}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setPickerRole(v);
-                  const found = VALID_APP_ROLES.find((r) => r.value === v);
-                  if (found && !pickerLabel) setPickerLabel(found.label);
-                }}
-                className="w-full h-9 rounded-md border border-border bg-background px-2 text-sm mb-3"
-              >
-                <option value="">— Select a role —</option>
-                {VALID_APP_ROLES
-                  .filter((r) => !roles.some((existing) => existing.role_name === r.value))
-                  .map((r) => (
-                    <option key={r.value} value={r.value}>{r.label}</option>
-                  ))}
-              </select>
-              <label className="text-xs font-medium text-foreground block mb-1">Display Label</label>
+              <label className="text-xs font-medium text-foreground block mb-1">Role Name</label>
               <Input
                 value={pickerLabel}
                 onChange={(e) => setPickerLabel(e.target.value)}
-                placeholder="e.g. Senior Doctor"
-                className="mb-4 h-9"
+                placeholder="e.g. Senior Nurse"
+                className="mb-3 h-9"
               />
+              <label className="text-xs font-medium text-foreground block mb-1">Start From (optional)</label>
+              <select
+                value={pickerStartFrom}
+                onChange={(e) => setPickerStartFrom(e.target.value)}
+                className="w-full h-9 rounded-md border border-border bg-background px-2 text-sm mb-4"
+              >
+                <option value="">— Blank permissions —</option>
+                {roles.map((r) => (
+                  <option key={r.id} value={r.id}>{r.role_label}</option>
+                ))}
+              </select>
               <div className="flex justify-end gap-2">
                 <Button size="sm" variant="outline" onClick={() => setCreatePickerOpen(false)}>Cancel</Button>
                 <Button
                   size="sm"
                   onClick={() => createMutation.mutate()}
-                  disabled={!pickerRole || createMutation.isPending}
+                  disabled={!pickerLabel.trim() || createMutation.isPending}
                 >
                   Create
                 </Button>
@@ -638,7 +690,7 @@ const SettingsRolesPage: React.FC = () => {
         </div>
 
         <div className="px-4 py-2 border-t border-border">
-          <p className="text-[11px] text-muted-foreground">15 roles maximum</p>
+          <p className="text-[11px] text-muted-foreground">{roles.length} role{roles.length === 1 ? "" : "s"}</p>
         </div>
       </div>
 

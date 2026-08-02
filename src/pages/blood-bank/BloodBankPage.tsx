@@ -7,6 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Package, Droplets, Microscope, User, ClipboardList, BarChart3, UserPlus, FileText, FlaskConical, Megaphone, Loader2 } from "lucide-react";
 import { formatBloodGroup } from "@/lib/bloodCompatibility";
 import { useHospitalId } from "@/hooks/useHospitalId";
+import { useRealtimeRefetch } from "@/hooks/useRealtimeRefetch";
 import { useToast } from "@/hooks/use-toast";
 import InventoryTab from "@/components/blood-bank/InventoryTab";
 import RequestsTab from "@/components/blood-bank/RequestsTab";
@@ -53,6 +54,14 @@ const BloodBankPage: React.FC = () => {
   };
 
   useEffect(() => { fetchCounts(); }, []);
+
+  // Live: the available-units-by-group board stays current as units are issued/received.
+  useRealtimeRefetch({
+    tables: ["blood_units", "blood_requests", "blood_issues"],
+    hospitalId,
+    onChange: fetchCounts,
+    channelName: "blood-bank-board",
+  });
 
   const getPillStyle = (count: number) => {
     if (count < 2) return "bg-red-100 text-red-700 border-red-200";

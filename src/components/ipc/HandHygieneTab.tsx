@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Droplets, Plus, Loader2, X, AlertTriangle, CheckCircle2, TrendingUp } from "lucide-react";
+import { FormError } from "@/components/ui/FormError";
+import { getErrorMessage } from "@/lib/errorMessage";
 import { cn } from "@/lib/utils";
 import { format, parseISO, startOfMonth, endOfMonth } from "date-fns";
 
@@ -66,6 +68,7 @@ const HandHygieneTab: React.FC<{ hospitalId: string }> = ({ hospitalId }) => {
   const { userId } = useHospitalId();
   const [audits, setAudits] = useState<HHAudit[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
@@ -85,15 +88,35 @@ const HandHygieneTab: React.FC<{ hospitalId: string }> = ({ hospitalId }) => {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data } = await (supabase as any)
-      .from("hand_hygiene_audits")
-      .select("*")
-      .eq("hospital_id", hospitalId)
-      .order("audit_date", { ascending: false })
-      .limit(200);
-    setAudits(data || []);
-    setLoading(false);
+    setError(null);
+    try {
+      const { data, error: err } = await (supabase as any)
+        .from("hand_hygiene_audits")
+        .select("*")
+        .eq("hospital_id", hospitalId)
+        .order("audit_date", { ascending: false })
+        .limit(200);
+      // The error used to be destructured away, so a failed read rendered as
+      // "No hand hygiene audits recorded" — indistinguishable from real compliance.
+      if (err) { setError(getErrorMessage(err)); setAudits([]); return; }
+      setAudits(data || []);
+    } catch (e) {
+      setError(getErrorMessage(e));
+      setAudits([]);
+    } finally {
+      setLoading(false);
+    }
   }, [hospitalId]);
+
+  const remove = async (id: string) => {
+    const { error: err } = await (supabase as any).from("hand_hygiene_audits").delete().eq("id", id);
+    if (err) {
+      toast({ title: "Failed to delete", description: getErrorMessage(err), variant: "destructive" });
+      return;
+    }
+    toast({ title: "Deleted" });
+    load();
+  };
 
   useEffect(() => { load(); }, [load]);
 
@@ -261,9 +284,10 @@ const HandHygieneTab: React.FC<{ hospitalId: string }> = ({ hospitalId }) => {
       )}
 
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <FormError message={error} />
         {loading ? (
           <div className="flex items-center gap-2 text-muted-foreground py-8"><Loader2 className="h-4 w-4 animate-spin" /><span className="text-sm">Loading…</span></div>
-        ) : audits.length === 0 ? (
+        ) : error ? null : audits.length === 0 ? (
           <div className="py-10 text-center space-y-2">
             <Droplets className="h-8 w-8 text-muted-foreground/40 mx-auto" />
             <p className="text-sm text-muted-foreground">No hand hygiene audits recorded.</p>
@@ -315,7 +339,7 @@ const HandHygieneTab: React.FC<{ hospitalId: string }> = ({ hospitalId }) => {
                     </p>
                   )}
                 </div>
-                <button onClick={() => (supabase as any).from("hand_hygiene_audits").delete().eq("id", a.id).then(() => { toast({ title: "Deleted" }); load(); })}
+                <button onClick={() => remove(a.id)}
                   className="p-1 text-muted-foreground hover:text-destructive shrink-0">
                   <X className="h-3.5 w-3.5" />
                 </button>

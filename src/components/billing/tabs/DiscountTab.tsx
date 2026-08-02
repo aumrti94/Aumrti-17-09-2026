@@ -7,12 +7,16 @@ import { formatINR } from "@/lib/currency";
 import { format, formatDistanceToNow } from "date-fns";
 import type { BillRecord } from "@/pages/billing/BillingPage";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
+import { roleLabels, canApproveTier } from "@/lib/appRoles";
 
 interface DiscountRules {
   t1_amount: number;
   t1_pct: number;
   t2_amount: number;
   t2_pct: number;
+  /** Roles authorized to approve tier 2 / tier 3. Admin/Super Admin always override. */
+  t2_roles: string[];
+  t3_roles: string[];
 }
 
 interface DiscountApproval {
@@ -21,6 +25,7 @@ interface DiscountApproval {
   discount_pct: number;
   reason: string;
   required_approver_role: string;
+  required_approver_roles: string[] | null;
   requested_at: string;
   approved_at: string | null;
   status: string;
@@ -36,12 +41,12 @@ interface Props {
   userRole?: string;
 }
 
-const DEFAULT_RULES: DiscountRules = { t1_amount: 500, t1_pct: 5, t2_amount: 2000, t2_pct: 15 };
+/** Sentinel rejection_reason marking a request the REQUESTER withdrew, not one an approver refused. */
+const CANCELLED_BY_REQUESTER = "Cancelled by requester";
 
-const ROLE_LABELS: Record<string, string> = {
-  billing_supervisor: "Billing Supervisor",
-  cfo: "CFO / Finance Head",
-  admin: "Hospital Administrator",
+const DEFAULT_RULES: DiscountRules = {
+  t1_amount: 500, t1_pct: 5, t2_amount: 2000, t2_pct: 15,
+  t2_roles: ["billing_executive"], t3_roles: ["cfo"],
 };
 
 const DiscountTab: React.FC<Props> = ({ bill, hospitalId, onRefresh, userRole }) => {
@@ -93,14 +98,20 @@ const DiscountTab: React.FC<Props> = ({ bill, hospitalId, onRefresh, userRole })
     }
   };
 
-  const getRequiredRole = (amount: number, pct: number): "none" | "billing_supervisor" | "cfo" => {
+  // Which tier a discount falls into. The approver ROLES for each tier are configurable
+  // (Settings → Approval Rules) and resolved via requiredRolesForTier below.
+  const getRequiredTier = (amount: number, pct: number): "none" | "t2" | "t3" => {
     if (amount <= rules.t1_amount && pct <= rules.t1_pct) return "none";
-    if (amount <= rules.t2_amount && pct <= rules.t2_pct) return "billing_supervisor";
-    return "cfo";
+    if (amount <= rules.t2_amount && pct <= rules.t2_pct) return "t2";
+    return "t3";
   };
 
+  const requiredRolesForTier = (tier: "none" | "t2" | "t3"): string[] =>
+    tier === "t2" ? (rules.t2_roles || []) : tier === "t3" ? (rules.t3_roles || []) : [];
+
   const { amount: previewAmt, pct: previewPct } = computeAmounts();
-  const requiredRole = getRequiredRole(previewAmt, previewPct);
+  const requiredTier = getRequiredTier(previewAmt, previewPct);
+  const requiredRoles = requiredRolesForTier(requiredTier);
 
   const applyDiscount = async (amount: number, pct: number) => {
     const { error } = await supabase.from("bills").update({
@@ -122,9 +133,10 @@ const DiscountTab: React.FC<Props> = ({ bill, hospitalId, onRefresh, userRole })
     if (amount > subtotal) { toast({ title: "Discount cannot exceed bill subtotal", variant: "destructive" }); return; }
 
     setSaving(true);
-    const role = getRequiredRole(amount, pct);
+    const tier = getRequiredTier(amount, pct);
+    const roles = requiredRolesForTier(tier);
 
-    if (role === "none") {
+    if (tier === "none") {
       // Apply directly
       const ok = await applyDiscount(amount, pct);
       if (ok) {
@@ -136,6 +148,7 @@ const DiscountTab: React.FC<Props> = ({ bill, hospitalId, onRefresh, userRole })
           discount_pct: pct,
           reason: reason.trim(),
           required_approver_role: "none",
+          required_approver_roles: [],
           requested_by: currentUserId,
           approved_by: currentUserId,
           approved_at: new Date().toISOString(),
@@ -150,14 +163,17 @@ const DiscountTab: React.FC<Props> = ({ bill, hospitalId, onRefresh, userRole })
         toast({ title: "Failed to apply discount", variant: "destructive" });
       }
     } else {
-      // Create approval request + set bill to pending_approval
+      // Create approval request + set bill to pending_approval. The authorized role set is
+      // frozen onto the row so later config changes don't retroactively alter who may approve
+      // this request (and so the DB enforcement trigger can read it).
       const { error: approvalErr } = await (supabase as any).from("bill_discount_approvals").insert({
         hospital_id: hospitalId,
         bill_id: bill.id,
         discount_amount: amount,
         discount_pct: pct,
         reason: reason.trim(),
-        required_approver_role: role,
+        required_approver_role: roles[0] || tier,
+        required_approver_roles: roles,
         requested_by: currentUserId,
         status: "pending",
       });
@@ -167,7 +183,7 @@ const DiscountTab: React.FC<Props> = ({ bill, hospitalId, onRefresh, userRole })
         return;
       }
       await supabase.from("bills").update({ bill_status: "pending_approval" } as any).eq("id", bill.id);
-      toast({ title: `Approval request submitted — awaiting ${ROLE_LABELS[role]}` });
+      toast({ title: `Approval request submitted — awaiting ${roleLabels(roles)}` });
       setShowForm(false);
       setDiscountInput("");
       setReason("");
@@ -214,7 +230,9 @@ const DiscountTab: React.FC<Props> = ({ bill, hospitalId, onRefresh, userRole })
 
   const handleCancel = async () => {
     if (!approval) return;
-    await (supabase as any).from("bill_discount_approvals").update({ status: "rejected", rejection_reason: "Cancelled by requester" }).eq("id", approval.id);
+    // bill_discount_approvals.status is CHECK-constrained to pending/approved/rejected, so a
+    // withdrawal is stored as 'rejected' and told apart by this exact reason string.
+    await (supabase as any).from("bill_discount_approvals").update({ status: "rejected", rejection_reason: CANCELLED_BY_REQUESTER }).eq("id", approval.id);
     await supabase.from("bills").update({ bill_status: "draft" } as any).eq("id", bill.id);
     toast({ title: "Discount request cancelled" });
     onRefresh();
@@ -234,7 +252,15 @@ const DiscountTab: React.FC<Props> = ({ bill, hospitalId, onRefresh, userRole })
 
   const isEditable = bill.bill_status === "draft";
   const isPendingApproval = bill.bill_status === "pending_approval";
-  const canApprove = (userRole === "admin" || userRole === "cfo" || userRole === "billing_supervisor") && approval?.status === "pending";
+  // `approval` is only the LATEST request. A rejected or cancelled one is history, not a
+  // standing state — gating the form on its mere existence is what made a rejected discount
+  // unrepeatable and an applied discount unremovable. Only a PENDING request blocks.
+  const hasPendingRequest = approval?.status === "pending";
+  const wasWithdrawn = approval?.status === "rejected" && approval.rejection_reason === CANCELLED_BY_REQUESTER;
+  // Only a role authorized for THIS request's tier may approve it (Admin/Super Admin always
+  // may — see canApproveTier). This mirrors the DB enforcement trigger.
+  const canApprove = approval?.status === "pending" &&
+    canApproveTier(userRole, approval.required_approver_roles ?? [approval.required_approver_role]);
 
   return (
     <div className="h-full overflow-y-auto p-5 space-y-5">
@@ -257,7 +283,7 @@ const DiscountTab: React.FC<Props> = ({ bill, hospitalId, onRefresh, userRole })
       <div className="bg-muted/40 rounded-xl p-4">
         <div className="flex items-center justify-between mb-1">
           <p className="text-xs font-bold uppercase text-muted-foreground tracking-wide">Current Discount</p>
-          {bill.discount_amount > 0 && isEditable && !approval && (
+          {bill.discount_amount > 0 && isEditable && !hasPendingRequest && (
             <button onClick={handleRemoveDiscount} className="text-[10px] text-destructive/70 hover:text-destructive font-medium transition-colors">Remove</button>
           )}
         </div>
@@ -289,26 +315,35 @@ const DiscountTab: React.FC<Props> = ({ bill, hospitalId, onRefresh, userRole })
             <p className="text-xs font-bold text-blue-800 mb-1.5">Discount Approval Rules</p>
             <div className="space-y-1 text-xs text-blue-700">
               <p>• Up to {formatINR(rules.t1_amount)} or {rules.t1_pct}% — <span className="font-semibold">No approval needed</span></p>
-              <p>• {formatINR(rules.t1_amount)}–{formatINR(rules.t2_amount)} or {rules.t1_pct}–{rules.t2_pct}% — <span className="font-semibold">Billing Supervisor</span> approval required</p>
-              <p>• Above {formatINR(rules.t2_amount)} or {rules.t2_pct}% — <span className="font-semibold">CFO / Finance Head</span> approval required</p>
+              <p>• {formatINR(rules.t1_amount)}–{formatINR(rules.t2_amount)} or {rules.t1_pct}–{rules.t2_pct}% — <span className="font-semibold">{roleLabels(rules.t2_roles)}</span> approval required</p>
+              <p>• Above {formatINR(rules.t2_amount)} or {rules.t2_pct}% — <span className="font-semibold">{roleLabels(rules.t3_roles)}</span> approval required</p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Apply / Request form */}
-      {(isEditable || isPendingApproval) && !approval?.status && bill.discount_amount === 0 && (
+      {/* Apply / Request form. A rejected or cancelled request must be repeatable — the
+          approver's "no" was to that amount and reason, not to the patient forever, and a
+          cancellation is usually a correction the requester intends to redo immediately. */}
+      {(isEditable || isPendingApproval) && !hasPendingRequest && bill.discount_amount === 0 && (
         <>
           {!showForm ? (
             <button
               onClick={() => setShowForm(true)}
               className="w-full border-2 border-dashed border-border rounded-xl py-3 text-sm text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors font-medium"
             >
-              + Apply Discount to This Bill
+              {approval ? "+ Request Discount Again" : "+ Apply Discount to This Bill"}
             </button>
           ) : (
             <div className="border border-border rounded-xl p-4 space-y-3">
-              <p className="text-xs font-bold text-foreground">Apply Bill-Level Discount</p>
+              <p className="text-xs font-bold text-foreground">
+                {approval ? "New Discount Request" : "Apply Bill-Level Discount"}
+              </p>
+              {approval?.status === "rejected" && (
+                <p className="text-[11px] text-muted-foreground">
+                  Previous request: {formatINR(approval.discount_amount)} — {approval.rejection_reason || "rejected"}.
+                </p>
+              )}
 
               {/* Input mode toggle */}
               <div className="flex gap-2 items-center">
@@ -350,15 +385,15 @@ const DiscountTab: React.FC<Props> = ({ bill, hospitalId, onRefresh, userRole })
               {discountInput && previewAmt > 0 && (
                 <div className={cn(
                   "flex items-center gap-2 rounded-lg px-3 py-2 text-xs",
-                  requiredRole === "none" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" :
-                  requiredRole === "billing_supervisor" ? "bg-amber-50 text-amber-700 border border-amber-200" :
+                  requiredTier === "none" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" :
+                  requiredTier === "t2" ? "bg-amber-50 text-amber-700 border border-amber-200" :
                   "bg-destructive/10 text-destructive border border-destructive/20"
                 )}>
-                  {requiredRole === "none"
+                  {requiredTier === "none"
                     ? <><CheckCircle2 size={13} /> Within free threshold — will be applied directly</>
-                    : requiredRole === "billing_supervisor"
-                    ? <><AlertTriangle size={13} /> Requires <strong>Billing Supervisor</strong> approval</>
-                    : <><Shield size={13} /> Requires <strong>CFO / Finance Head</strong> approval</>
+                    : requiredTier === "t2"
+                    ? <><AlertTriangle size={13} /> Requires <strong>{roleLabels(requiredRoles)}</strong> approval</>
+                    : <><Shield size={13} /> Requires <strong>{roleLabels(requiredRoles)}</strong> approval</>
                   }
                 </div>
               )}
@@ -381,13 +416,13 @@ const DiscountTab: React.FC<Props> = ({ bill, hospitalId, onRefresh, userRole })
                   disabled={saving || !discountInput || !reason.trim()}
                   className={cn(
                     "flex items-center gap-1.5 text-xs px-4 py-1.5 rounded-lg font-semibold active:scale-95 transition-all disabled:opacity-50 text-white",
-                    requiredRole === "none" ? "bg-emerald-500 hover:bg-emerald-600" :
-                    requiredRole === "billing_supervisor" ? "bg-amber-500 hover:bg-amber-600" :
+                    requiredTier === "none" ? "bg-emerald-500 hover:bg-emerald-600" :
+                    requiredTier === "t2" ? "bg-amber-500 hover:bg-amber-600" :
                     "bg-destructive hover:bg-destructive/90"
                   )}
                 >
                   {saving ? "Processing…" :
-                   requiredRole === "none" ? "Apply Discount" :
+                   requiredTier === "none" ? "Apply Discount" :
                    "Request Approval"}
                 </button>
               </div>
@@ -402,7 +437,7 @@ const DiscountTab: React.FC<Props> = ({ bill, hospitalId, onRefresh, userRole })
           <div className="flex items-center justify-between">
             <p className="text-xs font-bold text-amber-800">Pending Approval Request</p>
             <span className="text-[10px] bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full font-bold">
-              {ROLE_LABELS[approval.required_approver_role] || approval.required_approver_role} required
+              {roleLabels(approval.required_approver_roles ?? [approval.required_approver_role])} required
             </span>
           </div>
           <div className="grid grid-cols-2 gap-3 text-xs">
@@ -457,6 +492,11 @@ const DiscountTab: React.FC<Props> = ({ bill, hospitalId, onRefresh, userRole })
                 </button>
               </div>
             )}
+            {!canApprove && !showRejectForm && (
+              <span className="text-[11px] text-amber-700 font-medium">
+                Awaiting {roleLabels(approval.required_approver_roles ?? [approval.required_approver_role])}
+              </span>
+            )}
           </div>
         </div>
       )}
@@ -490,7 +530,7 @@ const DiscountTab: React.FC<Props> = ({ bill, hospitalId, onRefresh, userRole })
             )}
             {approval.status === "rejected" && approval.rejection_reason && (
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Rejection Reason</span>
+                <span className="text-muted-foreground">{wasWithdrawn ? "Outcome" : "Rejection Reason"}</span>
                 <span className="text-destructive text-right max-w-[60%]">{approval.rejection_reason}</span>
               </div>
             )}
@@ -498,9 +538,12 @@ const DiscountTab: React.FC<Props> = ({ bill, hospitalId, onRefresh, userRole })
               <span className="text-muted-foreground">Status</span>
               <span className={cn("font-bold uppercase text-[10px] px-2 py-0.5 rounded-full",
                 approval.status === "approved" ? "bg-emerald-100 text-emerald-700" :
+                wasWithdrawn ? "bg-muted text-muted-foreground" :
                 approval.status === "rejected" ? "bg-destructive/10 text-destructive" : "bg-amber-100 text-amber-700"
               )}>
-                {approval.status === "none" ? "Auto-approved" : approval.status}
+                {/* A withdrawal is not a refusal — showing "REJECTED" wrongly implies an
+                    approver said no to this patient's discount. */}
+                {wasWithdrawn ? "Cancelled" : approval.status === "none" ? "Auto-approved" : approval.status}
               </span>
             </div>
           </div>

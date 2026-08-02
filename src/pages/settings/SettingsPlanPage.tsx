@@ -11,6 +11,7 @@ import { useHospitalId } from "@/hooks/useHospitalId";
 import { supabase } from "@/integrations/supabase/client";
 import { ALL_MODULES } from "@/lib/modules";
 import SubscribeButton from "@/components/subscription/SubscribeButton";
+import AiCreditsCard from "@/components/subscription/AiCreditsCard";
 import PaymentHistoryTable, { downloadInvoiceDocument } from "@/components/billing/PaymentHistoryTable";
 import UpgradeDialog from "@/components/subscription/UpgradeDialog";
 import { toast } from "sonner";
@@ -597,6 +598,12 @@ const SettingsPlanPage: React.FC = () => {
               </p>
             </div>
           </div>
+
+          {hospitalId && (
+            <div className="mt-4">
+              <AiCreditsCard hospitalId={hospitalId} />
+            </div>
+          )}
         </section>
 
         {/* ── Refer & Earn ── */}

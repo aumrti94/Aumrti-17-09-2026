@@ -38,7 +38,7 @@ function esc(str: string): string {
 // ─── Header layout renderers ──────────────────────────────────────────────────
 function logoImg(url: string | null | undefined, name: string, inline = ""): string {
   if (!url) return "";
-  return `<img src="${url}" alt="${esc(name)} logo" style="max-height:60px;max-width:160px;object-fit:contain;${inline}" />`;
+  return `<img src="${url}" alt="${esc(name)} logo" style="max-height:46px;max-width:150px;object-fit:contain;${inline}" />`;
 }
 
 function buildHeaderHtml(
@@ -60,7 +60,7 @@ function buildHeaderHtml(
 
     // Layout 2 — Center All
     case 2:
-      return `<div style="text-align:center;padding-bottom:14px;margin-bottom:18px;border-bottom:2px solid ${color};">
+      return `<div style="text-align:center;padding-bottom:9px;margin-bottom:12px;border-bottom:2px solid ${color};">
   ${logo ? `<div style="margin-bottom:6px;">${logo}</div>` : ""}
   ${nameHtml}${taglineHtml}${subHtml}${extHtml}
 </div>`;
@@ -68,9 +68,9 @@ function buildHeaderHtml(
     // Layout 3 — Full Colour Band
     case 3: {
       const whiteLogo = logoUrl
-        ? `<img src="${logoUrl}" alt="${esc(name)} logo" style="max-height:54px;max-width:140px;object-fit:contain;background:#fff;padding:4px;border-radius:4px;" />`
+        ? `<img src="${logoUrl}" alt="${esc(name)} logo" style="max-height:42px;max-width:130px;object-fit:contain;background:#fff;padding:4px;border-radius:4px;" />`
         : "";
-      return `<div style="background:${color};color:#fff;padding:14px 20px;margin-bottom:18px;display:flex;align-items:center;gap:14px;border-radius:4px;">
+      return `<div style="background:${color};color:#fff;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:14px;border-radius:4px;">
   ${whiteLogo}
   <div>
     <div style="font-size:20px;font-weight:700;color:#fff;">${esc(name)}</div>
@@ -82,27 +82,27 @@ ${subHtml}${extHtml}`;
 
     // Layout 4 — Logo Right
     case 4:
-      return `<div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:14px;margin-bottom:18px;border-bottom:2px solid ${color};">
+      return `<div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:9px;margin-bottom:12px;border-bottom:2px solid ${color};">
   <div>${nameHtml}${taglineHtml}${subHtml}${extHtml}</div>
   ${logo || ""}
 </div>`;
 
     // Layout 5 — Text Only
     case 5:
-      return `<div style="text-align:center;padding-bottom:14px;margin-bottom:18px;border-bottom:2px solid ${color};">
+      return `<div style="text-align:center;padding-bottom:9px;margin-bottom:12px;border-bottom:2px solid ${color};">
   ${nameHtml}${taglineHtml}${subHtml}${extHtml}
 </div>`;
 
     // Layout 6 — Minimal
     case 6:
-      return `<div style="padding-bottom:10px;margin-bottom:18px;border-bottom:1px solid #e2e8f0;">
+      return `<div style="padding-bottom:8px;margin-bottom:12px;border-bottom:1px solid #e2e8f0;">
   <span style="font-size:26px;font-weight:800;color:${color};">${esc(name)}</span>
   ${subHtml}${extHtml}
 </div>`;
 
     // Layout 1 (default) — Logo Left + Center Text
     default:
-      return `<div style="display:flex;align-items:flex-start;gap:14px;padding-bottom:14px;margin-bottom:18px;border-bottom:2px solid ${color};">
+      return `<div style="display:flex;align-items:flex-start;gap:14px;padding-bottom:9px;margin-bottom:12px;border-bottom:2px solid ${color};">
   ${logo ? `<div style="flex-shrink:0;">${logo}</div>` : ""}
   <div style="flex:1;text-align:center;">${nameHtml}${taglineHtml}${subHtml}${extHtml}</div>
 </div>`;
@@ -205,22 +205,22 @@ export function printDocument(
 <html><head><title>${esc(title)}</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter&family=Poppins&family=Roboto&family=Noto+Sans&family=Open+Sans&family=Lato&family=Nunito&family=Raleway&display=swap');
-  body { font-family: ${fontFamily}; padding: 40px; margin: 0; font-size: ${fontSize}px; color: #1e293b; }
-  table { width: 100%; border-collapse: collapse; margin: 12px 0; }
-  th { background: #f1f5f9; padding: 8px 10px; text-align: left; font-size: 11px;
+  body { font-family: ${fontFamily}; padding: 24px; margin: 0; font-size: ${fontSize}px; color: #1e293b; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+  th { background: #f1f5f9; padding: 5px 8px; text-align: left; font-size: 11px;
        text-transform: uppercase; color: #64748b; border-bottom: 2px solid #e2e8f0; }
-  td { padding: 8px 10px; border-bottom: 1px solid #f1f5f9; font-size: ${fontSize}px; }
-  .header { padding-bottom: 14px; margin-bottom: 18px; }
+  td { padding: 5px 8px; border-bottom: 1px solid #f1f5f9; font-size: ${fontSize}px; }
+  .header { padding-bottom: 8px; margin-bottom: 10px; }
   .amount { font-family: monospace; font-weight: 600; }
   .label { color: #64748b; font-size: 11px; }
-  .row { display: flex; justify-content: space-between; margin-bottom: 6px; }
+  .row { display: flex; justify-content: space-between; margin-bottom: 4px; }
   .total-row { display: flex; justify-content: space-between; font-weight: bold;
-               font-size: ${fontSize + 2}px; border-top: 2px solid ${color}; padding-top: 8px; margin-top: 8px; }
-  .section-title { font-size: ${fontSize + 1}px; font-weight: 700; color: ${color}; margin: 16px 0 8px; }
+               font-size: ${fontSize + 2}px; border-top: 2px solid ${color}; padding-top: 5px; margin-top: 5px; }
+  .section-title { font-size: ${fontSize + 1}px; font-weight: 700; color: ${color}; margin: 10px 0 5px; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px;
            font-weight: 600; background: #f1f5f9; color: #475569; }
   pre { white-space: pre-wrap; font-family: inherit; }
-  @media print { body { padding: 20px; } }
+  @media print { body { padding: 12px; } }
 </style>
 </head><body>${bodyHtml}
 ${footerHtml}

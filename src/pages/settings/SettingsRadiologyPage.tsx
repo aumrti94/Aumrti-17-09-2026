@@ -6,11 +6,12 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Plus, Search, ChevronDown, ChevronRight, Trash2, Shield, Monitor, Loader2, ExternalLink } from "lucide-react";
+import { Plus, Search, ChevronDown, ChevronRight, Trash2, Shield, Monitor, Loader2, ExternalLink, ListPlus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useHospitalId } from "@/hooks/useHospitalId";
+import BulkPasteAddModal from "@/components/settings/BulkPasteAddModal";
 
 interface Study {
   id: string;
@@ -40,6 +41,9 @@ const SettingsRadiologyPage: React.FC = () => {
   const [addStudyModalityId, setAddStudyModalityId] = useState<string | null>(null);
   const [addStudyModalityType, setAddStudyModalityType] = useState("");
   const [studyForm, setStudyForm] = useState({ study_name: "", fee: "0" });
+  const [bulkModalityOpen, setBulkModalityOpen] = useState(false);
+  const [bulkStudyModalityId, setBulkStudyModalityId] = useState<string | null>(null);
+  const [bulkStudyModalityType, setBulkStudyModalityType] = useState("");
 
   // ── PACS configuration ─────────────────────────────────
   const [pacsConfigId, setPacsConfigId]     = useState<string | null>(null);
@@ -213,6 +217,18 @@ const SettingsRadiologyPage: React.FC = () => {
     onError: (err: any) => toast({ title: "Failed", description: err.message, variant: "destructive" }),
   });
 
+  const bulkAddModalities = async (rows: Record<string, string>[]) => {
+    const payload = rows.map((r) => ({
+      hospital_id: hospitalId!,
+      name: r.name.trim(),
+      modality_type: (r.modality_type || r.name).toLowerCase().replace(/\s+/g, "_"),
+      is_active: true,
+    }));
+    const { error } = await supabase.from("radiology_modalities").insert(payload as any);
+    if (error) return { error: error.message };
+    queryClient.invalidateQueries({ queryKey: ["settings-radiology-modalities"] });
+  };
+
   const toggleModalityActive = async (id: string, active: boolean) => {
     const { error } = await supabase.from("radiology_modalities").update({ is_active: active }).eq("id", id);
     if (error) { toast({ title: "Update failed", variant: "destructive" }); return; }
@@ -242,6 +258,23 @@ const SettingsRadiologyPage: React.FC = () => {
     },
     onError: (err: any) => toast({ title: "Failed", description: err.message, variant: "destructive" }),
   });
+
+  const bulkAddStudies = async (rows: Record<string, string>[]) => {
+    if (!bulkStudyModalityId) return { error: "No modality selected" };
+    const existing = studiesByModality(bulkStudyModalityId);
+    const payload = rows.map((r, i) => ({
+      hospital_id: hospitalId!,
+      modality_id: bulkStudyModalityId,
+      modality_type: bulkStudyModalityType,
+      study_name: r.study_name.trim(),
+      fee: Number(r.fee) || 0,
+      is_active: true,
+      sort_order: existing.length + i + 1,
+    }));
+    const { error } = await (supabase as any).from("radiology_study_master").insert(payload);
+    if (error) return { error: error.message };
+    queryClient.invalidateQueries({ queryKey: ["settings-radiology-studies"] });
+  };
 
   const updateStudyFee = async (id: string, fee: string) => {
     const { error } = await (supabase as any).from("radiology_study_master").update({ fee: Number(fee) || 0 }).eq("id", id);
@@ -278,6 +311,7 @@ const SettingsRadiologyPage: React.FC = () => {
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search modalities..." className="pl-9 h-9" />
           </div>
+          <Button size="sm" variant="outline" onClick={() => setBulkModalityOpen(true)} className="gap-1"><ListPlus size={14} /> Bulk Add</Button>
           <Button size="sm" onClick={() => setShowAddModality(true)} className="gap-1"><Plus size={14} /> Add Modality</Button>
         </div>
 
@@ -374,6 +408,18 @@ const SettingsRadiologyPage: React.FC = () => {
                         }}
                       >
                         <Plus size={12} /> Add Study
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1 text-xs h-7"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setBulkStudyModalityId(m.id);
+                          setBulkStudyModalityType(m.modality_type);
+                        }}
+                      >
+                        <ListPlus size={12} /> Bulk Add Studies
                       </Button>
                       <span className="text-[11px] text-muted-foreground">Add individual study with its own fee</span>
                     </div>
@@ -593,6 +639,31 @@ const SettingsRadiologyPage: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <BulkPasteAddModal
+        open={bulkModalityOpen}
+        onOpenChange={setBulkModalityOpen}
+        title="Bulk Add Modality Categories"
+        description="Fill in a row per modality — Type Code defaults from the Name if left blank."
+        columns={[
+          { key: "name",          label: "Name", required: true, placeholder: "e.g. PET-CT" },
+          { key: "modality_type", label: "Type Code", placeholder: "e.g. pet_ct" },
+        ]}
+        existingKeys={new Set(modalities.map((m) => m.name.toLowerCase()))}
+        onSubmit={bulkAddModalities}
+      />
+
+      <BulkPasteAddModal
+        open={bulkStudyModalityId !== null}
+        onOpenChange={(v) => !v && setBulkStudyModalityId(null)}
+        title={`Bulk Add Studies — ${modalities.find(m => m.id === bulkStudyModalityId)?.name ?? ""}`}
+        columns={[
+          { key: "study_name", label: "Study Name", required: true, placeholder: "e.g. X-Ray Chest PA View" },
+          { key: "fee",        label: "Fee (₹)", type: "number", placeholder: "0" },
+        ]}
+        existingKeys={new Set(studiesByModality(bulkStudyModalityId ?? "").map((s) => s.study_name.toLowerCase()))}
+        onSubmit={bulkAddStudies}
+      />
     </SettingsPageWrapper>
   );
 };

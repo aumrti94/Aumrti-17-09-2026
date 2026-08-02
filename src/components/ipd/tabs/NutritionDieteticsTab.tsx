@@ -128,7 +128,7 @@ export default function NutritionDieteticsTab({ admissionId, patientId, hospital
 
     await logNABHEvidence(hospitalId, "COP.1",
       `NRS-2002 nutritional screening completed — Score: ${nrsTotal} — ${nrsRisk}`,
-      nrsTotal >= 3 ? "partial" : "compliant");
+      nrsTotal >= 3 ? "partially_compliant" : "compliant");
 
     setSaving(false);
     fetch();

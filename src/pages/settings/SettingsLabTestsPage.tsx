@@ -7,7 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Plus, Search, Pencil, Layers, X, Upload, HelpCircle } from "lucide-react";
+import { Plus, Search, Pencil, Layers, X, Upload, HelpCircle, IndianRupee, Loader2 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
@@ -187,6 +187,48 @@ const SettingsLabTestsPage: React.FC = () => {
     toast({ title: `Bulk updated ${ids.length} tests to ${active ? 'Active' : 'Inactive'}` });
   };
 
+  const allFilteredActive = filtered.length > 0 && filtered.every((t: any) => t.is_active);
+
+  // --- Bulk price edit ---
+  const [showBulkPrice, setShowBulkPrice] = useState(false);
+  const [bulkPriceRows, setBulkPriceRows] = useState<{ id: string; test_name: string; fee: string }[]>([]);
+  const [bulkPriceSetAll, setBulkPriceSetAll] = useState("");
+  const [bulkPriceSaving, setBulkPriceSaving] = useState(false);
+
+  const openBulkPrice = () => {
+    setBulkPriceRows(filtered.map((t: any) => ({ id: t.id, test_name: t.test_name, fee: t.fee != null ? String(t.fee) : "0" })));
+    setBulkPriceSetAll("");
+    setShowBulkPrice(true);
+  };
+
+  const applySetAll = () => {
+    if (bulkPriceSetAll === "") return;
+    setBulkPriceRows(rows => rows.map(r => ({ ...r, fee: bulkPriceSetAll })));
+  };
+
+  const updateBulkPriceRow = (id: string, fee: string) => {
+    setBulkPriceRows(rows => rows.map(r => (r.id === id ? { ...r, fee } : r)));
+  };
+
+  const saveBulkPrices = async () => {
+    const original = new Map(filtered.map((t: any) => [t.id, t.fee != null ? String(t.fee) : "0"]));
+    const changed = bulkPriceRows.filter(r => r.fee !== original.get(r.id));
+    if (changed.length === 0) { setShowBulkPrice(false); return; }
+    setBulkPriceSaving(true);
+    const results = await Promise.all(
+      changed.map(r => supabase.from("lab_test_master").update({ fee: Number(r.fee) || 0 }).eq("id", r.id))
+    );
+    setBulkPriceSaving(false);
+    const failed = results.filter(r => r.error);
+    if (failed.length > 0) {
+      toast({ title: "Some updates failed", description: failed[0].error?.message, variant: "destructive" });
+      return;
+    }
+    queryClient.invalidateQueries({ queryKey: ["settings-lab-tests"] });
+    toast({ title: `${changed.length} test price${changed.length === 1 ? "" : "s"} updated` });
+    setShowBulkPrice(false);
+  };
+
   const formatRange = (min: number | null, max: number | null) => {
     if (min != null && max != null) return `${min}–${max}`;
     if (min != null) return `≥${min}`;
@@ -310,15 +352,16 @@ const SettingsLabTestsPage: React.FC = () => {
               </SelectContent>
             </Select>
             <Button variant="outline" size="sm" onClick={() => setShowBulkImport(true)} className="gap-1"><Upload size={14} /> Bulk Import</Button>
+            <Button variant="outline" size="sm" onClick={openBulkPrice} disabled={filtered.length === 0} className="gap-1"><IndianRupee size={14} /> Bulk Edit Price</Button>
             <Button size="sm" onClick={() => setShowAdd(true)} className="gap-1"><Plus size={14} /> Add Test</Button>
           </div>
 
           <div className="flex justify-between items-center">
             <p className="text-xs text-muted-foreground">{filtered.length} test{filtered.length !== 1 ? "s" : ""}</p>
             {filtered.length > 0 && (
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" className="h-7 text-[11px] px-2" onClick={() => bulkToggleActive(true)}>Enable All Filtered</Button>
-                <Button variant="outline" size="sm" className="h-7 text-[11px] px-2" onClick={() => bulkToggleActive(false)}>Disable All Filtered</Button>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-muted-foreground">All Filtered Active</span>
+                <Switch checked={allFilteredActive} onCheckedChange={(v) => bulkToggleActive(v)} />
               </div>
             )}
           </div>
@@ -517,6 +560,46 @@ const SettingsLabTestsPage: React.FC = () => {
             <Button variant="outline" onClick={() => { setShowAdd(false); setEditId(null); setForm(blankForm); }}>Cancel</Button>
             <Button onClick={() => editId ? editMutation.mutate() : addMutation.mutate()} disabled={!form.test_name || !form.test_code || addMutation.isPending || editMutation.isPending}>
               {(addMutation.isPending || editMutation.isPending) ? "Saving..." : editId ? "Update Test" : "Save Test"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Bulk Edit Price Dialog ── */}
+      <Dialog open={showBulkPrice} onOpenChange={setShowBulkPrice}>
+        <DialogContent className="max-w-lg max-h-[90vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Bulk Edit Price</DialogTitle>
+            <p className="text-xs text-muted-foreground">{bulkPriceRows.length} test{bulkPriceRows.length !== 1 ? "s" : ""} (matching the current search/category filter)</p>
+          </DialogHeader>
+
+          <div className="flex items-end gap-2 pb-2 border-b border-border">
+            <div className="flex-1">
+              <Label className="text-xs">Set all to (₹)</Label>
+              <Input type="number" value={bulkPriceSetAll} onChange={(e) => setBulkPriceSetAll(e.target.value)} placeholder="e.g. 200" className="mt-1 h-9" />
+            </div>
+            <Button variant="outline" size="sm" onClick={applySetAll} disabled={bulkPriceSetAll === ""}>Apply to All</Button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto -mx-1 px-1">
+            {bulkPriceRows.map(r => (
+              <div key={r.id} className="flex items-center gap-2 py-1.5 border-b border-border/50 last:border-0">
+                <span className="flex-1 text-sm text-foreground truncate">{r.test_name}</span>
+                <Input
+                  type="number"
+                  value={r.fee}
+                  onChange={(e) => updateBulkPriceRow(r.id, e.target.value)}
+                  className="h-8 w-28 text-right font-mono"
+                />
+              </div>
+            ))}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBulkPrice(false)}>Cancel</Button>
+            <Button onClick={saveBulkPrices} disabled={bulkPriceSaving} className="gap-1.5">
+              {bulkPriceSaving && <Loader2 size={14} className="animate-spin" />}
+              {bulkPriceSaving ? "Saving..." : "Save Changes"}
             </Button>
           </DialogFooter>
         </DialogContent>

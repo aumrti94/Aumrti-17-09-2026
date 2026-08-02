@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useRealtimeRefetch } from "@/hooks/useRealtimeRefetch";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { ChevronLeft } from "lucide-react";
 import OnboardingTour from "@/components/onboarding/OnboardingTour";
@@ -86,16 +87,23 @@ const OPDPage: React.FC = () => {
     fetchTokens(date);
   }, [fetchTokens]);
 
+  // Optimistic in-place token update. Lets the workspace reflect a status change
+  // (e.g. Start Consultation) immediately instead of blanking through a full refetch —
+  // the realtime subscription below still reconciles with the server right after.
+  const patchToken = useCallback((tokenId: string, patch: Partial<OpdToken>) => {
+    setTokens((prev) => prev.map((t) => (t.id === tokenId ? { ...t, ...patch } : t)));
+  }, []);
+
   useEffect(() => { fetchTokens(); }, [fetchTokens]);
 
-  useEffect(() => {
-    if (!hospitalId) return;
-    const channel = supabase
-      .channel("opd-tokens-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "opd_tokens", filter: `hospital_id=eq.${hospitalId}` }, () => fetchTokens())
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [hospitalId, fetchTokens]);
+  // Live updates: refetch the currently-viewed day's queue on any opd_tokens change,
+  // plus on tab focus / reconnect (fallback handled inside the hook).
+  useRealtimeRefetch({
+    tables: ["opd_tokens"],
+    hospitalId,
+    onChange: () => fetchTokens(selectedDate),
+    channelName: "opd-tokens",
+  });
 
   const isMobile = useIsMobile();
   const selectedToken = tokens.find((t) => t.id === selectedTokenId) || null;
@@ -149,7 +157,8 @@ const OPDPage: React.FC = () => {
               token={selectedToken}
               hospitalId={hospitalId}
               userId={userId}
-              onTokenUpdate={fetchTokens}
+              onTokenUpdate={() => fetchTokens(selectedDate)}
+              onTokenPatch={patchToken}
               showPatientDetails={showPatientDetails}
               onTogglePatientDetails={() => setShowPatientDetails((p) => !p)}
             />

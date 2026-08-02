@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { format, differenceInDays } from "date-fns";
+import type { BillingDateRange } from "@/lib/billingDateRange";
 import {
   Link2, CalendarDays, MessageSquare, HandCoins, RefreshCw,
   Copy, ExternalLink, AlertTriangle, CheckCircle2, Megaphone, QrCode
@@ -61,9 +62,14 @@ interface PayLink {
 
 interface CollectionsTabProps {
   hospitalId: string;
+  /** Shared Billing period. Omitted = no date restriction. */
+  dateRange?: BillingDateRange;
 }
 
-const CollectionsTab: React.FC<CollectionsTabProps> = ({ hospitalId }) => {
+const CollectionsTab: React.FC<CollectionsTabProps> = ({ hospitalId, dateRange }) => {
+  // Primitive deps — see PendingCollectionsPanel.
+  const rangeStart = dateRange?.start;
+  const rangeEnd = dateRange?.end;
   const { toast } = useToast();
   const [bills, setBills] = useState<OutstandingBill[]>([]);
   const [emiPlans, setEmiPlans] = useState<EMIPlan[]>([]);
@@ -105,7 +111,7 @@ const CollectionsTab: React.FC<CollectionsTabProps> = ({ hospitalId }) => {
     setLoading(true);
 
     // Outstanding bills
-    const { data: billsData } = await supabase
+    let billsQuery = supabase
       .from("bills")
       .select("id, bill_number, patient_id, bill_date, total_amount, balance_due, bill_type, paid_amount, admission_id, patients(full_name, uhid)")
       .eq("hospital_id", hospitalId)
@@ -116,6 +122,12 @@ const CollectionsTab: React.FC<CollectionsTabProps> = ({ hospitalId }) => {
       .not("payment_status", "in", `(${REFUND_PAYMENT_STATUSES.join(",")})`)
       .order("bill_date", { ascending: true })
       .limit(500);
+
+    if (rangeStart && rangeEnd) {
+      billsQuery = billsQuery.gte("bill_date", rangeStart).lte("bill_date", rangeEnd);
+    }
+
+    const { data: billsData } = await billsQuery;
 
     const outstanding: OutstandingBill[] = (billsData || []).map((b: any) => ({
       id: b.id,
@@ -187,7 +199,7 @@ const CollectionsTab: React.FC<CollectionsTabProps> = ({ hospitalId }) => {
     })));
 
     setLoading(false);
-  }, [hospitalId]);
+  }, [hospitalId, rangeStart, rangeEnd]);
 
   useEffect(() => { loadData(); }, [loadData]);
 

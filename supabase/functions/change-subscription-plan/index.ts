@@ -30,6 +30,7 @@ import {
   totalCountForCycle,
   type BillingCycle,
 } from "../_shared/platform-billing.ts";
+import { getRazorpaySubscriptionKeys } from "../_shared/platform-razorpay-config.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -51,8 +52,6 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const anonKey     = Deno.env.get("SUPABASE_ANON_KEY")!;
     const serviceKey  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const rzpKeyId    = Deno.env.get("RAZORPAY_SUBSCRIPTION_KEY_ID");
-    const rzpSecret   = Deno.env.get("RAZORPAY_SUBSCRIPTION_KEY_SECRET");
 
     // ── Auth: verify caller is a hospital super_admin ──────────────────────
     const userClient = createClient(supabaseUrl, anonKey, {
@@ -65,6 +64,9 @@ serve(async (req) => {
     if (!new_plan_id || !hospital_id) return err("new_plan_id and hospital_id required");
 
     const db = createClient(supabaseUrl, serviceKey);
+
+    // Razorpay keys: /platform-configured row first, env vars as fallback.
+    const { keyId: rzpKeyId, keySecret: rzpSecret } = await getRazorpaySubscriptionKeys(db);
 
     // Verify caller belongs to this hospital and is super_admin
     const { data: callerUser } = await db

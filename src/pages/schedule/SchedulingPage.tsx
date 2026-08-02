@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, addDays, subDays, parseISO } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
+import { useRealtimeRefetch } from "@/hooks/useRealtimeRefetch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -139,6 +140,17 @@ const SchedulingPage: React.FC = () => {
       if (error) throw error;
       return (data || []) as Appt[];
     },
+  });
+
+  // Live: appointments booked / checked-in / cancelled and slot changes reflect instantly.
+  useRealtimeRefetch({
+    tables: ["appointments", "doctor_slots"],
+    hospitalId,
+    onChange: () => {
+      qc.invalidateQueries({ queryKey: ["appointments", hospitalId, dateStr] });
+      qc.invalidateQueries({ queryKey: ["doctor-slots", hospitalId, dateStr] });
+    },
+    channelName: "scheduling",
   });
 
   const doctorSummaries = useMemo<DoctorSummary[]>(() => {

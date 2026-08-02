@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalContext } from "@/contexts/HospitalContext";
+import { useRealtimeRefetch } from "@/hooks/useRealtimeRefetch";
 import { useToast } from "@/hooks/use-toast";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { sofa, apacheII } from "@/lib/clinicalCalculators";
@@ -66,6 +67,14 @@ function FlowsheetTab({ admissionId, hospitalId, userId }: { admissionId: string
   }, [admissionId, hospitalId]);
 
   useEffect(() => { fetchEntries(); }, [fetchEntries]);
+
+  // Live ICU monitoring: new flowsheet entries (any recorder) appear without a refresh.
+  useRealtimeRefetch({
+    tables: [{ table: "icu_flowsheet_entries", filter: `admission_id=eq.${admissionId}` }],
+    hospitalId,
+    onChange: fetchEntries,
+    channelName: "icu-flowsheet",
+  });
 
   const n = (v: string) => v !== "" ? parseFloat(v) : null;
   const i = (v: string) => v !== "" ? parseInt(v) : null;
@@ -618,7 +627,7 @@ function DailyGoalsTab({ admissionId, hospitalId, userId }: { admissionId: strin
     }, { onConflict: "hospital_id,admission_id,goal_date" });
     setSaving(false);
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
-    await logNABHEvidence(hospitalId, "COP.2", `ICU Daily Goals completed for ${today}: ${completedCount}/${DAILY_GOAL_ITEMS.length} items`, completedCount >= 8 ? "compliant" : "partial");
+    await logNABHEvidence(hospitalId, "COP.2", `ICU Daily Goals completed for ${today}: ${completedCount}/${DAILY_GOAL_ITEMS.length} items`, completedCount >= 8 ? "compliant" : "partially_compliant");
     toast({ title: `Daily goals saved — ${completedCount}/${DAILY_GOAL_ITEMS.length} completed` });
   };
 
@@ -728,7 +737,7 @@ function CareBundlesTab({ admissionId, hospitalId, userId }: { admissionId: stri
     }, { onConflict: "hospital_id,admission_id,bundle_type,check_date" });
     setSaving(false);
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
-    await logNABHEvidence(hospitalId, "HIC.3", `${BUNDLE_LABELS[activeBundle]} compliance: ${done}/${total} (${pct.toFixed(0)}%) on ${today}`, pct >= 80 ? "compliant" : "partial");
+    await logNABHEvidence(hospitalId, "HIC.3", `${BUNDLE_LABELS[activeBundle]} compliance: ${done}/${total} (${pct.toFixed(0)}%) on ${today}`, pct >= 80 ? "compliant" : "partially_compliant");
     toast({ title: `${BUNDLE_LABELS[activeBundle]} saved — ${pct.toFixed(0)}% compliance` });
   };
 

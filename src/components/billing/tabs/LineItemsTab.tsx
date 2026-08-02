@@ -35,6 +35,8 @@ interface Props {
   hospitalId: string | null;
   lineItems: LineItem[];
   loading: boolean;
+  /** The background admission-charge sweep is still running — more items are coming. */
+  pullingCharges?: boolean;
   payments?: PaymentRecord[];
   onRefresh: () => void;
 }
@@ -49,7 +51,7 @@ const ITEM_TYPE_COLORS: Record<string, string> = {
   nursing: "bg-success/10 text-success",
 };
 
-const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, payments = [], onRefresh }) => {
+const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, pullingCharges = false, payments = [], onRefresh }) => {
   const { toast } = useToast();
   const [serviceSearch, setServiceSearch] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -124,9 +126,6 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
         : "Already up to date",
       description: "Room, doctor visits, lab, radiology, pharmacy, nursing.",
     });
-    if (result.usedFallbackRate) {
-      toast({ title: "Using fallback rates", description: "Configure service rates in Settings → Service Rates." });
-    }
     onRefresh();
   };
 
@@ -535,6 +534,14 @@ const LineItemsTab: React.FC<Props> = ({ bill, hospitalId, lineItems, loading, p
             <RotateCw size={12} className={refreshingCeiling ? "animate-spin" : ""} />
             {ceilingBreached ? "Refresh ceiling" : ""}
           </button>
+        </div>
+      )}
+
+      {/* Background sweep in progress — informational only, the tab stays fully usable */}
+      {pullingCharges && (
+        <div className="bg-amber-50 border-l-[3px] border-l-amber-400 px-4 py-2.5 text-xs text-amber-800 flex items-center gap-2 flex-shrink-0">
+          <RefreshCw size={13} className="animate-spin shrink-0" />
+          Pulling charges from room, doctor visits, lab, radiology, pharmacy and nursing…
         </div>
       )}
 

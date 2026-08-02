@@ -4,7 +4,11 @@ import { Mic, MicOff, Loader2, ChevronDown, Zap } from "lucide-react";
 import { useVoiceScribe, SessionType, SUPPORTED_LANGUAGES } from "@/contexts/VoiceScribeContext";
 import { supabase } from "@/integrations/supabase/client";
 import { unwrapFunctionError } from "@/lib/invokeError";
-import { joinTranscriptChunks } from "@/lib/transcriptMerge";
+import { joinTranscriptChunks, collapseRepetitionLoops } from "@/lib/transcriptMerge";
+import {
+  computeScribeConfidence, populatedSections, LOW_CONFIDENCE_THRESHOLD,
+} from "@/lib/scribeConfidence";
+import { structureWithStreaming } from "@/lib/voiceScribeStream";
 import { useToast } from "@/hooks/use-toast";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useVoiceScribeLanguages } from "@/hooks/useVoiceScribeLanguages";
@@ -30,6 +34,12 @@ interface Props {
 
 const SARVAM_CHUNK_SECONDS = 25;
 
+/** One transcribed segment plus whatever confidence signal the engine gave us. */
+interface ChunkResult {
+  text: string;
+  languageProbability: number | null;
+}
+
 const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, className, size = "md" }) => {
   const {
     isRecording, setIsRecording,
@@ -37,6 +47,7 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
     setRawTranscript, setStructuredOutput,
     setCurrentSessionType, setCurrentPatientId, selectedLanguage, setSelectedLanguage,
     setFallbackReason, getExistingDataForCurrentScreen,
+    setScribeSignals, setNativeTranscript, segmentBlobsRef, setRescueState,
   } = useVoiceScribe();
 
   // Keep the panel's notion of "current patient" in sync with whichever
@@ -54,6 +65,17 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
   const audioChunksRef = useRef<Blob[]>([]);
   const fullTranscriptRef = useRef("");
   const chunkTranscriptsRef = useRef<string[]>([]);
+  // Per-segment ASR signal (Sarvam's language_probability + segment length), collected
+  // so confidence can be MEASURED. Previously the engine returned this and the edge
+  // function discarded it, leaving the badge as the LLM's opinion of itself.
+  // `text` is kept alongside so a rescued segment can be spliced back into the
+  // transcript in place, rather than restructuring from that segment alone.
+  const segmentSignalsRef = useRef<{ languageProbability: number | null; words: number; text: string }[]>([]);
+  // One rescue round per dictation, to bound cost.
+  const rescueAttemptedRef = useRef(false);
+  // Lets processTranscript re-enter itself after a rescue without a circular useCallback
+  // dependency (the rescue path calls back into structuring exactly once).
+  const processTranscriptRef = useRef<((t: string, allowRescue?: boolean) => Promise<void>) | null>(null);
   // Gapless-capture queue: audio segments transcribed sequentially in recording order.
   const segmentQueueRef = useRef<Blob[]>([]);
   const queueProcessingRef = useRef(false);
@@ -127,7 +149,78 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
     };
   }, []);
 
-  const processTranscript = useCallback(async (rawText: string) => {
+  // Declared above rescueWorstSegment and the chunk senders, which both use it.
+  const blobToBase64 = useCallback(async (audioBlob: Blob): Promise<string> => {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = reader.result as string;
+        resolve(result.split(",")[1]);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(audioBlob);
+    });
+  }, []);
+
+  /**
+   * Re-hear the single worst-scoring segment with a multimodal model and splice the
+   * correction back into the transcript.
+   *
+   * Only worth doing when the cheap path clearly struggled: if the ASR turned a drug
+   * name into phonetic mush, no text-only model can recover it, because the information
+   * is no longer in the transcript. Restricted to one segment and one round so the
+   * expensive tier stays a small minority of calls and the cheap path keeps its saving.
+   *
+   * Returns the improved transcript, or null when rescue was unavailable or unhelpful —
+   * in which case the caller keeps the original result and the doctor is never blocked.
+   */
+  const rescueWorstSegment = useCallback(async (): Promise<string | null> => {
+    const signals = segmentSignalsRef.current;
+    const blobs = segmentBlobsRef.current;
+    if (signals.length === 0 || blobs.length !== signals.length) return null;
+
+    // Worst = lowest language probability; when the engine reported none, fall back to
+    // the longest segment, which carries the most at risk.
+    let worst = 0;
+    const anyProb = signals.some(s => s.languageProbability !== null);
+    for (let i = 1; i < signals.length; i++) {
+      if (anyProb) {
+        const a = signals[i].languageProbability ?? 1;
+        const b = signals[worst].languageProbability ?? 1;
+        if (a < b) worst = i;
+      } else if (signals[i].words > signals[worst].words) {
+        worst = i;
+      }
+    }
+
+    const blob = blobs[worst];
+    if (!blob || blob.size === 0) return null;
+
+    try {
+      const base64 = await blobToBase64(blob);
+      const { data, error } = await supabase.functions.invoke("ai-clinical-voice", {
+        body: {
+          rescue_only: true,
+          rescue_audio_base64: base64,
+          rescue_media_type: blob.type || "audio/webm",
+          rescue_prior_text: signals[worst].text,
+        },
+      });
+      if (error || data?.error) return null;
+      const corrected: string | null = data?.corrected_text ?? null;
+      if (!corrected?.trim()) return null;
+
+      // Splice in place so the rest of the dictation is preserved verbatim.
+      const rebuilt = signals.map((s, i) => (i === worst ? corrected.trim() : s.text)).filter(Boolean);
+      signals[worst] = { ...signals[worst], text: corrected.trim() };
+      return joinTranscriptChunks(rebuilt);
+    } catch (err) {
+      console.warn("Audio rescue failed (non-fatal):", err);
+      return null;
+    }
+  }, [blobToBase64, segmentBlobsRef]);
+
+  const processTranscript = useCallback(async (rawText: string, allowRescue = true) => {
     if (!rawText.trim()) return;
     setPanelState("processing");
     setIsPanelOpen(true);
@@ -137,54 +230,151 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
       // (e.g. the doctor forgot to mention fever the first time) instead of
       // overwriting the earlier note.
       const existingData = getExistingDataForCurrentScreen();
-      const { data, error } = await supabase.functions.invoke("ai-clinical-voice", {
-        body: { transcript: rawText, context_type: sessionType, language_code: selectedLanguage, existing_data: existingData ?? undefined, patient_id: patientId ?? undefined },
+
+      // Fold runaway ASR loops before spending tokens on them. A stuck recogniser can
+      // emit the same phrase a dozen times; sending that verbatim both wastes input
+      // budget and actively misleads the model about what was emphasised.
+      const loop = collapseRepetitionLoops(rawText);
+      const cleanedTranscript = loop.text;
+      if (loop.removedWords > 0) {
+        setRawTranscript(cleanedTranscript);
+        fullTranscriptRef.current = cleanedTranscript;
+      }
+
+      const requestBody = {
+        transcript: cleanedTranscript,
+        context_type: sessionType,
+        language_code: selectedLanguage,
+        existing_data: existingData ?? undefined,
+        patient_id: patientId ?? undefined,
+        // Saaras already returned English, so the edge function must NOT pay for a
+        // second per-character translation of text that is already translated.
+        pre_translated_by: activeEngineRef.current === "sarvam" ? "sarvam_saaras" : undefined,
+      };
+
+      // Try streaming first so the note fills field by field instead of appearing all at
+      // once after 10-20 s. ANY failure falls back to the buffered call — a partial note
+      // is never presented as final.
+      let data: Record<string, any> | null = null;
+      try {
+        data = await structureWithStreaming(requestBody, {
+          onPartial: (fields) => {
+            // Show the panel filling in as the model writes. `fields` is the complete set of
+            // finished fields so far (extractCompleteFields rescans the whole buffer), so
+            // this replaces rather than merges — no stale key can survive a correction.
+            setStructuredOutput(fields);
+            setPanelState("output");
+          },
+        });
+      } catch (streamErr) {
+        console.warn("Streaming unavailable, falling back to buffered:", streamErr);
+        setStructuredOutput(null);
+        setPanelState("processing");
+        const { data: buffered, error } = await supabase.functions.invoke("ai-clinical-voice", {
+          body: requestBody,
+        });
+        if (error || buffered?.error) throw new Error(await unwrapFunctionError(error, buffered));
+        data = buffered;
+      }
+      if (!data?.structured) throw new Error("No structured note returned");
+
+      const signals = {
+        segments: segmentSignalsRef.current,
+        repetition: { repetitionRatio: loop.repetitionRatio, maxRepeats: loop.maxRepeats },
+        lexiconHitRate: typeof data.lexicon_hit_rate === "number" ? data.lexicon_hit_rate : null,
+        repairs: Array.isArray(data.repairs) ? data.repairs : [],
+        englishTranscript: typeof data.transcript_used === "string"
+          ? data.transcript_used
+          : cleanedTranscript,
+        preTranslated: Boolean(data.pre_translated),
+        safetyCheck: data.safety_check ?? null,
+      };
+
+      // Escalate ONLY when the cheap path measurably struggled. Everything above the
+      // threshold — the great majority of dictations — is finished here, which is what
+      // keeps the expensive audio tier from eating the token saving.
+      const measured = computeScribeConfidence({
+        segments: signals.segments,
+        repetition: signals.repetition,
+        lexiconHitRate: signals.lexiconHitRate,
+        fieldConfidence: (data.structured?.field_confidence as Record<string, number | null>) ?? null,
+        populatedSections: populatedSections(data.structured),
       });
-      if (error || data?.error) throw new Error(await unwrapFunctionError(error, data));
+
+      const shouldRescue =
+        allowRescue &&
+        !rescueAttemptedRef.current &&
+        activeEngineRef.current === "sarvam" &&
+        measured.overall !== null &&
+        measured.overall < LOW_CONFIDENCE_THRESHOLD;
+
+      // Show the note NOW. The rescue used to be awaited here, which meant a low-confidence
+      // dictation ran the whole edge chain three times behind a single spinner with no sign
+      // that a second round had even started — the doctor just waited longer. The result is
+      // usable immediately; the rescue is an optional improvement that arrives after.
       setStructuredOutput(data.structured);
+      setScribeSignals(signals);
       setPanelState("output");
+
+      if (shouldRescue) {
+        rescueAttemptedRef.current = true;
+        setRescueState("running");
+        void (async () => {
+          try {
+            const improved = await rescueWorstSegment();
+            if (!improved || improved === cleanedTranscript) { setRescueState("idle"); return; }
+            setRawTranscript(improved);
+            fullTranscriptRef.current = improved;
+            chunkTranscriptsRef.current = segmentSignalsRef.current.map(s => s.text).filter(Boolean);
+            // Restructure once on the corrected text. `false` prevents a rescue loop.
+            // The panel already shows a usable note, so this quietly replaces it.
+            await processTranscriptRef.current?.(improved, false);
+            setRescueState("improved");
+          } catch {
+            setRescueState("idle");
+          }
+        })();
+      }
     } catch (err) {
       console.error("AI structuring failed:", err);
       const reason = err instanceof Error ? err.message : "AI structuring failed";
       setFallbackReason(reason);
       setPanelState("fallback");
     }
-  }, [sessionType, patientId, selectedLanguage, getExistingDataForCurrentScreen, setPanelState, setIsPanelOpen, setStructuredOutput, setFallbackReason]);
+  }, [sessionType, patientId, selectedLanguage, getExistingDataForCurrentScreen, setPanelState, setIsPanelOpen, setStructuredOutput, setFallbackReason, setRawTranscript, setScribeSignals, rescueWorstSegment, setRescueState]);
+
+  // Keep the self-reference current so the rescue path always calls the latest closure.
+  useEffect(() => { processTranscriptRef.current = processTranscript; }, [processTranscript]);
 
 
-  const sendChunkToSarvam = useCallback(async (audioBlob: Blob): Promise<string> => {
-    const base64 = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = reader.result as string;
-        resolve(result.split(",")[1]);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(audioBlob);
-    });
+  const sendChunkToSarvam = useCallback(async (audioBlob: Blob): Promise<ChunkResult> => {
+    const base64 = await blobToBase64(audioBlob);
 
     const { data, error } = await supabase.functions.invoke("sarvam-transcribe", {
       body: {
         audio_base64: base64,
         language_code: selectedLanguage,
         model: "saaras:v3",
+        // THE core fix. Saaras v3 defaults to mode="transcribe", which returns NATIVE
+        // SCRIPT — which is why the transcript box showed raw Telugu and the structuring
+        // LLM was being asked to translate AND structure inside one 1200-token budget.
+        // "translate" returns English from the same call at the same cost, and Indic
+        // script costs several times more LLM tokens per word than English does.
+        mode: "translate",
       },
     });
 
     if (error || data?.error) throw new Error(data?.error || error?.message);
-    return data.transcript || "";
-  }, [selectedLanguage]);
+    return {
+      text: data.transcript || "",
+      languageProbability: typeof data.language_probability === "number"
+        ? data.language_probability
+        : null,
+    };
+  }, [selectedLanguage, blobToBase64]);
 
-  const sendChunkToBhashini = useCallback(async (audioBlob: Blob): Promise<string> => {
-    const base64 = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = reader.result as string;
-        resolve(result.split(",")[1]);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(audioBlob);
-    });
+  const sendChunkToBhashini = useCallback(async (audioBlob: Blob): Promise<ChunkResult> => {
+    const base64 = await blobToBase64(audioBlob);
 
     const { data, error } = await supabase.functions.invoke("bhashini-transcribe", {
       body: {
@@ -194,10 +384,11 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
     });
 
     if (error || data?.error) throw new Error(data?.error || error?.message);
-    return data.transcript || "";
-  }, [selectedLanguage]);
+    // Bhashini's ULCA pipeline exposes no confidence field at all.
+    return { text: data.transcript || "", languageProbability: null };
+  }, [selectedLanguage, blobToBase64]);
 
-  const sendChunk = useCallback(async (audioBlob: Blob): Promise<string> => {
+  const sendChunk = useCallback(async (audioBlob: Blob): Promise<ChunkResult> => {
     if (activeEngineRef.current === "bhashini") {
       return sendChunkToBhashini(audioBlob);
     }
@@ -212,7 +403,16 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
     while (segmentQueueRef.current.length > 0) {
       const blob = segmentQueueRef.current.shift()!;
       try {
-        const text = await sendChunk(blob);
+        const { text, languageProbability } = await sendChunk(blob);
+        // Retain the audio IN MEMORY for the session. It powers the native-language
+        // transcript view and the low-confidence audio rescue, both of which would
+        // otherwise need the doctor to dictate again. Never persisted — this is PHI.
+        segmentBlobsRef.current.push(blob);
+        segmentSignalsRef.current.push({
+          languageProbability,
+          words: text.trim() ? text.trim().split(/\s+/).length : 0,
+          text: text.trim(),
+        });
         if (text.trim()) {
           chunkTranscriptsRef.current.push(text.trim());
           // Segments overlap by ~200ms on purpose (gapless), so the seam is transcribed twice —
@@ -247,7 +447,7 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
         setPanelState("ready");
       }
     }
-  }, [sendChunk, processTranscript, setRawTranscript, setPanelState, toast]);
+  }, [sendChunk, processTranscript, setRawTranscript, setPanelState, toast, segmentBlobsRef]);
 
   // --- MediaRecorder flow (Sarvam/Bhashini) with OVERLAPPING segments (gapless) ---
   // Sarvam caps a request at 30s, so long dictation is split. To avoid dropping audio
@@ -260,6 +460,12 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
       chunkTranscriptsRef.current = [];
       fullTranscriptRef.current = "";
       segmentQueueRef.current = [];
+      segmentSignalsRef.current = [];
+      rescueAttemptedRef.current = false;
+      // Drop the previous session's retained audio and its native-language view.
+      segmentBlobsRef.current = [];
+      setNativeTranscript(null);
+      setScribeSignals(null);
       queueProcessingRef.current = false;
       pendingFinalRef.current = false;
       isStoppingRef.current = false;
@@ -309,7 +515,7 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
       console.error("Microphone access failed:", err);
       toast({ title: "Microphone access denied", variant: "destructive" });
     }
-  }, [sessionType, activeEngine, drainQueue, setIsRecording, setIsPanelOpen, setPanelState, setRawTranscript, setCurrentSessionType, toast]);
+  }, [sessionType, activeEngine, drainQueue, setIsRecording, setIsPanelOpen, setPanelState, setRawTranscript, setCurrentSessionType, toast, segmentBlobsRef, setNativeTranscript, setScribeSignals]);
 
   // --- Web Speech API flow (English) with automatic Sarvam fallback ---
   const startWebSpeechRecording = useCallback(async () => {
@@ -359,8 +565,15 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
         const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
         audioChunksRef.current = [];
         try {
-          const text = await sendChunkToSarvam(blob);
+          const { text, languageProbability } = await sendChunkToSarvam(blob);
           if (text.trim()) {
+            // The Sarvam fallback owns the whole recording, so its signal and audio
+            // replace anything the (silent) Web Speech attempt left behind.
+            segmentBlobsRef.current = [blob];
+            segmentSignalsRef.current = [{
+              languageProbability, words: text.trim().split(/\s+/).length, text: text.trim(),
+            }];
+            activeEngineRef.current = "sarvam";
             setRawTranscript(text.trim());
             await processTranscript(text.trim());
             return;
@@ -416,7 +629,7 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
     setIsRecording(true);
     setIsPanelOpen(true);
     setPanelState("recording");
-  }, [isWebSpeechSupported, selectedLanguage, sessionType, processTranscript, sendChunkToSarvam, setIsRecording, setIsPanelOpen, setPanelState, setRawTranscript, setCurrentSessionType, toast]);
+  }, [isWebSpeechSupported, selectedLanguage, sessionType, processTranscript, sendChunkToSarvam, setIsRecording, setIsPanelOpen, setPanelState, setRawTranscript, setCurrentSessionType, toast, segmentBlobsRef]);
 
   const startRecording = useCallback(() => {
     if (useSarvamOrBhashini) {

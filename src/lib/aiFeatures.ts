@@ -19,6 +19,7 @@ export interface AIFeatureDef {
 
 export const AI_FEATURE_DEFS: AIFeatureDef[] = [
   { key: "voice_scribe", label: "Voice Scribe (SOAP)", description: "Voice-to-structured clinical notes (OPD/IPD/ED/nursing)" },
+  { key: "voice_scribe_rescue", label: "Voice Scribe Audio Rescue", description: "Re-hears only low-confidence dictation segments with a multimodal model to recover mangled medical terms" },
   { key: "radiology_impression", label: "Radiology AI Impression", description: "AI-suggested impressions for radiology reports" },
   { key: "ai_digest", label: "AI Executive Digest", description: "Daily KPI summaries & anomaly digest for management" },
   { key: "appeal_letter", label: "Appeal Letter Writer", description: "AI-drafted insurance denial appeal letters" },
@@ -95,3 +96,22 @@ export const AI_FEATURE_DEFS: AIFeatureDef[] = [
 ];
 
 export const AI_FEATURE_KEYS: string[] = AI_FEATURE_DEFS.map((f) => f.key);
+
+// ── Safety-class AI features ────────────────────────────────────────────────
+// Clinical-safety AI whose job is to catch harm: drug interactions / ADR,
+// physiological deterioration (early warning) and critical incidental findings.
+// These are NEVER counted against the AI budget and NEVER gated on wallet
+// balance — a cost cap that could throttle them would be a patient-safety
+// mechanism wearing a billing costume (see src/lib/aiBudget.ts).
+//
+// THIS LIST IS MIRRORED in the `hospital_ai_budget_status` view (migration
+// 20261009000175) and in the AI wallet draw-down guard. Change all together.
+export const SAFETY_AI_FEATURE_KEYS: string[] = [
+  "drug_interaction_analysis",
+  "adr_detector",
+  "sepsis_early_warning",
+  "critical_incidental_finder",
+];
+
+export const isSafetyAiFeature = (featureKey: string): boolean =>
+  SAFETY_AI_FEATURE_KEYS.includes(featureKey);

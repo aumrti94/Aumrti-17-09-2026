@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useRealtimeRefetch } from "@/hooks/useRealtimeRefetch";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -65,6 +66,15 @@ const DialysisPatientsTab: React.FC<Props> = ({ showRegister, onCloseRegister, o
   };
 
   useEffect(() => { fetchData(); }, []);
+
+  // Live: new/updated dialysis patients and their sessions reflect without a refresh.
+  // No hospital filter here — RLS scopes rows to the current hospital.
+  useRealtimeRefetch({
+    tables: [{ table: "dialysis_patients", filter: null }, { table: "dialysis_sessions", filter: null }],
+    hospitalId: null,
+    onChange: fetchData,
+    channelName: "dialysis-patients",
+  });
 
   useEffect(() => {
     if (showRegister && allPatients.length === 0) {

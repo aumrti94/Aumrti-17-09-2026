@@ -5,15 +5,27 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/hooks/use-toast";
-import { LogOut, CheckCircle2, XCircle, Printer } from "lucide-react";
+import { LogOut, CheckCircle2, XCircle, Printer, CalendarClock } from "lucide-react";
 import { printAdmissionBill } from "@/lib/billPrint";
 import { settleAdmissionAdvance } from "@/lib/settleAdmissionAdvance";
 import { findAdmissionBill } from "@/lib/admissionBill";
 import { formatINRExact } from "@/lib/currency";
+import { formatDateTimeIST } from "@/lib/dateUtils";
+import { getCurrentUserRowId } from "@/lib/currentUser";
 import {
   DayCareDischargeReadiness,
   evaluateDayCareDischargeReadiness,
 } from "@/lib/dayCareDischarge";
+import {
+  LATE_DISCHARGE_REASONS,
+  checkDayCareDischargeTime,
+  fromISTLocalInput,
+  isLateReasonAcceptable,
+  toISTLocalInput,
+} from "@/lib/dayCareLateDischarge";
+
+/** Sentinel select value that swaps the canned list for a free-text justification. */
+const OTHER_REASON = "__other__";
 
 interface Props {
   open: boolean;
@@ -42,19 +54,34 @@ const DayCareDischargeModal: React.FC<Props> = ({
   // second round-trip for the admission's hospital.
   const [hospitalId, setHospitalId] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
+  // The discharge time is EDITABLE. A day care discharge that was never clicked before
+  // midnight used to be impossible to record at all — the same-day trigger rejected it and
+  // the patient stayed 'active' forever. Almost always the patient really did leave on the
+  // admission day, so recording the actual time both fixes the record and satisfies the rule.
+  const [admittedAt, setAdmittedAt] = useState<string | null>(null);
+  const [dischargeAtLocal, setDischargeAtLocal] = useState("");
+  // A canned reason, or OTHER_REASON with the free text alongside it.
+  const [reasonPreset, setReasonPreset] = useState("");
+  const [otherReason, setOtherReason] = useState("");
 
   // Billing readiness is DERIVED, never self-attested. The old "Bill finalised and payment
   // cleared" checkbox could be ticked on a bill that did not exist.
   useEffect(() => {
-    if (!open) { setReadiness(null); setHospitalId(null); return; }
+    if (!open) {
+      setReadiness(null); setHospitalId(null); setAdmittedAt(null);
+      setDischargeAtLocal(""); setReasonPreset(""); setOtherReason("");
+      return;
+    }
+    setDischargeAtLocal(toISTLocalInput(new Date()));
     (async () => {
       const { data: adm } = await (supabase as any)
         .from("admissions")
-        .select("hospital_id, insurance_type")
+        .select("hospital_id, insurance_type, admitted_at")
         .eq("id", admissionId)
         .maybeSingle();
       if (!adm) { setReadiness(evaluateDayCareDischargeReadiness(null, "self_pay")); return; }
       setHospitalId(adm.hospital_id);
+      setAdmittedAt(adm.admitted_at ?? null);
 
       const found = await findAdmissionBill(adm.hospital_id, admissionId, { paymentStatuses: [] });
       if (!found) {
@@ -71,23 +98,55 @@ const DayCareDischargeModal: React.FC<Props> = ({
   }, [open, admissionId]);
 
   const clinicalChecked = procedureDone && patientStable && consentSigned;
-  const allChecked = clinicalChecked && !!readiness && readiness.blocking.length === 0;
+
+  // Mirrors enforce_daycare_same_day() so the override is asked for up front rather than
+  // surfacing as a failed write. `admittedAt` is null only while the fetch is in flight.
+  const dischargeAtISO = fromISTLocalInput(dischargeAtLocal);
+  const timeCheck = checkDayCareDischargeTime(admittedAt, dischargeAtISO);
+  const needsLateReason = admittedAt != null && timeCheck.crossesDay;
+  const lateReason = reasonPreset === OTHER_REASON ? otherReason : reasonPreset;
+  const lateReasonOk = !needsLateReason || isLateReasonAcceptable(lateReason);
+  const timeOk = admittedAt != null && !timeCheck.error && lateReasonOk;
+
+  const allChecked =
+    clinicalChecked && !!readiness && readiness.blocking.length === 0 && timeOk;
 
   const handleDischarge = async () => {
-    if (!allChecked) {
+    if (!allChecked || !dischargeAtISO) {
       toast({ title: "Complete all checklist items", variant: "destructive" });
       return;
     }
     setSubmitting(true);
-    const now = new Date().toISOString();
+    // auth.uid() is NOT users.id — the audit column is a users FK (see currentUser.ts).
+    const userId = needsLateReason ? await getCurrentUserRowId() : null;
+    if (needsLateReason && !userId) {
+      // The trigger requires reason AND owner together; sending one without the other would
+      // come back as the generic same-day rejection and read as "the reason didn't work".
+      toast({
+        title: "Could not identify you",
+        description: "A late discharge must be attributed to a user. Sign in again and retry.",
+        variant: "destructive",
+      });
+      setSubmitting(false);
+      return;
+    }
 
     const { error } = await supabase
       .from("admissions")
       .update({
         status: "discharged",
-        discharged_at: now,
+        discharged_at: dischargeAtISO,
         discharge_notes: dischargeNotes || null,
         discharge_type: "daycare",
+        // The trigger reads these off the ROW, so a later edit of the same admission
+        // re-validates cleanly instead of demanding the reason all over again.
+        ...(needsLateReason
+          ? {
+              late_discharge_reason: lateReason.trim(),
+              late_discharge_by: userId,
+              late_discharge_at: new Date().toISOString(),
+            }
+          : {}),
       } as any)
       .eq("id", admissionId);
 
@@ -143,15 +202,19 @@ const DayCareDischargeModal: React.FC<Props> = ({
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
+      {/* The checklist grew past the viewport once the discharge-time and late-reason blocks
+          were added, and the base DialogContent has no height cap — the title and, worse, the
+          Confirm button ended up off-screen with nothing to scroll. Cap the dialog and scroll
+          the body, keeping the header and the action row always reachable. */}
+      <DialogContent className="max-w-md max-h-[90vh] flex flex-col overflow-hidden">
+        <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <LogOut size={18} className="text-teal-600" />
             Day Care Discharge
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-1">
           <div className="text-sm text-muted-foreground">
             <span className="font-medium text-foreground">{patientName}</span>
             {" — "}
@@ -192,6 +255,77 @@ const DayCareDischargeModal: React.FC<Props> = ({
             </div>
           </div>
 
+          {/* Discharge time — editable, because the discharge is often recorded after the
+              fact and the same-day rule is judged against THIS value. */}
+          <div className="space-y-1">
+            <label className="text-xs font-medium flex items-center gap-1.5">
+              <CalendarClock size={12} className="text-muted-foreground" />
+              Discharge Date &amp; Time (IST)
+            </label>
+            <input
+              type="datetime-local"
+              value={dischargeAtLocal}
+              onChange={e => setDischargeAtLocal(e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-border rounded-md bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+            {admittedAt ? (
+              <>
+                <p className="text-[11px] text-muted-foreground">
+                  Admitted {formatDateTimeIST(admittedAt)}
+                </p>
+                {timeCheck.error && (
+                  <p className="text-[11px] text-red-600">{timeCheck.error}</p>
+                )}
+              </>
+            ) : readiness ? (
+              // Loaded, and there is still no arrival time — nothing to discharge.
+              <p className="text-[11px] text-red-600">
+                No admission time on record for this patient.
+              </p>
+            ) : null}
+          </div>
+
+          {/* Crossed midnight: allowed, but it is an exception and goes on the record. */}
+          {needsLateReason && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+              <p className="text-xs font-medium text-amber-800">
+                Discharging on a later day than admission
+              </p>
+              <p className="text-[11px] text-amber-700">
+                Admitted {timeCheck.admittedDate}, discharging {timeCheck.dischargeDate}. Day care
+                is same-day care, so this is recorded as an exception. If the patient actually
+                left on the admission day, set the real discharge time above instead.
+              </p>
+              <select
+                value={reasonPreset}
+                onChange={e => setReasonPreset(e.target.value)}
+                className="w-full px-2 py-1.5 text-xs border border-amber-300 rounded bg-white text-foreground"
+              >
+                <option value="">Select a reason…</option>
+                {LATE_DISCHARGE_REASONS.map(r => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+                <option value={OTHER_REASON}>Other…</option>
+              </select>
+              {/* Free text only when no canned reason fits — echoing the chosen one back into
+                  a second box reads as a duplicated field. */}
+              {reasonPreset === OTHER_REASON && (
+                <Textarea
+                  rows={2}
+                  value={otherReason}
+                  onChange={e => setOtherReason(e.target.value)}
+                  placeholder="Reason for the late discharge (required)…"
+                  className="bg-white text-xs"
+                />
+              )}
+              {!lateReasonOk && (
+                <p className="text-[11px] text-amber-700">
+                  A reason is required before this discharge can be recorded.
+                </p>
+              )}
+            </div>
+          )}
+
           <div className="space-y-1">
             <label className="text-xs font-medium">Discharge Notes</label>
             <Textarea
@@ -208,7 +342,10 @@ const DayCareDischargeModal: React.FC<Props> = ({
               All checks complete — ready to discharge.
             </div>
           )}
+        </div>
 
+        {/* Pinned below the scroll area — the actions must never be the part that scrolls off. */}
+        <div className="shrink-0 border-t pt-3">
           <div className="flex gap-2 justify-end">
             {/* The patient should leave holding an itemised bill, not just a deposit receipt. */}
             <Button

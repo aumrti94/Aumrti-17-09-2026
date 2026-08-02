@@ -4,11 +4,18 @@ import { recalculateBillTotalsSafe } from "@/lib/billTotals";
 import { buildOTChargeLineItems, recordOTServiceCharges, recordServiceCharge } from "@/lib/serviceBilling";
 import { getRoomChargeGSTRate, DEFAULT_PHARMACY_GST_PERCENT } from "@/lib/gstRules";
 import { checkBillWritable } from "@/lib/lockedDay";
+import { getRate, SERVICE_RATE_CODES } from "@/lib/serviceRates";
+import { bundlesNursingIntoRoom } from "@/lib/payerTypes";
+import { getWardNursingRate } from "@/lib/wardNursingRate";
+
+/** Bed categories priced as critical care — they take the ICU default rate. */
+const ICU_BED_CATEGORIES = new Set(["icu", "sicu", "picu", "nicu", "micu", "ccu", "iccu"]);
 
 // service_charges.service_module for sweep-added item_types that don't already
 // match a canonical MODULE_ string (lab/radiology/pharmacy already do).
 const SWEEP_SERVICE_MODULE_MAP: Record<string, string> = {
   nursing_procedure: "nursing",
+  nursing: "ipd_nursing",
   room_charge: "ipd_room",
   consultation: "ipd_consultation",
 };
@@ -635,7 +642,7 @@ export async function autoPullAdmissionCharges(
   const { data: admission } = await supabase
     .from("admissions")
     .select(
-      "admitted_at, discharged_at, admission_type, ward_id, bed_id, wards(name, type, rate_per_day), beds(bed_number, bed_category)"
+      "admitted_at, discharged_at, admission_type, ward_id, bed_id, payer_type, wards(name, type, rate_per_day, gst_applicable, gst_percent), beds(bed_number, bed_category)"
     )
     .eq("id", admissionId)
     .maybeSingle();
@@ -652,6 +659,20 @@ export async function autoPullAdmissionCharges(
         source_module: "ipd",
         source_dedupe_key: roomDedupeKey,
         item_type: "room_charge",
+      })
+    );
+
+    // Same unconditional queue for the daily nursing line. Doing it here rather than
+    // inside the "should we charge nursing" branch is what lets the line DISAPPEAR when
+    // a ward's nursing rate is cleared, or when the patient is switched to a payer that
+    // bundles nursing into room rent mid-stay.
+    const nursingDedupeKey = `ipd:nursing:${admissionId}`;
+    queueDeleteByDedupeKey(nursingDedupeKey);
+    existingKeys.delete(
+      buildKey({
+        source_module: "ipd_nursing",
+        source_dedupe_key: nursingDedupeKey,
+        item_type: "nursing",
       })
     );
   }
@@ -701,7 +722,28 @@ export async function autoPullAdmissionCharges(
       .maybeSingle();
 
     const wardDbRate = Number((admission as any).wards?.rate_per_day) || 0;
-    // Priority: ward.rate_per_day (configured in Settings) → payer-specific service_rates → service_master → hardcoded fallback
+
+    // Priority 3: the hospital's configured Default Rate for this class of bed
+    // (Settings → Services & Fees → Default Rates). Only queried when nothing more
+    // specific matched, so the common path costs no extra round trip. This exists
+    // because the chain used to end at a literal 500 — a number no one configured
+    // and no one could find, which silently became the room rate whenever a ward
+    // had no rate_per_day set.
+    const needsCodeRate = wardDbRate <= 0 && !categoryRate?.rate && !roomRate?.fee;
+    const codeRate = needsCodeRate
+      ? await getRate(
+          hospitalId,
+          ICU_BED_CATEGORIES.has((bedCategory || "").toLowerCase())
+            ? SERVICE_RATE_CODES.ICU_PER_DAY
+            : SERVICE_RATE_CODES.WARD_PER_DAY,
+          0
+        )
+      : 0;
+
+    // Priority: ward.rate_per_day (configured in Settings) → payer-specific service_rates
+    // → service_master → service_rates default code → per-category fallback.
+    // The last step shares resolveRoomRateFallback with the pre-bill ledger estimate, so
+    // an admission can no longer show ₹600/day as an estimate and ₹500/day once billed.
     const ratePerDay =
       wardDbRate > 0
         ? wardDbRate
@@ -709,12 +751,18 @@ export async function autoPullAdmissionCharges(
         ? Number(categoryRate.rate)
         : roomRate?.fee
         ? Number(roomRate.fee)
-        : 500;
-    if (wardDbRate <= 0 && !categoryRate?.rate && !roomRate?.fee) usedFallbackRate = true;
-    // GST on room charges is a matter of law (ICU-exempt; >₹5000/day non-ICU = 5%), not
-    // hospital-configurable pricing — deterministic from bed category + rate, independent of
-    // whether a matching service_rates/service_master row happens to exist.
-    const roomGstPct = getRoomChargeGSTRate(bedCategory, ratePerDay);
+        : codeRate > 0
+        ? codeRate
+        : resolveRoomRateFallback(0, bedCategory);
+    if (needsCodeRate && codeRate <= 0) usedFallbackRate = true;
+    // GST on room charges defaults to the statutory rule (ICU-exempt; >₹5000/day
+    // non-ICU = 5%), deterministic from bed category + rate, independent of whether
+    // a matching service_rates/service_master row happens to exist. A hospital may
+    // explicitly override this per ward (Settings → Wards & Beds → GST applicable)
+    // for a documented compliance reason — that configured rate takes precedence.
+    const wardGstApplicable = !!(admission as any).wards?.gst_applicable;
+    const wardGstPercent = Number((admission as any).wards?.gst_percent) || 0;
+    const roomGstPct = wardGstApplicable ? wardGstPercent : getRoomChargeGSTRate(bedCategory, ratePerDay);
     const roomTotal = ratePerDay * days;
     const roomGst = calcGST(roomTotal, roomGstPct);
 
@@ -734,6 +782,50 @@ export async function autoPullAdmissionCharges(
       source_record_id: admissionId, // real UUID
       source_dedupe_key: roomDedupeKey,
     });
+
+    // ----- Daily nursing charge -----
+    //
+    // Priced per ward (Settings → Wards & Beds → Nursing Charge Per Day), because that is
+    // how every real Indian tariff prices it: an ICU bed-day and a general-ward bed-day
+    // carry different nursing rates. 0 = off, which is the default, so a hospital that
+    // bundles nursing into the room rate bills nothing extra.
+    //
+    // Suppressed entirely for scheme/TPA payers: CGHS 2025 Annexure-III bundles nursing
+    // into the ward charge ("not payable separately or billable to the patient") and
+    // IRDAI's non-payable list treats a separate nursing charge as part of room rent, so
+    // such a line is deducted by the TPA rather than collected. See lib/payerTypes.ts.
+    //
+    // It rides the room block deliberately — same `days`, same ward, one line keyed to the
+    // admission — so it re-prices itself on every re-pull as the stay lengthens instead of
+    // depending on someone remembering to add it each day.
+    // Read in its own request rather than joined into the admission select above: naming
+    // the column there would sink the entire admission query — and with it the room charge
+    // and every charge after it — on a database predating migration 20261011000091.
+    const nursingRatePerDay = await getWardNursingRate((admission as any).ward_id);
+    const payerBundlesNursing = bundlesNursingIntoRoom((admission as any).payer_type);
+
+    if (nursingRatePerDay > 0 && !payerBundlesNursing) {
+      const nursingTotal = nursingRatePerDay * days;
+      // gstRules puts nursing at 0% — healthcare services by a clinical establishment
+      // are GST-exempt. Kept explicit so the line never inherits the room's 5% slab.
+      const nursingGstPct = 0;
+      addUniqueItem({
+        hospital_id: hospitalId,
+        bill_id: billId,
+        item_type: "nursing",
+        description: `Nursing Charge: ${wardName} (${days} days)`,
+        quantity: days,
+        unit_rate: nursingRatePerDay,
+        taxable_amount: nursingTotal,
+        gst_percent: nursingGstPct,
+        gst_amount: 0,
+        total_amount: nursingTotal,
+        hsn_code: "999312",
+        source_module: "ipd_nursing",
+        source_record_id: admissionId, // real UUID
+        source_dedupe_key: `ipd:nursing:${admissionId}`,
+      });
+    }
   }
 
   // ----- Sibling bills linked to the admission -----

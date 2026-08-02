@@ -16,50 +16,71 @@ const SettingsDrugsPage: React.FC = () => {
   const { hospitalId } = useHospitalId();
   const [showForm, setShowForm] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
-  const [form, setForm] = useState({ drug_name: "", generic_name: "", category: "", routes: "", schedule_type: "" });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const EMPTY_FORM = { drug_name: "", generic_name: "", category: "", routes: "", schedule_type: "", gst_percent: "12" };
+  const [form, setForm] = useState(EMPTY_FORM);
 
   const { data: drugs, isLoading } = useQuery({
     queryKey: ["settings-drugs"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("drug_master")
-        .select("id, drug_name, generic_name, category, routes, is_active, is_ndps, schedule_type")
+        .select("id, drug_name, generic_name, category, routes, is_active, is_ndps, schedule_type, gst_percent")
         .order("drug_name");
       if (error) throw error;
       return data;
     },
   });
 
-  const addDrug = useMutation({
+  const openEdit = (d: any) => {
+    setEditingId(d.id);
+    setForm({
+      drug_name: d.drug_name, generic_name: d.generic_name || "", category: d.category || "",
+      routes: d.routes?.join(", ") || "", schedule_type: d.schedule_type || "",
+      gst_percent: d.gst_percent != null ? String(d.gst_percent) : "12",
+    });
+    setShowForm(true);
+  };
+
+  const closeForm = () => { setShowForm(false); setEditingId(null); setForm(EMPTY_FORM); };
+
+  const saveDrug = useMutation({
     mutationFn: async () => {
       if (!form.drug_name.trim()) throw new Error("Drug name is required.");
       const { data: me } = await supabase.from("users").select("hospital_id").limit(1).maybeSingle();
       if (!me) throw new Error("No hospital context");
-      // Duplicate check: same drug_name (case-insensitive) for this hospital
-      const { data: existing } = await (supabase as any)
+      // Duplicate check: same drug_name (case-insensitive) for this hospital, excluding self when editing
+      let dupeQuery = (supabase as any)
         .from("drug_master")
         .select("id")
         .eq("hospital_id", me.hospital_id)
-        .ilike("drug_name", form.drug_name.trim())
-        .maybeSingle();
+        .ilike("drug_name", form.drug_name.trim());
+      if (editingId) dupeQuery = dupeQuery.neq("id", editingId);
+      const { data: existing } = await dupeQuery.maybeSingle();
       if (existing) throw new Error(`"${form.drug_name.trim()}" already exists in the drug master.`);
       const isNdps = form.schedule_type === "X";
-      const { error } = await (supabase as any).from("drug_master").insert({
-        hospital_id: me.hospital_id,
+      const gstPercent = form.gst_percent !== "" ? Number(form.gst_percent) : 12;
+      const payload = {
         drug_name: form.drug_name.trim(),
         generic_name: form.generic_name || null,
         category: form.category || null,
         routes: form.routes ? form.routes.split(",").map((r) => r.trim()) : null,
         schedule_type: form.schedule_type || null,
         is_ndps: isNdps,
-      });
-      if (error) throw error;
+        gst_percent: gstPercent,
+      };
+      if (editingId) {
+        const { error } = await (supabase as any).from("drug_master").update(payload).eq("id", editingId);
+        if (error) throw error;
+      } else {
+        const { error } = await (supabase as any).from("drug_master").insert({ hospital_id: me.hospital_id, ...payload });
+        if (error) throw error;
+      }
     },
     onSuccess: () => {
-      toast({ title: "Drug added" });
+      toast({ title: editingId ? "Drug updated" : "Drug added" });
       qc.invalidateQueries({ queryKey: ["settings-drugs"] });
-      setShowForm(false);
-      setForm({ drug_name: "", generic_name: "", category: "", routes: "", schedule_type: "" });
+      closeForm();
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -78,7 +99,7 @@ const SettingsDrugsPage: React.FC = () => {
           <button onClick={() => setShowBulkImport(true)} className="flex items-center gap-1.5 border border-border bg-background text-foreground px-4 py-2 rounded-lg text-sm font-medium hover:bg-muted active:scale-[0.97]">
             <Upload size={14} /> Bulk Import
           </button>
-          <button onClick={() => setShowForm(!showForm)} className="flex items-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 rounded-lg text-sm font-medium hover:opacity-90 active:scale-[0.97]">
+          <button onClick={() => (showForm ? closeForm() : setShowForm(true))} className="flex items-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 rounded-lg text-sm font-medium hover:opacity-90 active:scale-[0.97]">
             {showForm ? <X size={14} /> : <Plus size={14} />} {showForm ? "Cancel" : "Add Drug"}
           </button>
         </div>
@@ -86,12 +107,12 @@ const SettingsDrugsPage: React.FC = () => {
 
       {showForm && (
         <div className="flex-shrink-0 px-6 py-4 border-b border-border bg-muted/30">
-          <div className="flex items-end gap-3">
-            <div className="flex-1">
+          <div className="flex items-end gap-3 flex-wrap">
+            <div className="flex-1 min-w-[160px]">
               <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Drug Name *</label>
               <Input value={form.drug_name} onChange={(e) => setForm({ ...form, drug_name: e.target.value })} placeholder="Paracetamol 500mg" className="h-9" />
             </div>
-            <div className="flex-1">
+            <div className="flex-1 min-w-[160px]">
               <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Generic Name</label>
               <Input value={form.generic_name} onChange={(e) => setForm({ ...form, generic_name: e.target.value })} placeholder="Acetaminophen" className="h-9" />
             </div>
@@ -116,10 +137,17 @@ const SettingsDrugsPage: React.FC = () => {
                 <option value="other">Other</option>
               </select>
             </div>
-            <button onClick={() => addDrug.mutate()} disabled={!form.drug_name || addDrug.isPending} className="bg-primary text-primary-foreground px-4 h-9 rounded-md text-sm font-medium disabled:opacity-40 active:scale-[0.97]">
-              {addDrug.isPending ? "Saving..." : "Save"}
+            <div className="w-24">
+              <label className="text-[11px] font-medium text-muted-foreground mb-1 block">GST %</label>
+              <Input type="number" min={0} max={100} step="0.01" value={form.gst_percent} onChange={(e) => setForm({ ...form, gst_percent: e.target.value })} placeholder="12" className="h-9" />
+            </div>
+            <button onClick={() => saveDrug.mutate()} disabled={!form.drug_name || saveDrug.isPending} className="bg-primary text-primary-foreground px-4 h-9 rounded-md text-sm font-medium disabled:opacity-40 active:scale-[0.97]">
+              {saveDrug.isPending ? "Saving..." : editingId ? "Update" : "Save"}
             </button>
           </div>
+          <p className="text-[11px] text-muted-foreground mt-2">
+            This is the drug's default GST rate. Each batch received via Receive Stock can still carry its own rate (e.g. from the vendor invoice).
+          </p>
         </div>
       )}
 
@@ -133,10 +161,12 @@ const SettingsDrugsPage: React.FC = () => {
               <th className="px-4 py-2.5 font-medium">Routes</th>
               <th className="px-4 py-2.5 font-medium">Schedule</th>
               <th className="px-4 py-2.5 font-medium">NDPS</th>
+              <th className="px-4 py-2.5 font-medium text-right">GST %</th>
+              <th className="px-4 py-2.5 font-medium text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {isLoading && <tr><td colSpan={6} className="px-6 py-12 text-center text-muted-foreground">Loading...</td></tr>}
+            {isLoading && <tr><td colSpan={8} className="px-6 py-12 text-center text-muted-foreground">Loading...</td></tr>}
             {drugs?.map((d: any) => (
               <tr key={d.id} className="border-b border-border/50 hover:bg-muted/20">
                 <td className="px-6 py-3 font-medium text-foreground">{d.drug_name}</td>
@@ -156,6 +186,10 @@ const SettingsDrugsPage: React.FC = () => {
                   ) : <span className="text-[11px] text-muted-foreground">OTC</span>}
                 </td>
                 <td className="px-4 py-3">{d.is_ndps ? <Badge variant="destructive" className="text-[10px]">NDPS / Controlled</Badge> : "—"}</td>
+                <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{d.gst_percent != null ? `${d.gst_percent}%` : "—"}</td>
+                <td className="px-4 py-3 text-right">
+                  <button onClick={() => openEdit(d)} className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded hover:bg-muted">Edit</button>
+                </td>
               </tr>
             ))}
           </tbody>

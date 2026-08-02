@@ -273,8 +273,9 @@ const GRNPanel: React.FC = () => {
       const filePath = `${userData.hospital_id}/${grnNumber}.${scanImageFile.name.split('.').pop()}`;
       const { data: uploadData } = await supabase.storage.from("grn-invoices").upload(filePath, scanImageFile);
       if (uploadData?.path) {
-        const { data: urlData } = supabase.storage.from("grn-invoices").getPublicUrl(uploadData.path);
-        invoiceImageUrl = urlData?.publicUrl || null;
+        // Bucket is private (20261010000020) — store the object path, not a
+        // public URL. Any viewer must sign it via resolveStorageUrl().
+        invoiceImageUrl = uploadData.path;
         await (supabase as any).from("grn_records").update({ invoice_image_url: invoiceImageUrl }).eq("id", grn.id);
       }
       await (supabase as any).from("grn_ai_log").insert({

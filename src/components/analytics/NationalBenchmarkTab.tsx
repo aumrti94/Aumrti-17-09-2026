@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
-import { computeReadmissionMetrics, computePatientSatisfaction } from "@/hooks/useAnalyticsData";
 import { Badge } from "@/components/ui/badge";
 import { TrendingUp, TrendingDown, Minus, Trophy, AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -29,7 +28,8 @@ const BENCHMARKS = [
   {
     category: "Medication Safety",
     indicators: [
-      { code: "MER",        name: "Medication Error Rate",              unit: "%",     nabh: 0.10, direction: "lower",  source: "NABH MOM Standard" },
+      // Expressed per 1000 doses to match how it is measured (0.10% == 1.0/1000).
+      { code: "MER",        name: "Medication Error Rate",              unit: "/1000 doses", nabh: 1.0, direction: "lower",  source: "NABH MOM Standard" },
       { code: "ADR",        name: "Adverse Drug Reaction Reporting Rate", unit: "/1000 patients", nabh: 5.0, direction: "higher", source: "PvPI National Target" },
     ],
   },
@@ -58,100 +58,51 @@ const BENCHMARKS = [
   },
 ];
 
-// Fetch live hospital data
+// Benchmark code -> the indicator that measures it. Every one of these is now
+// computed server-side by public.run_quality_indicator_collection(), so this tab
+// no longer recomputes eight metrics its own (differently wrong) way. ERTOS and
+// SSI in particular used to be hardcoded null.
+const BENCHMARK_TO_INDICATOR: Record<string, string> = {
+  ALOS:          "aac.ip_alos_days",
+  BOR:           "aac.bed_occupancy_pct",
+  DTR:           "aac.discharge_tat_hrs",
+  ERTOS:         "cop.ertos_trauma_min",
+  CLABSI:        "hic.clabsi_per1000",
+  CAUTI:         "hic.cauti_per1000",
+  VAP:           "hic.vap_per1000",
+  SSI:           "hic.ssi_pct",
+  MER:           "mom.med_error_per1000",
+  ADR:           "mom.adr_per1000",
+  FALLS:         "qps.fall_per1000",
+  PRESSURE:      "cop.pressure_injury_per1000",
+  READMIT30:     "aac.readmit_30d_pct",
+  HH:            "hic.hand_hygiene_pct",
+  CAPA_TAT:      "qps.capa_ontime_closure_pct",
+  INCIDENT_RR:   "qps.incident_report_per100beds",
+  PREM:          "pre.prem_satisfaction_pct",
+  COMPLAINT_RES: "pre.complaint_resolved_7d_pct",
+};
+
+// Fetch live hospital data — one read of the persisted indicator set, matched by
+// stable indicator_code. The previous version matched on indicator_name
+// substrings and read a `current_value` column that does not exist, so every
+// quality-indicator-derived benchmark here was always null.
 async function fetchHospitalMetrics(hospitalId: string) {
-  const now = new Date();
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().split("T")[0];
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
+  const { data } = await (supabase as any)
+    .from("quality_indicators_current")
+    .select("indicator_code, value")
+    .eq("hospital_id", hospitalId);
 
-  const todayStr = now.toISOString().split("T")[0];
+  const byCode = new Map<string, number | null>(
+    ((data as any[]) || []).map((r) => [r.indicator_code, r.value === null ? null : Number(r.value)]),
+  );
 
-  const [admRes, bedRes, qiRes, hhRes, ipcRes, incRes, capaRes, readmissionMetrics, satisfaction] = await Promise.all([
-    (supabase as any).from("admissions").select("admitted_at, discharged_at, status, patient_id")
-      .eq("hospital_id", hospitalId).eq("status", "discharged").gte("discharged_at", thirtyDaysAgo),
-    supabase.from("beds").select("id, status").eq("hospital_id", hospitalId).eq("is_active", true),
-    (supabase as any).from("quality_indicators").select("*").eq("hospital_id", hospitalId),
-    (supabase as any).from("hand_hygiene_audits").select("total_opportunities, total_compliant")
-      .eq("hospital_id", hospitalId).gte("audit_date", monthStart),
-    (supabase as any).from("ipc_infection_events").select("infection_type, onset_date")
-      .eq("hospital_id", hospitalId).gte("onset_date", thirtyDaysAgo),
-    (supabase as any).from("incident_reports").select("id, status, created_at")
-      .eq("hospital_id", hospitalId).gte("created_at", thirtyDaysAgo),
-    (supabase as any).from("capa_records").select("id, status, due_date, closed_at")
-      .eq("hospital_id", hospitalId),
-    // Real chronological 30-day readmission check — shared with QualityTab, replaces the
-    // old duplicate-patient-id-in-list heuristic that was here before.
-    computeReadmissionMetrics(hospitalId, { from: thirtyDaysAgo, to: todayStr }),
-    // Real PREM source (prom_prem_surveys.prem_overall) — the old `prom_responses.overall_score`
-    // query referenced a table that never existed in the schema and always returned empty.
-    computePatientSatisfaction(hospitalId, { from: monthStart, to: todayStr }),
-  ]);
-
-  const discharges = admRes.data || [];
-  const beds = bedRes.data || [];
-  const occupied = beds.filter((b: any) => b.status === "occupied").length;
-  const qi = qiRes.data || [];
-
-  const avgLOS = discharges.length > 0
-    ? discharges.filter((a: any) => a.admitted_at && a.discharged_at)
-        .map((a: any) => (new Date(a.discharged_at).getTime() - new Date(a.admitted_at).getTime()) / 86400000)
-        .reduce((s: number, v: number) => s + v, 0) / discharges.length
-    : null;
-
-  const bor = beds.length > 0 ? Math.round((occupied / beds.length) * 100) : null;
-
-  const readmitRate = readmissionMetrics.readmissionRate;
-
-  const hhTotal = (hhRes.data || []).reduce((s: number, r: any) => s + (r.total_opportunities || 0), 0);
-  const hhDone  = (hhRes.data || []).reduce((s: number, r: any) => s + (r.total_compliant    || 0), 0);
-  const hhPct = hhTotal > 0 ? Math.round((hhDone / hhTotal) * 100) : null;
-
-  const infections = ipcRes.data || [];
-  const clabsiCount = infections.filter((i: any) => i.infection_type === "CLABSI").length;
-  const cautiCount  = infections.filter((i: any) => i.infection_type === "CAUTI").length;
-  const vapCount    = infections.filter((i: any) => i.infection_type === "VAP").length;
-
-  const closedCapas = (capaRes.data || []).filter((c: any) => c.status === "closed");
-  const capaOnTime  = closedCapas.filter((c: any) => c.closed_at && c.due_date && new Date(c.closed_at) <= new Date(c.due_date)).length;
-  const capaPct = closedCapas.length > 0 ? Math.round((capaOnTime / closedCapas.length) * 100) : null;
-
-  const incidentCount = (incRes.data || []).length;
-  const incidentRate = beds.length > 0 ? Math.round((incidentCount / beds.length) * 100 * 10) / 10 : null;
-
-  // PREM benchmark is expressed as a %, prem_overall is on a 1-5 scale — convert.
-  const promPct = satisfaction.avgOverall5 != null ? Math.round((satisfaction.avgOverall5 / 5) * 100) : null;
-
-  const qiMap: Record<string, number | null> = {};
-  for (const ind of qi) {
-    const name = (ind.indicator_name || "").toLowerCase();
-    if (name.includes("fall")) qiMap["FALLS"] = ind.current_value;
-    if (name.includes("medication error") || name.includes("med error")) qiMap["MER"] = ind.current_value;
-    if (name.includes("adr")) qiMap["ADR"] = ind.current_value;
-    if (name.includes("pressure") || name.includes("bedsore")) qiMap["PRESSURE"] = ind.current_value;
-    if (name.includes("discharge") && name.includes("time")) qiMap["DTR"] = ind.current_value;
-    if (name.includes("complaint")) qiMap["COMPLAINT_RES"] = ind.current_value;
-  }
-
-  return {
-    ALOS:     avgLOS != null ? Math.round(avgLOS * 10) / 10 : null,
-    BOR:      bor,
-    DTR:      qiMap["DTR"] ?? null,
-    ERTOS:    null,
-    CLABSI:   clabsiCount > 0 ? clabsiCount : null,
-    CAUTI:    cautiCount  > 0 ? cautiCount  : null,
-    VAP:      vapCount    > 0 ? vapCount    : null,
-    SSI:      null,
-    MER:      qiMap["MER"] ?? null,
-    ADR:      qiMap["ADR"] ?? null,
-    FALLS:    qiMap["FALLS"] ?? null,
-    PRESSURE: qiMap["PRESSURE"] ?? null,
-    READMIT30: readmitRate != null ? Math.round(readmitRate * 10) / 10 : null,
-    HH:       hhPct,
-    CAPA_TAT: capaPct,
-    INCIDENT_RR: incidentRate,
-    PREM:     promPct,
-    COMPLAINT_RES: qiMap["COMPLAINT_RES"] ?? null,
-  } as Record<string, number | null>;
+  return Object.fromEntries(
+    Object.entries(BENCHMARK_TO_INDICATOR).map(([benchmark, code]) => [
+      benchmark,
+      byCode.get(code) ?? null,
+    ]),
+  ) as Record<string, number | null>;
 }
 
 const TrafficLight: React.FC<{ value: number | null; benchmark: number; direction: "lower" | "higher"; unit: string }> = ({

@@ -3,6 +3,7 @@ import { Download, Receipt, AlertCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { usePatientPortal } from "@/contexts/PatientPortalContext";
+import { printBillById } from "@/lib/billPrint";
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -164,39 +165,12 @@ const PatientPortalBillsPage: React.FC = () => {
     }
   };
 
-  // ── print receipt ───────────────────────────────────────────────────────────
-  const handleReceipt = (bill: BillRow) => {
-    const w = window.open("", "_blank");
-    if (!w) return;
-    w.document.write(`
-      <html><head><title>Receipt - ${bill.bill_number}</title>
-      <style>
-        body { font-family: Inter, sans-serif; padding: 32px; max-width: 480px; margin: 0 auto; }
-        h1  { font-size: 18px; color: #0E7B7B; margin-bottom: 4px; }
-        sub { font-size: 12px; color: #64748B; }
-        .row { display: flex; justify-content: space-between; padding: 7px 0;
-               font-size: 13px; border-bottom: 1px solid #F1F5F9; }
-        .lbl { color: #64748B; } .val { font-weight: 600; color: #0F172A; }
-        .footer { margin-top: 24px; font-size: 11px; color: #94A3B8; text-align: center; }
-      </style></head>
-      <body>
-        <h1>Payment Receipt</h1>
-        <sub>${hospital?.name ?? ""}</sub>
-        <div style="margin-top:20px">
-          <div class="row"><span class="lbl">Bill No</span><span class="val">${bill.bill_number}</span></div>
-          <div class="row"><span class="lbl">Date</span>
-               <span class="val">${new Date(bill.bill_date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</span></div>
-          <div class="row"><span class="lbl">Patient</span><span class="val">${patient?.fullName ?? ""}</span></div>
-          <div class="row"><span class="lbl">UHID</span><span class="val">${patient?.uhid ?? ""}</span></div>
-          <div class="row"><span class="lbl">Type</span><span class="val">${bill.bill_type?.toUpperCase() ?? ""}</span></div>
-          <div class="row"><span class="lbl">Total</span><span class="val">${fmt(bill.total_amount)}</span></div>
-          <div class="row"><span class="lbl">Paid</span><span class="val" style="color:#15803D">${fmt(bill.paid_amount)}</span></div>
-          <div class="row"><span class="lbl">Balance</span><span class="val" style="color:${bill.balance_due > 0 ? "#DC2626" : "#15803D"}">${fmt(bill.balance_due)}</span></div>
-        </div>
-        <div class="footer">Thank you for choosing ${hospital?.name ?? "us"}.</div>
-        <script>window.onload = () => window.print();</script>
-      </body></html>`);
-    w.document.close();
+  // ── print bill ──────────────────────────────────────────────────────────────
+  // The portal cannot reach the admissions table under its RLS, so includeAdmission:false —
+  // the shared structured bill still renders, just without the stay header.
+  const handleReceipt = async (bill: BillRow) => {
+    if (!hospitalId) return;
+    await printBillById(bill.id, hospitalId, { includeAdmission: false });
   };
 
   // ── derived ─────────────────────────────────────────────────────────────────

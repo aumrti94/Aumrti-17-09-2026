@@ -4,11 +4,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Lock, Plus, X } from "lucide-react";
+import { Lock, Plus, X, ListPlus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { supabase } from "@/integrations/supabase/client";
 import { SIGNIN_ITEMS, TIMEOUT_ITEMS, SIGNOUT_ITEMS } from "@/components/ot/tabs/WHOChecklistTab";
+import BulkPasteAddModal from "@/components/settings/BulkPasteAddModal";
 
 type Phase = "signin" | "timeout" | "signout";
 
@@ -29,6 +30,7 @@ const SettingsOTChecklistPage: React.FC = () => {
   const { hospitalId } = useHospitalId();
   const [customItems, setCustomItems] = useState<Record<Phase, CustomItem[]>>({ signin: [], timeout: [], signout: [] });
   const [newItem, setNewItem] = useState("");
+  const [bulkPhase, setBulkPhase] = useState<Phase | null>(null);
 
   const fetchCustomItems = async () => {
     if (!hospitalId) return;
@@ -64,6 +66,18 @@ const SettingsOTChecklistPage: React.FC = () => {
 
   const removeCustom = async (id: string) => {
     await (supabase as any).from("ot_checklist_custom_items").delete().eq("id", id);
+    fetchCustomItems();
+  };
+
+  const addCustomBulk = async (phase: Phase, bulkRows: Record<string, string>[]) => {
+    if (!hospitalId) return { error: "No hospital context" };
+    const payload = bulkRows.map((r) => ({
+      hospital_id: hospitalId,
+      phase,
+      item_text: r.item_text.trim(),
+    }));
+    const { error } = await (supabase as any).from("ot_checklist_custom_items").insert(payload);
+    if (error) return { error: error.message };
     fetchCustomItems();
   };
 
@@ -106,11 +120,21 @@ const SettingsOTChecklistPage: React.FC = () => {
               <div className="flex gap-2 mt-2">
                 <Input value={newItem} onChange={(e) => setNewItem(e.target.value)} placeholder="Add custom checklist item..." className="h-9" onKeyDown={(e) => e.key === "Enter" && addCustom(phase)} />
                 <Button size="sm" onClick={() => addCustom(phase)} className="gap-1"><Plus size={14} /> Add</Button>
+                <Button size="sm" variant="outline" onClick={() => setBulkPhase(phase)} className="gap-1"><ListPlus size={14} /> Bulk Add</Button>
               </div>
             </div>
           </TabsContent>
         ))}
       </Tabs>
+
+      <BulkPasteAddModal
+        open={bulkPhase !== null}
+        onOpenChange={(v) => !v && setBulkPhase(null)}
+        title={`Bulk Add Checklist Items — ${bulkPhase ?? ""}`}
+        columns={[{ key: "item_text", label: "Checklist item", required: true }]}
+        existingKeys={new Set((bulkPhase ? customItems[bulkPhase] : []).map((i) => i.item_text.toLowerCase()))}
+        onSubmit={(rows) => addCustomBulk(bulkPhase as Phase, rows)}
+      />
     </SettingsPageWrapper>
   );
 };

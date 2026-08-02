@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { FileText, Upload, Loader2, Trash2, ExternalLink, ShieldCheck } from "lucide-react";
 import { differenceInDays, format } from "date-fns";
 import { cn } from "@/lib/utils";
+import { openStoredFile, BUCKETS } from "@/lib/storageUrls";
 
 const DOC_TYPES = [
   "offer_letter", "appointment_order", "id_proof", "pan", "address_proof",
@@ -62,15 +63,17 @@ const StaffDocumentsTab: React.FC = () => {
     setUploading(true);
     try {
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-      const path = `staff-documents/${hospitalId}/${selectedStaff}/${Date.now()}_${safeName}`;
-      const { error: upErr } = await supabase.storage.from("hospital-assets").upload(path, file, { upsert: true });
+      // Private bucket, hospitalId first so the RLS policy accepts the write.
+      // The old `staff-documents/${hospitalId}/…` path on public hospital-assets
+      // was blocked by that bucket's INSERT policy and exposed staff PII.
+      const path = `${hospitalId}/staff-documents/${selectedStaff}/${Date.now()}_${safeName}`;
+      const { error: upErr } = await supabase.storage.from(BUCKETS.hospitalPrivate).upload(path, file, { upsert: true });
       if (upErr) throw upErr;
-      const { data: urlData } = supabase.storage.from("hospital-assets").getPublicUrl(path);
       const { data: u } = await supabase.auth.getUser();
       const { data: cu } = await supabase.from("users").select("id").eq("auth_user_id", u.user?.id || "").maybeSingle();
       const { error } = await (supabase as any).from("staff_documents").insert({
         hospital_id: hospitalId, user_id: selectedStaff, doc_type: uploadForm.doc_type,
-        file_url: urlData.publicUrl, file_name: file.name, expiry_date: uploadForm.expiry_date || null,
+        file_url: path, file_name: file.name, expiry_date: uploadForm.expiry_date || null,
         uploaded_by: cu?.id || null,
       });
       if (error) throw error;
@@ -140,7 +143,18 @@ const StaffDocumentsTab: React.FC = () => {
                   </div>
                   <p className="text-[10px] text-muted-foreground truncate">{d.file_name}</p>
                 </div>
-                <a href={d.file_url} target="_blank" rel="noopener noreferrer" className="text-primary"><ExternalLink className="h-4 w-4" /></a>
+                <button
+                  type="button"
+                  className="text-primary"
+                  title="Open document"
+                  onClick={async () => {
+                    if (!(await openStoredFile(BUCKETS.hospitalPrivate, d.file_url))) {
+                      toast({ title: "Could not open document", variant: "destructive" });
+                    }
+                  }}
+                >
+                  <ExternalLink className="h-4 w-4" />
+                </button>
                 <Button size="sm" variant="ghost" className="h-7 text-[10px]" onClick={() => toggleVerified(d)}>
                   {d.verified ? "Unverify" : "Verify"}
                 </Button>

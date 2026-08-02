@@ -2,12 +2,13 @@ import React from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Receipt, Plus, IndianRupee, Search, X } from "lucide-react";
+import { Receipt, Plus, IndianRupee, Search, X, CalendarDays } from "lucide-react";
 import EmptyState from "@/components/EmptyState";
 import type { BillRecord } from "@/pages/billing/BillingPage";
 import { useHospitalContext } from "@/contexts/HospitalContext";
 import { hasActionAccess } from "@/lib/tabPermissions";
 import { billStatusDisplay, isRefundStatus } from "@/lib/billStatus";
+import { BILLING_DATE_PRESETS } from "@/lib/billingDateRange";
 
 const STATUS_FILTERS = [
   { key: "all", label: "All" },
@@ -16,12 +17,16 @@ const STATUS_FILTERS = [
   { key: "paid", label: "Paid" },
 ];
 
-const DATE_FILTERS = [
-  { key: "today", label: "Today" },
-  { key: "yesterday", label: "Yesterday" },
-  { key: "week", label: "This Week" },
-  { key: "month", label: "This Month" },
-];
+/**
+ * The shared preset list, not a hand-written copy. This panel used to keep its own, which
+ * labelled the same keys "This Week" and "This Month" while they actually resolve to rolling
+ * 7- and 30-day windows — so the queue promised a calendar month and delivered something
+ * else, and the page's own filter bar disagreed with it word for word.
+ *
+ * Custom is included so every value `dateFilter` can hold is selectable in the dropdown;
+ * leaving it out left the control blank whenever a custom range was active.
+ */
+const DATE_FILTERS = BILLING_DATE_PRESETS;
 
 interface Props {
   bills: BillRecord[];
@@ -119,35 +124,47 @@ const BillQueue: React.FC<Props> = ({
 
     {/* Date filter — hidden when patient search is active */}
     <div className={cn("px-4 py-1.5 border-b border-border flex-shrink-0 space-y-1.5", patientSearch && "opacity-40 pointer-events-none")}>
+      {/* A dropdown rather than a row of links: the presets outgrew this 320px panel once
+          "All time" was added, and wrapping them cost a whole line of vertical space above
+          the bill list. One control also makes the active period unambiguous — the old row
+          showed nothing selected at all while a custom range was in effect. */}
       <div className="flex items-center gap-2">
-        {DATE_FILTERS.map((d) => (
-          <button
-            key={d.key}
-            onClick={() => onDateFilter(d.key)}
-            className={cn(
-              "text-[11px] font-medium transition-colors whitespace-nowrap",
-              dateFilter === d.key ? "text-primary underline" : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {d.label}
-          </button>
-        ))}
+        <CalendarDays size={13} className="text-muted-foreground shrink-0" />
+        <select
+          value={dateFilter}
+          onChange={(e) => onDateFilter(e.target.value)}
+          aria-label="Period"
+          className="flex-1 min-w-0 text-[11px] font-medium border border-border rounded px-1.5 py-1 bg-card text-foreground focus:border-primary focus:outline-none"
+        >
+          {DATE_FILTERS.map((d) => (
+            <option key={d.key} value={d.key}>{d.label}</option>
+          ))}
+        </select>
       </div>
-      <div className="flex items-center gap-1.5">
-        <input
-          type="date"
-          value={startDate}
-          onChange={e => onStartDate(e.target.value)}
-          className="flex-1 text-[11px] border border-border rounded px-1.5 py-1 bg-card text-foreground focus:border-primary focus:outline-none"
-        />
-        <span className="text-[11px] text-muted-foreground shrink-0">to</span>
-        <input
-          type="date"
-          value={endDate}
-          onChange={e => onEndDate(e.target.value)}
-          className="flex-1 text-[11px] border border-border rounded px-1.5 py-1 bg-card text-foreground focus:border-primary focus:outline-none"
-        />
-      </div>
+      {/* The From/To pair only belongs to the Custom option, so it stays out of the way the
+          rest of the time. Picking a date still switches the preset to custom (see the
+          page's onStartDate/onEndDate), so the two can never disagree. */}
+      {dateFilter === "custom" && (
+        <div className="flex items-center gap-1.5">
+          <input
+            type="date"
+            value={startDate}
+            max={endDate || undefined}
+            onChange={e => onStartDate(e.target.value)}
+            aria-label="From date"
+            className="flex-1 min-w-0 text-[11px] border border-border rounded px-1.5 py-1 bg-card text-foreground focus:border-primary focus:outline-none"
+          />
+          <span className="text-[11px] text-muted-foreground shrink-0">to</span>
+          <input
+            type="date"
+            value={endDate}
+            min={startDate || undefined}
+            onChange={e => onEndDate(e.target.value)}
+            aria-label="To date (leave blank for a single day)"
+            className="flex-1 min-w-0 text-[11px] border border-border rounded px-1.5 py-1 bg-card text-foreground focus:border-primary focus:outline-none"
+          />
+        </div>
+      )}
     </div>
 
     {/* Bill list */}
@@ -155,13 +172,26 @@ const BillQueue: React.FC<Props> = ({
       {loading ? (
         <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">Loading...</div>
       ) : bills.length === 0 ? (
-        <EmptyState
-          icon="🧾"
-          title="No bills for this period"
-          description="Bills created from OPD, IPD, and emergency appear here"
-          actionLabel={hasActionAccess("billing", "new_bill", permissions, role) ? "+ Create Bill" : undefined}
-          onAction={hasActionAccess("billing", "new_bill", permissions, role) ? onNewBill : undefined}
-        />
+        // An empty window is far more often the filter than the truth — an unpaid bill from
+        // last month is still owed, it has just aged out of a rolling range. So the primary
+        // action here is to widen the range, not to create yet another bill.
+        dateFilter !== "all" ? (
+          <EmptyState
+            icon="🧾"
+            title="No bills in this period"
+            description="Older unpaid bills are still outstanding — they have just aged out of this date range."
+            actionLabel="Show all dates"
+            onAction={() => onDateFilter("all")}
+          />
+        ) : (
+          <EmptyState
+            icon="🧾"
+            title="No bills yet"
+            description="Bills created from OPD, IPD, and emergency appear here"
+            actionLabel={hasActionAccess("billing", "new_bill", permissions, role) ? "+ Create Bill" : undefined}
+            onAction={hasActionAccess("billing", "new_bill", permissions, role) ? onNewBill : undefined}
+          />
+        )
       ) : (
         bills.map((bill) => {
           const isPendingIPD = bill.bill_status === "pending_ipd";
@@ -175,6 +205,10 @@ const BillQueue: React.FC<Props> = ({
           const days = isPendingIPD
             ? Math.max(1, Math.ceil((Date.now() - new Date(bill.bill_date).getTime()) / 86400000))
             : 0;
+          // The patient is still admitted, so room and nursing are still accruing. Anything
+          // not yet swept onto the bill is shown beside the stored total rather than folded
+          // into it — the headline figure must stay the amount actually billed.
+          const unbilled = bill.is_live_admission ? (bill.live_unbilled_amount || 0) : 0;
           return (
             <button
               key={bill.id}
@@ -206,6 +240,21 @@ const BillQueue: React.FC<Props> = ({
                   <span className="text-[13px] font-bold text-foreground">₹{bill.total_amount.toLocaleString("en-IN")}</span>
                 )}
               </div>
+              {bill.is_live_admission && (
+                <div className="flex items-center justify-between mt-0.5 text-[10px]">
+                  <span className="font-medium text-accent">
+                    Day {bill.live_days} · still admitted
+                  </span>
+                  {unbilled > 0 && (
+                    <span
+                      className="text-accent font-semibold"
+                      title="Room and nursing accrued since the bill was last recalculated. Open the bill to post them."
+                    >
+                      + ₹{unbilled.toLocaleString("en-IN")} accrued
+                    </span>
+                  )}
+                </div>
+              )}
               <div className="flex items-center gap-2 mt-1">
                 <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[9px] font-bold">
                   {bill.patient_name.charAt(0)}

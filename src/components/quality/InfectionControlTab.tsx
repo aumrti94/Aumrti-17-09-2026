@@ -9,12 +9,14 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { useHospitalId } from "@/hooks/useHospitalId";
 
 interface QI {
   id: string;
+  indicator_code: string;
   indicator_name: string;
   category: string;
-  value: number;
+  value: number | null;
   unit: string;
   target: number | null;
 }
@@ -37,12 +39,15 @@ interface HAIReport {
   status: string;
 }
 
-const infectionTypes = ["CAUTI", "CLABSI", "VAP", "SSI", "C.Diff", "Other"];
+// Must match the infection_type CHECK on ipc_infection_events.
+const infectionTypes = ["CAUTI", "CLABSI", "VAP", "SSI", "BSI", "CDI", "MDRO", "other"] as const;
 
 const InfectionControlTab: React.FC = () => {
   const { toast } = useToast();
+  const { hospitalId } = useHospitalId();
   const [indicators, setIndicators] = useState<QI[]>([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   // Hand hygiene audit state
   const [hhModalOpen, setHhModalOpen] = useState(false);
@@ -55,50 +60,84 @@ const InfectionControlTab: React.FC = () => {
   const [haiReports, setHaiReports] = useState<HAIReport[]>([]);
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (hospitalId) loadData();
+  }, [hospitalId]);
 
   const loadData = async () => {
-    const { data: qiData } = await supabase
-      .from("quality_indicators")
-      .select("*")
-      .eq("category", "infection_control");
-    setIndicators((qiData as any) || []);
+    if (!hospitalId) return;
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    const monthStartISO = monthStart.toISOString().slice(0, 10);
 
-    // For demo, we'll simulate audit/HAI logs from quality_indicators
-    // In production these would be separate tables
+    // Real tables, not simulated state. The audits and HAI events entered here
+    // are the same rows the indicator engine aggregates.
+    const [qiRes, hhRes, haiRes] = await Promise.all([
+      (supabase as any).from("quality_indicators_current")
+        .select("id, indicator_code, indicator_name, category, value, unit, target")
+        .eq("hospital_id", hospitalId).eq("category", "infection_control"),
+      (supabase as any).from("hand_hygiene_audits")
+        .select("id, audit_date, area_name, total_compliant, total_opportunities")
+        .eq("hospital_id", hospitalId).order("audit_date", { ascending: false }).limit(20),
+      (supabase as any).from("ipc_infection_events")
+        .select("id, onset_date, infection_type, organism, outcome")
+        .eq("hospital_id", hospitalId).gte("onset_date", monthStartISO)
+        .order("onset_date", { ascending: false }).limit(20),
+    ]);
+
+    setIndicators((qiRes.data as QI[]) || []);
+    setHhAudits(((hhRes.data as any[]) || []).map((a) => ({
+      id: a.id,
+      date: a.audit_date,
+      ward: a.area_name || "General",
+      compliance: a.total_opportunities ? Math.round((a.total_compliant / a.total_opportunities) * 100) : 0,
+      observations: a.total_opportunities || 0,
+      auditor: "—",
+    })));
+    setHaiReports(((haiRes.data as any[]) || []).map((h) => ({
+      id: h.id,
+      date: h.onset_date,
+      infection_type: h.infection_type,
+      organism: h.organism || "—",
+      ward: "General",
+      status: h.outcome || "ongoing",
+    })));
     setLoading(false);
   };
 
-  const handHygieneQI = indicators.find((i) => i.indicator_name.toLowerCase().includes("hand hygiene"));
-  const haiQI = indicators.find((i) => i.indicator_name.toLowerCase().includes("acquired infection"));
+  const indicatorByCode = (code: string) => indicators.find((i) => i.indicator_code === code);
+  const handHygieneQI = indicatorByCode("hic.hand_hygiene_pct");
+  const haiQI = indicatorByCode("hic.hai_per1000");
 
   const saveHHAudit = async () => {
     const obs = parseInt(hhForm.observations);
     const comp = parseInt(hhForm.compliant);
     if (!obs || !comp) { toast({ title: "Enter observations and compliant count", variant: "destructive" }); return; }
+    if (comp > obs) { toast({ title: "Compliant count cannot exceed observations", variant: "destructive" }); return; }
+    if (!hospitalId) return;
 
-    const pct = Math.round((comp / obs) * 100);
+    setSaving(true);
+    // Write the audit itself and let the engine derive hic.hand_hygiene_pct from
+    // it. Previously this overwrote the indicator's value directly, which the
+    // next collection run would simply discard.
+    const { error } = await (supabase as any).from("hand_hygiene_audits").insert({
+      hospital_id: hospitalId,
+      audit_date: hhForm.date,
+      area_name: hhForm.ward || "General",
+      total_opportunities: obs,
+      total_compliant: comp,
+    });
+    setSaving(false);
 
-    // Update the hand hygiene indicator
-    if (handHygieneQI) {
-      await supabase.from("quality_indicators").update({
-        value: pct,
-        numerator: comp,
-        denominator: obs,
-      }).eq("id", handHygieneQI.id);
+    if (error) {
+      toast({ title: "Could not save audit", description: error.message, variant: "destructive" });
+      return;
     }
 
-    setHhAudits((prev) => [...prev, {
-      id: crypto.randomUUID(),
-      date: hhForm.date,
-      ward: hhForm.ward || "General",
-      compliance: pct,
-      observations: obs,
-      auditor: "Current User",
-    }]);
-
-    toast({ title: `Hand hygiene audit saved: ${pct}% compliance` });
+    const pct = Math.round((comp / obs) * 100);
+    toast({
+      title: `Hand hygiene audit saved: ${pct}% compliance`,
+      description: "Included in the next indicator recalculation",
+    });
     setHhModalOpen(false);
     setHhForm({ ward: "", date: new Date().toISOString().split("T")[0], observations: "", compliant: "" });
     loadData();
@@ -106,42 +145,52 @@ const InfectionControlTab: React.FC = () => {
 
   const saveHAI = async () => {
     if (!haiForm.organism.trim()) { toast({ title: "Organism is required", variant: "destructive" }); return; }
+    if (!hospitalId) return;
 
-    setHaiReports((prev) => [...prev, {
-      id: crypto.randomUUID(),
-      date: haiForm.date,
+    setSaving(true);
+    // Persist the surveillance event. This is the row CLABSI/CAUTI/VAP/SSI rates
+    // are computed from; it used to live only in React state and vanish on reload.
+    const { error } = await (supabase as any).from("ipc_infection_events").insert({
+      hospital_id: hospitalId,
       infection_type: haiForm.infection_type,
-      organism: haiForm.organism,
-      ward: "General",
-      status: "active",
-    }]);
+      onset_date: haiForm.date,
+      organism: haiForm.organism.trim(),
+      is_device_related: ["CLABSI", "CAUTI", "VAP"].includes(haiForm.infection_type),
+      outcome: "ongoing",
+      notes: haiForm.procedure ? `Procedure: ${haiForm.procedure}` : null,
+    });
+    setSaving(false);
 
-    // Create clinical alert for infection control
+    if (error) {
+      toast({ title: "Could not report HAI", description: error.message, variant: "destructive" });
+      return;
+    }
+
+    // A clinical alert notifies the IPC team. It is deliberately NOT a metric
+    // source: the SSI rate now reads ipc_infection_events directly, because
+    // counting alerts of type 'infection' counted every HAI type as an SSI.
     try {
-      const { data: userData } = await supabase.auth.getUser();
-      if (userData.user?.id) {
-        const { data: userProfile } = await supabase.from("users").select("hospital_id").eq("auth_user_id", userData.user.id).maybeSingle();
-        if (userProfile) {
-          await supabase.from("clinical_alerts").insert({
-            hospital_id: userProfile.hospital_id,
-            alert_type: "infection",
-            severity: "high",
-            alert_message: `HAI reported: ${haiForm.infection_type} — ${haiForm.organism}`,
-          });
-        }
-      }
-    } catch { /* silent */ }
+      await supabase.from("clinical_alerts").insert({
+        hospital_id: hospitalId,
+        alert_type: "infection",
+        severity: "high",
+        alert_message: `HAI reported: ${haiForm.infection_type} — ${haiForm.organism}`,
+      });
+    } catch { /* notification only — never block the surveillance record */ }
 
     toast({ title: "HAI reported", description: `${haiForm.infection_type} — ${haiForm.organism}` });
     setHaiModalOpen(false);
     setHaiForm({ infection_type: "CAUTI", organism: "", date: new Date().toISOString().split("T")[0], procedure: "", treatment: "yes" });
+    loadData();
   };
 
   if (loading) return <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">Loading…</div>;
 
-  const hhValue = handHygieneQI ? Number(handHygieneQI.value) : 0;
-  const haiValue = haiQI ? Number(haiQI.value) : 0;
-  const haiTarget = haiQI?.target ? Number(haiQI.target) : 2;
+  // Null means "not measured yet", which must not render as 0 — a 0% hand-hygiene
+  // figure reads as catastrophic compliance rather than an absent audit.
+  const hhValue = handHygieneQI?.value == null ? null : Number(handHygieneQI.value);
+  const haiValue = haiQI?.value == null ? null : Number(haiQI.value);
+  const haiTarget = haiQI?.target ? Number(haiQI.target) : 5;
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -153,10 +202,16 @@ const InfectionControlTab: React.FC = () => {
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Hand Hygiene Compliance</p>
-                <p className={`text-2xl font-bold mt-1 ${hhValue >= 80 ? "text-green-600 dark:text-green-400" : "text-amber-600 dark:text-amber-400"}`}>
-                  {hhValue.toFixed(0)}%
+                <p className={`text-2xl font-bold mt-1 ${
+                  hhValue === null ? "text-muted-foreground"
+                    : hhValue >= 80 ? "text-green-600 dark:text-green-400"
+                    : "text-amber-600 dark:text-amber-400"
+                }`}>
+                  {hhValue === null ? "—" : `${hhValue.toFixed(0)}%`}
                 </p>
-                <p className="text-[10px] text-muted-foreground">Target: 80%</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {hhValue === null ? "No audits recorded yet" : "Target: 80%"}
+                </p>
               </div>
               <Button size="sm" variant="outline" className="text-[10px] h-7" onClick={() => setHhModalOpen(true)}>
                 + Record Audit
@@ -171,8 +226,12 @@ const InfectionControlTab: React.FC = () => {
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">HAI Rate</p>
-                <p className={`text-2xl font-bold mt-1 ${haiValue <= haiTarget ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
-                  {haiValue.toFixed(1)}
+                <p className={`text-2xl font-bold mt-1 ${
+                  haiValue === null ? "text-muted-foreground"
+                    : haiValue <= haiTarget ? "text-green-600 dark:text-green-400"
+                    : "text-red-600 dark:text-red-400"
+                }`}>
+                  {haiValue === null ? "—" : haiValue.toFixed(1)}
                 </p>
                 <p className="text-[10px] text-muted-foreground">per 1000 patient days • Target: &lt; {haiTarget}</p>
                 <div className="flex gap-2 mt-1.5 text-[9px] text-muted-foreground">
@@ -200,7 +259,7 @@ const InfectionControlTab: React.FC = () => {
       </div>
 
       {/* HAI alert */}
-      {haiValue > haiTarget && (
+      {haiValue !== null && haiValue > haiTarget && (
         <div className="mx-4 mb-2 bg-destructive/5 border border-destructive/20 border-l-[3px] border-l-destructive rounded-lg p-3 flex items-center justify-between">
           <div className="text-xs">
             <span className="font-semibold text-destructive">⚠️ HAI rate ({haiValue.toFixed(1)}) exceeds target ({haiTarget})</span>
@@ -320,7 +379,9 @@ const InfectionControlTab: React.FC = () => {
                 </p>
               )}
             </div>
-            <Button onClick={saveHHAudit} className="w-full" size="sm">Save Audit</Button>
+            <Button onClick={saveHHAudit} className="w-full" size="sm" disabled={saving}>
+              {saving ? "Saving…" : "Save Audit"}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -363,7 +424,9 @@ const InfectionControlTab: React.FC = () => {
                 </SelectContent>
               </Select>
             </div>
-            <Button onClick={saveHAI} className="w-full" size="sm">Save HAI Report</Button>
+            <Button onClick={saveHAI} className="w-full" size="sm" disabled={saving}>
+              {saving ? "Saving…" : "Save HAI Report"}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

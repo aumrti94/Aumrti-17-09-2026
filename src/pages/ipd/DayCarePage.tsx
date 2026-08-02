@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useRealtimeRefetch } from "@/hooks/useRealtimeRefetch";
 import DayCareAdmissionModal, { DayCareBooking } from "@/components/ipd/DayCareAdmissionModal";
 import DayCareDischargeModal from "@/components/ipd/DayCareDischargeModal";
 import DayCareAdmitGateModal from "@/components/ipd/DayCareAdmitGateModal";
@@ -16,7 +17,7 @@ import { cn } from "@/lib/utils";
 import { formatINRExact } from "@/lib/currency";
 import { Plus, Search, Clock, User, Stethoscope, LogOut, RefreshCw, CalendarClock, IndianRupee, LogIn, XCircle, UserX, CheckCircle2, Printer } from "lucide-react";
 import { formatDateIST } from "@/lib/dateUtils";
-import { DayCareTab, dayCareDateColumn, dayCareStatusFilter, dayCareSortAscending } from "@/lib/dayCareBoard";
+import { DayCareTab, dayCareDateColumn, dayCareDateRange, dayCareStatusFilter, dayCareSortAscending } from "@/lib/dayCareBoard";
 import {
   DayCareClearance, DayCarePaymentPolicy, DEFAULT_DAY_CARE_POLICY,
   checkDayCareClearance, deriveDepositDefault, fetchDayCarePolicy,
@@ -27,6 +28,7 @@ import {
   listProcedures, mapProcedureRow, totalDurationMinutes, totalProcedureCharge,
 } from "@/lib/dayCareProcedures";
 import { CancelStatus } from "@/lib/dayCareCancel";
+import { istDateKey } from "@/lib/dayCareLateDischarge";
 import { useConfigLabelMap } from "@/hooks/useConfigValues";
 import { syncAdvanceToBill } from "@/lib/advanceBillSync";
 import { printAdmissionBill } from "@/lib/billPrint";
@@ -106,8 +108,11 @@ const DayCarePage: React.FC = () => {
     // A booking has admitted_at NULL and scheduled_at set, so the tab decides which column
     // the date picker filters on — see lib/dayCareBoard.ts.
     const dateCol = dayCareDateColumn(view);
+    // Active is open-ended below so an overnight case admitted on an earlier day is still on
+    // the board today — see dayCareDateRange.
+    const range = dayCareDateRange(view, selectedDate);
 
-    const { data, error } = await (supabase as any)
+    let query = (supabase as any)
       .from("admissions")
       .select(`
         id, patient_id, admission_number, admitted_at, scheduled_at, admitting_diagnosis,
@@ -120,9 +125,12 @@ const DayCarePage: React.FC = () => {
       .eq("hospital_id", ud.hospital_id)
       .eq("admission_type", "daycare")
       .in("status", dayCareStatusFilter(view))
-      .gte(dateCol, `${selectedDate}T00:00:00+05:30`)
-      .lte(dateCol, `${selectedDate}T23:59:59+05:30`)
+      .lte(dateCol, range.to)
       .order(dateCol, { ascending: dayCareSortAscending(view) });
+
+    if (range.from) query = query.gte(dateCol, range.from);
+
+    const { data, error } = await query;
 
     if (error) { console.error("Day care fetch:", error.message); setLoading(false); return; }
 
@@ -170,6 +178,14 @@ const DayCarePage: React.FC = () => {
     setLoading(true);
     fetchData();
   }, [fetchData]);
+
+  // Live: bookings/admissions/discharges and their bills reflect without a refresh.
+  useRealtimeRefetch({
+    tables: ["admissions", "bills", "advance_receipts", "ipd_advances"],
+    hospitalId,
+    onChange: fetchData,
+    channelName: "day-care",
+  });
 
   const filtered = admissions.filter(a =>
     !search ||
@@ -592,12 +608,27 @@ const DayCarePage: React.FC = () => {
               )}
 
               {view === "active" && (
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-                  <p className="text-xs text-amber-800 font-medium">Same-day discharge required</p>
-                  <p className="text-xs text-amber-700 mt-0.5">
-                    Day care patients must be discharged before midnight (IST) on the day of admission.
-                  </p>
-                </div>
+                selected.admitted_at && istDateKey(selected.admitted_at) !== todayStr() ? (
+                  // Past midnight. Before 20261009000183 this was a dead end — the trigger
+                  // refused the discharge and nothing else in the app could close the
+                  // admission — so say plainly how to get out of it.
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                    <p className="text-xs text-red-800 font-medium">Still admitted from a previous day</p>
+                    <p className="text-xs text-red-700 mt-0.5">
+                      Admitted {formatDateIST(selected.admitted_at)} and not yet discharged. Open
+                      Discharge and set the actual discharge time — if the patient genuinely stayed
+                      past midnight, give a reason and it is recorded as an exception.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                    <p className="text-xs text-amber-800 font-medium">Same-day discharge expected</p>
+                    <p className="text-xs text-amber-700 mt-0.5">
+                      Day care patients should be discharged before midnight (IST) on the day of
+                      admission. A later discharge needs a recorded reason.
+                    </p>
+                  </div>
+                )
               )}
             </div>
           )}

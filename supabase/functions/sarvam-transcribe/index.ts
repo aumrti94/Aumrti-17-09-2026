@@ -12,6 +12,33 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+// Saaras v3 output modes (https://api.sarvam.ai/speech-to-text).
+//   transcribe (Sarvam's default) — native script, NO translation
+//   translate                     — Indic speech straight to English, same call, same cost
+//   verbatim | translit | codemix — see docs
+// We default to "translate": the structuring LLM wants English, and letting Saaras
+// do the translation here is both free (it is the same request) and 3-6x cheaper in
+// downstream LLM tokens than shipping native Indic script into the prompt.
+const VALID_MODES = ["transcribe", "translate", "verbatim", "translit", "codemix"];
+const DEFAULT_MODE = "translate";
+
+// Sarvam's model page advertises hotword biasing for Saaras, but the REST reference
+// does not document the field. So it is sent optimistically and, the first time the
+// API rejects it as an unknown parameter, permanently disabled for this instance.
+// The deterministic lexicon repair in _shared/medical-lexicon.ts is the load-bearing
+// fix for medical vocabulary — hotwords are upside only and must never break a call.
+let hotwordsSupported = true;
+
+const looksLikeUnknownFieldError = (status: number, body: string): boolean => {
+  if (status !== 400 && status !== 422) return false;
+  const lower = body.toLowerCase();
+  return lower.includes("hotword") ||
+    lower.includes("unexpected") ||
+    lower.includes("unknown") ||
+    lower.includes("not permitted") ||
+    lower.includes("extra field");
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -67,7 +94,7 @@ serve(async (req) => {
       );
     }
 
-    const { audio_base64, language_code, model } = await req.json();
+    const { audio_base64, language_code, model, mode, hotwords } = await req.json();
 
     if (!audio_base64 || !language_code) {
       return new Response(
@@ -76,26 +103,62 @@ serve(async (req) => {
       );
     }
 
+    const resolvedModel = model || "saaras:v3";
+    const resolvedMode = VALID_MODES.includes(mode) ? mode : DEFAULT_MODE;
+
     // Decode base64 to binary
     const audioBytes = decode(audio_base64);
     // Browser MediaRecorder always produces audio/webm (not WAV) — use correct MIME type
     const audioFile = new File([audioBytes], "audio.webm", { type: "audio/webm" });
 
     // Sarvam v3 API requires multipart/form-data
-    const formData = new FormData();
-    formData.append("file", audioFile);
-    formData.append("model", model || "saaras:v3");
-    formData.append("language_code", language_code === "auto" ? "unknown" : language_code);
-    formData.append("with_timestamps", "false");
+    const buildForm = (withHotwords: boolean): FormData => {
+      const formData = new FormData();
+      formData.append("file", audioFile);
+      formData.append("model", resolvedModel);
+      formData.append("language_code", language_code === "auto" ? "unknown" : language_code);
+      // `mode` is only honoured by saaras:v3; sending it for saarika is harmless but pointless.
+      if (resolvedModel.startsWith("saaras")) {
+        formData.append("mode", resolvedMode);
+      }
+      // NOTE: `with_timestamps` used to be sent here. It is not a parameter of this
+      // endpoint (the documented field is `timestamps`) and was silently ignored.
+      if (withHotwords && Array.isArray(hotwords) && hotwords.length > 0) {
+        // Cap the list — this rides in the multipart body alongside the audio.
+        formData.append("hotwords", JSON.stringify(hotwords.slice(0, 100)));
+      }
+      return formData;
+    };
+
+    const wantsHotwords = hotwordsSupported && Array.isArray(hotwords) && hotwords.length > 0;
 
     const asrStartedAt = Date.now();
-    const response = await fetch("https://api.sarvam.ai/speech-to-text", {
+    let response = await fetch("https://api.sarvam.ai/speech-to-text", {
       method: "POST",
-      headers: {
-        "api-subscription-key": sarvamApiKey,
-      },
-      body: formData,
+      headers: { "api-subscription-key": sarvamApiKey },
+      body: buildForm(wantsHotwords),
     });
+
+    // If the account/endpoint does not accept hotwords, retry once without them and
+    // stop sending them. A biasing nicety must never cost a clinician their dictation.
+    if (!response.ok && wantsHotwords) {
+      const probeErr = await response.text();
+      if (looksLikeUnknownFieldError(response.status, probeErr)) {
+        console.warn("Sarvam rejected `hotwords` — disabling hotword biasing for this instance.");
+        hotwordsSupported = false;
+        response = await fetch("https://api.sarvam.ai/speech-to-text", {
+          method: "POST",
+          headers: { "api-subscription-key": sarvamApiKey },
+          body: buildForm(false),
+        });
+      } else {
+        console.error("Sarvam API error:", response.status, probeErr);
+        return new Response(
+          JSON.stringify({ error: `Sarvam API error: ${response.status}`, details: probeErr }),
+          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
 
     if (!response.ok) {
       const errText = await response.text();
@@ -120,15 +183,28 @@ serve(async (req) => {
       await recordAsrUsage(supabaseAdmin, {
         hospitalId,
         provider: "sarvam",
-        model: model || "saaras:v3",
+        model: resolvedModel,
         seconds: estimateAudioSeconds(audioBytes.length, bitrate),
         estimated: true,
         latencyMs: Date.now() - asrStartedAt,
       });
     })();
 
+    // Return the FULL signal, not just the text. `language_probability` is Sarvam's
+    // confidence that it identified the spoken language correctly — a proxy for audio
+    // quality, not a word-level ASR score, but the only real signal the API gives us.
+    // It used to be discarded here, which is why the panel's confidence badge was
+    // nothing but the structuring LLM's guess about itself.
     return new Response(
-      JSON.stringify({ transcript: result.transcript || "" }),
+      JSON.stringify({
+        transcript: result.transcript || "",
+        detected_language_code: result.language_code ?? null,
+        language_probability: typeof result.language_probability === "number"
+          ? result.language_probability
+          : null,
+        mode: resolvedMode,
+        request_id: result.request_id ?? null,
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {

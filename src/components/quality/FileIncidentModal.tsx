@@ -59,9 +59,12 @@ const FileIncidentModal: React.FC<Props> = ({ open, onOpenChange, onFiled }) => 
       const userId = userData.user?.id;
       if (!userId) { toast({ title: "Session expired — please log in again", variant: "destructive" }); setSaving(false); return; }
 
+      // `id` as well: incident_reports.reported_by references public.users(id)
+      // NOT NULL, which is not the same value as auth.uid() — see
+      // src/lib/currentUser.ts. Passing the auth uid failed the FK on every file.
       const { data: userProfile } = await supabase
         .from("users")
-        .select("hospital_id, full_name")
+        .select("id, hospital_id, full_name")
         .eq("auth_user_id", userId)
         .maybeSingle();
       if (!userProfile) { toast({ title: "User profile not found", variant: "destructive" }); setSaving(false); return; }
@@ -81,7 +84,7 @@ const FileIncidentModal: React.FC<Props> = ({ open, onOpenChange, onFiled }) => 
         severity: form.severity,
         description: form.description,
         immediate_action: form.immediate_action || null,
-        reported_by: userId,
+        reported_by: userProfile.id,
       });
 
       if (error) throw error;

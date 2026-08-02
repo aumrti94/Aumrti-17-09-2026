@@ -2,7 +2,40 @@ import React, { createContext, useContext, useState, useCallback, useRef, useEff
 import { useLocation } from "react-router-dom";
 
 export type PanelState = "ready" | "recording" | "processing" | "output" | "fallback" | "transcribing";
-export type SessionType = "opd_consultation" | "ward_round" | "emergency" | "nursing_note";
+// "ipd_workspace" was always passed by IPDWorkspace.tsx but was missing from this union,
+// so it type-checked as a bare string and fell through to the OPD prompt server-side.
+export type SessionType =
+  | "opd_consultation" | "ward_round" | "emergency" | "nursing_note" | "ipd_workspace";
+
+/** Per-segment ASR signal, kept so confidence can be measured rather than guessed. */
+export interface ScribeSegmentSignal {
+  /** Sarvam `language_probability`, or null when the engine reported none. */
+  languageProbability: number | null;
+  words: number;
+}
+
+/** A term the deterministic lexicon pass rewrote, shown to the doctor for review. */
+export interface ScribeRepair {
+  from: string;
+  to: string;
+  score: number;
+  source: string;
+}
+
+/**
+ * Everything measured about a dictation, as opposed to what the LLM claimed about it.
+ * Feeds src/lib/scribeConfidence.ts.
+ */
+export interface ScribeSignals {
+  segments: ScribeSegmentSignal[];
+  repetition: { repetitionRatio: number; maxRepeats: number } | null;
+  lexiconHitRate: number | null;
+  repairs: ScribeRepair[];
+  /** The English text the structuring model actually read. */
+  englishTranscript: string;
+  preTranslated: boolean;
+  safetyCheck: { safe: boolean; flags: unknown[] } | null;
+}
 
 export interface LanguageOption {
   code: string;
@@ -69,6 +102,31 @@ interface VoiceScribeContextType {
   getExistingDataForCurrentScreen: () => Record<string, unknown> | null;
   resetSession: () => void;
   detectedSessionType: SessionType;
+  /** Measured signals for this dictation — null until structuring completes. */
+  scribeSignals: ScribeSignals | null;
+  setScribeSignals: (v: ScribeSignals | null) => void;
+  /**
+   * The dictation in its ORIGINAL language, fetched lazily only if the doctor asks to
+   * see it. Sarvam now returns English in one call; re-transcribing for the native view
+   * is a second billable call, so it is paid for only when actually used.
+   */
+  nativeTranscript: string | null;
+  setNativeTranscript: (v: string | null) => void;
+  /**
+   * Background audio-rescue status. The note is shown as soon as it is ready; when a
+   * dictation scored badly a second pass re-listens to the worst segment and quietly
+   * replaces the note. "running" lets the panel say so instead of looking frozen.
+   */
+  rescueState: "idle" | "running" | "improved";
+  setRescueState: (v: "idle" | "running" | "improved") => void;
+  /**
+   * Recorded audio segments, retained IN MEMORY ONLY for the life of the session.
+   * Powers both the native-transcript view and the low-confidence audio rescue.
+   * This is PHI — it is never written to disk or Storage, and is dropped by
+   * resetSession(). Deliberately a ref: the panel reads it without re-rendering
+   * on every segment.
+   */
+  segmentBlobsRef: React.MutableRefObject<Blob[]>;
 }
 
 const VoiceScribeContext = createContext<VoiceScribeContextType | null>(null);
@@ -103,6 +161,10 @@ export const VoiceScribeProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [selectedLanguage, setSelectedLanguageState] = useState<string>(
     () => localStorage.getItem("vscribe_preferred_language") || "auto"
   );
+  const [scribeSignals, setScribeSignals] = useState<ScribeSignals | null>(null);
+  const [nativeTranscript, setNativeTranscript] = useState<string | null>(null);
+  const [rescueState, setRescueState] = useState<"idle" | "running" | "improved">("idle");
+  const segmentBlobsRef = useRef<Blob[]>([]);
   const screenFillFns = useRef<Map<string, (data: Record<string, unknown>) => void>>(new Map());
   const screenExistingDataFns = useRef<Map<string, () => Record<string, unknown> | null>>(new Map());
 
@@ -114,10 +176,19 @@ export const VoiceScribeProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const detectedSessionType = detectSessionTypeFromPath(location.pathname);
 
   useEffect(() => {
-    if (!isRecording) {
+    // Only fall back to route detection when there is NO live session. A mounted
+    // VoiceDictationButton sets the session type explicitly from its own prop, and
+    // that must survive until the panel closes.
+    //
+    // This is why IPD dictation never worked: IPDWorkspace sets "ipd_workspace", but
+    // the moment recording stopped this effect rewrote it to "ward_round" (every /ipd
+    // route detects as ward_round), so the panel rendered ward-round fields for an
+    // order dictation. The other screens never showed the bug because their explicit
+    // type and their detected type happen to be identical.
+    if (!isRecording && !isPanelOpen) {
       setCurrentSessionType(detectedSessionType);
     }
-  }, [detectedSessionType, isRecording]);
+  }, [detectedSessionType, isRecording, isPanelOpen]);
 
   const registerScreen = useCallback((
     screenId: string,
@@ -154,6 +225,10 @@ export const VoiceScribeProvider: React.FC<{ children: React.ReactNode }> = ({ c
     setRawTranscript("");
     setStructuredOutput(null);
     setFallbackReason("");
+    setScribeSignals(null);
+    setNativeTranscript(null);
+    // Drop the retained PHI audio as soon as the session ends.
+    segmentBlobsRef.current = [];
   }, []);
 
   return (
@@ -164,6 +239,8 @@ export const VoiceScribeProvider: React.FC<{ children: React.ReactNode }> = ({ c
       setRawTranscript, setStructuredOutput, setCurrentSessionType, setCurrentPatientId, setFallbackReason,
       registerScreen, unregisterScreen, applyToCurrentScreen, getExistingDataForCurrentScreen, resetSession,
       detectedSessionType,
+      scribeSignals, setScribeSignals, nativeTranscript, setNativeTranscript, segmentBlobsRef,
+      rescueState, setRescueState,
     }}>
       {children}
     </VoiceScribeContext.Provider>

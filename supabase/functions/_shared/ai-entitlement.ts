@@ -66,35 +66,40 @@ export async function checkAIAllowed(
       .maybeSingle();
     if (!sub?.plan_id) return { allowed: true };
 
-    // 2. Plan-level ai_suite row: master default (is_enabled) + per-feature defaults (actions).
-    const { data: planRow } = await admin
-      .from("plan_features")
-      .select("is_enabled, actions")
-      .eq("plan_id", sub.plan_id)
-      .eq("module_key", "ai_suite")
-      .maybeSingle();
-
-    // 3. Hospital-level master override (wins over the plan default when present).
-    const { data: override } = await admin
-      .from("hospital_feature_overrides")
-      .select("is_enabled")
-      .eq("hospital_id", hospitalId)
-      .eq("module_key", "ai_suite")
-      .maybeSingle();
+    // Queries 2-4 in ONE round trip. Only #2 depends on plan_id; the two hospital-scoped
+    // lookups never did, yet all three were awaited serially — four sequential round trips
+    // to answer one boolean, on the critical path of every AI call.
+    const [{ data: planRow }, { data: override }, { data: hospEnt }] = await Promise.all([
+      // 2. Plan-level ai_suite row: master default (is_enabled) + per-feature defaults (actions).
+      admin
+        .from("plan_features")
+        .select("is_enabled, actions")
+        .eq("plan_id", sub.plan_id)
+        .eq("module_key", "ai_suite")
+        .maybeSingle(),
+      // 3. Hospital-level master override (wins over the plan default when present).
+      admin
+        .from("hospital_feature_overrides")
+        .select("is_enabled")
+        .eq("hospital_id", hospitalId)
+        .eq("module_key", "ai_suite")
+        .maybeSingle(),
+      // 4. Per-feature withhold. Fetched unconditionally now that it is free (same round
+      //    trip); it is simply ignored below when no featureKey was supplied.
+      admin
+        .from("hospital_module_entitlements")
+        .select("actions")
+        .eq("hospital_id", hospitalId)
+        .eq("module_key", "ai_suite")
+        .maybeSingle(),
+    ]);
 
     // Master: override value when set, else DEFAULT ON unless the plan explicitly says false.
     const masterOn = override ? override.is_enabled === true : planRow?.is_enabled !== false;
     if (!masterOn) return { allowed: false, reason: MASTER_DISABLED_REASON };
 
-    // 4. Per-feature withhold: hospitalExplicit ?? planDefault ?? allowed.
+    // Per-feature withhold: hospitalExplicit ?? planDefault ?? allowed.
     if (featureKey) {
-      const { data: hospEnt } = await admin
-        .from("hospital_module_entitlements")
-        .select("actions")
-        .eq("hospital_id", hospitalId)
-        .eq("module_key", "ai_suite")
-        .maybeSingle();
-
       const hospActions = (hospEnt?.actions ?? {}) as Record<string, boolean>;
       const planActions = (planRow?.actions ?? {}) as Record<string, boolean>;
       // ?? (not ||) so an explicit hospital `false` is respected and an explicit

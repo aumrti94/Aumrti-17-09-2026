@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Loader2, Download, Upload, Banknote, Building2, FileText, Smartphone, CreditCard } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { openStoredFile, BUCKETS } from "@/lib/storageUrls";
 
 interface Props {
   hospitalId: string | null;
@@ -87,12 +88,25 @@ const ExpensesTab: React.FC<Props> = ({ hospitalId, dateRange, userId }) => {
 
     let receiptUrl: string | null = null;
     if (receiptFile) {
-      const path = `${hospitalId}/${form.expense_date}/${Date.now()}-${receiptFile.name}`;
-      const { data: upload } = await supabase.storage.from("hospital-assets").upload(`expense-receipts/${path}`, receiptFile);
-      if (upload?.path) {
-        const { data: urlData } = supabase.storage.from("hospital-assets").getPublicUrl(`expense-receipts/${path}`);
-        receiptUrl = urlData?.publicUrl || null;
+      // Private bucket, hospitalId first so the RLS policy accepts the write.
+      // The old `expense-receipts/${hospitalId}/…` path on public hospital-assets
+      // was rejected by that bucket's INSERT policy, and the error was discarded
+      // here — expenses saved with receipt_url = null and nobody noticed.
+      const path = `${hospitalId}/expense-receipts/${form.expense_date}/${Date.now()}-${receiptFile.name}`;
+      const { data: upload, error: uploadErr } = await supabase.storage
+        .from(BUCKETS.hospitalPrivate)
+        .upload(path, receiptFile);
+
+      if (uploadErr || !upload?.path) {
+        toast({
+          title: "Receipt upload failed",
+          description: uploadErr?.message ?? "The expense was not saved — please retry or remove the receipt.",
+          variant: "destructive",
+        });
+        setSaving(false);
+        return;
       }
+      receiptUrl = upload.path;
     }
 
     const { data: expense, error } = await supabase.from("expense_records").insert({
@@ -300,7 +314,19 @@ const ExpensesTab: React.FC<Props> = ({ hospitalId, dateRange, userId }) => {
                       <TableCell className="text-[10px] text-muted-foreground">{e.payment_mode?.replace(/_/g, " ")}</TableCell>
                       <TableCell className="text-[10px] text-muted-foreground">{departments.find(d => d.id === e.department_id)?.name || "—"}</TableCell>
                       <TableCell className="text-center">
-                        {e.receipt_url ? <a href={e.receipt_url} target="_blank" className="text-primary text-[10px] hover:underline">View</a> : <span className="text-muted-foreground text-[10px]">—</span>}
+                        {e.receipt_url ? (
+                          <button
+                            type="button"
+                            className="text-primary text-[10px] hover:underline"
+                            onClick={async () => {
+                              if (!(await openStoredFile(BUCKETS.hospitalPrivate, e.receipt_url))) {
+                                toast({ title: "Could not open receipt", variant: "destructive" });
+                              }
+                            }}
+                          >
+                            View
+                          </button>
+                        ) : <span className="text-muted-foreground text-[10px]">—</span>}
                       </TableCell>
                     </TableRow>
                   ))

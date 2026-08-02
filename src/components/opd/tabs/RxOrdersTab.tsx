@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { X, Plus, AlertTriangle, ShieldX, CheckCircle2, Pencil, RotateCcw } from "lucide-react";
-import type { PrescriptionData, DrugEntry, LabOrder, RadiologyOrder, EncounterData } from "../ConsultationWorkspace";
+import type { PrescriptionData, DrugEntry, LabOrder, RadiologyOrder, EncounterData, OrderAvailability } from "../ConsultationWorkspace";
 import { checkDrugSafety, type DrugSafetyResult } from "@/lib/drugSafetyCheck";
 import DrugSafetyAlertModal from "@/components/opd/DrugSafetyAlertModal";
 import AllergyBanner from "@/components/clinical/AllergyBanner";
@@ -385,6 +385,7 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
               <div className="flex items-center gap-2">
                 <span className="text-sm font-bold text-foreground">{drug.drug_name}</span>
                 {drug.is_ndps && <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-px rounded-full font-bold">NDPS</span>}
+                <AvailabilityBadge availability={drug.availability} stockQty={drug.stock_qty} />
                 {getSafetyBadge(i)}
               </div>
               <div className="flex gap-2 mt-1 flex-wrap">
@@ -758,7 +759,10 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
                       return (
                         <div key={i} className="flex items-center justify-between bg-blue-50 border border-blue-100 rounded px-2 py-1.5">
                           <div className="flex flex-col">
-                            <span className="text-xs font-medium text-foreground/80">{l.test_name}</span>
+                            <span className="text-xs font-medium text-foreground/80 flex items-center gap-1.5">
+                              {l.test_name}
+                              <AvailabilityBadge availability={l.availability} kind="test" />
+                            </span>
                             {isOrdered && (
                               <span className="text-[9px] text-emerald-600 font-bold flex items-center gap-1">
                                 <CheckCircle2 size={10} /> BILLED & ORDERED
@@ -868,7 +872,10 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
                       return (
                         <div key={i} className="flex items-center justify-between bg-purple-50 border border-purple-100 rounded px-2 py-1.5">
                           <div className="flex flex-col">
-                            <span className="text-xs font-medium text-foreground/80">{r.study_name}</span>
+                            <span className="text-xs font-medium text-foreground/80 flex items-center gap-1.5">
+                              {r.study_name}
+                              <AvailabilityBadge availability={r.availability} kind="study" />
+                            </span>
                             {isOrdered && (
                               <span className="text-[9px] text-emerald-600 font-bold flex items-center gap-1">
                                 <CheckCircle2 size={10} /> BILLED & ORDERED
@@ -981,6 +988,47 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
         />
       )}
     </div>
+  );
+};
+
+/**
+ * Whether the hospital can actually supply a dictated item.
+ *
+ * The doctor's requirement: never drop something we don't stock — the patient still needs
+ * it, they just have to buy it outside. So an unstocked item stays on the prescription and
+ * prints normally; this badge is what tells the doctor, the pharmacy and reception that it
+ * won't be dispensed or billed here.
+ *
+ * `in_stock` renders NOTHING: the common case should be quiet, and a badge on every line
+ * would train people to ignore all of them.
+ */
+const AvailabilityBadge: React.FC<{
+  availability?: OrderAvailability;
+  stockQty?: number;
+  kind?: "drug" | "test" | "study";
+}> = ({ availability, stockQty, kind = "drug" }) => {
+  if (!availability || availability === "in_stock") return null;
+
+  const notOffered = kind === "drug" ? "Not stocked" : "Not offered here";
+  const label = availability === "not_stocked" ? notOffered : "Unmatched";
+  const title = availability === "not_stocked"
+    ? kind === "drug"
+      ? `This hospital has no stock${typeof stockQty === "number" ? ` (${stockQty} units)` : ""}. It stays on the prescription for the patient to buy outside, and is not billed here.`
+      : "This hospital does not offer this — the patient will need it done elsewhere. It is not billed here."
+    : "Could not be matched to the catalogue, so it is not auto-billed. Check the spelling or pick it manually.";
+
+  return (
+    <span
+      title={title}
+      className={cn(
+        "text-[9px] px-1.5 py-px rounded-full font-bold whitespace-nowrap",
+        availability === "not_stocked"
+          ? "bg-orange-100 text-orange-700"
+          : "bg-slate-200 text-slate-600",
+      )}
+    >
+      {label}
+    </span>
   );
 };
 

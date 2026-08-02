@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useRealtimeRefetch } from "@/hooks/useRealtimeRefetch";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -152,6 +153,14 @@ const PrescriptionQueue: React.FC<Props> = ({ hospitalId, selectedId, onSelect, 
   }, [hospitalId]);
 
   useEffect(() => { fetchQueue(); fetchWards(); }, [fetchQueue, fetchWards]);
+
+  // Live: new prescriptions and dispensing status changes appear in the queue instantly.
+  useRealtimeRefetch({
+    tables: ["prescriptions", "pharmacy_dispensing", "pharmacy_dispensing_items"],
+    hospitalId,
+    onChange: fetchQueue,
+    channelName: "pharmacy-rx-queue",
+  });
 
   const filtered = selectedWard === "all" ? items : items.filter(i => i.ward_name === selectedWard);
   const pendingCount = items.filter(i => i.status === "pending").length;

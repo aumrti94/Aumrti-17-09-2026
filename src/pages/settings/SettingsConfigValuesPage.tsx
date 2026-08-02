@@ -10,11 +10,12 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import BulkPasteAddModal from "@/components/settings/BulkPasteAddModal";
 import {
   ArrowLeft, Plus, Pencil, Trash2, RotateCcw, Save, X,
   Loader2, GripVertical, FlaskConical, Pill, Users, Building2,
   HeartPulse, Shield, Clipboard, Package, Activity, Droplets,
-  Stethoscope, Home, Wrench, List,
+  Stethoscope, Home, Wrench, List, ListPlus,
 } from "lucide-react";
 
 // ── Category registry ─────────────────────────────────────────────────────────
@@ -105,6 +106,7 @@ const SettingsConfigValuesPage: React.FC = () => {
     CATEGORIES.some(c => c.key === requestedCat) ? requestedCat! : CATEGORIES[0].key
   );
   const [addOpen,   setAddOpen]   = useState(false);
+  const [bulkOpen,  setBulkOpen]  = useState(false);
   const [addForm,   setAddForm]   = useState<RowFormState>(EMPTY_FORM);
   const [editId,    setEditId]    = useState<string | null>(null);
   const [editForm,  setEditForm]  = useState<RowFormState>(EMPTY_FORM);
@@ -172,6 +174,25 @@ const SettingsConfigValuesPage: React.FC = () => {
       setAddForm(EMPTY_FORM);
       invalidate();
     }
+  };
+
+  // ── Bulk add ──────────────────────────────────────────────────────────────
+
+  const handleBulkAdd = async (bulkRows: Record<string, string>[]) => {
+    if (!hospitalId) return { error: "No hospital context" };
+    const maxOrder = rows.reduce((m, r) => Math.max(m, r.sort_order), 0);
+    const payload = bulkRows.map((r, i) => ({
+      hospital_id: hospitalId,
+      category:    activeCat,
+      value:       (r.value || r.label).trim().replace(/\s+/g, "_"),
+      label:       r.label.trim(),
+      sort_order:  r.sort_order ? Number(r.sort_order) || 0 : maxOrder + i + 1,
+      is_active:   true,
+      is_system:   false,
+    }));
+    const { error } = await (supabase as any).from("hospital_config_values").insert(payload);
+    if (error) return { error: error.message };
+    invalidate();
   };
 
   // ── Edit ──────────────────────────────────────────────────────────────────
@@ -274,6 +295,7 @@ const SettingsConfigValuesPage: React.FC = () => {
   // Visible rows: deduplicate so hospital override shows, system default hidden
   const hospitalValues = new Set(rows.filter(r => r.hospital_id !== null).map(r => r.value));
   const visible = rows.filter(r => !(r.hospital_id === null && hospitalValues.has(r.value)));
+  const existingLabelKeys = new Set(visible.map(r => r.label.toLowerCase()));
 
   return (
     <div className="flex flex-col h-screen bg-background">
@@ -340,6 +362,15 @@ const SettingsConfigValuesPage: React.FC = () => {
               >
                 {resetting ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
                 Reset to Defaults
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5 text-xs"
+                onClick={() => setBulkOpen(true)}
+              >
+                <ListPlus size={12} />
+                Bulk Add
               </Button>
               <Button
                 size="sm"
@@ -541,6 +572,20 @@ const SettingsConfigValuesPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <BulkPasteAddModal
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        title={`Bulk Add — ${catDef.label}`}
+        description="Fill in a row per value — Value (code) and Sort Order are optional and will be auto-filled."
+        columns={[
+          { key: "label",      label: "Display Label", required: true, placeholder: "e.g. My Type" },
+          { key: "value",      label: "Value (code)",   placeholder: "auto from label" },
+          { key: "sort_order", label: "Sort Order",     type: "number", placeholder: "auto" },
+        ]}
+        existingKeys={existingLabelKeys}
+        onSubmit={handleBulkAdd}
+      />
     </div>
   );
 };

@@ -35,6 +35,7 @@ const QualityPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState("nabh");
   const [incidentModalOpen, setIncidentModalOpen] = useState(false);
   const [auditModalOpen, setAuditModalOpen] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState<string | undefined>(undefined);
   const [refreshKey, setRefreshKey] = useState(0);
   const [exportingZip, setExportingZip] = useState(false);
   const { hospitalId } = useHospitalId();
@@ -47,10 +48,15 @@ const QualityPage: React.FC = () => {
       const JSZip = (await import("jszip")).default;
       const zip = new JSZip();
 
-      const [evidenceRes, incidentRes, auditRes] = await Promise.all([
+      const [evidenceRes, incidentRes, auditRes, indicatorRes] = await Promise.all([
         (supabase as any).from("nabh_evidence_log").select("*").eq("hospital_id", hospitalId).order("logged_at", { ascending: false }).limit(500),
-        (supabase as any).from("incident_reports").select("id, incident_date, incident_type, severity_level, description, status, reported_by, created_at").eq("hospital_id", hospitalId).order("incident_date", { ascending: false }).limit(500),
-        (supabase as any).from("audit_logs").select("id, action, table_name, created_at, user_id").eq("hospital_id", hospitalId).order("created_at", { ascending: false }).limit(500),
+        // incident_reports has `severity`, not `severity_level`.
+        (supabase as any).from("incident_reports").select("id, incident_date, incident_type, severity, description, status, reported_by, created_at").eq("hospital_id", hospitalId).order("incident_date", { ascending: false }).limit(500),
+        // The table is audit_log (singular); "audit_logs" does not exist, so this
+        // CSV was always empty.
+        (supabase as any).from("audit_log").select("id, action, table_name, created_at, user_id").eq("hospital_id", hospitalId).order("created_at", { ascending: false }).limit(500),
+        // Indicator history is the trend evidence an assessor asks for.
+        (supabase as any).from("quality_indicators").select("indicator_code, indicator_name, nabh_chapter, numerator, denominator, value, unit, target, benchmark, period, period_start, auto_calculated, computed_at").eq("hospital_id", hospitalId).order("period_start", { ascending: false }).limit(2000),
       ]);
 
       const toCSV = (rows: any[], cols: string[]) => {
@@ -64,9 +70,10 @@ const QualityPage: React.FC = () => {
         return header + "\n" + body;
       };
 
-      zip.file("nabh_evidence_log.csv", toCSV(evidenceRes.data || [], ["id", "criterion_number", "description", "compliance_status", "logged_at", "logged_by"]));
-      zip.file("incident_reports.csv", toCSV(incidentRes.data || [], ["id", "incident_date", "incident_type", "severity_level", "description", "status", "reported_by", "created_at"]));
-      zip.file("audit_logs.csv", toCSV(auditRes.data || [], ["id", "action", "table_name", "user_id", "created_at"]));
+      zip.file("nabh_evidence_log.csv", toCSV(evidenceRes.data || [], ["id", "criterion_number", "is_known_criterion", "description", "compliance_status", "source", "logged_at", "logged_by"]));
+      zip.file("incident_reports.csv", toCSV(incidentRes.data || [], ["id", "incident_date", "incident_type", "severity", "description", "status", "reported_by", "created_at"]));
+      zip.file("audit_log.csv", toCSV(auditRes.data || [], ["id", "action", "table_name", "user_id", "created_at"]));
+      zip.file("quality_indicators.csv", toCSV(indicatorRes.data || [], ["indicator_code", "indicator_name", "nabh_chapter", "numerator", "denominator", "value", "unit", "target", "benchmark", "period", "period_start", "auto_calculated", "computed_at"]));
 
       const { data: hosp } = await (supabase as any).from("hospitals").select("name").eq("id", hospitalId).maybeSingle();
       const hospitalName = (hosp?.name || "Hospital").replace(/\s+/g, "_");
@@ -79,7 +86,7 @@ const QualityPage: React.FC = () => {
       a.download = `NABH-Evidence-${hospitalName}-${date}.zip`;
       a.click();
       URL.revokeObjectURL(url);
-      toast({ title: "NABH Evidence Bundle exported", description: `3 CSV files zipped — ${(blob.size / 1024).toFixed(0)} KB` });
+      toast({ title: "NABH Evidence Bundle exported", description: `4 CSV files zipped — ${(blob.size / 1024).toFixed(0)} KB` });
     } catch (e: any) {
       toast({ title: "Export failed", description: e.message, variant: "destructive" });
     }
@@ -90,7 +97,12 @@ const QualityPage: React.FC = () => {
     switch (activeTab) {
       case "nabh": return <NABHDashboard />;
       case "indicators": return <QualityIndicatorsTab />;
-      case "audits": return <AuditCalendarTab onScheduleAudit={() => setAuditModalOpen(true)} />;
+      case "audits": return (
+        <AuditCalendarTab
+          key={refreshKey}
+          onScheduleAudit={(date) => { setScheduleDate(date); setAuditModalOpen(true); }}
+        />
+      );
       case "incidents": return <IncidentReportsTab key={refreshKey} onFileIncident={() => setIncidentModalOpen(true)} />;
       case "capa": return <CAPATrackerTab />;
       case "infection": return <InfectionControlTab />;
@@ -112,7 +124,7 @@ const QualityPage: React.FC = () => {
           <Button size="sm" variant="outline" onClick={() => setIncidentModalOpen(true)}>
             + File Incident
           </Button>
-          <Button size="sm" variant="outline" onClick={() => setAuditModalOpen(true)}>
+          <Button size="sm" variant="outline" onClick={() => { setScheduleDate(undefined); setAuditModalOpen(true); }}>
             + Schedule Audit
           </Button>
         </div>
@@ -189,7 +201,12 @@ const QualityPage: React.FC = () => {
         onOpenChange={setIncidentModalOpen}
         onFiled={() => setRefreshKey((k) => k + 1)}
       />
-      <ScheduleAuditModal open={auditModalOpen} onOpenChange={setAuditModalOpen} />
+      <ScheduleAuditModal
+        open={auditModalOpen}
+        onOpenChange={setAuditModalOpen}
+        initialDate={scheduleDate}
+        onScheduled={() => setRefreshKey((k) => k + 1)}
+      />
     </div>
   );
 };

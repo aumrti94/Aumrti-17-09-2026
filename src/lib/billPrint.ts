@@ -258,6 +258,8 @@ export interface BillPrintInput {
   payerType?: string | null;
   lineItems: BillPrintLineItem[];
   money: BillMoney;
+  /** Extra rows appended into the bill-details grid — e.g. OPD token/department/doctor. */
+  extraMeta?: { label: string; value?: string | null }[];
   /** Extra HTML appended after the totals — e.g. the discount authorisation trail. */
   extraSections?: string;
 }
@@ -279,26 +281,26 @@ function totalRow(label: string, value: string, opts?: { strong?: boolean; color
 }
 
 const BILL_PRINT_STYLES = `<style>
-  .bp-table { width:100%; border-collapse:collapse; margin:8px 0 14px; }
-  .bp-table th { background:#f1f5f9; padding:6px 8px; text-align:left; font-size:10px;
+  .bp-table { width:100%; border-collapse:collapse; margin:4px 0 8px; }
+  .bp-table th { background:#f1f5f9; padding:4px 6px; text-align:left; font-size:10px;
                  text-transform:uppercase; color:#475569; border-bottom:1.5px solid #cbd5e1; }
-  .bp-table td { padding:5px 8px; border-bottom:1px solid #f1f5f9; font-size:11.5px; vertical-align:top; }
+  .bp-table td { padding:3px 6px; border-bottom:1px solid #f1f5f9; font-size:11.5px; vertical-align:top; }
   .bp-group td { background:#f8fafc; font-weight:700; font-size:11px; text-transform:uppercase;
-                 letter-spacing:0.3px; padding-top:8px; }
+                 letter-spacing:0.3px; padding-top:4px; }
   .bp-subtotal td { font-weight:700; font-size:11px; border-bottom:1.5px solid #cbd5e1; background:#fcfdfe; }
-  .bp-section { font-size:13px; font-weight:700; letter-spacing:0.5px; text-align:center;
-                background:#f1f5f9; padding:5px 0; margin:16px 0 4px; border-radius:3px; }
-  .bp-meta { display:flex; flex-wrap:wrap; gap:2px 24px; margin-bottom:10px;
-             border:1px solid #e2e8f0; border-radius:4px; padding:8px 10px; }
-  .bp-kv { display:flex; gap:8px; min-width:46%; font-size:11px; padding:1px 0; }
+  .bp-section { font-size:12.5px; font-weight:700; letter-spacing:0.5px; text-align:center;
+                background:#f1f5f9; padding:3px 0; margin:8px 0 3px; border-radius:3px; }
+  .bp-meta { display:flex; flex-wrap:wrap; gap:1px 24px; margin-bottom:6px;
+             border:1px solid #e2e8f0; border-radius:4px; padding:5px 8px; }
+  .bp-kv { display:flex; gap:8px; min-width:46%; font-size:11px; padding:0.5px 0; }
   .bp-k { color:#64748b; min-width:96px; }
   .bp-v { font-weight:600; }
   .bp-totals { margin-left:auto; width:60%; }
-  .bp-total { display:flex; justify-content:space-between; font-size:12px; padding:3px 0; }
+  .bp-total { display:flex; justify-content:space-between; font-size:12px; padding:1.5px 0; }
   .bp-total-strong { font-weight:700; font-size:14px; border-top:1.5px solid #94a3b8;
-                     border-bottom:1.5px solid #94a3b8; padding:6px 0; margin:4px 0; }
-  .bp-words { margin-top:10px; font-size:11px; font-style:italic; color:#475569;
-              border-top:1px dashed #cbd5e1; padding-top:8px; }
+                     border-bottom:1.5px solid #94a3b8; padding:3px 0; margin:2px 0; }
+  .bp-words { margin-top:6px; font-size:11px; font-style:italic; color:#475569;
+              border-top:1px dashed #cbd5e1; padding-top:5px; }
 </style>`;
 
 /**
@@ -331,27 +333,46 @@ export function renderBillHtml(input: BillPrintInput): string {
     detailRow("Discharged", fmtStamp(adm?.dischargedAt)),
     detailRow("Ward / Bed", [adm?.ward, adm?.bed].filter(Boolean).join(" · ") || null),
     detailRow("Consulting Doctor", adm?.doctor ? `Dr. ${adm.doctor}` : null),
+    // Caller-supplied rows (e.g. OPD token / department / doctor) — kept in the details grid
+    // rather than a separate banner so a simple bill stays compact.
+    ...(input.extraMeta || []).map((r) => detailRow(r.label, r.value)),
   ].join("");
+
+  // A fully-settled bill needs no Paid/Balance rows — the patient has paid in full. Those
+  // lines only carry information while money is still outstanding (partial) or owed back
+  // (refund). See computeBillMoney for the settlement fields.
+  const fullyPaid = m.balanceDue <= 0 && m.refundDue <= 0 && m.totalCredits > 0;
 
   const totals = [
     totalRow("Gross Charges", rupees(m.grossCharges)),
     m.discount > 0 ? totalRow("Discount", `- ${rupees(m.discount)}`) : "",
     m.insuranceCovered > 0 ? totalRow("Insurance / TPA Covered", `- ${rupees(m.insuranceCovered)}`) : "",
     totalRow("Total Payable", rupees(m.patientPayable), { strong: true }),
-    m.netAdvance > 0 ? totalRow("Advance / Deposit", `- ${rupees(m.netAdvance)}`) : "",
-    m.directPaid > 0 ? totalRow("Paid", `- ${rupees(m.directPaid)}`) : "",
+    !fullyPaid && m.netAdvance > 0 ? totalRow("Advance / Deposit", `- ${rupees(m.netAdvance)}`) : "",
+    !fullyPaid && m.directPaid > 0 ? totalRow("Paid", `- ${rupees(m.directPaid)}`) : "",
     m.balanceDue > 0
       ? totalRow("Balance Due", rupees(m.balanceDue), { strong: true, color: "#dc2626" })
       : m.refundDue > 0
         ? totalRow("Refund Due to Patient", rupees(m.refundDue), { strong: true, color: "#047857" })
-        : totalRow("Balance Due", rupees(0), { strong: true, color: "#047857" }),
+        : fullyPaid
+          ? totalRow("Status", "PAID IN FULL", { strong: true, color: "#047857" })
+          : "",
   ].join("");
+
+  // The PARTICULARS summary earns its space only with 2+ categories; for a single-category
+  // bill it just duplicates the one DETAILED BREAKUP subtotal, so it is dropped.
+  const summarySection =
+    groups.length === 0
+      ? renderBillSummaryTable(groups)
+      : groups.length >= 2
+        ? `<div class="bp-section">PARTICULARS</div>\n${renderBillSummaryTable(groups)}`
+        : "";
 
   return `${BILL_PRINT_STYLES}
 <div class="bp-section">${billPrintTitle(input.billStatus)}</div>
 <div class="bp-meta">${meta}</div>
 
-${renderBillSummaryTable(groups)}
+${summarySection}
 
 ${groups.length > 0 ? `<div class="bp-section">DETAILED BREAKUP</div>
 ${renderBillDetailTable(groups)}` : ""}
@@ -468,7 +489,7 @@ export async function fetchBillForPrint(
 export async function printBillById(
   billId: string,
   hospitalId: string,
-  opts?: { extraSections?: string; includeAdmission?: boolean }
+  opts?: { extraSections?: string; includeAdmission?: boolean; extraMeta?: { label: string; value?: string | null }[] }
 ): Promise<boolean> {
   const [brand, input] = await Promise.all([
     fetchHospitalBrand(supabase, hospitalId),
@@ -477,6 +498,7 @@ export async function printBillById(
   if (!input) return false;
 
   if (opts?.extraSections) input.extraSections = opts.extraSections;
+  if (opts?.extraMeta) input.extraMeta = opts.extraMeta;
 
   const body = `${printHeader(brand.name, brand.address || undefined)}${renderBillHtml(input)}`;
   printDocument(`${billPrintTitle(input.billStatus)} — ${input.billNumber}`, body);

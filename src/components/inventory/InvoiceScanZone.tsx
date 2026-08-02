@@ -3,6 +3,7 @@ import { Camera, Upload, X, Loader2, CheckCircle, Search, Sparkles } from "lucid
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { fileToBase64 } from "@/lib/documentAI";
 
 export interface ExtractedInvoiceItem {
   name: string;
@@ -76,12 +77,9 @@ const InvoiceScanZone: React.FC<Props> = ({ onExtracted }) => {
     const stepTimer2 = setTimeout(() => setStep(2), 2500);
 
     try {
-      // Convert to base64
-      const arrayBuffer = await imageFile.arrayBuffer();
-      const uint8 = new Uint8Array(arrayBuffer);
-      let binary = "";
-      for (let i = 0; i < uint8.length; i++) binary += String.fromCharCode(uint8[i]);
-      const base64 = btoa(binary);
+      // Convert to base64. FileReader-based, so a large photo doesn't build a
+      // multi-megabyte string one charCode at a time on the main thread.
+      const base64 = await fileToBase64(imageFile);
 
       const { data, error } = await supabase.functions.invoke("scan-invoice", {
         body: { base64Image: base64, mediaType: imageFile.type },

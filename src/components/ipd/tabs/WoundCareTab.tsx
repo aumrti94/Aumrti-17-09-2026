@@ -208,7 +208,7 @@ export default function WoundCareTab({ admissionId, patientId, hospitalId, userI
     if (form.wound_type === "pressure_injury" && ["Stage III","Stage IV","Unstageable"].includes(form.stage)) {
       await logNABHEvidence(hospitalId, "COP.4",
         `Pressure injury documented: ${form.stage} at ${form.location}. Wound assessment recorded with care plan.`,
-        "partial");
+        "partially_compliant");
     }
 
     setSaving(false);

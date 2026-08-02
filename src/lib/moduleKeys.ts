@@ -68,6 +68,7 @@ export const ROUTE_TO_MODULE_KEY: Record<string, string> = {
   "/research":                 "research",
   "/analytics":              "analytics",
   "/hod-dashboard":          "hod_dashboard",
+  "/ceo-board":              "analytics",
   "/tv-display":             "tv_display",
   "/settings":               "settings",
   // ── Module-specific Settings sub-pages ──────────────────────────────────────

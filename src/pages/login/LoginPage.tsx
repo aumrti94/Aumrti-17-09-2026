@@ -248,9 +248,18 @@ const LoginPage: React.FC = () => {
 
       const { data: userRow } = await supabase
         .from("users")
-        .select("full_name, role, mfa_required")
+        .select("full_name, role, mfa_required, is_active")
         .eq("auth_user_id", uid)
         .maybeSingle();
+
+      // Deactivated staff must be rejected here, before any "welcome" state fires —
+      // HospitalContext also enforces this post-navigation, but by then the toast
+      // and route change have already happened.
+      if ((userRow as any)?.is_active === false) {
+        await supabase.auth.signOut();
+        setErrorMsg("This account has been deactivated. Contact your administrator.");
+        return;
+      }
 
       const fullName   = (userRow as any)?.full_name || "there";
       const role       = (userRow as any)?.role || "receptionist";

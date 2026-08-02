@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Receipt, Printer, MessageSquare, FileText, Send, Lock, AlertTriangle, ShieldAlert } from "lucide-react";
+import { Receipt, Printer, MessageSquare, FileText, Send, Lock, AlertTriangle, ShieldAlert, IndianRupee } from "lucide-react";
 import { printAmount } from "@/lib/printUtils";
 import { printBillById } from "@/lib/billPrint";
 import { billStatusDisplay } from "@/lib/billStatus";
@@ -13,6 +13,8 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import LineItemsTab from "@/components/billing/tabs/LineItemsTab";
 import PaymentsTab from "@/components/billing/tabs/PaymentsTab";
+import CollectPaymentForm from "@/components/billing/CollectPaymentForm";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import InsuranceTab from "@/components/billing/tabs/InsuranceTab";
 import DiscountTab from "@/components/billing/tabs/DiscountTab";
 import AdvanceApplicationTab from "@/components/billing/tabs/AdvanceApplicationTab";
@@ -25,10 +27,11 @@ import { autoPostJournalEntry } from "@/lib/accounting";
 import { logAudit } from "@/lib/auditLog";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
 import { autoPullAdmissionCharges } from "@/lib/ipdBilling";
-import { isAdmissionBill } from "@/lib/admissionBill";
+import { ADMISSION_BILL_TYPES, isAdmissionBill } from "@/lib/admissionBill";
 import { formatINR } from "@/lib/currency";
 import { computeBillMoney } from "@/lib/billMoney";
 import { fetchAdvanceLedger, type AdvanceLedger } from "@/lib/advanceLedger";
+import { useHospitalContext } from "@/contexts/HospitalContext";
 import type { BillRecord } from "@/pages/billing/BillingPage";
 
 interface DiscountApproval {
@@ -88,12 +91,17 @@ interface AdmissionEstimate {
 
 const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
   const { toast } = useToast();
+  const { role: userRole } = useHospitalContext();
   const { show: showWaNotif, card: waCard } = useWhatsAppNotification();
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
+  // The admission charge sweep runs in the background after the editor opens; this
+  // drives a non-blocking note in the line-items tab so the user knows more is coming.
+  const [pullingCharges, setPullingCharges] = useState(false);
   const [showGstInvoice, setShowGstInvoice] = useState(false);
   const [showPaymentLink, setShowPaymentLink] = useState(false);
+  const [showPayModal, setShowPayModal] = useState(false);
   const [hospitalInfo, setHospitalInfo] = useState<any>(null);
   const [estimateData, setEstimateData] = useState<AdmissionEstimate | null>(null);
   const [advanceLedger, setAdvanceLedger] = useState<AdvanceLedger | null>(null);
@@ -221,23 +229,34 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
     fetchDiscountApprovals();
   }, [fetchLineItems, fetchPayments, fetchDiscountApprovals]);
 
-  // Auto-pull admission charges on first open of a draft IPD bill
+  // Auto-pull admission charges on first open of a draft admission bill.
+  //
+  // This is the ONLY place the sweep runs on the open path — BillingPage used to await
+  // it before opening the dialog, which meant a 60-120 round-trip job stood between the
+  // click and anything rendering, and then this effect ran the whole sweep a second time.
+  // It runs unawaited here so the editor is interactive immediately; `pullingCharges`
+  // tells the line-items tab to show a quiet "pulling" note rather than blocking.
+  //
+  // Covers BOTH admission bill types: day care bills used to be auto-pulled only by
+  // BillingPage, so narrowing this to 'ipd' would silently stop charging them.
   const autoPulledRef = React.useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!bill || !hospitalId) return;
-    if (bill.bill_type !== "ipd" || !bill.admission_id) return;
+    if (!ADMISSION_BILL_TYPES.includes(bill.bill_type as any) || !bill.admission_id) return;
     if (bill.bill_status !== "draft") return;
     if (autoPulledRef.current.has(bill.id)) return;
     autoPulledRef.current.add(bill.id);
+    setPullingCharges(true);
     (async () => {
-      const result = await autoPullAdmissionCharges(bill.id, bill.admission_id!, hospitalId);
-      if (result.ok && result.insertedCount > 0) {
-        toast({ title: `Pulled ${result.insertedCount} IPD charges`, description: "Room, doctor visits, lab, radiology, pharmacy, nursing." });
-        fetchLineItems();
-        onRefresh();
-      }
-      if (result.usedFallbackRate) {
-        toast({ title: "Using fallback rates", description: "Configure service rates in Settings → Service Rates." });
+      try {
+        const result = await autoPullAdmissionCharges(bill.id, bill.admission_id!, hospitalId);
+        if (result.ok && result.insertedCount > 0) {
+          toast({ title: `Pulled ${result.insertedCount} IPD charges`, description: "Room, doctor visits, lab, radiology, pharmacy, nursing." });
+          fetchLineItems();
+          onRefresh();
+        }
+      } finally {
+        setPullingCharges(false);
       }
     })();
   }, [bill, hospitalId, fetchLineItems, onRefresh, toast]);
@@ -420,6 +439,11 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
               <span className="text-[11px] font-semibold text-amber-800">Awaiting discount approval</span>
             </div>
           )}
+          {bill.bill_status === "final" && (isAdmissionBill(bill.bill_type) ? money.balanceDue : bill.balance_due) > 0 && (
+            <Button size="sm" className="h-7 text-[11px] gap-1" onClick={() => setShowPayModal(true)}>
+              <IndianRupee size={12} /> Pay Bill
+            </Button>
+          )}
           {bill.bill_status === "final" && bill.gst_amount > 0 && !isIRNLocked && (
             <Button size="sm" className="h-7 text-[11px] gap-1 bg-emerald-700 hover:bg-emerald-800 text-white" onClick={() => setShowGstInvoice(true)}>
               <FileText size={12} /> GST Invoice
@@ -538,6 +562,7 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
             hospitalId={hospitalId}
             lineItems={lineItems}
             loading={loadingItems}
+            pullingCharges={pullingCharges}
             payments={payments}
             onRefresh={() => { fetchLineItems(); recalcBillTotals(); }}
           />
@@ -576,6 +601,7 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
             <DiscountTab
               bill={bill}
               hospitalId={hospitalId}
+              userRole={userRole ?? undefined}
               onRefresh={() => { fetchDiscountApprovals(); onRefresh(); }}
             />
           )}
@@ -603,6 +629,23 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
           onClose={() => setShowPaymentLink(false)}
         />
       )}
+      <Dialog open={showPayModal} onOpenChange={setShowPayModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Collect Payment · {bill.bill_number}</DialogTitle>
+          </DialogHeader>
+          <CollectPaymentForm
+            bill={bill}
+            hospitalId={hospitalId}
+            payments={payments}
+            netAdvanceBalance={netAdvanceBalance}
+            money={money}
+            compact
+            onRefresh={() => { fetchPayments(); onRefresh(); }}
+            onSuccess={() => setShowPayModal(false)}
+          />
+        </DialogContent>
+      </Dialog>
     </div>
     </>
   );

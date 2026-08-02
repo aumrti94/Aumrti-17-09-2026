@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useRealtimeRefetch } from "@/hooks/useRealtimeRefetch";
 import { IndianRupee, CreditCard, Link2, Wallet, Download, Printer, Search, Send, CheckCircle2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { recordBillPayment } from "@/lib/billPayments";
+import { printReceiptDoc } from "@/lib/receiptPrint";
 import PaymentLinkModal from "@/components/billing/PaymentLinkModal";
 import type { BillRecord } from "@/pages/billing/BillingPage";
 
@@ -59,6 +61,8 @@ interface PaymentRow {
 const PaymentsPage: React.FC = () => {
   const { toast } = useToast();
   const [hospitalId, setHospitalId] = useState<string | null>(null);
+  // Bumped by realtime/focus events to re-run all data effects on this screen live.
+  const [reloadKey, setReloadKey] = useState(0);
   const [userId, setUserId] = useState<string | null>(null);
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [hospital80G, setHospital80G] = useState<{ name: string; registration_80g?: string; trust_pan?: string } | null>(null);
@@ -99,7 +103,7 @@ const PaymentsPage: React.FC = () => {
         setOutstandingTotal(total);
       }
     })();
-  }, [hospitalId, payments]);
+  }, [hospitalId, payments, reloadKey]);
 
   // Links Sent (this period) + Advances on hold (all-time, mirrors Outstanding)
   useEffect(() => {
@@ -122,7 +126,7 @@ const PaymentsPage: React.FC = () => {
       setLinksSentCount(linkCount ?? 0);
       setAdvancesOnHold((advRows || []).reduce((s: number, r: any) => s + Number(r.amount || 0), 0));
     })();
-  }, [hospitalId, dateFilter]);
+  }, [hospitalId, dateFilter, reloadKey]);
 
   useEffect(() => {
     (async () => {
@@ -206,26 +210,28 @@ const PaymentsPage: React.FC = () => {
   };
 
   const print80GReceipt = (p: PaymentRow) => {
+    if (!hospitalId) return;
     const h = hospital80G;
-    const fmt80 = (n: number) => `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
-    const html = `<div style="font-family:Arial,sans-serif;padding:40px;max-width:600px;margin:0 auto">
-      <h2 style="margin:0 0 4px;color:#1e3a5f">${h?.name || "Hospital"}</h2>
-      ${h?.trust_pan ? `<p style="margin:2px 0;font-size:11px;color:#64748b">PAN: ${h.trust_pan}</p>` : ""}
-      ${h?.registration_80g ? `<p style="margin:2px 0;font-size:11px;color:#64748b">80G Registration: ${h.registration_80g}</p>` : ""}
-      <h3 style="margin:20px 0 12px;padding-top:16px;border-top:2px solid #1e3a5f;color:#1e3a5f">80G Donation Receipt</h3>
-      <table style="width:100%;font-size:13px">
-        <tr><td style="padding:4px 0;color:#64748b">Donor Name</td><td style="padding:4px 0;font-weight:600">${p.patient_name}</td></tr>
-        <tr><td style="padding:4px 0;color:#64748b">Date</td><td style="padding:4px 0">${new Date(p.payment_date).toLocaleDateString("en-IN")}</td></tr>
-        <tr><td style="padding:4px 0;color:#64748b">Reference / Bill No.</td><td style="padding:4px 0">${p.bill_number}</td></tr>
-        <tr><td style="padding:4px 0;color:#64748b">Mode of Donation</td><td style="padding:4px 0 capitalize">${p.payment_mode}</td></tr>
-        ${p.transaction_id ? `<tr><td style="padding:4px 0;color:#64748b">Transaction ID</td><td style="padding:4px 0;font-family:monospace">${p.transaction_id}</td></tr>` : ""}
-        <tr><td style="padding:4px 0;color:#64748b">Amount</td><td style="padding:4px 0;font-size:18px;font-weight:700;color:#1e3a5f">${fmt80(p.amount)}</td></tr>
-      </table>
-      <p style="margin-top:16px;font-size:11px;color:#64748b">Donation is eligible for income tax deduction under Section 80G of the Income Tax Act, 1961, subject to applicable limits.</p>
-      <p style="margin-top:24px;font-size:11px;color:#94a3b8">Receipt generated on ${new Date().toLocaleString()}</p>
-    </div>`;
-    const w = window.open("", "_blank", "noopener,noreferrer,width=700,height=600");
-    if (w) { w.document.write(`<html><head><title>80G Receipt</title><style>@media print{body{padding:0}}</style></head><body>${html}</body></html>`); w.document.close(); w.focus(); setTimeout(() => w.print(), 300); }
+    // Statutory identifiers (PAN, 80G registration) shown as a block on the shared receipt.
+    const statutory = (h?.trust_pan || h?.registration_80g)
+      ? `<div style="border-top:1px dashed #cbd5e1;padding-top:8px;margin-top:10px;font-size:11px;color:#64748b;">
+          ${h?.trust_pan ? `<div>PAN: ${h.trust_pan}</div>` : ""}
+          ${h?.registration_80g ? `<div>80G Registration: ${h.registration_80g}</div>` : ""}
+        </div>`
+      : "";
+    void printReceiptDoc(hospitalId, {
+      title: "80G DONATION RECEIPT",
+      receiptNumber: p.bill_number,
+      date: p.payment_date,
+      patientName: p.patient_name,
+      receivedFrom: p.patient_name,
+      towards: "Donation",
+      amountReceived: p.amount,
+      paymentMode: p.payment_mode,
+      reference: p.transaction_id,
+      extraSections: statutory,
+      footerNote: "Donation is eligible for income tax deduction under Section 80G of the Income Tax Act, 1961, subject to applicable limits.",
+    });
   };
 
   const lookUpRazorpayTxn = async () => {
@@ -297,7 +303,15 @@ const PaymentsPage: React.FC = () => {
     setLoading(false);
   }, [hospitalId, dateFilter, modeFilter]);
 
-  useEffect(() => { fetchPayments(); }, [fetchPayments]);
+  useEffect(() => { fetchPayments(); }, [fetchPayments, reloadKey]);
+
+  // Live updates for the payments list, outstanding, and advances-on-hold tiles.
+  useRealtimeRefetch({
+    tables: ["bill_payments", "bills", "advance_receipts", "payment_links"],
+    hospitalId,
+    onChange: () => setReloadKey((k) => k + 1),
+    channelName: "billing-payments",
+  });
 
   // KPIs
   const todayTotal = payments.reduce((s, p) => s + p.amount, 0);

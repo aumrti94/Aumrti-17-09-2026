@@ -9,6 +9,7 @@ import { Download, Calendar, Trash2, Loader2, Save } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import * as XLSX from "xlsx";
 import type { DateRange } from "@/hooks/useAnalyticsData";
+import { attainment } from "@/lib/qualityIndicators";
 import ScheduleReportModal from "./ScheduleReportModal";
 
 const DATA_SOURCES: Record<string, { label: string; metrics: string[] }> = {
@@ -158,15 +159,21 @@ const CustomReportBuilder: React.FC<{ range: DateRange }> = ({ range }) => {
           name: date, "Total Sales": v.sales, "Retail Count": v.retail, "IP Count": v.ip,
         }));
       } else if (source === "quality") {
-        const { data } = await supabase.from("quality_indicators")
-          .select("indicator_name, value, target, unit, category")
+        const { data } = await (supabase as any).from("quality_indicators_current")
+          .select("indicator_name, value, target, unit, category, direction")
           .eq("hospital_id", hospitalId);
 
-        result = (data || []).map(q => ({
+        result = ((data as any[]) || []).map(q => ({
           name: q.indicator_name,
-          "Indicator Values": q.value,
-          Targets: q.target,
-          "Compliance %": q.target && q.value ? Math.round((q.value / q.target) * 100) : 0,
+          "Indicator Values": q.value === null ? null : Number(q.value),
+          Targets: q.target === null ? null : Number(q.target),
+          // Direction-aware. A plain value/target ratio reports 400% "compliance"
+          // for a lower-is-better indicator sitting four times over its target.
+          "Compliance %": attainment(
+            q.value === null ? null : Number(q.value),
+            q.target === null ? null : Number(q.target),
+            q.direction,
+          ),
         }));
       }
 

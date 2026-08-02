@@ -23,4 +23,15 @@ export default tseslint.config(
       "@typescript-eslint/no-unused-vars": "off",
     },
   },
+  {
+    // The Playwright test suite is Node, not React. Its fixture API takes a
+    // callback named `use`, which react-hooks/rules-of-hooks mistakes for
+    // React's use() hook and reports as an error.
+    files: ["e2e/**/*.{ts,tsx}"],
+    languageOptions: { globals: globals.node },
+    rules: {
+      "react-hooks/rules-of-hooks": "off",
+      "react-refresh/only-export-components": "off",
+    },
+  },
 );

@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { ROUTE_TO_MODULE_KEY, CANONICAL_MODULE_KEYS } from "@/lib/moduleKeys";
-import { resolveSubscriptionAccess, type AccessBlockReason } from "@/lib/subscriptionAccess";
+import { resolveSubscriptionAccess, SUBSCRIPTION_GRACE_DAYS, type AccessBlockReason } from "@/lib/subscriptionAccess";
 import { resolveEnabledModules } from "@/lib/moduleAccess";
 // Re-exported for the many consumers that import these from this hook.
 export { ROUTE_TO_MODULE_KEY, CANONICAL_MODULE_KEYS };
@@ -38,6 +38,8 @@ export interface HospitalSubscription {
   plan_id: string;
   status: "trial" | "active" | "past_due" | "suspended" | "cancelled";
   trial_ends_at: string | null;
+  /** When the last renewal failed (status went past_due) — anchors the buffer. */
+  past_due_since: string | null;
   current_period_start: string | null;
   current_period_end: string | null;
   razorpay_subscription_id: string | null;
@@ -89,12 +91,12 @@ const ALWAYS_ENABLED = new Set(["settings", "inbox", "dashboard"]);
 // ─────────────────────────────────────────────────────────────
 
 async function fetchSubscriptionConfig(hospitalId: string): Promise<Omit<SubscriptionConfig, "isLoading" | "error" | "refetch">> {
-  const [subResult, overridesResult, pricingResult] = await Promise.all([
+  const [subResult, overridesResult, pricingResult, graceResult] = await Promise.all([
     (supabase as any)
       .from("hospital_subscriptions")
       .select(`
         id, hospital_id, plan_id, status,
-        trial_ends_at, current_period_start, current_period_end,
+        trial_ends_at, past_due_since, current_period_start, current_period_end,
         razorpay_subscription_id, discount_code_applied, discount_pct,
         discount_expires_at, trial_bonus_days, conversion_period_start_mode
       `)
@@ -111,9 +113,17 @@ async function fetchSubscriptionConfig(hospitalId: string): Promise<Omit<Subscri
       .select("monthly_price, yearly_price, valid_until")
       .eq("hospital_id", hospitalId)
       .maybeSingle(),
+
+    // Configurable payment-failure buffer (from /platform → Payments). Exposed
+    // to hospital users via a SECURITY DEFINER RPC since the settings table is
+    // admin-only. Fails soft to the default if the RPC is unavailable.
+    (supabase as any).rpc("get_subscription_grace_days"),
   ]);
 
   if (subResult.error) throw subResult.error;
+
+  const graceDays: number =
+    typeof graceResult?.data === "number" ? graceResult.data : SUBSCRIPTION_GRACE_DAYS;
 
   const subscription = subResult.data as HospitalSubscription | null;
 
@@ -202,7 +212,7 @@ async function fetchSubscriptionConfig(hospitalId: string): Promise<Omit<Subscri
     subscription.status === "past_due";
 
   // The enforced decision — mirrored by public.subscription_access_blocked() in the DB.
-  const access = resolveSubscriptionAccess(subscription);
+  const access = resolveSubscriptionAccess(subscription, new Date(), graceDays);
 
   return {
     plan,

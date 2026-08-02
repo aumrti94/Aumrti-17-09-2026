@@ -10,7 +10,7 @@ import { postAncillaryOrderCharges } from "@/lib/ancillaryCharges";
 import { fetchIpdAncillaryPolicy, resolveChargePaymentStatus } from "@/lib/ipdAncillaryGate";
 import AdmissionLinker from "@/components/shared/AdmissionLinker";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
-import { printDocument } from "@/lib/printUtils";
+import { printBillById } from "@/lib/billPrint";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -112,6 +112,7 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
 
   // Success step state
   const [createdBillNumber, setCreatedBillNumber] = useState<string | null>(null);
+  const [createdBillId, setCreatedBillId] = useState<string | null>(null);
 
   // Capture preselected names at mount time (stable ref — avoids stale closure)
   const preselectedNamesRef = React.useRef<string[]>(preselectedTestNames || []);
@@ -679,6 +680,7 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
       );
 
       setCreatedBillNumber(billNumber);
+      setCreatedBillId(bill.id);
       setStep("success");
       onCreated();
     } catch (err: any) {
@@ -1068,16 +1070,12 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
             </div>
 
             <div className="flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={() => printDocument(
-                `Lab Receipt — ${createdBillNumber}`,
-                `<div class="header"><h1>Lab Order Receipt</h1></div>
-                 <div class="row"><span class="label">Bill No.</span><span>${createdBillNumber}</span></div>
-                 <div class="row"><span class="label">Patient</span><span>${selectedPatient?.full_name || "—"}</span></div>
-                 <div class="row"><span class="label">Tests</span><span>${selectedTests.length} test(s)</span></div>
-                 <div class="row"><span class="label">Payment Mode</span><span style="text-transform:capitalize">${paymentMode}</span></div>
-                 <div class="total-row"><span>Amount Paid</span><span class="amount">₹${grandTotal.toLocaleString("en-IN")}</span></div>`
-              )}>
-                <Printer className="h-4 w-4 mr-1" /> Print Receipt
+              <Button variant="outline" className="flex-1" onClick={async () => {
+                if (!createdBillId) return;
+                const ok = await printBillById(createdBillId, hospitalId);
+                if (!ok) toast({ title: "Could not open the bill for printing", variant: "destructive" });
+              }}>
+                <Printer className="h-4 w-4 mr-1" /> Print Bill
               </Button>
               <Button className="flex-1" onClick={onClose}>
                 Done

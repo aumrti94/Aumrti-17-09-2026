@@ -3,9 +3,10 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, Plus, X, Building2 } from "lucide-react";
+import { ArrowLeft, Plus, X, Building2, ListPlus } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import BulkPasteAddModal from "@/components/settings/BulkPasteAddModal";
 
 const PAYER_TYPES = [
   { value: "cash", label: "Cash" },
@@ -61,6 +62,7 @@ const SettingsPayerMastersPage: React.FC = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ ...emptyForm });
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const getHospitalId = async () => {
     const { data } = await supabase.from("users").select("hospital_id").limit(1).maybeSingle();
@@ -109,6 +111,23 @@ const SettingsPayerMastersPage: React.FC = () => {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const bulkAddPayers = async (rows: Record<string, string>[]) => {
+    const hid = await getHospitalId();
+    const defaultType = filterType !== "all" ? filterType : "tpa";
+    const payload = rows.map((r) => ({
+      hospital_id: hid,
+      payer_type: r.payer_type?.trim() || defaultType,
+      payer_name: r.payer_name.trim(),
+      credit_limit: r.credit_limit ? parseFloat(r.credit_limit) : null,
+      payment_terms_days: r.payment_terms_days ? parseInt(r.payment_terms_days) : 30,
+      tariff_class: "standard",
+      is_active: true,
+    }));
+    const { error } = await (supabase as any).from("payer_masters").insert(payload);
+    if (error) return { error: error.message };
+    qc.invalidateQueries({ queryKey: ["settings-payer-masters"] });
+  };
+
   const toggleActive = useMutation({
     mutationFn: async ({ id, active }: { id: string; active: boolean }) => {
       const { error } = await (supabase as any).from("payer_masters").update({ is_active: active }).eq("id", id);
@@ -152,10 +171,30 @@ const SettingsPayerMastersPage: React.FC = () => {
             <p className="text-xs text-muted-foreground">Settings › Payer Masters</p>
           </div>
         </div>
-        <button onClick={() => openDrawer()} className="flex items-center gap-1.5 bg-[hsl(222,55%,23%)] text-white px-4 py-2 rounded-lg text-sm font-medium hover:opacity-90 active:scale-[0.97]">
-          <Plus size={14} /> Add Payer
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setBulkOpen(true)} className="flex items-center gap-1.5 border border-border text-foreground px-4 py-2 rounded-lg text-sm font-medium hover:bg-muted active:scale-[0.97]">
+            <ListPlus size={14} /> Bulk Add
+          </button>
+          <button onClick={() => openDrawer()} className="flex items-center gap-1.5 bg-[hsl(222,55%,23%)] text-white px-4 py-2 rounded-lg text-sm font-medium hover:opacity-90 active:scale-[0.97]">
+            <Plus size={14} /> Add Payer
+          </button>
+        </div>
       </div>
+
+      <BulkPasteAddModal
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        title="Bulk Add Payers"
+        description="Fill in a row per payer — Type defaults to the current filter tab if left blank."
+        columns={[
+          { key: "payer_name",          label: "Payer Name", required: true, placeholder: "e.g. Star Health Insurance" },
+          { key: "payer_type",          label: "Type (optional)", placeholder: filterType !== "all" ? filterType : "tpa" },
+          { key: "credit_limit",        label: "Credit Limit (₹)", type: "number", placeholder: "0" },
+          { key: "payment_terms_days",  label: "Terms (days)", type: "number", placeholder: "30" },
+        ]}
+        existingKeys={new Set((payers ?? []).map((p) => p.payer_name.toLowerCase()))}
+        onSubmit={bulkAddPayers}
+      />
 
       {/* TYPE FILTER */}
       <div className="flex-shrink-0 px-6 py-2.5 border-b border-border flex gap-1.5 overflow-x-auto">

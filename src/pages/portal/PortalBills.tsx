@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useRealtimeRefetch } from "@/hooks/useRealtimeRefetch";
 import type { PortalSession } from "./PortalLogin";
 import { X, Smartphone, Link2, Building2, Download } from "lucide-react";
 import { toast } from "sonner";
+import { printBillById } from "@/lib/billPrint";
 
 const PortalBills: React.FC<{ session: PortalSession }> = ({ session }) => {
   const [tab, setTab] = useState<"pending" | "paid">("pending");
@@ -11,27 +13,37 @@ const PortalBills: React.FC<{ session: PortalSession }> = ({ session }) => {
   const [payingBill, setPayingBill] = useState<any>(null);
   const [hospital, setHospital] = useState<any>(null);
 
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase
-        .from("bills")
-        .select("id, bill_number, bill_date, bill_type, total_amount, paid_amount, balance_due, payment_status")
-        .eq("patient_id", session.patientId)
-        .eq("hospital_id", session.hospitalId)
-        .order("bill_date", { ascending: false })
-        .limit(50);
-      setBills(data || []);
+  const loadBills = useCallback(async () => {
+    const { data } = await supabase
+      .from("bills")
+      .select("id, bill_number, bill_date, bill_type, total_amount, paid_amount, balance_due, payment_status")
+      .eq("patient_id", session.patientId)
+      .eq("hospital_id", session.hospitalId)
+      .order("bill_date", { ascending: false })
+      .limit(50);
+    setBills(data || []);
 
-      const { data: h } = await supabase
-        .from("hospitals")
-        .select("name, address, razorpay_key_id")
-        .eq("id", session.hospitalId)
-        .maybeSingle();
-      setHospital(h);
+    const { data: h } = await supabase
+      .from("hospitals")
+      .select("name, address, razorpay_key_id")
+      .eq("id", session.hospitalId)
+      .maybeSingle();
+    setHospital(h);
 
-      setLoading(false);
-    })();
+    setLoading(false);
   }, [session]);
+
+  useEffect(() => { loadBills(); }, [loadBills]);
+
+  // Live: reflect a payment/settlement on the patient's own bills without a refresh.
+  // (Realtime is filtered to this patient; the hook's focus fallback covers portal
+  // sessions where realtime delivery isn't authorized.)
+  useRealtimeRefetch({
+    tables: [{ table: "bills", filter: `patient_id=eq.${session.patientId}` }],
+    hospitalId: session.hospitalId,
+    onChange: loadBills,
+    channelName: "portal-bills",
+  });
 
   const pendingBills = bills.filter((b) => b.payment_status === "unpaid" || b.payment_status === "partial");
   const paidBills = bills.filter((b) => b.payment_status === "paid");
@@ -39,33 +51,9 @@ const PortalBills: React.FC<{ session: PortalSession }> = ({ session }) => {
 
   const activeBills = tab === "pending" ? pendingBills : paidBills;
 
-  const handlePrintReceipt = (bill: any) => {
-    const w = window.open("", "_blank");
-    if (!w) return;
-    w.document.write(`
-      <html><head><title>Receipt - ${bill.bill_number}</title>
-      <style>
-        body { font-family: Inter, sans-serif; padding: 32px; max-width: 500px; margin: 0 auto; }
-        h1 { font-size: 18px; color: #0E7B7B; } 
-        .row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; border-bottom: 1px solid #F1F5F9; }
-        .label { color: #64748B; } .value { font-weight: bold; color: #0F172A; }
-        .footer { margin-top: 24px; font-size: 11px; color: #94A3B8; }
-      </style></head><body>
-        <h1>🧾 Payment Receipt</h1>
-        <p style="font-size:12px;color:#64748B">${session.hospitalName}</p>
-        <div style="margin-top:20px">
-          <div class="row"><span class="label">Bill #</span><span class="value">${bill.bill_number}</span></div>
-          <div class="row"><span class="label">Date</span><span class="value">${new Date(bill.bill_date).toLocaleDateString("en-IN")}</span></div>
-          <div class="row"><span class="label">Patient</span><span class="value">${session.fullName}</span></div>
-          <div class="row"><span class="label">UHID</span><span class="value">${session.uhid}</span></div>
-          <div class="row"><span class="label">Total</span><span class="value">₹${(bill.total_amount || 0).toLocaleString("en-IN")}</span></div>
-          <div class="row"><span class="label">Paid</span><span class="value" style="color:#15803D">₹${(bill.paid_amount || 0).toLocaleString("en-IN")}</span></div>
-        </div>
-        <div class="footer">Thank you for choosing ${session.hospitalName}.</div>
-        <script>window.onload=()=>window.print()</script>
-      </body></html>
-    `);
-    w.document.close();
+  // Shared structured bill. includeAdmission:false — the portal's RLS cannot reach admissions.
+  const handlePrintReceipt = async (bill: any) => {
+    await printBillById(bill.id, session.hospitalId, { includeAdmission: false });
   };
 
   return (

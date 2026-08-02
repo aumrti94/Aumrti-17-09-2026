@@ -60,6 +60,28 @@ async function fetchOAuthProviders(): Promise<OAuthRow[]> {
   return data || [];
 }
 
+// ── Subscription payments (platform's own Razorpay account) ─────────────────
+interface PaymentConfigStatus {
+  key_id: string | null;
+  has_key_secret: boolean;
+  has_webhook_secret: boolean;
+  payment_gateway_enabled: boolean;
+  access_grace_days: number;
+}
+
+async function fetchPaymentConfig(): Promise<PaymentConfigStatus | null> {
+  // The secret values are never returned — the status view only reports whether
+  // each is set (has_key_secret / has_webhook_secret).
+  const { data } = await (supabase as any)
+    .from("platform_payment_config_status")
+    .select("key_id, has_key_secret, has_webhook_secret, payment_gateway_enabled, access_grace_days")
+    .maybeSingle();
+  return data ?? null;
+}
+
+const SUBSCRIPTION_WEBHOOK_URL =
+  `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/razorpay-subscription-webhook`;
+
 export default function PlatformSettingsPage() {
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
@@ -286,6 +308,53 @@ export default function PlatformSettingsPage() {
     onError: (e: any) => { const m = getErrorMessage(e); setOauthError(m); toast.error(m); },
   });
 
+  // ── Subscription payments (platform Razorpay) ─────────────────────────────
+  const { data: payCfg } = useQuery({
+    queryKey: ["platform-payment-config"],
+    queryFn: fetchPaymentConfig,
+    staleTime: 60_000,
+  });
+  const [rzpKeyId, setRzpKeyId] = useState("");
+  const [rzpKeySecret, setRzpKeySecret] = useState("");
+  const [rzpWebhookSecret, setRzpWebhookSecret] = useState("");
+  const [gatewayEnabled, setGatewayEnabled] = useState(false);
+  const [graceDays, setGraceDays] = useState(3);
+  const [payError, setPayError] = useState<string | null>(null);
+
+  // Hydrate from status view; secrets are write-only so only their presence loads.
+  useEffect(() => {
+    if (!payCfg) return;
+    setRzpKeyId(payCfg.key_id ?? "");
+    setGatewayEnabled(payCfg.payment_gateway_enabled ?? false);
+    setGraceDays(payCfg.access_grace_days ?? 3);
+  }, [payCfg]);
+
+  const savePayment = useMutation({
+    mutationFn: async () => {
+      const payload: any = {
+        id: 1,
+        razorpay_subscription_key_id: rzpKeyId.trim() || null,
+        payment_gateway_enabled: gatewayEnabled,
+        access_grace_days: graceDays,
+        updated_at: new Date().toISOString(),
+      };
+      // Blank keeps the saved secret — same write-only pattern as Meta / OAuth.
+      if (rzpKeySecret.trim()) payload.razorpay_subscription_key_secret = rzpKeySecret.trim();
+      if (rzpWebhookSecret.trim()) payload.razorpay_subscription_webhook_secret = rzpWebhookSecret.trim();
+      const { error } = await (supabase as any)
+        .from("platform_billing_settings")
+        .upsert(payload, { onConflict: "id" });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      setPayError(null);
+      toast.success("Payment settings saved");
+      setRzpKeySecret(""); setRzpWebhookSecret("");
+      qc.invalidateQueries({ queryKey: ["platform-payment-config"] });
+    },
+    onError: (e: any) => { const m = getErrorMessage(e); setPayError(m); toast.error(m); },
+  });
+
   return (
     <div className="flex flex-col h-full">
       <div className="h-14 border-b border-border flex items-center justify-between px-6 shrink-0">
@@ -343,6 +412,99 @@ export default function PlatformSettingsPage() {
               </tbody>
             </table>
           )}
+        </div>
+
+        {/* Subscription Payments (Razorpay) */}
+        <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
+          <div className="px-5 py-3 border-b border-border flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <KeyRound className="w-4 h-4 text-foreground/70" />
+              <p className="text-sm font-semibold text-foreground">Subscription Payments (Razorpay)</p>
+            </div>
+            {payCfg?.key_id && payCfg?.has_key_secret ? (
+              <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-medium">Configured</span>
+            ) : (
+              <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-medium">Not configured</span>
+            )}
+          </div>
+          <div className="p-5 space-y-4">
+            <p className="text-xs text-foreground/60">
+              Aumrti's own Razorpay account — used to charge hospitals for their subscription. This is
+              separate from a hospital's patient-billing keys. Get these from your Razorpay Dashboard →
+              Settings → API Keys. Keys are stored securely and the secrets are never shown again.
+            </p>
+
+            <label className="flex items-center justify-between gap-3">
+              <span className="text-sm text-foreground">Payment gateway enabled</span>
+              <input type="checkbox" className="h-4 w-4" checked={gatewayEnabled}
+                onChange={(e) => setGatewayEnabled(e.target.checked)} />
+            </label>
+
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-foreground/70">Key ID</label>
+              <input className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm"
+                placeholder="rzp_live_XXXXXXXXXXXX" value={rzpKeyId}
+                onChange={(e) => setRzpKeyId(e.target.value)} />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-foreground/70">Key Secret</label>
+              <input type="password" className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm"
+                placeholder={payCfg?.has_key_secret ? "•••••••• saved — leave blank to keep" : "Enter key secret"}
+                value={rzpKeySecret} onChange={(e) => setRzpKeySecret(e.target.value)} />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-foreground/70">Webhook Secret</label>
+              <input type="password" className="w-full h-9 px-3 rounded-md border border-border bg-background text-sm"
+                placeholder={payCfg?.has_webhook_secret ? "•••••••• saved — leave blank to keep" : "From Razorpay → Webhooks"}
+                value={rzpWebhookSecret} onChange={(e) => setRzpWebhookSecret(e.target.value)} />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-foreground/70">
+                Webhook URL — add this in Razorpay → Settings → Webhooks
+              </label>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-[11px] px-3 py-2 rounded-md bg-muted text-foreground/80 break-all">
+                  {SUBSCRIPTION_WEBHOOK_URL}
+                </code>
+                <button type="button"
+                  className="text-xs px-2 py-1.5 rounded-md border border-border hover:bg-muted"
+                  onClick={() => { navigator.clipboard.writeText(SUBSCRIPTION_WEBHOOK_URL); toast.success("Webhook URL copied"); }}>
+                  Copy
+                </button>
+              </div>
+              <p className="text-[11px] text-foreground/50">
+                Subscribe to: subscription.activated, .charged, .halted, .cancelled, .completed,
+                .paused, .resumed, payment.failed, refund.created, refund.processed
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-foreground/70">
+                Payment-failure access buffer (days)
+              </label>
+              <input type="number" min={0} max={30}
+                className="w-28 h-9 px-3 rounded-md border border-border bg-background text-sm"
+                value={graceDays}
+                onChange={(e) => setGraceDays(Math.max(0, Math.min(30, Number(e.target.value) || 0)))} />
+              <p className="text-[11px] text-foreground/50">
+                After a failed renewal a hospital keeps write access for this many days, then becomes read-only.
+              </p>
+            </div>
+
+            {payError && <FormError message={payError} />}
+            <div className="flex justify-end">
+              <button
+                onClick={() => savePayment.mutate()}
+                disabled={savePayment.isPending}
+                className="inline-flex items-center gap-2 h-9 px-4 rounded-md bg-primary text-primary-foreground text-sm font-medium disabled:opacity-60">
+                {savePayment.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Save Payment Settings
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Signup WhatsApp OTP */}

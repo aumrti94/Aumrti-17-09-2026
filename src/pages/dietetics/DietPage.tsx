@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { supabase } from "@/integrations/supabase/client";
+import { useRealtimeRefetch } from "@/hooks/useRealtimeRefetch";
 import { autoChargeService, MODULE_DIETETICS } from "@/lib/serviceBilling";
 import { callAI } from "@/lib/aiProvider";
 import { Button } from "@/components/ui/button";
@@ -171,6 +172,14 @@ const DietPage: React.FC = () => {
     };
     init();
   }, [loadData]);
+
+  // Live: new diet orders and meal deliveries reflect without a refresh.
+  useRealtimeRefetch({
+    tables: ["diet_orders", "meal_deliveries"],
+    hospitalId,
+    onChange: () => { if (hospitalId) loadData(hospitalId); },
+    channelName: "dietetics",
+  });
 
   // ── BMI Calculation ──
   const bmi = weightKg && heightCm ? parseFloat((parseFloat(weightKg) / Math.pow(parseFloat(heightCm) / 100, 2)).toFixed(1)) : null;

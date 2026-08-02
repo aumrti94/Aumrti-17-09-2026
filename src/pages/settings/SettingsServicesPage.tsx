@@ -3,9 +3,11 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, Plus, X, Receipt } from "lucide-react";
+import { getWardNursingRates, setWardNursingRate } from "@/lib/wardNursingRate";
+import { ArrowLeft, Plus, X, Receipt, ListPlus } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import BulkPasteAddModal from "@/components/settings/BulkPasteAddModal";
 import { resolveServiceGstPercent, getDefaultGSTRate } from "@/lib/gstRules";
 
 const TABS = [
@@ -158,6 +160,7 @@ const SettingsServicesPage: React.FC = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", category: "consultation", fee: "", follow_up_fee: "", gst_applicable: false, gst_percent: "0" });
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   // Rates by Payer drawer
   const [payerRatesOpen, setPayerRatesOpen] = useState(false);
@@ -269,6 +272,13 @@ const SettingsServicesPage: React.FC = () => {
     },
   });
 
+  // Separate query on purpose — naming nursing_rate_per_day in the select above would take
+  // the whole ward tariff table down on a database without migration 20261011000091.
+  const { data: wardNursingRates } = useQuery({
+    queryKey: ["settings-ward-nursing-rates"],
+    queryFn: getWardNursingRates,
+  });
+
   // Lab Tests — canonical fee lives in lab_test_master (read by billing). Edited here directly.
   const { data: labTests } = useQuery({
     queryKey: ["settings-lab-tests-fees"],
@@ -353,6 +363,26 @@ const SettingsServicesPage: React.FC = () => {
     await (supabase as any).from("wards").update({ rate_per_day: rate }).eq("id", wardId);
     qc.invalidateQueries({ queryKey: ["settings-ward-rates"] });
     qc.invalidateQueries({ queryKey: ["settings-services"] });
+  };
+
+  /**
+   * Per-ward nursing charge. Blank clears it back to 0, which means "nursing is included
+   * in the room rate" — the required treatment for CGHS/ESI/TPA patients, so clearing has
+   * to be possible, not just setting.
+   */
+  const updateWardNursingRate = async (wardId: string, value: string) => {
+    const rate = value.trim() === "" ? 0 : parseFloat(value);
+    if (isNaN(rate) || rate < 0) return;
+    const saved = await setWardNursingRate(wardId, rate);
+    if (!saved) {
+      toast({
+        title: "Nursing rate not saved",
+        description: "This database has not had the ward nursing-rate migration applied yet.",
+        variant: "destructive",
+      });
+      return;
+    }
+    qc.invalidateQueries({ queryKey: ["settings-ward-nursing-rates"] });
   };
 
   // Inline fee edits that write straight to each module's canonical table.
@@ -517,6 +547,21 @@ const SettingsServicesPage: React.FC = () => {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const bulkAddServices = async (bulkRows: Record<string, string>[]) => {
+    const hid = await getHospitalId();
+    const defaultCategory = !NON_CATALOG_TABS.includes(tab) && tab !== "all" && tab !== "rates" ? tab : "other";
+    const payload = bulkRows.map((r) => {
+      const category = r.category?.trim() || defaultCategory;
+      const fee = parseFloat(r.fee) || 0;
+      return {
+        hospital_id: hid, name: r.name.trim(), category, item_type: category, fee,
+      };
+    });
+    const { error } = await supabase.from("service_master").insert(payload);
+    if (error) return { error: error.message };
+    qc.invalidateQueries({ queryKey: ["settings-services"] });
+  };
+
   const applyBulkFee = useMutation({
     mutationFn: async () => {
       const hid = await getHospitalId();
@@ -662,11 +707,30 @@ const SettingsServicesPage: React.FC = () => {
           </div>
         </div>
         {!NON_CATALOG_TABS.includes(tab) && (
-          <button onClick={() => openDrawer()} className="flex items-center gap-1.5 bg-[hsl(222,55%,23%)] text-white px-4 py-2 rounded-lg text-sm font-medium hover:opacity-90 active:scale-[0.97]">
-            <Plus size={14} /> Add Service
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setBulkOpen(true)} className="flex items-center gap-1.5 border border-border text-foreground px-4 py-2 rounded-lg text-sm font-medium hover:bg-muted active:scale-[0.97]">
+              <ListPlus size={14} /> Bulk Add
+            </button>
+            <button onClick={() => openDrawer()} className="flex items-center gap-1.5 bg-[hsl(222,55%,23%)] text-white px-4 py-2 rounded-lg text-sm font-medium hover:opacity-90 active:scale-[0.97]">
+              <Plus size={14} /> Add Service
+            </button>
+          </div>
         )}
       </div>
+
+      <BulkPasteAddModal
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        title="Bulk Add Services"
+        description="Fill in a row per service — Category defaults to the current tab if left blank."
+        columns={[
+          { key: "name",     label: "Service Name", required: true, placeholder: "e.g. ECG" },
+          { key: "fee",      label: "Fee (₹)", type: "number", placeholder: "0" },
+          { key: "category", label: "Category", type: "select", options: SERVICE_CATEGORIES, placeholder: `Default: ${SERVICE_CATEGORIES.find(c => c.value === tab)?.label ?? tab}` },
+        ]}
+        existingKeys={new Set((services ?? []).map((s) => s.name.toLowerCase()))}
+        onSubmit={bulkAddServices}
+      />
 
       {/* TABS */}
       <div className="flex-shrink-0 px-6 py-2.5 border-b border-border flex gap-1.5 overflow-x-auto">
@@ -810,6 +874,11 @@ const SettingsServicesPage: React.FC = () => {
           <div className="mb-3">
             <h2 className="text-sm font-semibold text-foreground">IPD Beds & Wards — Per-Day Tariff</h2>
             <p className="text-xs text-muted-foreground">Room/bed charge per day for each ward. Syncs with Settings › Wards &amp; Beds and applies to IPD bed-day billing.</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Nursing is billed as a separate per-day line only where a rate is set. Leave it
+              blank for CGHS, ESI, PM-JAY and TPA patients — those schemes require nursing to be
+              included in the room rent.
+            </p>
           </div>
           {(wardRates ?? []).length === 0 ? (
             <div className="text-center text-muted-foreground text-xs py-10 border border-border rounded-lg">
@@ -823,6 +892,7 @@ const SettingsServicesPage: React.FC = () => {
                   <th className="px-4 py-2.5 font-medium">Ward</th>
                   <th className="px-4 py-2.5 font-medium">Type</th>
                   <th className="px-4 py-2.5 font-medium text-right">Rate / Day (₹)</th>
+                  <th className="px-4 py-2.5 font-medium text-right">Nursing / Day (₹)</th>
                 </tr>
               </thead>
               <tbody>
@@ -839,6 +909,16 @@ const SettingsServicesPage: React.FC = () => {
                         placeholder="—"
                         onBlur={(e) => updateWardRate(w.id, e.target.value)}
                         className="w-28 h-7 text-right text-sm font-medium tabular-nums bg-transparent border border-transparent hover:border-input focus:border-input rounded px-1 outline-none"
+                      />
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <input
+                        type="number"
+                        key={`nursing-${w.id}-${wardNursingRates?.[w.id] ?? ""}`}
+                        defaultValue={wardNursingRates?.[w.id] ? Number(wardNursingRates[w.id]) : ""}
+                        placeholder="incl. in room"
+                        onBlur={(e) => updateWardNursingRate(w.id, e.target.value)}
+                        className="w-32 h-7 text-right text-sm font-medium tabular-nums bg-transparent border border-transparent hover:border-input focus:border-input rounded px-1 outline-none"
                       />
                     </td>
                   </tr>
@@ -1314,14 +1394,9 @@ const SettingsServicesPage: React.FC = () => {
                 <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Category</label>
                 <select value={form.category} onChange={(e) => onCategoryChange(e.target.value)}
                   className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
-                  {SERVICE_CATEGORIES.map((c) => {
-                    const rate = getDefaultGSTRate(c.value);
-                    return (
-                      <option key={c.value} value={c.value}>
-                        {c.label}{rate > 0 ? ` — GST ${rate}%` : " — GST exempt"}
-                      </option>
-                    );
-                  })}
+                  {SERVICE_CATEGORIES.map((c) => (
+                    <option key={c.value} value={c.value}>{c.label}</option>
+                  ))}
                   {/* A legacy row may carry a category outside this list (e.g. the old
                       'service' default). Without an option to match it, the browser
                       would show the first entry and silently re-categorise the service
@@ -1352,17 +1427,14 @@ const SettingsServicesPage: React.FC = () => {
                 </label>
                 {form.gst_applicable && (
                   <div className="flex items-center gap-2">
-                    <select
+                    <Input
+                      type="number" min={0} max={100} step="0.01"
                       value={form.gst_percent}
                       onChange={(e) => setForm({ ...form, gst_percent: e.target.value })}
-                      className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                    >
-                      <option value="0">0%</option>
-                      <option value="5">5% (Healthcare services)</option>
-                      <option value="12">12%</option>
-                      <option value="18">18% (Non-medical)</option>
-                    </select>
-                    <span className="text-xs text-muted-foreground">GST rate</span>
+                      placeholder="e.g. 5"
+                      className="h-9 w-24"
+                    />
+                    <span className="text-xs text-muted-foreground">% GST rate</span>
                   </div>
                 )}
               </div>

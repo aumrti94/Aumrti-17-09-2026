@@ -98,7 +98,7 @@ export function classifyFile(file: File): { kind: DocInputKind; mediaType: strin
   return { kind: "unsupported", mediaType };
 }
 
-function fileToBase64(file: File): Promise<string> {
+export function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -117,6 +117,63 @@ async function extractDocxText(file: File): Promise<string> {
   const arrayBuffer = await file.arrayBuffer();
   const { value } = await mammoth.extractRawText({ arrayBuffer });
   return value || "";
+}
+
+// ── File → model input ─────────────────────────────────────────────────────
+
+export interface DocumentInput {
+  /** Multimodal blocks for images / PDFs — the model reads these directly. */
+  attachments?: AIAttachment[];
+  /** Real text pulled out client-side (DOCX via mammoth, or plain text). */
+  inlineText: string | null;
+  /** Set when the file can't be read at all; callers should not call the AI. */
+  error?: string;
+}
+
+/**
+ * Turn a File into something a model can actually read.
+ *
+ * Shared by `analyzeDocument` below and by PolicyVerificationPanel, which needs
+ * the same image/PDF/DOCX handling but asks for a different extraction schema.
+ * Keeping one implementation is the point — the panel previously rolled its own
+ * and shipped a truncated base64 prefix, which the model could not read.
+ */
+export async function prepareDocumentInput(file: File): Promise<DocumentInput> {
+  const { kind, mediaType } = classifyFile(file);
+
+  try {
+    if (kind === "image") {
+      return { attachments: [{ kind: "image", mediaType, data: await fileToBase64(file) }], inlineText: null };
+    }
+    if (kind === "pdf") {
+      return {
+        attachments: [{ kind: "pdf", mediaType: "application/pdf", data: await fileToBase64(file) }],
+        inlineText: null,
+      };
+    }
+    if (kind === "docx") {
+      const text = await extractDocxText(file);
+      return text.trim()
+        ? { inlineText: text }
+        : { inlineText: null, error: "Could not read any text from this Word document." };
+    }
+    if (kind === "text") {
+      const text = await file.text();
+      return text.trim()
+        ? { inlineText: text }
+        : { inlineText: null, error: "The file appears to be empty." };
+    }
+    // bmp/tiff/.doc/heic/dicom — no reliable in-browser reader or vision support
+    return {
+      inlineText: null,
+      error: `Automatic analysis isn't supported for ${file.name.split(".").pop()?.toUpperCase() || "this"} files yet — the file was saved as-is.`,
+    };
+  } catch (prepErr) {
+    return {
+      inlineText: null,
+      error: prepErr instanceof Error ? prepErr.message : "Could not read the file.",
+    };
+  }
 }
 
 // ── Prompt construction ────────────────────────────────────────────────────
@@ -192,29 +249,8 @@ export async function analyzeDocument(args: AnalyzeArgs): Promise<DocAnalysis> {
     ...over,
   });
 
-  const { kind, mediaType } = classifyFile(file);
-
-  let attachments: AIAttachment[] | undefined;
-  let inlineText: string | null = null;
-
-  try {
-    if (kind === "image") {
-      attachments = [{ kind: "image", mediaType, data: await fileToBase64(file) }];
-    } else if (kind === "pdf") {
-      attachments = [{ kind: "pdf", mediaType: "application/pdf", data: await fileToBase64(file) }];
-    } else if (kind === "docx") {
-      inlineText = await extractDocxText(file);
-      if (!inlineText.trim()) return fallback({ error: "Could not read any text from this Word document." });
-    } else if (kind === "text") {
-      inlineText = await file.text();
-      if (!inlineText.trim()) return fallback({ error: "The file appears to be empty." });
-    } else {
-      // unsupported (bmp/tiff/doc/dicom/etc.) — stored raw, no analysis
-      return fallback({ error: `Automatic analysis isn't supported for ${file.name.split(".").pop()?.toUpperCase() || "this"} files yet — the file was saved as-is.` });
-    }
-  } catch (prepErr) {
-    return fallback({ error: prepErr instanceof Error ? prepErr.message : "Could not read the file." });
-  }
+  const { attachments, inlineText, error: prepError } = await prepareDocumentInput(file);
+  if (prepError) return fallback({ error: prepError });
 
   const prompt = buildPrompt(args, inlineText);
 

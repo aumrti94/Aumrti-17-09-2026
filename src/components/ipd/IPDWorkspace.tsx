@@ -15,6 +15,7 @@ import IPDVitalsTab from "./tabs/IPDVitalsTab";
 import IPDMedicationsTab from "./tabs/IPDMedicationsTab";
 import IPDWardRoundTab from "./tabs/IPDWardRoundTab";
 import InvestigationsTab from "./tabs/InvestigationsTab";
+import { INSURANCE_PAYER_TYPES } from "@/lib/payerTypes";
 import IPDNotesTab from "./tabs/IPDNotesTab";
 import IPDDocumentsTab from "./tabs/IPDDocumentsTab";
 import IPDFinancialTab from "./tabs/IPDFinancialTab";
@@ -201,7 +202,6 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
   // Check if insurance pre-auth is required for this admission
   useEffect(() => {
     const admData = bed?.admission as any;
-    const INSURANCE_PAYER_TYPES = ["tpa", "pmjay", "cghs", "esi", "state_scheme", "corporate"];
     if (!admData?.id || !INSURANCE_PAYER_TYPES.includes(admData.payer_type)) {
       setPreAuthNeeded(false);
       return;

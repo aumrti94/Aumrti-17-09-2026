@@ -456,7 +456,7 @@ export default function HospitalDetailPage() {
       // Phase 2: the purge stream completed.
       setPurgeLabel("Done");
       setPurgeDone(result?.cumulative ?? purgeTotal);
-      logAdminAction("hospital_purged", { hospitalId: id, hospitalName: hospital?.name, details: { deleted_auth_users: result?.deleted_auth_users } });
+      logAdminAction("hospital_purged", { hospitalId: null, hospitalName: hospital?.name, details: { deleted_auth_users: result?.deleted_auth_users } });
       const staffMsg = (result?.deleted_auth_users ?? 0) > 0
         ? ` · ${result!.deleted_auth_users} staff account${result!.deleted_auth_users! > 1 ? "s" : ""} removed`
         : "";

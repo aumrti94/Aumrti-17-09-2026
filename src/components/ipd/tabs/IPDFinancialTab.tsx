@@ -2,11 +2,14 @@ import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { syncAdvanceToBill } from "@/lib/advanceBillSync";
 import { resolveRoomRateFallback } from "@/lib/ipdBilling";
+import { bundlesNursingIntoRoom } from "@/lib/payerTypes";
+import { getWardNursingRate } from "@/lib/wardNursingRate";
 import {
   addManualConsultationCharge,
   fetchConsultationDoctors,
   type DoctorConsultOption,
 } from "@/lib/ipdConsultationCharge";
+import { addSpecialNursingCharge, fetchWardNursingRate } from "@/lib/ipdNursingCharge";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -14,7 +17,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { Loader2, Plus, RefreshCw, ArrowUpCircle, ArrowDownCircle, Wallet, Stethoscope } from "lucide-react";
+import { Loader2, Plus, RefreshCw, ArrowUpCircle, ArrowDownCircle, Wallet, Stethoscope, HeartPulse } from "lucide-react";
 
 interface Props {
   admissionId: string;
@@ -28,7 +31,7 @@ interface LedgerLine {
   date: string;
   description: string;
   amount: number;
-  category: "room" | "pharmacy" | "lab" | "other";
+  category: "room" | "nursing" | "pharmacy" | "lab" | "other";
 }
 
 interface AdvanceTx {
@@ -44,6 +47,7 @@ interface AdvanceTx {
 
 const CATEGORY_COLORS: Record<string, string> = {
   room:     "bg-blue-50 text-blue-700",
+  nursing:  "bg-teal-50 text-teal-700",
   pharmacy: "bg-purple-50 text-purple-700",
   lab:      "bg-amber-50 text-amber-700",
   other:    "bg-slate-50 text-slate-600",
@@ -62,6 +66,8 @@ const fmt = (n: number) => `₹${n.toLocaleString("en-IN", { minimumFractionDigi
 const categorizeItem = (itemType?: string | null): LedgerLine["category"] => {
   const t = (itemType || "").toLowerCase();
   if (t.includes("room") || t.includes("bed")) return "room";
+  // Covers both the daily 'nursing' line and per-procedure 'nursing_procedure' rows.
+  if (t.includes("nurs")) return "nursing";
   if (t.includes("pharm") || t.includes("drug") || t.includes("medic")) return "pharmacy";
   if (t.includes("lab") || t.includes("investig")) return "lab";
   return "other";
@@ -101,6 +107,17 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
   const [consultLoadingDocs, setConsultLoadingDocs] = useState(false);
   const [savingConsult, setSavingConsult] = useState(false);
 
+  // Special / private-duty nursing form. Routine daily nursing accrues automatically from
+  // the ward's configured rate — this covers only one-to-one nursing, which is a clinical
+  // decision nothing can infer.
+  const [showNursing, setShowNursing] = useState(false);
+  const [nursingDate, setNursingDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [nursingDays, setNursingDays] = useState("1");
+  const [nursingRate, setNursingRate] = useState("");
+  const [wardNursingRate, setWardNursingRate] = useState<number | null>(null);
+  const [nursingLoadingRate, setNursingLoadingRate] = useState(false);
+  const [savingNursing, setSavingNursing] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     let charges: LedgerLine[] = [];
@@ -110,7 +127,7 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
     const [admRes, billRes, balRes, txRes, receiptsRes, ipdAdvRefs] = await Promise.all([
       (supabase as any)
         .from("admissions")
-        .select("admitted_at, admitting_diagnosis, wards(rate_per_day), beds!admissions_bed_id_fkey(bed_category)")
+        .select("admitted_at, admitting_diagnosis, payer_type, ward_id, wards(name, rate_per_day), beds!admissions_bed_id_fkey(bed_category)")
         .eq("id", admissionId)
         .maybeSingle(),
       (supabase as any)
@@ -199,6 +216,19 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
           amount: rate * days,
           category: "room",
         });
+
+        // Mirror the bill's nursing rule so the estimate doesn't understate the stay:
+        // per-ward rate, and nothing at all for payers that bundle nursing into room rent.
+        // Fetched separately — see lib/wardNursingRate.ts.
+        const nursingRate = await getWardNursingRate(adm.ward_id);
+        if (nursingRate > 0 && !bundlesNursingIntoRoom(adm.payer_type)) {
+          charges.push({
+            date: new Date(adm.admitted_at).toISOString().split("T")[0],
+            description: `Nursing — ${days} day${days !== 1 ? "s" : ""} @ ₹${nursingRate.toLocaleString("en-IN")}`,
+            amount: nursingRate * days,
+            category: "nursing",
+          });
+        }
       }
 
       // Pharmacy + labs in parallel for the estimate path
@@ -425,6 +455,49 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
     }
   };
 
+  const openNursing = async () => {
+    setShowNursing(true);
+    setNursingLoadingRate(true);
+    try {
+      const { rate } = await fetchWardNursingRate(admissionId);
+      setWardNursingRate(rate);
+      // Prefill from the ward, but leave it editable — special nursing normally costs
+      // more than the routine daily rate.
+      setNursingRate(rate > 0 ? String(rate) : "");
+    } catch (e: any) {
+      toast.error(e?.message || "Could not load the ward's nursing rate");
+    } finally {
+      setNursingLoadingRate(false);
+    }
+  };
+
+  const handleAddNursing = async () => {
+    const rate = parseFloat(nursingRate);
+    const days = parseInt(nursingDays, 10);
+    if (!rate || rate <= 0) { toast.error("Enter a valid nursing rate"); return; }
+    setSavingNursing(true);
+    try {
+      const res = await addSpecialNursingCharge({
+        hospitalId,
+        patientId,
+        admissionId,
+        date: nursingDate,
+        days: Number.isFinite(days) ? days : 1,
+        rate,
+        orderedBy: userId,
+      });
+      if (!res.ok) { toast.error(res.error || "Failed to add nursing charge"); return; }
+      toast.success(`Nursing charged: ₹${(res.amount || 0).toLocaleString("en-IN")}`);
+      setShowNursing(false);
+      setNursingDays("1");
+      load();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to add nursing charge");
+    } finally {
+      setSavingNursing(false);
+    }
+  };
+
   const totalCharges   = chargeLines.reduce((s, l) => s + l.amount, 0);
   const effectiveCharges = Math.max(0, totalCharges - discountAmount);
   const netAdvance     = totalDeposited - totalRefunded;
@@ -502,6 +575,16 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
                 title="Charge a doctor's consultation / round even when no ward-round note was recorded"
               >
                 <Stethoscope className="h-3 w-3 mr-1" /> Add Consultation
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 px-2 text-xs"
+                onClick={openNursing}
+                disabled={loading}
+                title="Charge special / one-to-one nursing. Routine daily nursing is billed automatically from the ward's configured rate."
+              >
+                <HeartPulse className="h-3 w-3 mr-1" /> Add Nursing
               </Button>
             </div>
             {!loading && noDiagnosis && (
@@ -763,6 +846,64 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
             <Button onClick={handleAddConsult} disabled={savingConsult || consultLoadingDocs || consultDoctors.length === 0}>
               {savingConsult && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
               Add Consultation
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Special Nursing modal — one-to-one / private-duty nursing only */}
+      <Dialog open={showNursing} onOpenChange={setShowNursing}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Add Special Nursing Charge</DialogTitle>
+          </DialogHeader>
+          <p className="text-[11px] text-muted-foreground -mt-1">
+            For one-to-one / private-duty nursing only. Routine daily nursing is billed
+            automatically from the ward's rate. One line per date — re-adding replaces it.
+          </p>
+          {nursingLoadingRate ? (
+            <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading ward rate…
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs">Date *</Label>
+                  <Input type="date" value={nursingDate} onChange={(e) => setNursingDate(e.target.value)} className="mt-1" />
+                </div>
+                <div>
+                  <Label className="text-xs">Days</Label>
+                  <Input type="number" min="1" value={nursingDays} onChange={(e) => setNursingDays(e.target.value)} className="mt-1" />
+                </div>
+              </div>
+              <div>
+                <Label className="text-xs">Rate per day (₹) *</Label>
+                <Input type="number" min="0" value={nursingRate} onChange={(e) => setNursingRate(e.target.value)} placeholder="0" className="mt-1" />
+                {wardNursingRate === 0 && (
+                  <p className="text-[10px] text-amber-700 mt-1">
+                    This ward has no nursing rate configured — set one in Settings → Wards &amp; Beds,
+                    or just enter the amount here.
+                  </p>
+                )}
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  GST-exempt. Insurers treat special nursing as non-payable, so this is normally
+                  a cash item.
+                </p>
+              </div>
+              <div className="text-xs text-muted-foreground flex justify-between border-t border-border/60 pt-2">
+                <span>Total</span>
+                <span className="font-semibold text-foreground">
+                  {fmt((parseFloat(nursingRate) || 0) * Math.max(1, parseInt(nursingDays, 10) || 1))}
+                </span>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowNursing(false)}>Cancel</Button>
+            <Button onClick={handleAddNursing} disabled={savingNursing || nursingLoadingRate}>
+              {savingNursing && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
+              Add Nursing
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -5,6 +5,7 @@ import { CheckCircle2, XCircle, Clock, Wallet } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatINR } from "@/lib/currency";
 import { formatDistanceToNow } from "date-fns";
+import { endOfDayISO, type BillingDateRange } from "@/lib/billingDateRange";
 import { useHospitalContext } from "@/contexts/HospitalContext";
 import { hasActionAccess } from "@/lib/tabPermissions";
 import { autoPostJournalEntry } from "@/lib/accounting";
@@ -39,6 +40,8 @@ interface RefundRow {
 interface Props {
   hospitalId: string;
   onBillSelect?: (billId: string) => void;
+  /** Shared Billing period. Applies to decided history only — never to pending items. */
+  dateRange?: BillingDateRange;
 }
 
 const REFUND_MODE_LABELS: Record<string, string> = {
@@ -48,7 +51,10 @@ const REFUND_MODE_LABELS: Record<string, string> = {
   cheque: "Cheque",
 };
 
-const RefundApprovalsInbox: React.FC<Props> = ({ hospitalId, onBillSelect }) => {
+const RefundApprovalsInbox: React.FC<Props> = ({ hospitalId, onBillSelect, dateRange }) => {
+  // Primitive deps — see PendingCollectionsPanel.
+  const rangeStart = dateRange?.start;
+  const rangeEnd = dateRange?.end;
   const { toast } = useToast();
   const { permissions, role } = useHospitalContext();
   const canApproveRefund = hasActionAccess("billing", "approve_refund", permissions, role);
@@ -77,12 +83,18 @@ const RefundApprovalsInbox: React.FC<Props> = ({ hospitalId, onBillSelect }) => 
       `)
       .eq("hospital_id", hospitalId)
       .order("created_at", { ascending: false });
-    if (filter === "pending") q = q.eq("status", "pending_approval");
+    if (filter === "pending") {
+      q = q.eq("status", "pending_approval");
+      // Deliberately NOT date-filtered — see DiscountApprovalsInbox: a refund awaiting a
+      // decision must never be hidden by the selected period.
+    } else if (rangeStart && rangeEnd) {
+      q = q.gte("created_at", rangeStart).lte("created_at", endOfDayISO(rangeEnd));
+    }
     const { data, error } = await q;
     if (error) console.error("Refund approvals load error:", error);
     setRefunds(data || []);
     setLoading(false);
-  }, [hospitalId, filter]);
+  }, [hospitalId, filter, rangeStart, rangeEnd]);
 
   useEffect(() => { fetchRefunds(); }, [fetchRefunds]);
 

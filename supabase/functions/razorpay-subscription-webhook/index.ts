@@ -44,6 +44,7 @@ import {
   razorpayPeriodForCycle,
   type BillingCycle,
 } from "../_shared/platform-billing.ts";
+import { getRazorpaySubscriptionKeys } from "../_shared/platform-razorpay-config.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -63,8 +64,10 @@ const EVENT_STATUS: Record<string, string> = {
 };
 
 // Payment-level events arrive WITHOUT a subscription entity, so they are routed
-// separately from the status-mapping flow above.
-const PAYMENT_EVENTS = new Set(["payment.failed", "refund.created", "refund.processed"]);
+// separately from the status-mapping flow above. payment.captured is included
+// for AI-wallet top-ups (a one-time order, not a subscription charge); ordinary
+// subscription-renewal captures are ignored here (subscription.charged owns them).
+const PAYMENT_EVENTS = new Set(["payment.captured", "payment.failed", "refund.created", "refund.processed"]);
 
 /** Card last4 / UPI VPA / bank — whatever Razorpay gives us for this method. */
 function paymentMethodDetail(p: any): string | null {
@@ -85,7 +88,15 @@ serve(async (req) => {
 
   rawBody = await req.text();
   const signature = req.headers.get("x-razorpay-signature");
-  const secret   = Deno.env.get("RAZORPAY_SUBSCRIPTION_WEBHOOK_SECRET");
+
+  const db = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
+
+  // Razorpay keys: /platform-configured row first, env vars as fallback.
+  const { keyId: rzpKeyId, keySecret: rzpSecret, webhookSecret: secret } =
+    await getRazorpaySubscriptionKeys(db);
 
   // ── HMAC-SHA256 signature verification ───────────────────────────────────
   if (secret) {
@@ -123,11 +134,6 @@ serve(async (req) => {
   const subEntity = payload?.payload?.subscription?.entity;
   const paymentEntity = payload?.payload?.payment?.entity;
 
-  const db = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-  );
-
   // ── Webhook-level idempotency (prevents double-processing on retries) ──
   // Shares razorpay_webhook_log with razorpay-webhook — Razorpay event IDs
   // are unique per account regardless of which endpoint receives them.
@@ -152,6 +158,42 @@ serve(async (req) => {
   // guard, which would otherwise silently drop them.
   if (PAYMENT_EVENTS.has(event)) {
     const refundEntity = payload?.payload?.refund?.entity;
+
+    // ── AI-wallet top-up ──
+    // A one-time order tagged notes.purpose='ai_wallet_topup' (create-ai-wallet-topup).
+    // Ordinary subscription-renewal captures have no such note and are ignored,
+    // so this does not double-count against subscription.charged.
+    if (event === "payment.captured") {
+      const p = paymentEntity;
+      const notes = p?.notes ?? {};
+      if (notes.purpose !== "ai_wallet_topup" || !notes.hospital_id) {
+        return new Response(JSON.stringify({ status: "ignored", event }), {
+          status: 200, headers: { "Content-Type": "application/json" },
+        });
+      }
+      const amountInr = (p?.amount ?? 0) / 100;
+      // Idempotent on the payment id (partial unique index + in-function guard).
+      const { data: newBalance } = await db.rpc("apply_ai_wallet_delta", {
+        p_hospital_id: notes.hospital_id,
+        p_amount_inr:  amountInr,
+        p_type:        "topup",
+        p_feature_key: null,
+        p_source:      p?.id ?? null,
+        p_metadata:    { razorpay_payment_id: p?.id ?? null, method: p?.method ?? null },
+      });
+
+      await db.from("subscription_events").insert({
+        hospital_id: notes.hospital_id,
+        event_type:  "ai_wallet_topup",
+        razorpay_event: event,
+        metadata: { razorpay_payment_id: p?.id ?? null, amount_inr: amountInr, balance_after_inr: newBalance ?? null },
+      }).catch(() => {});
+
+      console.log(`✓ AI wallet top-up ₹${amountInr} → hospital ${notes.hospital_id}`);
+      return new Response(JSON.stringify({ status: "processed", event, hospitalId: notes.hospital_id }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+    }
 
     if (event === "payment.failed") {
       const p = paymentEntity;
@@ -328,6 +370,16 @@ serve(async (req) => {
   // notes back on every event, so this is how a renewal knows whether it is a
   // monthly or annual charge.
   const cycle: BillingCycle = notes.billing_cycle === "yearly" ? "yearly" : "monthly";
+
+  // Payment-failure buffer anchor (mirrors resolveSubscriptionAccess):
+  //   • halted → the renewal just failed, start the buffer clock.
+  //   • back to active (activated / charged / resumed) → the account recovered,
+  //     clear the anchor so a later failure starts a fresh buffer.
+  if (event === "subscription.halted") {
+    update.past_due_since = new Date().toISOString();
+  } else if (["subscription.activated", "subscription.charged", "subscription.resumed"].includes(event)) {
+    update.past_due_since = null;
+  }
 
   // Set billing period when subscription activates or renews
   if (["subscription.activated", "subscription.charged"].includes(event)) {
@@ -559,8 +611,6 @@ serve(async (req) => {
               );
             } else {
 
-            const rzpKeyId  = Deno.env.get("RAZORPAY_SUBSCRIPTION_KEY_ID");
-            const rzpSecret = Deno.env.get("RAZORPAY_SUBSCRIPTION_KEY_SECRET");
             if (rzpKeyId && rzpSecret) {
               const auth = btoa(`${rzpKeyId}:${rzpSecret}`);
 
@@ -664,8 +714,6 @@ serve(async (req) => {
   // no mandate at all. Once the new one actually activates, the old one is safe
   // to cancel — and this is the only place that knows it succeeded.
   if (event === "subscription.activated" && notes.supersedes_subscription_id) {
-    const rzpKeyId  = Deno.env.get("RAZORPAY_SUBSCRIPTION_KEY_ID");
-    const rzpSecret = Deno.env.get("RAZORPAY_SUBSCRIPTION_KEY_SECRET");
     if (rzpKeyId && rzpSecret) {
       const auth = btoa(`${rzpKeyId}:${rzpSecret}`);
       await fetch(

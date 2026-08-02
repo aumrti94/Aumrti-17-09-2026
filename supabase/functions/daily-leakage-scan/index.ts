@@ -222,11 +222,26 @@ serve(async (req) => {
       day: '2-digit', month: '2-digit', year: 'numeric',
     }); // DD/MM/YYYY
 
-    // Fetch all active hospitals with WATI credentials
-    const { data: hospitals, error: hospitalsErr } = await sb
+    // Scope: an on-demand scan from the Billing UI sends { hospital_id } and must scan
+    // ONLY that hospital. Previously the body was ignored entirely, so one user clicking
+    // "Run Scan" kicked off a scan for every hospital on the platform — wasteful and
+    // cross-tenant. The pg_cron nightly job sends no body and still scans all.
+    let requestedHospitalId: string | null = null;
+    try {
+      const body = await req.json();
+      requestedHospitalId = body?.hospital_id ?? null;
+    } catch {
+      // No/!JSON body — the cron path. Scan everything.
+    }
+
+    let hospitalQuery = sb
       .from('hospitals')
       .select('id, name, wati_api_url, wati_api_key, whatsapp_enabled')
       .eq('is_active', true);
+
+    if (requestedHospitalId) hospitalQuery = hospitalQuery.eq('id', requestedHospitalId);
+
+    const { data: hospitals, error: hospitalsErr } = await hospitalQuery;
 
     if (hospitalsErr) throw new Error(`hospitals query: ${hospitalsErr.message}`);
     if (!hospitals || hospitals.length === 0) {
@@ -236,7 +251,10 @@ serve(async (req) => {
       );
     }
 
-    const summary: { hospital_id: string; total_items: number; estimated_amount: number }[] = [];
+    const summary: {
+      hospital_id: string; total_items: number; estimated_amount: number; modules_with_leaks: number;
+    }[] = [];
+    const failures: string[] = [];
 
     for (const hospital of hospitals) {
       try {
@@ -302,14 +320,34 @@ serve(async (req) => {
           hospital_id:      hospital.id,
           total_items:      scan.total_items,
           estimated_amount: scan.estimated_amount,
+          modules_with_leaks: [
+            scan.lab_count, scan.radiology_count, scan.pharmacy_count, scan.ot_count,
+          ].filter((c) => c > 0).length,
         });
       } catch (scanErr) {
         console.error(`Scan failed for hospital ${hospital.id}:`, scanErr);
+        failures.push(hospital.id);
       }
     }
 
+    // Flat totals at the top level: the caller reads `leakage_count` / `modules_scanned`
+    // directly, and previously got `undefined` for both — so a successful scan always
+    // toasted "Found 0 unbilled items across 0 modules", indistinguishable from a no-op.
+    const leakageCount = summary.reduce((s, h) => s + h.total_items, 0);
+    const modulesScanned = summary.reduce((m, h) => Math.max(m, h.modules_with_leaks), 0);
+
     return new Response(
-      JSON.stringify({ ok: true, report_date: reportDateStr, hospitals: summary }),
+      JSON.stringify({
+        ok: failures.length === 0,
+        report_date: reportDateStr,
+        hospitals: summary,
+        leakage_count: leakageCount,
+        modules_scanned: modulesScanned,
+        estimated_amount: summary.reduce((s, h) => s + h.estimated_amount, 0),
+        // Per-hospital scan errors were previously only console.error'd while the
+        // response still claimed ok:true — a total failure looked like success.
+        failed_hospitals: failures.length,
+      }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
   } catch (err: any) {

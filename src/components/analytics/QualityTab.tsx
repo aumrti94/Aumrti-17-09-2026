@@ -19,16 +19,13 @@ function useQualityData(range: DateRange) {
       const hospitalId = await getHospitalId();
       if (!hospitalId) return null;
 
-      const [nabhRes, incidentRes, capaRes, qiRes, admRes] = await Promise.all([
+      const [nabhRes, incidentRes, capaRes, qiRes] = await Promise.all([
         supabase.from("nabh_criteria").select("compliance_score, compliance_status").eq("hospital_id", hospitalId),
         supabase.from("incident_reports").select("id, severity, status").eq("hospital_id", hospitalId)
           .gte("incident_date", range.from).lte("incident_date", range.to),
         supabase.from("capa_records").select("id, status").eq("hospital_id", hospitalId)
           .in("status", ["open", "in_progress"]),
-        supabase.from("quality_indicators").select("*").eq("hospital_id", hospitalId),
-        supabase.from("admissions").select("id, admitted_at, discharged_at, status, patient_id")
-          .eq("hospital_id", hospitalId).eq("status", "discharged")
-          .gte("discharged_at", range.from).lte("discharged_at", range.to + "T23:59:59"),
+        (supabase as any).from("quality_indicators_current").select("*").eq("hospital_id", hospitalId),
       ]);
 
       const nabhData = nabhRes.data || [];
@@ -38,16 +35,18 @@ function useQualityData(range: DateRange) {
       const incidents = incidentRes.data || [];
       const sentinelCount = incidents.filter(i => i.severity === "sentinel").length;
 
-      const qiData = qiRes.data || [];
-      const haiIndicator = qiData.find(q => q.indicator_name?.toLowerCase().includes("hai"));
-      const hhIndicator = qiData.find(q => q.indicator_name?.toLowerCase().includes("hand hygiene"));
+      const qiData = (qiRes.data as any[]) || [];
+      // Matched on stable indicator_code rather than an indicator_name substring,
+      // which silently missed whenever a name was reworded.
+      const qiValue = (code: string): number | null => {
+        const row = qiData.find((q) => q.indicator_code === code);
+        return row?.value == null ? null : Number(row.value);
+      };
 
-      const discharges = admRes.data || [];
-      let avgDischargeTat = 0;
-      const tats = discharges
-        .filter(a => a.admitted_at && a.discharged_at)
-        .map(a => (new Date(a.discharged_at!).getTime() - new Date(a.admitted_at!).getTime()) / 3600000);
-      if (tats.length > 0) avgDischargeTat = Math.round((tats.reduce((a, b) => a + b, 0) / tats.length) * 10) / 10;
+      // Real discharge TAT (discharge order -> actual discharge) comes from the
+      // indicator engine. The figure computed here previously was admit -> discharge,
+      // i.e. length of stay in hours, which is a different measure entirely.
+      const avgDischargeTat = qiValue("aac.discharge_tat_hrs");
 
       return {
         avgNabh,
@@ -55,8 +54,8 @@ function useQualityData(range: DateRange) {
         incidentCount: incidents.length,
         sentinelCount,
         capaOpen: capaRes.data?.length || 0,
-        haiRate: haiIndicator?.value ?? null,
-        handHygiene: hhIndicator?.value ?? null,
+        haiRate: qiValue("hic.hai_per1000"),
+        handHygiene: qiValue("hic.hand_hygiene_pct"),
         avgDischargeTat,
         indicators: qiData,
       };
@@ -119,11 +118,11 @@ const QualityTab: React.FC<{ range: DateRange }> = ({ range }) => {
           subtitleColor={data.sentinelCount > 0 ? "text-destructive" : undefined}
         />
         <AnalyticsKPICard icon="🦠" iconBg="bg-orange-50" label="Infection Control"
-          value={data.haiRate !== null ? `${data.haiRate}%` : "N/A"}
+          value={data.haiRate !== null ? `${data.haiRate}/1000` : "N/A"}
           subtitle={`Hand Hygiene: ${data.handHygiene !== null ? `${data.handHygiene}%` : "N/A"}`}
         />
         <AnalyticsKPICard icon="📋" iconBg="bg-blue-50" label="Clinical Quality"
-          value={`${data.avgDischargeTat}h TAT`}
+          value={data.avgDischargeTat !== null ? `${data.avgDischargeTat}h TAT` : "N/A"}
           subtitle={
             readmission == null
               ? "Readmission: —"

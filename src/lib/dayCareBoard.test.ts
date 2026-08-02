@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { dayCareDateColumn, dayCareStatusFilter, dayCareSortAscending } from "./dayCareBoard";
+import { dayCareDateColumn, dayCareDateRange, dayCareStatusFilter, dayCareSortAscending } from "./dayCareBoard";
 
 describe("dayCareDateColumn", () => {
   it("filters the Scheduled tab on scheduled_at, not admitted_at", () => {
@@ -49,5 +49,31 @@ describe("dayCareSortAscending", () => {
     expect(dayCareSortAscending("active")).toBe(false);
     expect(dayCareSortAscending("discharged")).toBe(false);
     expect(dayCareSortAscending("cancelled")).toBe(false);
+  });
+});
+
+describe("dayCareDateRange", () => {
+  it("leaves Active open-ended below so an overnight case is still on today's board", () => {
+    // Regression lock for the stranded day care patient: admitted yesterday, never
+    // discharged before midnight. Pinning the lower bound to the picked date made them
+    // vanish from Today, so the only way to reach the Discharge button at all was to guess
+    // the admission date.
+    const r = dayCareDateRange("active", "2026-07-25");
+    expect(r.from).toBeNull();
+    expect(r.to).toBe("2026-07-25T23:59:59+05:30");
+  });
+
+  it("pins both ends for the log tabs — they are a record of one date", () => {
+    for (const tab of ["scheduled", "discharged", "cancelled"] as const) {
+      const r = dayCareDateRange(tab, "2026-07-25");
+      expect(r.from).toBe("2026-07-25T00:00:00+05:30");
+      expect(r.to).toBe("2026-07-25T23:59:59+05:30");
+    }
+  });
+
+  it("anchors the window to IST, not to whatever zone the machine is in", () => {
+    const r = dayCareDateRange("discharged", "2026-07-25");
+    expect(r.from).toContain("+05:30");
+    expect(r.to).toContain("+05:30");
   });
 });

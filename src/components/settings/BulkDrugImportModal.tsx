@@ -7,6 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { Upload, FileSpreadsheet, ImageIcon, Trash2, Download, Loader2, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { fileToBase64 } from "@/lib/documentAI";
 
 interface ImportRow {
   drug_name: string;
@@ -141,14 +142,10 @@ const BulkDrugImportModal: React.FC<Props> = ({ open, onClose, hospitalId }) => 
     if (!imageFile) return;
     setScanning(true);
     try {
-      const ab = await imageFile.arrayBuffer();
-      const bytes = new Uint8Array(ab);
-      let binary = "";
-      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      const base64Image = btoa(binary);
+      const base64Image = await fileToBase64(imageFile);
 
       const { data, error } = await supabase.functions.invoke("scan-drug-list", {
-        body: { base64Image, mediaType: imageFile.type },
+        body: { base64Image, mediaType: imageFile.type, hospital_id: hospitalId },
       });
 
       if (error || !data || data.error) {

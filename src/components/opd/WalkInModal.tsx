@@ -11,7 +11,7 @@ import { autoPostJournalEntry } from "@/lib/accounting";
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { logAudit } from "@/lib/auditLog";
 import AddReferralDoctorModal from "@/components/shared/AddReferralDoctorModal";
-import { printDocument, printHeader } from "@/lib/printUtils";
+import { printBillById } from "@/lib/billPrint";
 import { getErrorMessage } from "@/lib/errorMessage";
 import OutstandingBalanceBanner from "@/components/billing/OutstandingBalanceBanner";
 import { FormError } from "@/components/ui/FormError";
@@ -164,6 +164,7 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
   const [paymentMode, setPaymentMode] = useState("cash");
   const [paymentRef, setPaymentRef] = useState("");
   const [receiptData, setReceiptData] = useState<{
+    billId: string;
     billNumber: string;
     patientName: string;
     uhid: string;
@@ -963,6 +964,7 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
         }
       }
       const rData = {
+        billId: bill.id,
         billNumber,
         patientName: patientDisplayName || "—",
         uhid: useExisting ? foundPatient?.uhid || "" : "New",
@@ -991,61 +993,19 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
     }
   };
 
-  const handlePrintReceipt = () => {
+  const handlePrintReceipt = async () => {
     if (!receiptData) return;
-    
-    const hospitalName = hospitalInfo?.name || "Hospital Receipt";
-    const hospitalAddress = hospitalInfo?.address || "";
-    
-    const paidLabel = receiptData.paid ? "Paid (" + receiptData.paymentMode + ")" : "Pending";
-    const paidClass = receiptData.paid ? "paid" : "pending";
-    
-    const header = printHeader(hospitalName, hospitalAddress);
-    
-    const body = `
-      ${header}
-      <div style="text-align:center; border-bottom:1px dashed #cbd5e1; padding-bottom:10px; margin-bottom:10px;">
-        <strong style="font-size:16px;">OPD CONSULTATION RECEIPT</strong><br/>
-        <small>${receiptData.date}</small>
-      </div>
-      
-      <div class="row"><span class="label">Bill No.</span><span class="amount">${receiptData.billNumber}</span></div>
-      <div class="row"><span class="label">Patient</span><span class="value">${receiptData.patientName}</span></div>
-      <div class="row"><span class="label">UHID</span><span class="amount">${receiptData.uhid}</span></div>
-      <div class="row"><span class="label">Department</span><span class="value">${receiptData.department}</span></div>
-      <div class="row"><span class="label">Doctor</span><span class="value">${receiptData.doctor}</span></div>
-      
-      <div style="border-top:1px dashed #cbd5e1; padding-top:10px; margin-top:10px;">
-        <div class="row">
-          <span class="label">Token</span>
-          <span style="font-size:24px; font-weight:800; color:#1A2F5A;">${receiptData.token}</span>
-        </div>
-        <div class="row">
-          <span class="label">Consultation Fee</span>
-          <span class="amount" style="font-size:16px;">₹${receiptData.fee.toLocaleString("en-IN")}</span>
-        </div>
-        ${receiptData.discountNote ? `<div class="row"><span class="label" style="color:#059669;">Discount Applied</span><span style="color:#059669;font-size:11px;">${receiptData.discountNote}</span></div>` : ""}
-        <div class="row">
-          <span class="label">Payment</span>
-          <span class="${paidClass}">${paidLabel}</span>
-        </div>
-      </div>
-      
-      <style>
-        .row { display: flex; justify-content: space-between; margin-bottom: 6px; }
-        .label { color: #64748b; font-size: 12px; }
-        .value { font-weight: 600; color: #1e293b; text-align: right; }
-        .paid { color: #059669; font-weight: 600; }
-        .pending { color: #d97706; font-weight: 600; }
-        .amount { font-family: 'JetBrains Mono', monospace; font-weight: 600; }
-      </style>
-      
-      <div style="text-align:center; font-size:11px; color:#94a3b8; margin-top:20px; border-top:1px dashed #cbd5e1; padding-top:10px;">
-        Thank you for visiting. Get well soon!
-      </div>
-    `;
-    
-    printDocument("OPD Receipt", body, { width: 450, height: 650 });
+    // Print the structured OPD bill (same template as every module). Token / department /
+    // doctor go INTO the bill-details grid rather than a separate banner, to save space.
+    const ok = await printBillById(receiptData.billId, hospitalId, {
+      extraMeta: [
+        { label: "Token", value: receiptData.token },
+        { label: "Department", value: receiptData.department },
+        { label: "Consulting Doctor", value: receiptData.doctor && receiptData.doctor !== "—" ? receiptData.doctor : null },
+      ],
+      extraSections: `<div style="text-align:center;font-size:11px;color:#94a3b8;margin-top:6px;">Thank you for visiting. Get well soon!</div>`,
+    });
+    if (!ok) toast({ title: "Could not open the bill for printing", variant: "destructive" });
   };
 
   return (

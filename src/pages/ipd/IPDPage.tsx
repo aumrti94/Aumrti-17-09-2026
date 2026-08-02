@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useRealtimeRefetch } from "@/hooks/useRealtimeRefetch";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { ChevronLeft, BedDouble } from "lucide-react";
 import BedMap from "@/components/ipd/BedMap";
@@ -167,25 +168,14 @@ const IPDPage: React.FC = () => {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   // Coalesce bursts of realtime changes into a single refetch. Kept short (≤500ms)
-  // so the bed board never goes stale enough to risk double-booking.
-  const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const scheduleRefetch = useCallback(() => {
-    if (refetchTimer.current) clearTimeout(refetchTimer.current);
-    refetchTimer.current = setTimeout(() => { fetchData(); }, 400);
-  }, [fetchData]);
-
-  useEffect(() => {
-    if (!hospitalId) return;
-    const ch = supabase.channel("ipd-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "beds", filter: `hospital_id=eq.${hospitalId}` }, scheduleRefetch)
-      .on("postgres_changes", { event: "*", schema: "public", table: "admissions", filter: `hospital_id=eq.${hospitalId}` }, scheduleRefetch)
-      .on("postgres_changes", { event: "*", schema: "public", table: "bed_reservations", filter: `hospital_id=eq.${hospitalId}` }, scheduleRefetch)
-      .subscribe();
-    return () => {
-      if (refetchTimer.current) clearTimeout(refetchTimer.current);
-      supabase.removeChannel(ch);
-    };
-  }, [hospitalId, scheduleRefetch]);
+  // so the bed board never goes stale enough to risk double-booking. Debounced +
+  // focus/reconnect fallback are handled inside the shared hook.
+  useRealtimeRefetch({
+    tables: ["beds", "admissions", "bed_reservations"],
+    hospitalId,
+    onChange: fetchData,
+    channelName: "ipd",
+  });
 
   const isMobile = useIsMobile();
   const selectedBed = beds.find((b) => b.id === selectedBedId) || null;

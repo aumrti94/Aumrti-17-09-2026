@@ -3,6 +3,7 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useHospitalId } from "@/hooks/useHospitalId";
+import { useRealtimeRefetch } from "@/hooks/useRealtimeRefetch";
 import { useDebounce } from "@/hooks/useDebounce";
 import { Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -133,6 +134,14 @@ const PatientsPage: React.FC = () => {
     setPage(0);
     fetchPatients();
   }, [debouncedSearch, filter, hospitalId, showInactive]);
+
+  // Live: a patient registered/updated at another desk shows up without a refresh.
+  useRealtimeRefetch({
+    tables: ["patients"],
+    hospitalId,
+    onChange: () => { setPage(0); fetchPatients(false); },
+    channelName: "patients-list",
+  });
 
   const loadMore = () => {
     const nextPage = page + 1;

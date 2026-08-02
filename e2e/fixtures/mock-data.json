@@ -1,0 +1,296 @@
+{
+  "_readme": "CANONICAL QA TEST DATA. This file is the single source of truth for docs/qa/MOCK_DATA_BOOK.md, scripts/qa-seed.mjs and the Playwright suite. Never hardcode test data in a spec file - add it here. Every record is synthetic; no real patient data may ever be placed in this file (DPDP Act 2023).",
+
+  "guard": {
+    "hospitalNamePrefixes": ["Aarogya Multispecialty", "Sanjeevani General"],
+    "uhidPrefix": "PT-QA-",
+    "emailOwners": ["yeswanthvarma94@gmail.com", "gysk94@gmail.com"],
+    "emailPrefixes": ["yeswanthvarma94+qa.", "gysk94+qa."],
+    "batchPrefix": "QA-",
+    "note": "scripts/qa-seed.mjs and e2e/global-setup.ts both refuse to touch any hospital whose name does not start with one of hospitalNamePrefixes. Hospital A's admin is the yeswanthvarma94 inbox; Hospital B's admin is the gysk94 inbox, so the two tenants can be administered independently."
+  },
+
+  "password": "TestPass@2026",
+
+  "hospitals": {
+    "A": {
+      "key": "A",
+      "name": "Aarogya Multispecialty Hospital",
+      "type": "Private Hospital",
+      "state": "Telangana",
+      "bedCount": "101_200",
+      "phone": "9876500001",
+      "adminName": "Dr. Ravi Shankar",
+      "adminEmail": "yeswanthvarma94@gmail.com",
+      "designation": "Medical Director",
+      "address1": "Plot 42, Road No. 12, Banjara Hills",
+      "address2": "Near Care Hospital",
+      "pincode": "500034",
+      "city": "Hyderabad",
+      "gstin": "36AABCA1234F1Z5",
+      "nabhAccredited": true,
+      "nabhNumber": "NABH-QA-A-2026",
+      "website": "https://qa-aarogya.example.in",
+      "plan": "professional"
+    },
+    "B": {
+      "key": "B",
+      "name": "Sanjeevani General Hospital",
+      "type": "Nursing Home",
+      "state": "Maharashtra",
+      "bedCount": "30_50",
+      "phone": "9876500002",
+      "adminName": "Dr. Meena Joshi",
+      "adminEmail": "gysk94@gmail.com",
+      "designation": "Hospital Administrator",
+      "address1": "Survey No. 88, Baner Road",
+      "address2": "",
+      "pincode": "411045",
+      "city": "Pune",
+      "gstin": "27AABTS5678K1Z9",
+      "nabhAccredited": false,
+      "nabhNumber": "",
+      "website": "",
+      "plan": "starter"
+    }
+  },
+
+  "staff": {
+    "A": [
+      { "email": "yeswanthvarma94@gmail.com",       "name": "Dr. Ravi Shankar",     "role": "hospital_admin",      "department": null,                        "landing": "/dashboard" },
+      { "email": "yeswanthvarma94+qa.doctor.a@gmail.com",      "name": "Dr. Suresh Menon",     "role": "doctor",              "department": "General Medicine",          "landing": "/opd" },
+      { "email": "yeswanthvarma94+qa.doctor2.a@gmail.com",     "name": "Dr. Kavitha Rao",      "role": "doctor",              "department": "Obstetrics & Gynaecology",  "landing": "/opd" },
+      { "email": "yeswanthvarma94+qa.surgeon.a@gmail.com",     "name": "Dr. Arjun Nair",       "role": "doctor",              "department": "General Surgery",           "landing": "/ot" },
+      { "email": "yeswanthvarma94+qa.nurse.a@gmail.com",       "name": "Sr. Mary Thomas",      "role": "nurse",               "department": "General Medicine",          "landing": "/nursing" },
+      { "email": "yeswanthvarma94+qa.reception.a@gmail.com",   "name": "Ms. Divya Sharma",     "role": "receptionist",        "department": null,                        "landing": "/opd" },
+      { "email": "yeswanthvarma94+qa.pharmacist.a@gmail.com",  "name": "Mr. Imran Khan",       "role": "pharmacist",          "department": "Pharmacy",                  "landing": "/pharmacy" },
+      { "email": "yeswanthvarma94+qa.labtech.a@gmail.com",     "name": "Mr. Naveen Kumar",     "role": "lab_technician",      "department": "Pathology",                 "landing": "/lab" },
+      { "email": "yeswanthvarma94+qa.labtech2.a@gmail.com",    "name": "Ms. Sneha Patil",      "role": "lab_tech",            "department": "Pathology",                 "landing": "/lab" },
+      { "email": "yeswanthvarma94+qa.radiologist.a@gmail.com", "name": "Dr. Anil Verma",       "role": "radiologist",         "department": "Radiology",                 "landing": "/radiology" },
+      { "email": "yeswanthvarma94+qa.billing.a@gmail.com",     "name": "Mr. Rajesh Gupta",     "role": "billing_executive",   "department": null,                        "landing": "/billing" },
+      { "email": "yeswanthvarma94+qa.billing2.a@gmail.com",    "name": "Ms. Pooja Singh",      "role": "billing_staff",       "department": null,                        "landing": "/billing" },
+      { "email": "yeswanthvarma94+qa.accountant.a@gmail.com",  "name": "Mr. Venkat Rao",       "role": "accountant",          "department": null,                        "landing": "/accounts" },
+      { "email": "yeswanthvarma94+qa.cfo.a@gmail.com",         "name": "Ms. Lakshmi Iyer",     "role": "cfo",                 "department": null,                        "landing": "/accounts/financial-statements" },
+      { "email": "yeswanthvarma94+qa.hr.a@gmail.com",          "name": "Mr. Prakash Jain",     "role": "hr_manager",          "department": null,                        "landing": "/hr" },
+      { "email": "yeswanthvarma94+qa.insurance.a@gmail.com",   "name": "Ms. Fatima Sheikh",    "role": "insurance_executive", "department": null,                        "landing": "/insurance" },
+      { "email": "yeswanthvarma94+qa.mrd.a@gmail.com",         "name": "Mr. Sanjay Deshmukh",  "role": "mrd_officer",         "department": null,                        "landing": "/mrd" }
+    ],
+    "B": [
+      { "email": "gysk94@gmail.com",     "name": "Dr. Meena Joshi",     "role": "hospital_admin", "department": null,               "landing": "/dashboard" },
+      { "email": "yeswanthvarma94+qa.doctor.b@gmail.com",    "name": "Dr. Rohan Kulkarni", "role": "doctor",         "department": "General Medicine", "landing": "/opd" },
+      { "email": "yeswanthvarma94+qa.reception.b@gmail.com", "name": "Ms. Snehal More",    "role": "receptionist",   "department": null,               "landing": "/opd" }
+    ]
+  },
+
+  "appRoleEnum": [
+    "super_admin", "hospital_admin", "doctor", "nurse", "receptionist",
+    "pharmacist", "lab_tech", "lab_technician", "accountant",
+    "billing_executive", "billing_staff", "cfo", "hr_manager",
+    "insurance_executive", "mrd_officer", "radiologist"
+  ],
+
+  "departments": [
+    { "name": "General Medicine",          "code": "GMED", "type": "clinical" },
+    { "name": "General Surgery",           "code": "GSUR", "type": "clinical" },
+    { "name": "Obstetrics & Gynaecology",  "code": "OBGY", "type": "clinical" },
+    { "name": "Paediatrics",               "code": "PAED", "type": "clinical" },
+    { "name": "Orthopaedics",              "code": "ORTH", "type": "clinical" },
+    { "name": "Anaesthesiology",           "code": "ANES", "type": "clinical" },
+    { "name": "Radiology",                 "code": "RADI", "type": "diagnostic" },
+    { "name": "Pathology",                 "code": "PATH", "type": "diagnostic" },
+    { "name": "Pharmacy",                  "code": "PHAR", "type": "support" },
+    { "name": "Emergency",                 "code": "EMER", "type": "clinical" }
+  ],
+
+  "wards": [
+    { "name": "General Ward",   "category": "general",      "bedPrefix": "GW",  "bedCount": 10, "ratePerDay": 1500,  "note": "below the Rs 5000 GST threshold" },
+    { "name": "Semi-Private",   "category": "semi_private", "bedPrefix": "SP",  "bedCount": 6,  "ratePerDay": 3000,  "note": "" },
+    { "name": "Private Room",   "category": "private",      "bedPrefix": "PR",  "bedCount": 4,  "ratePerDay": 6000,  "note": "above the HDFC ERGO 4000/day ceiling - drives P9-S07" },
+    { "name": "Deluxe Room",    "category": "deluxe",       "bedPrefix": "DX",  "bedCount": 2,  "ratePerDay": 9500,  "note": "above Rs 5000 - must attract 5% GST" },
+    { "name": "ICU",            "category": "icu",          "bedPrefix": "ICU", "bedCount": 6,  "ratePerDay": 12000, "note": "above Rs 5000 but ICU is GST EXEMPT" },
+    { "name": "Maternity Ward", "category": "general",      "bedPrefix": "MW",  "bedCount": 4,  "ratePerDay": 2500,  "note": "" }
+  ],
+
+  "doctorFees": [
+    { "doctor": "Dr. Suresh Menon", "department": "General Medicine",         "consultation": 500, "followUp": 0,   "validityDays": 7,  "emergency": 800,  "ipdVisit": 400 },
+    { "doctor": "Dr. Kavitha Rao",  "department": "Obstetrics & Gynaecology", "consultation": 700, "followUp": 300, "validityDays": 10, "emergency": 1000, "ipdVisit": 500 },
+    { "doctor": "Dr. Arjun Nair",   "department": "General Surgery",          "consultation": 800, "followUp": 0,   "validityDays": 7,  "emergency": 1200, "ipdVisit": 600 }
+  ],
+
+  "services": [
+    { "name": "General Consultation",        "code": "CONS-GEN",  "category": "consultation", "rate": 500,   "gstApplicable": false, "gstPercent": 0,  "hsn": "999312" },
+    { "name": "Specialist Consultation",     "code": "CONS-SPL",  "category": "consultation", "rate": 800,   "gstApplicable": false, "gstPercent": 0,  "hsn": "999312" },
+    { "name": "Dressing (Minor)",            "code": "PROC-DRS",  "category": "procedure",    "rate": 300,   "gstApplicable": false, "gstPercent": 0,  "hsn": "999312" },
+    { "name": "Nebulisation",                "code": "PROC-NEB",  "category": "procedure",    "rate": 250,   "gstApplicable": false, "gstPercent": 0,  "hsn": "999312" },
+    { "name": "Suturing (up to 5cm)",        "code": "PROC-SUT",  "category": "procedure",    "rate": 1200,  "gstApplicable": false, "gstPercent": 0,  "hsn": "999312" },
+    { "name": "Ambulance (per trip, local)", "code": "SERV-AMB",  "category": "service",      "rate": 1500,  "gstApplicable": true,  "gstPercent": 5,  "hsn": "996423" },
+    { "name": "Medical Records Copy",        "code": "SERV-MRD",  "category": "service",      "rate": 250,   "gstApplicable": true,  "gstPercent": 18, "hsn": "998599" },
+    { "name": "Attendant Meal",              "code": "SERV-MEAL", "category": "service",      "rate": 200,   "gstApplicable": true,  "gstPercent": 5,  "hsn": "996331" },
+    { "name": "Hernia Repair (Open)",        "code": "SURG-HERN", "category": "surgery",      "rate": 35000, "gstApplicable": false, "gstPercent": 0,  "hsn": "999312" },
+    { "name": "Haemodialysis Session",       "code": "PROC-HD",   "category": "procedure",    "rate": 2200,  "gstApplicable": false, "gstPercent": 0,  "hsn": "999312" }
+  ],
+
+  "healthPackages": [
+    { "name": "Master Health Checkup", "rate": 3500, "includes": ["CBC", "FBS", "LIPID", "LFT", "CREAT", "TSH", "URINE", "ECG", "Chest X-Ray PA View", "General Consultation"] }
+  ],
+
+  "drugs": [
+    { "brand": "Dolo 650",            "generic": "Paracetamol",                 "form": "Tablet",   "strength": "650mg",     "schedule": "OTC",  "mrp": 30.00,  "gst": 12 },
+    { "brand": "Augmentin 625",       "generic": "Amoxicillin + Clavulanate",   "form": "Tablet",   "strength": "625mg",     "schedule": "H",    "mrp": 198.00, "gst": 12 },
+    { "brand": "Mox 500",             "generic": "Amoxicillin",                 "form": "Capsule",  "strength": "500mg",     "schedule": "H",    "mrp": 62.00,  "gst": 12 },
+    { "brand": "Pan 40",              "generic": "Pantoprazole",                "form": "Tablet",   "strength": "40mg",      "schedule": "H",    "mrp": 115.00, "gst": 12 },
+    { "brand": "Metformin 500",       "generic": "Metformin",                   "form": "Tablet",   "strength": "500mg",     "schedule": "H",    "mrp": 28.00,  "gst": 12 },
+    { "brand": "Telma 40",            "generic": "Telmisartan",                 "form": "Tablet",   "strength": "40mg",      "schedule": "H",    "mrp": 142.00, "gst": 12 },
+    { "brand": "Amlong 5",            "generic": "Amlodipine",                  "form": "Tablet",   "strength": "5mg",       "schedule": "H",    "mrp": 58.00,  "gst": 12 },
+    { "brand": "Atorva 10",           "generic": "Atorvastatin",                "form": "Tablet",   "strength": "10mg",      "schedule": "H",    "mrp": 88.00,  "gst": 12 },
+    { "brand": "Zifi 200",            "generic": "Cefixime",                    "form": "Tablet",   "strength": "200mg",     "schedule": "H",    "mrp": 165.00, "gst": 12 },
+    { "brand": "Emeset 4",            "generic": "Ondansetron",                 "form": "Injection","strength": "4mg/2ml",   "schedule": "H",    "mrp": 22.00,  "gst": 12 },
+    { "brand": "Lasix 40",            "generic": "Furosemide",                  "form": "Tablet",   "strength": "40mg",      "schedule": "H",    "mrp": 18.00,  "gst": 12 },
+    { "brand": "Human Mixtard 30/70", "generic": "Insulin",                     "form": "Injection","strength": "100IU/ml",  "schedule": "H",    "mrp": 385.00, "gst": 5  },
+    { "brand": "Monocef 1g",          "generic": "Ceftriaxone",                 "form": "Injection","strength": "1g",        "schedule": "H",    "mrp": 78.00,  "gst": 12 },
+    { "brand": "Perinorm",            "generic": "Metoclopramide",              "form": "Tablet",   "strength": "10mg",      "schedule": "H",    "mrp": 14.00,  "gst": 12 },
+    { "brand": "Crocin Syrup",        "generic": "Paracetamol",                 "form": "Syrup",    "strength": "125mg/5ml", "schedule": "OTC",  "mrp": 52.00,  "gst": 12 },
+    { "brand": "Deriphyllin",         "generic": "Etophylline + Theophylline",  "form": "Injection","strength": "2ml",       "schedule": "H",    "mrp": 26.00,  "gst": 12 },
+    { "brand": "Tramadol 50",         "generic": "Tramadol",                    "form": "Capsule",  "strength": "50mg",      "schedule": "H1",   "mrp": 42.00,  "gst": 12 },
+    { "brand": "Morphine Sulphate",   "generic": "Morphine",                    "form": "Injection","strength": "10mg/ml",   "schedule": "NDPS", "mrp": 95.00,  "gst": 12 },
+    { "brand": "Fentanyl",            "generic": "Fentanyl",                    "form": "Injection","strength": "50mcg/ml",  "schedule": "NDPS", "mrp": 135.00, "gst": 12 },
+    { "brand": "Normal Saline",       "generic": "Sodium Chloride 0.9%",        "form": "IV Fluid", "strength": "500ml",     "schedule": "OTC",  "mrp": 45.00,  "gst": 12 }
+  ],
+
+  "drugBatches": [
+    { "drug": "Dolo 650",          "batch": "QA-DOLO-A", "qty": 500, "expiry": "2027-12-31", "status": "active",      "purpose": "normal stock" },
+    { "drug": "Dolo 650",          "batch": "QA-DOLO-B", "qty": 200, "expiry": "2027-03-31", "status": "active",      "purpose": "FEFO - must be picked BEFORE QA-DOLO-A" },
+    { "drug": "Augmentin 625",     "batch": "QA-AUG-A",  "qty": 100, "expiry": "2027-06-30", "status": "active",      "purpose": "the penicillin allergy-block drug" },
+    { "drug": "Mox 500",           "batch": "QA-MOX-EXP","qty": 50,  "expiry": "2026-01-31", "status": "active",      "purpose": "EXPIRED - dispensing must be refused" },
+    { "drug": "Zifi 200",          "batch": "QA-ZIFI-Q", "qty": 80,  "expiry": "2027-08-31", "status": "quarantined", "purpose": "QUARANTINED - must be excluded from selection" },
+    { "drug": "Morphine Sulphate", "batch": "QA-MOR-A",  "qty": 20,  "expiry": "2027-12-31", "status": "active",      "purpose": "NDPS dual sign-off" },
+    { "drug": "Metformin 500",     "batch": "QA-MET-LOW","qty": 8,   "expiry": "2027-09-30", "status": "active",      "purpose": "below reorder level - triggers alert" }
+  ],
+  "defaultBatch": { "qty": 100, "expiry": "2027-12-31", "status": "active" },
+
+  "labTests": [
+    { "name": "Complete Blood Count",       "code": "CBC",   "sampleType": "EDTA Blood",     "fee": 350,  "unit": "",        "normalMin": null, "normalMax": null, "tatMinutes": 120 },
+    { "name": "Haemoglobin",                "code": "HB",    "sampleType": "EDTA Blood",     "fee": 120,  "unit": "g/dL",    "normalMin": 13.0, "normalMax": 17.0, "tatMinutes": 60 },
+    { "name": "Fasting Blood Sugar",        "code": "FBS",   "sampleType": "Fluoride",       "fee": 80,   "unit": "mg/dL",   "normalMin": 70,   "normalMax": 100,  "tatMinutes": 60 },
+    { "name": "Post Prandial Blood Sugar",  "code": "PPBS",  "sampleType": "Fluoride",       "fee": 80,   "unit": "mg/dL",   "normalMin": 70,   "normalMax": 140,  "tatMinutes": 60 },
+    { "name": "HbA1c",                      "code": "HBA1C", "sampleType": "EDTA Blood",     "fee": 550,  "unit": "%",       "normalMin": 4.0,  "normalMax": 5.6,  "tatMinutes": 240 },
+    { "name": "Serum Creatinine",           "code": "CREAT", "sampleType": "Serum",          "fee": 180,  "unit": "mg/dL",   "normalMin": 0.7,  "normalMax": 1.3,  "tatMinutes": 120 },
+    { "name": "Blood Urea",                 "code": "UREA",  "sampleType": "Serum",          "fee": 150,  "unit": "mg/dL",   "normalMin": 15,   "normalMax": 40,   "tatMinutes": 120 },
+    { "name": "Serum Potassium",            "code": "K",     "sampleType": "Serum",          "fee": 200,  "unit": "mEq/L",   "normalMin": 3.5,  "normalMax": 5.1,  "tatMinutes": 60 },
+    { "name": "Serum Sodium",               "code": "NA",    "sampleType": "Serum",          "fee": 200,  "unit": "mEq/L",   "normalMin": 135,  "normalMax": 145,  "tatMinutes": 60 },
+    { "name": "Liver Function Test",        "code": "LFT",   "sampleType": "Serum",          "fee": 650,  "unit": "",        "normalMin": null, "normalMax": null, "tatMinutes": 240 },
+    { "name": "Lipid Profile",              "code": "LIPID", "sampleType": "Serum",          "fee": 700,  "unit": "",        "normalMin": null, "normalMax": null, "tatMinutes": 240 },
+    { "name": "Thyroid Profile",            "code": "TSH",   "sampleType": "Serum",          "fee": 450,  "unit": "uIU/mL",  "normalMin": 0.4,  "normalMax": 4.0,  "tatMinutes": 240 },
+    { "name": "Urine Routine",              "code": "URINE", "sampleType": "Urine",          "fee": 150,  "unit": "",        "normalMin": null, "normalMax": null, "tatMinutes": 120 },
+    { "name": "Dengue NS1",                 "code": "DENG",  "sampleType": "Serum",          "fee": 800,  "unit": "",        "normalMin": null, "normalMax": null, "tatMinutes": 180 },
+    { "name": "Blood Culture",              "code": "BCULT", "sampleType": "Culture Bottle", "fee": 1200, "unit": "",        "normalMin": null, "normalMax": null, "tatMinutes": 4320 }
+  ],
+
+  "labTestGroups": [
+    { "name": "Fever Panel", "fee": 1100, "members": ["CBC", "URINE", "DENG"], "note": "individual sum is 1300 - the group price of 1100 must win (P5-S04)" }
+  ],
+
+  "radiologyModalities": [
+    { "name": "X-Ray",      "type": "xray" },
+    { "name": "Ultrasound", "type": "usg" },
+    { "name": "CT Scan",    "type": "ct" },
+    { "name": "MRI",        "type": "mri" }
+  ],
+
+  "radiologyStudies": [
+    { "name": "Chest X-Ray PA View",       "modality": "X-Ray",      "fee": 400,  "sortOrder": 1, "note": "" },
+    { "name": "X-Ray Knee AP/Lateral",     "modality": "X-Ray",      "fee": 450,  "sortOrder": 2, "note": "" },
+    { "name": "USG Abdomen & Pelvis",      "modality": "Ultrasound", "fee": 1200, "sortOrder": 3, "note": "non-obstetric - must NOT create a Form F (P5-S14)" },
+    { "name": "USG Obstetric (Level II)",  "modality": "Ultrasound", "fee": 1800, "sortOrder": 4, "note": "contains 'obstetric' - MUST create a PCPNDT Form F (P5-S13)" },
+    { "name": "USG Pregnancy Profile",     "modality": "Ultrasound", "fee": 1500, "sortOrder": 5, "note": "clinically obstetric but the name lacks 'obstetric' - test what actually happens" },
+    { "name": "CT Brain Plain",            "modality": "CT Scan",    "fee": 3500, "sortOrder": 6, "note": "" },
+    { "name": "MRI Lumbar Spine",          "modality": "MRI",        "fee": 8500, "sortOrder": 7, "note": "" }
+  ],
+
+  "payers": [
+    { "name": "Self Pay / Cash",           "type": "self",      "roomCeiling": null, "coPayPercent": 0,  "deductible": 0 },
+    { "name": "Star Health Insurance",     "type": "tpa",       "roomCeiling": 5000, "coPayPercent": 10, "deductible": 0 },
+    { "name": "HDFC ERGO",                 "type": "tpa",       "roomCeiling": 4000, "coPayPercent": 0,  "deductible": 5000 },
+    { "name": "Medi Assist",               "type": "tpa",       "roomCeiling": 3000, "coPayPercent": 20, "deductible": 0 },
+    { "name": "PMJAY / Ayushman Bharat",   "type": "govt",      "roomCeiling": null, "coPayPercent": 0,  "deductible": 0 },
+    { "name": "CGHS",                      "type": "govt",      "roomCeiling": null, "coPayPercent": 0,  "deductible": 0 },
+    { "name": "ECHS",                      "type": "govt",      "roomCeiling": null, "coPayPercent": 0,  "deductible": 0 },
+    { "name": "Infosys Corporate Panel",   "type": "corporate", "roomCeiling": 6000, "coPayPercent": 0,  "deductible": 0 }
+  ],
+
+  "configValues": {
+    "drug_routes": ["Oral", "IV", "IM", "SC", "Topical", "Inhalation", "Rectal", "Sublingual", "Ophthalmic"],
+    "drug_frequencies": ["OD", "BD", "TDS", "QID", "HS", "SOS", "STAT", "Q6H", "Q8H"]
+  },
+
+  "shifts": [
+    { "name": "Morning", "start": "08:00", "end": "16:00" },
+    { "name": "Evening", "start": "16:00", "end": "00:00" },
+    { "name": "Night",   "start": "00:00", "end": "08:00" }
+  ],
+
+  "settings": {
+    "discountApprovalRules": [
+      { "upToPercent": 20,  "requires": [] },
+      { "upToPercent": 50,  "requires": ["hospital_admin"] },
+      { "upToPercent": 100, "requires": ["hospital_admin", "cfo"] }
+    ],
+    "ipdAncillaryPayment": "post_paid"
+  },
+
+  "patients": [
+    { "uhid": "PT-QA-0001", "name": "Ramesh Kumar",        "age": 42, "sex": "male",   "phone": "9876500001", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "the baseline patient",                       "scenarios": ["P4-S01", "P4-S02", "P4-S03"] },
+    { "uhid": "PT-QA-0002", "name": "Sunita Reddy",        "age": 34, "sex": "female", "phone": "9876500002", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "complete details",                           "scenarios": ["P3-S01"] },
+    { "uhid": "PT-QA-0003", "name": "Anitha Menon",        "age": 51, "sex": "female", "phone": "9876500003", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "pre-booked appointments",                    "scenarios": ["P4-S04"] },
+    { "uhid": "PT-QA-0004", "name": "Vinod Agarwal",       "age": 45, "sex": "male",   "phone": "9876500004", "payer": "Star Health Insurance",   "hospital": "A", "feature": "private insurance",                          "scenarios": ["P4-S05"] },
+    { "uhid": "PT-QA-0005", "name": "Lakshmi Devi",        "age": 58, "sex": "female", "phone": "9876500005", "payer": "PMJAY / Ayushman Bharat", "hospital": "A", "feature": "Ayushman card PMJAY-QA-0005",                "scenarios": ["P4-S06", "P7-S04"] },
+    { "uhid": "PT-QA-0006", "name": "R. Subramanian",      "age": 67, "sex": "male",   "phone": "9876500006", "payer": "CGHS",                    "hospital": "A", "feature": "HAS a referral letter",                      "scenarios": ["P4-S07", "P9-S14"] },
+    { "uhid": "PT-QA-0007", "name": "K. Venkatesan",       "age": 71, "sex": "male",   "phone": "9876500007", "payer": "CGHS",                    "hospital": "A", "feature": "NO referral letter - finalise must block",   "scenarios": ["P4-S08", "P9-S15"] },
+    { "uhid": "PT-QA-0008", "name": "Havildar Singh",      "age": 63, "sex": "male",   "phone": "9876500008", "payer": "ECHS",                    "hospital": "A", "feature": "ex-serviceman",                              "scenarios": ["P9"] },
+    { "uhid": "PT-QA-0009", "name": "Baby Aarav Sharma",   "age": 0,  "sex": "male",   "phone": "9876500009", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "8 months, 7.2 kg - weight-based dosing",     "scenarios": ["P4-S09"] },
+    { "uhid": "PT-QA-0010", "name": "Krishnamurthy Iyer",  "age": 74, "sex": "male",   "phone": "9876500010", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "on 6 drugs - interaction alert must fire",   "scenarios": ["P4-S10"] },
+    { "uhid": "PT-QA-0011", "name": "Fatima Begum",        "age": 39, "sex": "female", "phone": "9876500011", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "ALLERGY: Penicillin - prescribing must block", "scenarios": ["P4-S11", "P6"], "allergies": ["Penicillin"] },
+    { "uhid": "PT-QA-0012", "name": "Deepa Nair",          "age": 27, "sex": "female", "phone": "9876500012", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "22 weeks pregnant - PCPNDT Form F",          "scenarios": ["P4-S13", "P5-S13"] },
+    { "uhid": "PT-QA-0013", "name": "Ganesh Pawar",        "age": 33, "sex": "male",   "phone": "9876500013", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "pays partially, leaves owing",               "scenarios": ["P4-S21"] },
+    { "uhid": "PT-QA-0014", "name": "Mohan Rao",           "age": 48, "sex": "male",   "phone": "9876500014", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "staff relative - 50% discount request",      "scenarios": ["P4-S20", "P8-S11"] },
+    { "uhid": "PT-QA-0015", "name": "Unknown Male ~35",    "age": 35, "sex": "male",   "phone": "",           "payer": "Self Pay / Cash",         "hospital": "A", "feature": "no ID, unconscious, MLC",                    "scenarios": ["P3-S03", "P4-S23", "P10"] },
+    { "uhid": "PT-QA-0016", "name": "Priya Deshmukh",      "age": 29, "sex": "female", "phone": "9876500016", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "in labour - delivery + newborn",             "scenarios": ["P7-S07", "P12"] },
+    { "uhid": "PT-QA-0017", "name": "B/O Priya Deshmukh",  "age": 0,  "sex": "male",   "phone": "9876500016", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "newborn, linked to PT-QA-0016",              "scenarios": ["P3-S04", "P7-S07"] },
+    { "uhid": "PT-QA-0018", "name": "Sharma Ji",           "age": 55, "sex": "male",   "phone": "9876500018", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "planned hernia repair, Rs 25000 advance",    "scenarios": ["P7-S01", "P7-S15"] },
+    { "uhid": "PT-QA-0019", "name": "Shalini Nair",        "age": 44, "sex": "female", "phone": "9876500019", "payer": "HDFC ERGO",               "hospital": "A", "feature": "pre-auth Rs 80000, Private Room vs 4000 ceiling", "scenarios": ["P7-S03", "P9-S07"] },
+    { "uhid": "PT-QA-0020", "name": "Abdul Rahman",        "age": 62, "sex": "male",   "phone": "9876500020", "payer": "Medi Assist",             "hospital": "A", "feature": "20% co-pay",                                 "scenarios": ["P9-S08"] },
+    { "uhid": "PT-QA-0021", "name": "Sarita Joshi",        "age": 36, "sex": "female", "phone": "9876500021", "payer": "Infosys Corporate Panel", "hospital": "A", "feature": "corporate panel",                            "scenarios": ["P9"] },
+    { "uhid": "PT-QA-0022", "name": "Gopal Krishna",       "age": 68, "sex": "male",   "phone": "9876500022", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "CKD - dialysis 3x/week",                     "scenarios": ["P7-S08", "P12"] },
+    { "uhid": "PT-QA-0023", "name": "Vimala Sundaram",     "age": 54, "sex": "female", "phone": "9876500023", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "oncology - needs morphine (NDPS)",           "scenarios": ["P6-S07", "P12"] },
+    { "uhid": "PT-QA-0024", "name": "Rakesh Yadav",        "age": 40, "sex": "male",   "phone": "9876500024", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "sepsis - ICU, ventilated",                   "scenarios": ["P7-S06", "P14"] },
+    { "uhid": "PT-QA-0025", "name": "Kamala Bai",          "age": 79, "sex": "female", "phone": "9876500025", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "LAMA - family takes her home",               "scenarios": ["P7-S18"] },
+    { "uhid": "PT-QA-0026", "name": "Bhaskar Reddy",       "age": 81, "sex": "male",   "phone": "9876500026", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "dies in hospital - MCCD",                    "scenarios": ["P7-S19", "P10"] },
+    { "uhid": "PT-QA-0027", "name": "Nitin Kulkarni",      "age": 37, "sex": "male",   "phone": "9876500027", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "readmitted 11 days later",                   "scenarios": ["P7-S20"] },
+    { "uhid": "PT-QA-0028", "name": "Meera Pillai",        "age": 31, "sex": "female", "phone": "9876500028", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "long stay 1st-10th, crosses a locked day",   "scenarios": ["P7-S13"] },
+    { "uhid": "PT-QA-0029", "name": "Ramesh Kumar",        "age": 42, "sex": "male",   "phone": "9876500001", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "DELIBERATE DUPLICATE of PT-QA-0001",         "scenarios": ["P3-S02", "P4-S22"] },
+    { "uhid": "PT-QA-0030", "name": "Rohan Kulkarni",      "age": 45, "sex": "male",   "phone": "9876500030", "payer": "Self Pay / Cash",         "hospital": "B", "feature": "HOSPITAL B ONLY - isolation control",        "scenarios": ["P3-S12", "R7"] },
+    { "uhid": "PT-QA-0031", "name": "Savitri Amma",        "age": 66, "sex": "female", "phone": "9876500031", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "diabetic + hypertensive, chronic disease",   "scenarios": ["P12"] },
+    { "uhid": "PT-QA-0032", "name": "Arun Prakash",        "age": 24, "sex": "male",   "phone": "9876500032", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "assault injury - MLC",                       "scenarios": ["P4-S23", "P10"] },
+    { "uhid": "PT-QA-0033", "name": "Nandini Rao",         "age": 30, "sex": "female", "phone": "9876500033", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "IVF cycle",                                  "scenarios": ["P12"] },
+    { "uhid": "PT-QA-0034", "name": "Suresh Babu",         "age": 52, "sex": "male",   "phone": "9876500034", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "dental - full mouth charting",               "scenarios": ["P12"] },
+    { "uhid": "PT-QA-0035", "name": "Ismail Sheikh",       "age": 47, "sex": "male",   "phone": "9876500035", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "mental health - risk assessment",            "scenarios": ["P12"] },
+    { "uhid": "PT-QA-0036", "name": "Geetha Krishnan",     "age": 59, "sex": "female", "phone": "9876500036", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "physiotherapy post-fracture",                "scenarios": ["P4-S16", "P12"] },
+    { "uhid": "PT-QA-0037", "name": "Padma Rani",          "age": 34, "sex": "female", "phone": "9876500037", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "AYUSH - Prakriti assessment",               "scenarios": ["P12"] },
+    { "uhid": "PT-QA-0038", "name": "Vikram Chauhan",      "age": 28, "sex": "male",   "phone": "9876500038", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "ophthalmology - refraction, IOL",           "scenarios": ["P12"] },
+    { "uhid": "PT-QA-0039", "name": "Anand Verma",         "age": 43, "sex": "male",   "phone": "9876500039", "payer": "Self Pay / Cash",         "hospital": "A", "feature": "blood transfusion - cross-match",            "scenarios": ["P10"] },
+    { "uhid": "PT-QA-0040", "name": "Kalpana Iyer",        "age": 49, "sex": "female", "phone": "9876500040", "payer": "Star Health Insurance",   "hospital": "A", "feature": "claim denied then appealed",                 "scenarios": ["P9-S10"] }
+  ],
+
+  "commonValues": {
+    "standardAdvance": 25000,
+    "standardConsultation": 500,
+    "discountBelowThreshold": 15,
+    "discountAboveThreshold": 35,
+    "discountDualApproval": 55,
+    "criticalPotassium": 7.2,
+    "deltaCreatinineBefore": 0.9,
+    "deltaCreatinineAfter": 4.5,
+    "standardVitals":  { "bp": "128/84", "pulse": 82,  "tempF": 98.6,  "spo2": 98, "rr": 16 },
+    "sepsisVitals":    { "bp": "86/54",  "pulse": 124, "tempF": 103.2, "spo2": 89, "rr": 28 }
+  }
+}

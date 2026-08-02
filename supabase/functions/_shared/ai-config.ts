@@ -192,10 +192,36 @@ export interface ChatMessage {
  * Falls back to global_default if no feature-specific row found.
  * Returns null if no config or API key is available.
  */
+export interface ResolveAiConfigOptions {
+  /**
+   * Entitlement already decided by the caller. Pass it when the caller has ALREADY run
+   * checkAIAllowed for this same feature — otherwise this function re-runs it and the
+   * request pays 4 extra serial DB queries to re-answer one boolean it already knows.
+   */
+  entitlement?: { allowed: boolean; reason?: string };
+}
+
+/**
+ * Cache for the GLOBAL platform tables (platform_ai_provider_config / platform_ai_keys).
+ *
+ * These are platform-wide rows an admin edits maybe monthly, but every AI call was
+ * re-reading them from scratch — up to 3 serial round trips per request, on the critical
+ * path of a doctor watching a spinner. Same pattern as LEXICON_TTL_MS in medical-lexicon.ts.
+ * Per-isolate; a config edit takes effect within the TTL, or immediately on a cold isolate.
+ */
+const AI_CONFIG_TTL_MS = 5 * 60 * 1000;
+const aiConfigCache = new Map<string, { config: AiConfig | null; loadedAt: number }>();
+
+/** Drop cached provider config — call after an admin writes new platform AI settings. */
+export function invalidateAiConfigCache(): void {
+  aiConfigCache.clear();
+}
+
 export async function resolveAiConfig(
   hospitalId: string,
   featureKey: string,
   defaultMaxTokens = 1000,
+  options: ResolveAiConfigOptions = {},
 ): Promise<AiConfig | null> {
   const sb = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -207,31 +233,37 @@ export async function resolveAiConfig(
   // withholds this: null would let callers fall through to `?? resolveAiConfigFromEnv()`
   // and spend on a platform key anyway. checkAIAllowed fails open, so this only throws
   // on a definite disabled decision — never on a transient DB error.
-  const gate = await checkAIAllowed(sb, hospitalId, featureKey);
+  const gate = options.entitlement ?? await checkAIAllowed(sb, hospitalId, featureKey);
   if (!gate.allowed) throw new AIDisabledError(gate.reason);
 
-  // Feature-specific config first, then global_default — global tables, no hospital_id
-  let cfg: Record<string, unknown> | null = null;
-  const { data: featureCfg } = await sb
-    .from("platform_ai_provider_config")
-    .select("provider, model_name, temperature, max_tokens")
-    .eq("feature_key", featureKey)
-    .eq("is_active", true)
-    .maybeSingle();
-
-  cfg = featureCfg;
-
-  if (!cfg) {
-    const { data: defaultCfg } = await sb
-      .from("platform_ai_provider_config")
-      .select("provider, model_name, temperature, max_tokens")
-      .eq("feature_key", "global_default")
-      .eq("is_active", true)
-      .maybeSingle();
-    cfg = defaultCfg;
+  const cacheKey = `${featureKey}:${defaultMaxTokens}`;
+  const cached = aiConfigCache.get(cacheKey);
+  if (cached && Date.now() - cached.loadedAt < AI_CONFIG_TTL_MS) {
+    // Re-attach the meter for THIS caller. The cached copy deliberately has none — see
+    // finalize() below. Returning it bare would leave the call unmetered and unbilled.
+    return cached.config ? { ...cached.config, meter: { hospitalId, featureKey } } : null;
   }
 
-  if (!cfg) return null;
+  // Feature-specific config first, then global_default — global tables, no hospital_id.
+  // ONE query for both: these used to be two sequential maybeSingle() calls, and because
+  // most feature_key rows are never seeded the first reliably missed, so nearly every
+  // request paid for both.
+  const { data: cfgRows } = await sb
+    .from("platform_ai_provider_config")
+    .select("feature_key, provider, model_name, temperature, max_tokens")
+    .in("feature_key", [featureKey, "global_default"])
+    .eq("is_active", true);
+
+  const rows = (cfgRows ?? []) as Record<string, unknown>[];
+  const cfg: Record<string, unknown> | null =
+    rows.find(r => r.feature_key === featureKey) ??
+    rows.find(r => r.feature_key === "global_default") ??
+    null;
+
+  if (!cfg) {
+    aiConfigCache.set(cacheKey, { config: null, loadedAt: Date.now() });
+    return null;
+  }
 
   // The DB stores Azure as "azure_openai" but everything below is keyed on "azure" —
   // normalise once so the service-key lookup and the Azure branch actually fire.
@@ -251,11 +283,19 @@ export async function resolveAiConfig(
     keyCfgData = keyCfg?.config as Record<string, string> | undefined;
   }
 
+  // Cache the resolved config WITHOUT the meter, then attach a fresh meter per call.
+  // `meter` carries hospitalId; caching it would bill one hospital's usage to whichever
+  // hospital happened to warm the isolate first.
+  const finalize = (resolved: Omit<AiConfig, "meter">): AiConfig => {
+    aiConfigCache.set(cacheKey, { config: resolved as AiConfig, loadedAt: Date.now() });
+    return { ...resolved, meter: { hospitalId, featureKey } } as AiConfig;
+  };
+
   // Azure OpenAI requires endpoint + deployment in addition to API key
   if (provider === "azure") {
     const azApiKey = keyCfgData?.api_key || Deno.env.get("AZURE_OPENAI_API_KEY") || undefined;
     if (!azApiKey) return null;
-    return {
+    return finalize({
       provider: "azure",
       // Per-feature model wins over the drawer's single deployment — otherwise EVERY Azure
       // feature is pinned to one deployment and the platform UI's per-feature Model box does
@@ -269,8 +309,7 @@ export async function resolveAiConfig(
       azureSurface: keyCfgData?.azure_surface || undefined,
       temperature: Number(cfg.temperature) || 0.3,
       maxTokens: Number(cfg.max_tokens) || defaultMaxTokens,
-      meter: { hospitalId, featureKey },
-    };
+    });
   }
 
   let apiKey: string | undefined = keyCfgData?.api_key;
@@ -283,14 +322,13 @@ export async function resolveAiConfig(
 
   if (!apiKey) return null;
 
-  return {
+  return finalize({
     provider,
     model: (cfg.model_name as string) || DEFAULT_MODELS[provider] || "gpt-4o",
     apiKey,
     temperature: Number(cfg.temperature) || 0.3,
     maxTokens: Number(cfg.max_tokens) || defaultMaxTokens,
-    meter: { hospitalId, featureKey },
-  };
+  });
 }
 
 /**
@@ -378,7 +416,9 @@ export function estimateAiCostUsd(model: string, usage: ChatUsage): number {
  * call. A lost log row costs a rounding error in a budget; a thrown error here
  * would cost a discharge summary.
  */
-async function recordAiUsage(
+// Exported so the streaming path can meter a streamed call exactly like a buffered one —
+// callAiChatStream deliberately does not meter itself, since the caller owns the timing.
+export async function recordAiUsage(
   meter: { hospitalId: string; featureKey: string },
   provider: string,
   model: string,
@@ -425,6 +465,16 @@ async function recordAiUsage(
       p_cache_hit:         cacheHit,
       p_cost_usd:          costUsd,
       p_cost_inr:          costInr,
+    });
+
+    // Draw the metered cost from the prepaid AI wallet — but only the slice
+    // above the plan's included monthly allowance. Runs AFTER the ai_cost_daily
+    // upsert so the month-to-date figure includes this call. Safety-class AI is
+    // never billed. Fire-and-forget: a wallet error must never fail an AI call.
+    await sb.rpc("debit_ai_wallet_for_usage", {
+      p_hospital_id: meter.hospitalId,
+      p_feature_key: meter.featureKey,
+      p_cost_inr:    costInr,
     });
   } catch (err) {
     console.error("AI usage metering failed (non-fatal):", err instanceof Error ? err.message : String(err));
@@ -564,6 +614,136 @@ export function parseAzureResponse(
  * Provider dispatch. Has one return per provider branch, which is exactly why
  * metering does NOT live here — see the exported wrapper below.
  */
+/**
+ * Streaming chat. Emits text deltas as they arrive and returns the full text at the end.
+ *
+ * WHY: a ~1200-token structured note takes 10-20 s to generate, and the doctor had zero
+ * feedback for all of it — one spinner, then everything at once. Streaming lets the form
+ * fill in field by field while the model is still writing.
+ *
+ * Provider support is narrow on purpose: claude and the OpenAI-compatible providers, which
+ * covers the configured defaults. `supportsStreaming()` below is the guard, and EVERY caller
+ * must keep the buffered path as a fallback — a provider that cannot stream, or a stream
+ * that breaks mid-flight, must still produce a complete note.
+ *
+ * Usage/metering is deliberately NOT handled here; the caller meters the final text so a
+ * streamed call is billed exactly like a buffered one.
+ */
+export function supportsStreaming(config: AiConfig): boolean {
+  const p = normalizeProviderKey(config.provider);
+  return p === "claude" || p === "openai" || p === "openrouter";
+}
+
+export async function callAiChatStream(
+  config: AiConfig,
+  messages: ChatMessage[],
+  onDelta: (text: string) => void,
+  maxTokens?: number,
+  temperature?: number,
+): Promise<ChatResult> {
+  const maxTok = maxTokens ?? config.maxTokens;
+  const temp = temperature ?? config.temperature;
+  const provider = normalizeProviderKey(config.provider);
+
+  let url: string;
+  let headers: Record<string, string>;
+  let body: Record<string, unknown>;
+
+  if (provider === "claude") {
+    const systemMsg = messages.find((m) => m.role === "system");
+    const chatMsgs = messages.filter((m) => m.role !== "system");
+    url = "https://api.anthropic.com/v1/messages";
+    headers = {
+      "x-api-key": config.apiKey,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+    };
+    body = {
+      model: config.model,
+      max_tokens: maxTok,
+      temperature: temp,
+      stream: true,
+      ...(systemMsg ? { system: systemMsg.content } : {}),
+      messages: chatMsgs.map((m) => ({ role: m.role, content: m.content })),
+    };
+  } else if (provider === "openai" || provider === "openrouter") {
+    url = provider === "openrouter"
+      ? "https://openrouter.ai/api/v1/chat/completions"
+      : "https://api.openai.com/v1/chat/completions";
+    headers = { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" };
+    body = {
+      model: config.model,
+      max_tokens: maxTok,
+      temperature: temp,
+      stream: true,
+      stream_options: { include_usage: true },
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+    };
+  } else {
+    throw new Error(`Provider ${config.provider} does not support streaming`);
+  }
+
+  const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+  if (!res.ok || !res.body) throw new Error(`${provider} stream error ${res.status}: ${await res.text()}`);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+  const usage: ChatUsage = { tokensInput: 0, tokensOutput: 0, cacheCreationTokens: 0, cacheReadTokens: 0 };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    // SSE frames are separated by a blank line; a frame can straddle two chunks, so only
+    // complete frames are consumed and the remainder is carried forward.
+    let idx: number;
+    while ((idx = buffer.indexOf("\n\n")) !== -1) {
+      const frame = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+
+      for (const line of frame.split("\n")) {
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+
+        let evt: Record<string, any>;
+        try { evt = JSON.parse(payload); } catch { continue; }
+
+        if (provider === "claude") {
+          if (evt.type === "content_block_delta" && evt.delta?.text) {
+            content += evt.delta.text;
+            onDelta(evt.delta.text);
+          } else if (evt.type === "message_start" && evt.message?.usage) {
+            usage.tokensInput = evt.message.usage.input_tokens ?? 0;
+            usage.cacheReadTokens = evt.message.usage.cache_read_input_tokens ?? 0;
+            usage.cacheCreationTokens = evt.message.usage.cache_creation_input_tokens ?? 0;
+          } else if (evt.type === "message_delta" && evt.usage?.output_tokens) {
+            usage.tokensOutput = evt.usage.output_tokens;
+          }
+        } else {
+          const delta = evt.choices?.[0]?.delta?.content;
+          if (delta) { content += delta; onDelta(delta); }
+          if (evt.usage) {
+            usage.tokensInput = evt.usage.prompt_tokens ?? usage.tokensInput;
+            usage.tokensOutput = evt.usage.completion_tokens ?? usage.tokensOutput;
+          }
+        }
+      }
+    }
+  }
+
+  // Some providers omit usage on the stream; fall back to a rough estimate so a streamed
+  // call is never silently unbilled.
+  if (!usage.tokensOutput) usage.tokensOutput = Math.ceil(content.length / 4);
+  if (!usage.inputTokens) {
+    usage.inputTokens = Math.ceil(messages.reduce((n, m) => n + m.content.length, 0) / 4);
+  }
+  return { content, usage };
+}
+
 async function callAiChatWithUsageRaw(
   config: AiConfig,
   messages: ChatMessage[],
@@ -901,6 +1081,87 @@ export async function callAiVision(
 ): Promise<string> {
   const startedAt = Date.now();
   const result = await callAiVisionRaw(config, base64Image, mediaType, textPrompt, maxTokens);
+  if (config.meter) {
+    void recordAiUsage(config.meter, config.provider, config.model, result.usage, Date.now() - startedAt);
+  }
+  return result.content;
+}
+
+/**
+ * Call the configured provider with an AUDIO + text input.
+ *
+ * Used by the voice-scribe rescue tier: when a dictation segment scores badly, the
+ * audio is re-heard by a multimodal model that CAN recover a drug name the Indic ASR
+ * destroyed — something no text-only pass can do, because the information is simply
+ * gone from the transcript.
+ *
+ * PROVIDER SUPPORT IS GENUINELY NARROW, and callers must treat failure as normal:
+ *   gemini  — inline_data, the only provider here that accepts browser webm directly
+ *   openai  — input_audio, but ONLY wav/mp3; MediaRecorder produces webm, so a webm
+ *             payload is rejected up front rather than sent and billed for nothing
+ *   others  — Claude has no audio input at all
+ * Every caller must treat a throw as "rescue unavailable" and keep the original
+ * result. This is an optional upgrade, never a dependency.
+ */
+export async function callAiAudio(
+  config: AiConfig,
+  base64Audio: string,
+  mediaType: string,
+  textPrompt: string,
+  maxTokens?: number,
+): Promise<string> {
+  const startedAt = Date.now();
+  const maxTok = maxTokens ?? config.maxTokens;
+  let result: ChatResult;
+
+  if (config.provider === "gemini") {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.model}:generateContent?key=${config.apiKey}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { inline_data: { mime_type: mediaType, data: base64Audio } },
+            { text: textPrompt },
+          ],
+        }],
+        generationConfig: { maxOutputTokens: maxTok, temperature: 0.1 },
+      }),
+    });
+    if (!res.ok) throw new Error(`Gemini audio error ${res.status}: ${await res.text()}`);
+    const data = await res.json();
+    result = {
+      content: data.candidates?.[0]?.content?.parts?.[0]?.text || "",
+      usage: extractUsage(data, "gemini"),
+    };
+  } else if (config.provider === "openai") {
+    const format = mediaType.includes("wav") ? "wav" : mediaType.includes("mp3") || mediaType.includes("mpeg") ? "mp3" : null;
+    if (!format) {
+      throw new Error(`OpenAI audio input supports wav/mp3 only, got ${mediaType}`);
+    }
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: config.model,
+        max_tokens: maxTok,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "input_audio", input_audio: { data: base64Audio, format } },
+            { type: "text", text: textPrompt },
+          ],
+        }],
+      }),
+    });
+    if (!res.ok) throw new Error(`OpenAI audio error ${res.status}`);
+    const data = await res.json();
+    result = { content: data.choices?.[0]?.message?.content || "", usage: extractUsage(data, "openai") };
+  } else {
+    throw new Error(`Provider ${config.provider} does not support audio input`);
+  }
+
   if (config.meter) {
     void recordAiUsage(config.meter, config.provider, config.model, result.usage, Date.now() - startedAt);
   }

@@ -58,8 +58,30 @@ describe("resolveSubscriptionAccess", () => {
     expect(resolveSubscriptionAccess({ status: "cancelled" }, NOW)).toMatchObject({ blocked: true, reason: "cancelled" });
   });
 
-  it("does NOT block past_due — dunning suspends it after 7 days, and suspension blocks", () => {
+  it("does NOT block past_due until it has an anchor (past_due_since)", () => {
     expect(resolveSubscriptionAccess({ status: "past_due" }, NOW).blocked).toBe(false);
+    expect(resolveSubscriptionAccess({ status: "past_due", past_due_since: null }, NOW).blocked).toBe(false);
+  });
+
+  it("allows past_due inside the buffer, blocks past it", () => {
+    const inBuffer = resolveSubscriptionAccess({ status: "past_due", past_due_since: at(-1) }, NOW);
+    expect(inBuffer.blocked).toBe(false);
+    expect(inBuffer.inGrace).toBe(true);
+
+    const expired = resolveSubscriptionAccess({ status: "past_due", past_due_since: at(-30) }, NOW);
+    expect(expired.blocked).toBe(true);
+    expect(expired.reason).toBe("past_due");
+  });
+
+  it("honours a configurable grace window for past_due", () => {
+    // 5-day buffer: a failure 4 days ago is still allowed, 6 days ago is blocked.
+    expect(resolveSubscriptionAccess({ status: "past_due", past_due_since: at(-4) }, NOW, 5).blocked).toBe(false);
+    expect(resolveSubscriptionAccess({ status: "past_due", past_due_since: at(-6) }, NOW, 5).blocked).toBe(true);
+  });
+
+  it("honours a configurable grace window for trials", () => {
+    // 0-day buffer: an expired trial blocks immediately.
+    expect(resolveSubscriptionAccess({ status: "trial", trial_ends_at: at(-0.5) }, NOW, 0).blocked).toBe(true);
   });
 
   it("fails open on a null or unparseable trial_ends_at", () => {

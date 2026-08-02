@@ -21,6 +21,7 @@ import { useAIFeature } from "@/hooks/useAIFeature";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
 import { getPendingInvestigations, type PendingInvestigationRow } from "@/lib/pendingInvestigations";
+import { toLocalISODate, type BillingDateRange } from "@/lib/billingDateRange";
 
 interface LeakItem {
   id: string;
@@ -34,6 +35,28 @@ interface LeakItem {
   billing_status: string;
   notes: string | null;
   created_at: string;
+  /**
+   * Where the row came from. "scan" rows are derived from a leakage_reports snapshot
+   * and have no service_charges row behind them — so they can't be waived.
+   */
+  source?: "scan" | "charge";
+}
+
+/** One item inside leakage_reports.items — see daily-leakage-scan's LeakageItem. */
+interface ScanLeakageItem {
+  category: string;
+  description: string;
+  entity_id: string;
+  estimated_amount: number;
+}
+
+interface LeakageReportRow {
+  report_date: string;
+  /** jsonb — shape is not guaranteed by the DB, so it's narrowed at the use site. */
+  items: unknown;
+  scan_completed_at: string;
+  total_items: number;
+  estimated_amount: number;
 }
 
 interface ModuleLeakSummary {
@@ -103,7 +126,12 @@ const MODULE_COLORS: Record<string, string> = {
 const inr = (n: number) =>
   `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
-const LeakageDashboard: React.FC = () => {
+interface LeakageDashboardProps {
+  /** Shared Billing period. Omitted = fall back to this tab's own last-7-days default. */
+  dateRange?: BillingDateRange;
+}
+
+const LeakageDashboard: React.FC<LeakageDashboardProps> = ({ dateRange }) => {
   const __aiOn = useAIFeature("revenue_leakage");
   const { hospitalId } = useHospitalId();
   const { toast }      = useToast();
@@ -112,12 +140,25 @@ const LeakageDashboard: React.FC = () => {
   const [loading, setLoading]     = useState(true);
   const [scanning, setScanning]   = useState(false);
   const [expanded, setExpanded]   = useState<Set<string>>(new Set());
-  const [dateFrom, setDateFrom]   = useState(() => {
+  /** Non-null when the load itself failed — must never render as "no leakage". */
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reportMeta, setReportMeta] = useState<{
+    count: number; usedFallback: boolean; latestDate: string | null; scannedAt: string | null;
+  }>({ count: 0, usedFallback: false, latestDate: null, scannedAt: null });
+
+  // Driven by the page-level period. This tab used to own a second pair of From/To
+  // inputs, which sat right under the shared bar and silently disagreed with it.
+  const fallback = React.useMemo(() => {
     const d = new Date();
-    d.setDate(d.getDate() - 7);
-    return d.toISOString().split("T")[0];
-  });
-  const [dateTo, setDateTo]       = useState(() => new Date().toISOString().split("T")[0]);
+    d.setDate(d.getDate() - 6);
+    return { start: toLocalISODate(d), end: toLocalISODate(new Date()) };
+  }, []);
+  const dateFrom = dateRange?.start ?? fallback.start;
+  const dateTo   = dateRange?.end   ?? fallback.end;
+
+  // Tab-local filters — narrow what the period returned.
+  const [moduleFilter, setModuleFilter] = useState("all");
+  const [minAmount, setMinAmount]       = useState("all");
 
   const [pendingInvRows, setPendingInvRows]         = useState<PendingInvestigationRow[]>([]);
   const [loadingPendingInv, setLoadingPendingInv]   = useState(false);
@@ -128,8 +169,70 @@ const LeakageDashboard: React.FC = () => {
   const fetchLeaks = useCallback(async () => {
     if (!hospitalId) return;
     setLoading(true);
+    setLoadError(null);
 
-    const { data } = await (supabase as any)
+    // ── Source A: findings from the leakage scan ───────────────────────────────
+    // `service_charges` alone can never answer "what was delivered but never billed":
+    // a row is only written once billing SUCCEEDS, stamped 'billed'. A service nobody
+    // billed produces no row at all. The scan (daily-leakage-scan) does the real
+    // cross-module detection and stores it here, so this is where the leakage lives.
+    let reports: LeakageReportRow[] = [];
+    const reportRes = await supabase
+      .from("leakage_reports")
+      .select("report_date, items, scan_completed_at, total_items, estimated_amount")
+      .eq("hospital_id", hospitalId)
+      .gte("report_date", dateFrom)
+      .lte("report_date", dateTo)
+      .order("report_date", { ascending: false })
+      .limit(60);
+
+    if (reportRes.error) {
+      setLoadError(reportRes.error.message);
+      setLoading(false);
+      return;
+    }
+    reports = (reportRes.data ?? []) as LeakageReportRow[];
+
+    // The scan always stamps report_date = YESTERDAY while scanning a rolling 24h
+    // window, so with the period on "Today" a scan you just ran falls outside the
+    // range. Rather than show a false all-clear, fall back to the newest report and
+    // label it — see `fallbackReport` in the header.
+    let usedFallback = false;
+    if (reports.length === 0) {
+      const latest = await supabase
+        .from("leakage_reports")
+        .select("report_date, items, scan_completed_at, total_items, estimated_amount")
+        .eq("hospital_id", hospitalId)
+        .order("report_date", { ascending: false })
+        .limit(1);
+      if (!latest.error && latest.data?.length) {
+        reports = latest.data as LeakageReportRow[];
+        usedFallback = true;
+      }
+    }
+
+    const scanItems: LeakItem[] = reports.flatMap((r) =>
+      (Array.isArray(r.items) ? (r.items as ScanLeakageItem[]) : []).map((it, idx) => ({
+        id: `scan:${r.report_date}:${it.entity_id ?? idx}`,
+        patient_id: null,
+        service_module: it.category || "other",
+        service_name: it.description || "Unbilled service",
+        service_date: r.report_date,
+        quantity: 1,
+        unit_rate: Number(it.estimated_amount) || 0,
+        total_amount: Number(it.estimated_amount) || 0,
+        billing_status: "unbilled",
+        notes: null,
+        created_at: r.scan_completed_at,
+        source: "scan" as const,
+      })),
+    );
+
+    // ── Source B: 'no fee configured' stragglers ──────────────────────────────
+    // The only rows service_charges legitimately holds as unbilled (unitRate === 0
+    // fallbacks from CSSD / Emergency). Real lost revenue, and the only rows the
+    // per-row Waive action can act on.
+    const chargeRes = await (supabase as any)
       .from("service_charges")
       .select("*")
       .eq("hospital_id", hospitalId)
@@ -139,7 +242,24 @@ const LeakageDashboard: React.FC = () => {
       .order("service_date", { ascending: false })
       .limit(500);
 
-    setItems(data ?? []);
+    if (chargeRes.error) {
+      setLoadError(chargeRes.error.message);
+      setLoading(false);
+      return;
+    }
+
+    const chargeItems: LeakItem[] = (chargeRes.data ?? []).map((r: LeakItem) => ({
+      ...r,
+      source: "charge" as const,
+    }));
+
+    setReportMeta({
+      count: reports.length,
+      usedFallback,
+      latestDate: reports[0]?.report_date ?? null,
+      scannedAt: reports[0]?.scan_completed_at ?? null,
+    });
+    setItems([...scanItems, ...chargeItems]);
     setLoading(false);
   }, [hospitalId, dateFrom, dateTo]);
 
@@ -153,11 +273,26 @@ const LeakageDashboard: React.FC = () => {
       .finally(() => setLoadingPendingInv(false));
   }, [hospitalId, dateFrom, dateTo]);
 
+  // Module list for the dropdown comes from the full period, so a module doesn't
+  // vanish from the options the moment you filter to a different one.
+  const availableModules = React.useMemo(
+    () => [...new Set(items.map(i => i.service_module))].sort(
+      (a, b) => (MODULE_LABELS[a] || a).localeCompare(MODULE_LABELS[b] || b),
+    ),
+    [items],
+  );
+
+  const minAmountValue = minAmount === "all" ? 0 : Number(minAmount);
+  const filteredItems = items.filter(i =>
+    (moduleFilter === "all" || i.service_module === moduleFilter) &&
+    i.total_amount >= minAmountValue
+  );
+
   // Group by module
   const grouped: ModuleLeakSummary[] = [];
   const moduleMap: Record<string, ModuleLeakSummary> = {};
 
-  for (const item of items) {
+  for (const item of filteredItems) {
     if (!moduleMap[item.service_module]) {
       moduleMap[item.service_module] = {
         module: item.service_module,
@@ -175,8 +310,9 @@ const LeakageDashboard: React.FC = () => {
   }
   Object.values(moduleMap).sort((a, b) => b.amount - a.amount).forEach(g => grouped.push(g));
 
-  const totalUnbilled = items.reduce((s, i) => s + i.total_amount, 0);
-  const totalCount    = items.length;
+  // KPIs track the filtered view so the headline numbers always match the rows below.
+  const totalUnbilled = filteredItems.reduce((s, i) => s + i.total_amount, 0);
+  const totalCount    = filteredItems.length;
 
   const pendingInvCount   = pendingInvRows.reduce((s, r) => s + r.pendingLabTests.length + r.pendingRadiologyStudies.length, 0);
   const pendingInvRevenue = pendingInvRows.reduce((s, r) => s + r.estimatedRevenue, 0);
@@ -190,10 +326,34 @@ const LeakageDashboard: React.FC = () => {
         body: { hospital_id: hospitalId },
       });
       if (error) throw error;
-      toast({
-        title: "Revenue scan complete",
-        description: `Found ${data?.leakage_count ?? 0} unbilled items across ${data?.modules_scanned ?? 0} modules`,
-      });
+
+      // The function stamps its report with YESTERDAY's date. Say so plainly, otherwise a
+      // successful scan looks like it did nothing whenever the period is set to Today.
+      // Tolerate both function versions. The updated one returns a flat `leakage_count`;
+      // the version currently deployed returns only `hospitals[{total_items}]` — and its
+      // redeploy is blocked by the project's function-count cap. Deriving the total from
+      // whichever shape arrives keeps this toast truthful without needing that deploy.
+      const perHospital: { total_items?: number }[] =
+        Array.isArray(data?.hospitals) ? data.hospitals : [];
+      const found = data?.leakage_count != null
+        ? Number(data.leakage_count)
+        : perHospital.reduce((s, h) => s + Number(h?.total_items ?? 0), 0);
+      const modules = Number(data?.modules_scanned ?? 0);
+      if (data?.failed_hospitals > 0) {
+        toast({
+          title: "Scan finished with errors",
+          description: "Some data could not be scanned. The figures below may be incomplete.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: found > 0 ? `Found ${found} unbilled item${found === 1 ? "" : "s"}` : "Scan complete — nothing unbilled found",
+          description: [
+            found > 0 && modules > 0 ? `Across ${modules} module${modules === 1 ? "" : "s"}.` : null,
+            `Report dated ${data?.report_date ?? "the last 24h"} — widen the period if you don't see it.`,
+          ].filter(Boolean).join(" "),
+        });
+      }
       fetchLeaks();
     } catch (err: any) {
       toast({ title: "Scan failed", description: err.message, variant: "destructive" });
@@ -274,17 +434,57 @@ Keep response concise (under 250 words). Use Indian hospital context.`,
     <div className="p-4 space-y-5">
       {/* Header + controls */}
       <div className="flex items-center gap-4 flex-wrap">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <TrendingDown size={18} className="text-red-500" />
           <h2 className="text-[15px] font-bold">Revenue Leakage Dashboard</h2>
+          {/* Always say what the figures are as-of — the scan stamps its report with
+              YESTERDAY's date, so a range like "Today" can legitimately hold no report. */}
+          {reportMeta.scannedAt && (
+            <span className={cn(
+              "text-[10px] px-2 py-0.5 rounded-full border",
+              reportMeta.usedFallback
+                ? "bg-amber-50 text-amber-700 border-amber-200"
+                : "bg-muted text-muted-foreground border-border",
+            )}>
+              {reportMeta.usedFallback
+                ? `No scan in this period — showing latest, ${reportMeta.latestDate}`
+                : `Scanned ${formatDistanceToNow(new Date(reportMeta.scannedAt), { addSuffix: true })}`}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2 ml-auto">
-          <label className="text-[11px] text-muted-foreground">From</label>
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-            className="h-7 text-xs border border-border rounded px-2 bg-background" />
-          <label className="text-[11px] text-muted-foreground">To</label>
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-            className="h-7 text-xs border border-border rounded px-2 bg-background" />
+          {/* Tab-local filters. The date period lives in the page-level bar above. */}
+          <select
+            value={moduleFilter}
+            onChange={e => setModuleFilter(e.target.value)}
+            aria-label="Filter by module"
+            className="h-7 text-[11px] border border-border rounded px-1.5 bg-background"
+          >
+            <option value="all">All modules</option>
+            {availableModules.map(m => (
+              <option key={m} value={m}>{MODULE_LABELS[m] || m}</option>
+            ))}
+          </select>
+          <select
+            value={minAmount}
+            onChange={e => setMinAmount(e.target.value)}
+            aria-label="Filter by minimum amount"
+            className="h-7 text-[11px] border border-border rounded px-1.5 bg-background"
+          >
+            <option value="all">Any amount</option>
+            <option value="500">≥ ₹500</option>
+            <option value="1000">≥ ₹1,000</option>
+            <option value="5000">≥ ₹5,000</option>
+          </select>
+          {(moduleFilter !== "all" || minAmount !== "all") && (
+            <button
+              onClick={() => { setModuleFilter("all"); setMinAmount("all"); }}
+              title="Clear filters"
+              className="h-7 px-2 text-[11px] rounded border border-border text-muted-foreground hover:bg-muted"
+            >
+              Clear
+            </button>
+          )}
           <Button size="sm" variant="outline" className="h-7 text-[11px] gap-1" onClick={fetchLeaks}>
             <RefreshCw size={11} /> Refresh
           </Button>
@@ -351,16 +551,61 @@ Keep response concise (under 250 words). Use Indian hospital context.`,
         ))}
       </div>
 
-      {/* Empty state */}
-      {grouped.length === 0 && (
+      {/* Empty / error states.
+          These used to collapse into one green "No revenue leakage detected" panel, which
+          claimed everything was billed even when the query had failed outright or a filter
+          was hiding every row — a false all-clear on a financial dashboard. */}
+      {loadError ? (
+        <div className="flex flex-col items-center justify-center py-12 border border-red-200 rounded-lg bg-red-50">
+          <AlertTriangle size={40} className="text-red-500 mb-3" />
+          <p className="text-[15px] font-bold text-red-800">Couldn't load leakage data</p>
+          <p className="text-[12px] text-red-600 mt-1">{loadError}</p>
+          <Button size="sm" variant="outline" className="mt-3 h-7 text-[11px] gap-1" onClick={fetchLeaks}>
+            <RefreshCw size={11} /> Try again
+          </Button>
+        </div>
+      ) : grouped.length === 0 && items.length > 0 ? (
+        // Rows exist for the period — the tab-local filters are hiding all of them.
+        <div className="flex flex-col items-center justify-center py-12 border border-border rounded-lg bg-muted/30">
+          <TrendingDown size={40} className="text-muted-foreground/40 mb-3" />
+          <p className="text-[15px] font-bold text-foreground">No results for these filters</p>
+          <p className="text-[12px] text-muted-foreground mt-1">
+            {items.length} unbilled item{items.length === 1 ? "" : "s"} in this period are hidden by the module / amount filter.
+          </p>
+          <Button
+            size="sm" variant="outline" className="mt-3 h-7 text-[11px]"
+            onClick={() => { setModuleFilter("all"); setMinAmount("all"); }}
+          >
+            Clear filters
+          </Button>
+        </div>
+      ) : grouped.length === 0 && reportMeta.count === 0 ? (
+        // Nothing scanned this period — NOT the same as "everything is billed".
+        <div className="flex flex-col items-center justify-center py-12 border border-border rounded-lg bg-amber-50">
+          <AlertTriangle size={40} className="text-amber-500 mb-3" />
+          <p className="text-[15px] font-bold text-amber-900">No scan has run for this period</p>
+          <p className="text-[12px] text-amber-700 mt-1 text-center max-w-md">
+            Leakage is detected by a scan (nightly, or on demand). Until one runs for these
+            dates, this isn't a clean bill of health — run a scan to check.
+          </p>
+          <Button
+            size="sm" className="mt-3 h-7 text-[11px] gap-1 bg-red-600 hover:bg-red-700"
+            onClick={runAiScan} disabled={scanning}
+          >
+            {scanning ? <><Loader2 size={11} className="animate-spin" /> Scanning…</> : <><Zap size={11} /> Run Scan</>}
+          </Button>
+        </div>
+      ) : grouped.length === 0 ? (
+        // A scan did run and genuinely found nothing — the real all-clear, qualified.
         <div className="flex flex-col items-center justify-center py-12 border border-border rounded-lg bg-emerald-50">
           <CheckCircle2 size={40} className="text-emerald-500 mb-3" />
           <p className="text-[15px] font-bold text-emerald-800">No revenue leakage detected</p>
           <p className="text-[12px] text-emerald-600 mt-1">
-            All services in this date range are billed or waived.
+            Last scanned {reportMeta.scannedAt ? formatDistanceToNow(new Date(reportMeta.scannedAt), { addSuffix: true }) : "recently"}
+            {reportMeta.latestDate ? ` for ${reportMeta.latestDate}` : ""}.
           </p>
         </div>
-      )}
+      ) : null}
 
       {/* Leakage by module */}
       {grouped.map(g => {
@@ -412,14 +657,23 @@ Keep response concise (under 250 words). Use Indian hospital context.`,
                       )}
                     </span>
                     <div className="flex justify-end gap-1.5">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-6 text-[10px] text-muted-foreground"
-                        onClick={() => markWaived(item.id)}
-                      >
-                        Waive
-                      </Button>
+                      {/* Waive updates a service_charges row. Scan findings are derived from a
+                          leakage_reports snapshot and have no such row, so the action is only
+                          offered on rows it can actually act on. */}
+                      {item.source === "scan" ? (
+                        <span className="text-[10px] text-muted-foreground px-2" title="Detected by the leakage scan">
+                          from scan
+                        </span>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 text-[10px] text-muted-foreground"
+                          onClick={() => markWaived(item.id)}
+                        >
+                          Waive
+                        </Button>
+                      )}
                     </div>
                   </div>
                 ))}

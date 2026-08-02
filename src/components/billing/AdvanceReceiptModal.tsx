@@ -8,12 +8,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { formatINRExact } from "@/lib/currency";
-import { printDocument, printHeader } from "@/lib/printUtils";
+import { printReceiptDoc } from "@/lib/receiptPrint";
 import {
   DAY_CARE_PROCEDURES_SELECT, DayCareProcedureSelection, lineTotal, listProcedures,
   mapProcedureRow, normalizeQuantity, totalProcedureCharge,
 } from "@/lib/dayCareProcedures";
-import { amt, escapeHtml } from "@/lib/billPrint";
+import { amt } from "@/lib/billPrint";
 import { CheckCircle2, Printer, IndianRupee } from "lucide-react";
 
 interface Props {
@@ -218,84 +218,30 @@ const AdvanceReceiptModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, 
 
   const handlePrintReceipt = () => {
     if (!receipt) return;
-    const hospitalName = hospitalInfo?.name || "Hospital Receipt";
-    const hospitalAddress = hospitalInfo?.address || "";
-
-    const totalCharges = receiptCharges;
-    const balancePayable = receiptBalance;
-
-    // Priced breakdown of what the deposit is against. Falls back to the plain layout for a
-    // patient-level advance (no admission), where there are no procedures to list — an empty
-    // table would read as "you were charged nothing".
-    const chargesHtml = receipt.procedures.length > 0
-      ? `<div style="border-top:1px dashed #cbd5e1; padding-top:8px; margin-top:8px;">
-          <p style="font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;margin:0 0 4px;">Charges Covered</p>
-          <table style="width:100%;border-collapse:collapse;">
-            <tr>
-              <th style="text-align:left;font-size:10px;">Particulars</th>
-              <th style="text-align:right;font-size:10px;">Rate</th>
-              <th style="text-align:center;font-size:10px;">Qty</th>
-              <th style="text-align:right;font-size:10px;">Amount</th>
-            </tr>
-            ${receipt.procedures.map(p => `<tr>
-              <td style="font-size:11px;">${escapeHtml(p.procedureName)}</td>
-              <td style="text-align:right;font-size:11px;" class="amount">${amt(p.rate)}</td>
-              <td style="text-align:center;font-size:11px;">${normalizeQuantity(p.quantity)}</td>
-              <td style="text-align:right;font-size:11px;" class="amount">${amt(lineTotal(p))}</td>
-            </tr>`).join("")}
-          </table>
-          <div class="row" style="margin-top:6px;">
-            <span class="label">Total Charges</span>
-            <span class="amount">₹${amt(totalCharges)}</span>
-          </div>
-        </div>`
-      : "";
-
-    const body = `
-      ${printHeader(hospitalName, hospitalAddress)}
-      <div style="text-align:center; border-bottom:1px dashed #cbd5e1; padding-bottom:10px; margin-bottom:10px;">
-        <strong style="font-size:16px;">ADVANCE / DEPOSIT RECEIPT</strong><br/>
-        <small>${receipt.date}</small>
-      </div>
-
-      <div class="row"><span class="label">Receipt No.</span><span class="amount">${receipt.receiptNumber}</span></div>
-      <div class="row"><span class="label">Patient</span><span class="value">${receipt.patientName}</span></div>
-      <div class="row"><span class="label">UHID</span><span class="amount">${receipt.uhid}</span></div>
-      ${receipt.admissionNumber ? `<div class="row"><span class="label">Admission No.</span><span class="amount">${receipt.admissionNumber}</span></div>` : ""}
-      ${receipt.procedures.length === 0 && receipt.procedureName ? `<div class="row"><span class="label">Procedure</span><span class="value">${escapeHtml(receipt.procedureName)}</span></div>` : ""}
-
-      ${chargesHtml}
-
-      <div style="border-top:1px dashed #cbd5e1; padding-top:10px; margin-top:10px;">
-        <div class="row">
-          <span class="label">Amount Received</span>
-          <span class="amount" style="font-size:18px;">₹${receipt.amount.toLocaleString("en-IN")}</span>
-        </div>
-        <div class="row">
-          <span class="label">Payment</span>
-          <span class="paid">Paid (${receipt.paymentMode})</span>
-        </div>
-        ${receipt.reference ? `<div class="row"><span class="label">Reference</span><span class="amount">${escapeHtml(receipt.reference)}</span></div>` : ""}
-        ${receipt.notes ? `<div class="row"><span class="label">Notes</span><span class="value">${escapeHtml(receipt.notes)}</span></div>` : ""}
-        ${balancePayable > 0 ? `<div class="row" style="color:#dc2626;font-weight:700;">
-          <span>Balance Payable</span><span class="amount">₹${amt(balancePayable)}</span>
-        </div>` : ""}
-      </div>
-
-      <style>
-        .row { display: flex; justify-content: space-between; margin-bottom: 6px; }
-        .label { color: #64748b; font-size: 12px; }
-        .value { font-weight: 600; color: #1e293b; text-align: right; }
-        .paid { color: #059669; font-weight: 600; }
-        .amount { font-family: 'JetBrains Mono', monospace; font-weight: 600; }
-      </style>
-
-      <div style="text-align:center; font-size:11px; color:#94a3b8; margin-top:20px; border-top:1px dashed #cbd5e1; padding-top:10px;">
-        This is an advance against the final bill. Adjusted at discharge.
-      </div>
-    `;
-
-    printDocument("Advance Receipt", body, { width: 450, height: 650 });
+    // Shared structured receipt template (same header/fonts/footer as the bill).
+    void printReceiptDoc(hospitalId, {
+      title: "ADVANCE / DEPOSIT RECEIPT",
+      receiptNumber: receipt.receiptNumber,
+      date: receipt.date,
+      patientName: receipt.patientName,
+      uhid: receipt.uhid,
+      admissionNumber: receipt.admissionNumber,
+      // A patient-level advance (no procedures) shows the procedure name as "Towards".
+      towards: receipt.procedures.length === 0 ? receipt.procedureName : null,
+      lineItems: receipt.procedures.map((p) => ({
+        description: p.procedureName,
+        rate: p.rate,
+        quantity: normalizeQuantity(p.quantity),
+        amount: lineTotal(p),
+      })),
+      totalCharges: receipt.procedures.length > 0 ? receiptCharges : null,
+      amountReceived: receipt.amount,
+      paymentMode: receipt.paymentMode,
+      reference: receipt.reference,
+      notes: receipt.notes,
+      balance: receiptBalance,
+      footerNote: "This is an advance against the final bill. Adjusted at discharge.",
+    });
   };
 
   /**

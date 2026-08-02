@@ -11,6 +11,7 @@ import { callAIOrThrow } from "@/lib/aiProvider";
 import { MODULE_TABS, MODULE_ACTIONS } from "@/lib/tabPermissions";
 import { ModuleAccessDrawer } from "@/components/access/ModuleAccessDrawer";
 import type { AddonSku } from "@/lib/addons";
+import AddonSkuEditor from "@/components/platform/AddonSkuEditor";
 
 type ModuleDetail = { tabs: Record<string, boolean>; actions: Record<string, boolean> };
 
@@ -99,6 +100,7 @@ const BLANK_PLAN: Partial<Plan> = {
 export default function PlansManagerPage() {
   const qc = useQueryClient();
   const [activeTab, setActiveTab] = useState<"plans" | "addons" | "leads">("plans");
+  const [editingSku, setEditingSku] = useState<AddonSku | "new" | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [form, setForm] = useState<Partial<Plan>>(BLANK_PLAN);
   const [enabledKeys, setEnabledKeys] = useState<Set<string>>(new Set());
@@ -349,6 +351,11 @@ export default function PlansManagerPage() {
             <Plus size={12} /> New Plan
           </button>
         )}
+        {activeTab === "addons" && (
+          <button onClick={() => setEditingSku("new")} className="flex items-center gap-2 px-3 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold rounded-lg transition-colors">
+            <Plus size={12} /> New Add-on
+          </button>
+        )}
       </div>
 
       {/* Add-ons tab — the SKU catalogue. Prices and the module/AI keys each SKU
@@ -365,12 +372,22 @@ export default function PlansManagerPage() {
               <div key={s.id} className="border border-border rounded-xl p-4 bg-card">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="text-sm font-semibold text-foreground">{s.name}</p>
+                    <p className="text-sm font-semibold text-foreground">
+                      {s.name}
+                      {s.is_active === false && (
+                        <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground align-middle">inactive</span>
+                      )}
+                    </p>
                     <p className="text-[11px] text-muted-foreground font-mono">{s.slug}</p>
                   </div>
-                  <p className="text-sm font-bold text-foreground font-mono shrink-0">
-                    ₹{Number(s.price_monthly).toLocaleString("en-IN")}/mo
-                  </p>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <p className="text-sm font-bold text-foreground font-mono">
+                      ₹{Number(s.price_monthly).toLocaleString("en-IN")}/mo
+                    </p>
+                    <button onClick={() => setEditingSku(s)} className="text-[11px] px-2 py-1 rounded-md border border-border hover:bg-muted text-muted-foreground">
+                      Edit
+                    </button>
+                  </div>
                 </div>
                 {s.description && (
                   <p className="text-xs text-muted-foreground mt-2 leading-relaxed">{s.description}</p>
@@ -389,7 +406,7 @@ export default function PlansManagerPage() {
             ))}
             {(!addonSkus || addonSkus.length === 0) && (
               <p className="text-xs text-muted-foreground">
-                No add-on SKUs yet — apply the add-on migration to seed the catalogue.
+                No add-on SKUs yet — click “New Add-on” to create one.
               </p>
             )}
           </div>
@@ -404,6 +421,10 @@ export default function PlansManagerPage() {
                 ))}
               </div>
             </div>
+          )}
+
+          {editingSku && (
+            <AddonSkuEditor sku={editingSku} onClose={() => setEditingSku(null)} />
           )}
         </div>
       )}
@@ -516,11 +537,6 @@ export default function PlansManagerPage() {
                     </p>
                     <p>Modules: {enabledCount} / {ALL_KEYS.length}</p>
                     <p>Trial: {plan.trial_days} days</p>
-                    <p className={plan.razorpay_plan_id ? "text-emerald-600" : "text-amber-600"}>
-                      {plan.razorpay_plan_id
-                        ? `✓ Razorpay: ${plan.razorpay_plan_id}`
-                        : "⚠ No Razorpay Plan ID"}
-                    </p>
                   </div>
                   <button
                     onClick={() => togglePlanActive.mutate({ id: plan.id, is_active: !plan.is_active })}
@@ -561,7 +577,6 @@ export default function PlansManagerPage() {
                 { label: "Trial Days", key: "trial_days" as const, type: "number" },
                 { label: "Badge Text (e.g. Most Popular)", key: "badge_text" as const, type: "text" },
                 { label: "Description", key: "description" as const, type: "text" },
-                { label: "Razorpay Plan ID (from Razorpay Dashboard → Products → Plans)", key: "razorpay_plan_id" as const, type: "text" },
                 { label: "AI Budget Included (₹/month, blank = not metered)", key: "ai_included_budget_inr" as const, type: "number" },
               ].map(({ label, key, type }) => (
                 <div key={key}>

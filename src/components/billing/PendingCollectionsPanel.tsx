@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
+import { useRealtimeRefetch } from "@/hooks/useRealtimeRefetch";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -11,6 +12,7 @@ import { syncBillItemPaymentStatus } from "@/lib/chargePosting";
 import { recordBillPayment } from "@/lib/billPayments";
 import { getCurrentUserRowId } from "@/lib/currentUser";
 import { isRefundStatus } from "@/lib/billStatus";
+import { endOfDayISO, type BillingDateRange } from "@/lib/billingDateRange";
 import { Loader2, RefreshCw, Search, CheckCircle2, AlertCircle, IndianRupee } from "lucide-react";
 
 interface PendingItem {
@@ -38,8 +40,12 @@ const MODULE_LABELS: Record<string, string> = {
   nursing: "Nursing", pharmacy: "Pharmacy",
 };
 
-export default function PendingCollectionsPanel() {
+export default function PendingCollectionsPanel({ dateRange }: { dateRange?: BillingDateRange }) {
   const { hospitalId } = useHospitalId();
+  // Depend on the primitives, not the object — the reload must key off the dates
+  // themselves, so a caller that rebuilds the range object each render can't loop us.
+  const rangeStart = dateRange?.start;
+  const rangeEnd = dateRange?.end;
   const [items, setItems] = useState<PendingItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
@@ -57,7 +63,7 @@ export default function PendingCollectionsPanel() {
     if (!hospitalId) return;
     setLoading(true);
     try {
-      const { data, error } = await (supabase as any)
+      let query = (supabase as any)
         .from("bill_line_items")
         .select(`
           id, bill_id, description, item_type, source_module,
@@ -68,6 +74,14 @@ export default function PendingCollectionsPanel() {
         .eq("payment_status", "pending_payment")
         .order("created_at", { ascending: false })
         .limit(200);
+
+      // Charges are filtered by the day the service was performed, which is what a cashier
+      // reconciling a given day actually cares about — not when the row happened to be written.
+      if (rangeStart && rangeEnd) {
+        query = query.gte("service_date", rangeStart).lte("service_date", rangeEnd);
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
 
@@ -83,6 +97,12 @@ export default function PendingCollectionsPanel() {
           // to guard against — a pre-paid charge on an advance-covered bill being uncollectable
           // — is handled where it belongs, in the gate: an advance-covered charge is cleared,
           // so the service proceeds without a counter payment. See ipdAncillaryGate.)
+          // A ₹0 charge has nothing to collect — a zero-rated or unconfigured service
+          // (e.g. a consultation fee left at 0) posts a line that can never be "collected",
+          // so it sat here forever as noise and made the header count disagree with the
+          // amount owed. It's worth ₹0 to the ancillary gate too, so hiding it strands nothing.
+          if (Number(r.total_amount) <= 0) return false;
+
           const b = r.bills;
           if (!b) return false;
           if (b.payment_status === "paid") return false;
@@ -116,9 +136,17 @@ export default function PendingCollectionsPanel() {
     } finally {
       setLoading(false);
     }
-  }, [hospitalId]);
+  }, [hospitalId, rangeStart, rangeEnd]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Live: refresh pending collectables as charges are posted or bills get paid.
+  useRealtimeRefetch({
+    tables: ["bill_line_items", "bills", "bill_payments"],
+    hospitalId,
+    onChange: load,
+    channelName: "pending-collections",
+  });
 
   const collectPayment = async (item: PendingItem) => {
     if (!userId || !hospitalId) return;
@@ -137,8 +165,22 @@ export default function PendingCollectionsPanel() {
       const paidNow = Number(fresh?.paid_amount ?? item.bill_paid_amount) || 0;
       const balanceNow = Number(fresh?.balance_due ?? item.bill_balance_due) || 0;
 
-      const newPaid = paidNow + item.total_amount;
-      const newBalance = Math.max(0, balanceNow - item.total_amount);
+      // Never collect more than the bill's outstanding balance. When an advance has
+      // already covered part (or all) of the bill, a line item's gross amount can exceed
+      // what is actually still owed — collecting the gross would over-charge the patient.
+      const collect = Math.min(item.total_amount, balanceNow);
+
+      if (collect <= 0) {
+        // This charge is already paid for by the advance — clear its status without taking
+        // any cash, so it stops showing as pending.
+        await syncBillItemPaymentStatus({ billItemId: item.id, collectedBy: userId });
+        toast.success(`${item.description} cleared (covered by advance)`);
+        setItems(prev => prev.filter(i => i.id !== item.id));
+        return;
+      }
+
+      const newPaid = paidNow + collect;
+      const newBalance = Math.max(0, balanceNow - collect);
       const newStatus: "paid" | "partial" = newBalance <= 0 ? "paid" : "partial";
 
       const result = await recordBillPayment({
@@ -147,7 +189,7 @@ export default function PendingCollectionsPanel() {
         billNumber: item.bill_number,
         patientId: item.bill_patient_id,
         admissionId: item.bill_admission_id,
-        rows: [{ mode: "cash", amount: item.total_amount }],
+        rows: [{ mode: "cash", amount: collect }],
         collectedBy: userId,
         newPaidAmount: newPaid,
         newBalanceDue: newBalance,
@@ -175,11 +217,38 @@ export default function PendingCollectionsPanel() {
     const billItems = items.filter(i => i.bill_id === billId);
     if (billItems.length === 0) return;
     const first = billItems[0];
-    const sum = billItems.reduce((s, i) => s + i.total_amount, 0);
 
-    const newPaid = first.bill_paid_amount + sum;
-    const newBalance = Math.max(0, first.bill_balance_due - sum);
-    const newStatus: "paid" | "partial" = newBalance <= 0 ? "paid" : "partial";
+    // Re-read the bill: an advance can land asynchronously and the list snapshot's
+    // balance can be stale. The amount to collect is the OUTSTANDING BALANCE, never the
+    // gross sum of line items — a bill with ₹4,600 of charges but a ₹3,000 advance owes
+    // only ₹1,600, and collecting the gross would take money the patient does not owe
+    // (and is rejected by recordBillPayment's over-collection guard).
+    const { data: fresh } = await (supabase as any)
+      .from("bills")
+      .select("paid_amount, balance_due")
+      .eq("id", billId)
+      .maybeSingle();
+
+    const paidNow = Number(fresh?.paid_amount ?? first.bill_paid_amount) || 0;
+    const balanceNow = Number(fresh?.balance_due ?? first.bill_balance_due) || 0;
+
+    if (balanceNow <= 0) {
+      // Advance already covers the bill in full — nothing to collect at the counter, but
+      // the still-'pending_payment' line items must be cleared (they were paid for by the
+      // advance) so they stop showing here.
+      for (const item of billItems) {
+        setPaying(item.id);
+        await syncBillItemPaymentStatus({ billItemId: item.id, collectedBy: userId });
+      }
+      toast.success(`Bill already covered by advance — charges cleared`);
+      setItems(prev => prev.filter(i => i.bill_id !== billId));
+      setPaying(null);
+      return;
+    }
+
+    const collect = balanceNow; // exactly the residual
+    const newPaid = paidNow + collect;
+    const newBalance = 0;
 
     const result = await recordBillPayment({
       hospitalId,
@@ -187,11 +256,11 @@ export default function PendingCollectionsPanel() {
       billNumber: first.bill_number,
       patientId: first.bill_patient_id,
       admissionId: first.bill_admission_id,
-      rows: [{ mode: "cash", amount: sum }],
+      rows: [{ mode: "cash", amount: collect }],
       collectedBy: userId,
       newPaidAmount: newPaid,
       newBalanceDue: newBalance,
-      newPaymentStatus: newStatus,
+      newPaymentStatus: "paid",
     });
 
     if (result.ok) {
@@ -223,7 +292,14 @@ export default function PendingCollectionsPanel() {
     return acc;
   }, {} as Record<string, PendingItem[]>);
 
-  const totalPending = filtered.reduce((s, i) => s + i.total_amount, 0);
+  // Amount owed is the bill's outstanding BALANCE, deduped per bill — not the gross sum of
+  // line items. Summing line items ignores advances/payments already applied and overstates
+  // what patients owe (e.g. a ₹4,600 bill with a ₹3,000 advance owes ₹1,600, not ₹4,600).
+  const balanceByBill = new Map<string, number>();
+  for (const i of filtered) {
+    if (!balanceByBill.has(i.bill_id)) balanceByBill.set(i.bill_id, i.bill_balance_due);
+  }
+  const totalPending = [...balanceByBill.values()].reduce((s, b) => s + (b > 0 ? b : 0), 0);
   const modules = [...new Set(items.map(i => i.source_module))];
 
   return (
@@ -281,7 +357,9 @@ export default function PendingCollectionsPanel() {
 
         {!loading && Object.entries(byBill).map(([billId, billItems]) => {
           const first = billItems[0];
-          const billTotal = billItems.reduce((s, i) => s + i.total_amount, 0);
+          // Outstanding balance owed (net of advances/payments), not the gross line sum.
+          const grossSum = billItems.reduce((s, i) => s + i.total_amount, 0);
+          const billTotal = first.bill_balance_due > 0 ? first.bill_balance_due : grossSum;
           return (
             <Card key={billId} className="border-orange-200">
               <CardContent className="p-3">

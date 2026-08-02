@@ -297,7 +297,14 @@ serve(async (req) => {
       );
     }
 
-    // 3. Insert user record
+    // 3. Seed default role permissions for the new hospital — must happen
+    // before the user insert below, since users.role now has a foreign key
+    // into role_permissions(hospital_id, role_name).
+    await supabaseAdmin.rpc("seed_default_roles_for_hospital", {
+      p_hospital_id: hospitalData.id,
+    });
+
+    // 4. Insert user record
     const { error: userError } = await supabaseAdmin
       .from("users")
       .insert({
@@ -311,11 +318,6 @@ serve(async (req) => {
         is_active: true,
         can_login: true,
       });
-
-    // Seed default role permissions for the new hospital
-    await supabaseAdmin.rpc("seed_default_roles_for_hospital", {
-      p_hospital_id: hospitalData.id,
-    });
 
     if (userError) {
       // Cleanup

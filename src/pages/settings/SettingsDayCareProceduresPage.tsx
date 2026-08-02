@@ -5,12 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Plus, Search, Trash2, ShieldCheck } from "lucide-react";
+import { Plus, Search, Trash2, ShieldCheck, ListPlus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { formatINRExact } from "@/lib/currency";
+import BulkPasteAddModal from "@/components/settings/BulkPasteAddModal";
 import {
   DAY_CARE_POLICY_KEY,
   DEFAULT_DAY_CARE_POLICY,
@@ -55,6 +56,7 @@ const SettingsDayCareProceduresPage: React.FC = () => {
   const [showAdd, setShowAdd] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const { data: procedures = [], isLoading } = useQuery({
     queryKey: ["settings-day-care-procedures", hospitalId],
@@ -126,6 +128,23 @@ const SettingsDayCareProceduresPage: React.FC = () => {
     },
     onError: (err: any) => toast({ title: "Failed", description: err.message, variant: "destructive" }),
   });
+
+  const bulkAddProcedures = async (rows: Record<string, string>[]) => {
+    if (!hospitalId) return { error: "No hospital context" };
+    const payload = rows.map((r) => ({
+      hospital_id: hospitalId,
+      procedure_name: r.procedure_name.trim(),
+      procedure_code: r.procedure_code?.trim() || null,
+      specialty: r.specialty?.trim() || null,
+      duration_minutes: Number(r.duration_minutes) || 60,
+      standard_rate: Number(r.standard_rate) || 0,
+      pre_auth_required: true,
+      is_active: true,
+    }));
+    const { error } = await (supabase as any).from("day_care_procedures").insert(payload);
+    if (error) return { error: error.message };
+    invalidate();
+  };
 
   const updateMutation = useMutation({
     mutationFn: async () => {
@@ -243,6 +262,9 @@ const SettingsDayCareProceduresPage: React.FC = () => {
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search procedures..." className="pl-9 h-9" />
           </div>
+          <Button size="sm" variant="outline" onClick={() => setBulkOpen(true)} className="gap-1">
+            <ListPlus size={14} /> Bulk Add
+          </Button>
           <Button size="sm" onClick={() => { setForm(emptyForm); setShowAdd(true); }} className="gap-1">
             <Plus size={14} /> Add Procedure
           </Button>
@@ -365,6 +387,22 @@ const SettingsDayCareProceduresPage: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <BulkPasteAddModal
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        title="Bulk Add Day Care Procedures"
+        description="Fill in a row per procedure — Duration defaults to 60 min if left blank."
+        columns={[
+          { key: "procedure_name",   label: "Procedure Name", required: true, placeholder: "e.g. Cataract Surgery" },
+          { key: "procedure_code",   label: "Code", placeholder: "e.g. DC-001" },
+          { key: "specialty",        label: "Specialty", placeholder: "e.g. Ophthalmology" },
+          { key: "standard_rate",    label: "Rate (₹)", type: "number", placeholder: "0" },
+          { key: "duration_minutes", label: "Duration (min)", type: "number", placeholder: "60" },
+        ]}
+        existingKeys={new Set(procedures.map((p) => p.procedure_name.toLowerCase()))}
+        onSubmit={bulkAddProcedures}
+      />
     </SettingsPageWrapper>
   );
 };

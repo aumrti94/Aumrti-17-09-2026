@@ -2,7 +2,7 @@
  * AI budget status — pure, no I/O.
  *
  * The SQL mirror of this lives in the `hospital_ai_budget_status` view
- * (migration ...167). CHANGE BOTH TOGETHER, or the platform's over-budget
+ * (migration 20261009000175). CHANGE BOTH TOGETHER, or the platform's over-budget
  * worklist and the hospital's own usage bar will disagree about who is over.
  *
  * Two invariants this file exists to protect:

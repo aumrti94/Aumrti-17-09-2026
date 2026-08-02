@@ -1,5 +1,12 @@
 -- Translation pricing table.
 --
+-- NOTE: renumbered from 20261007000000 → 20261009000179 to resolve a duplicate
+-- migration version. Two files shared 20261007000000
+-- (appointments_active_slot_unique + translate_pricing); the second to apply
+-- collided on schema_migrations_pkey and aborted the push. This is the same
+-- file, re-versioned to the next free slot and made fully idempotent so it
+-- applies cleanly regardless of any prior partial state.
+--
 -- Translation (Indian language → English) is priced per 1 000 characters,
 -- which is fundamentally different from LLM pricing (per token) and ASR
 -- pricing (per audio minute). A dedicated table keeps the pricing model
@@ -25,6 +32,7 @@ ON CONFLICT (provider) DO NOTHING;
 -- RLS: service_role only (platform admin operations).
 ALTER TABLE translate_pricing ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Service role manages translate pricing" ON translate_pricing;
 CREATE POLICY "Service role manages translate pricing"
   ON translate_pricing FOR ALL
   USING (

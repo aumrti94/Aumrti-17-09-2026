@@ -205,7 +205,10 @@ const queryClient = new QueryClient({
       staleTime: 2 * 60 * 1000,
       gcTime: 10 * 60 * 1000,
       retry: 2,
-      refetchOnWindowFocus: false,
+      // Refetch when the user returns to the tab so React-Query screens are never
+      // stale-until-hard-refresh. Realtime (useRealtimeRefetch) drives instant updates;
+      // this is the universal focus fallback for everything else.
+      refetchOnWindowFocus: true,
       refetchOnReconnect: true,
     },
     mutations: {
@@ -214,8 +217,19 @@ const queryClient = new QueryClient({
   },
 });
 
+/**
+ * Route chunks load lazily. The fallback used to be an empty <div>, so navigating to a
+ * heavy page (Billing especially) showed a blank screen for as long as the chunk took —
+ * indistinguishable from a hang. A spinner makes the wait legible.
+ */
+const RouteFallback = () => (
+  <div className="flex-1 flex items-center justify-center py-16 text-muted-foreground">
+    <div className="h-6 w-6 rounded-full border-2 border-current border-t-transparent animate-spin" />
+  </div>
+);
+
 const SuspenseWrap = ({ children }: { children: React.ReactNode }) => (
-  <Suspense fallback={<div />}>{children}</Suspense>
+  <Suspense fallback={<RouteFallback />}>{children}</Suspense>
 );
 
 const RG = ({ path, children }: { path: string; children: React.ReactNode }) => {
@@ -280,8 +294,6 @@ const App = () => (
           <Route path="/kiosk/register" element={<SuspenseWrap><KioskCheckinPage /></SuspenseWrap>} />
           <Route path="/kiosk/pay"      element={<SuspenseWrap><KioskCheckinPage /></SuspenseWrap>} />
           <Route path="/ward-board" element={<SuspenseWrap><WardNursingBoard /></SuspenseWrap>} />
-          <Route path="/hod-dashboard" element={<AuthGuard><SuspenseWrap><HODDashboardPage /></SuspenseWrap></AuthGuard>} />
-          <Route path="/ceo-board" element={<AuthGuard><SuspenseWrap><CEOBoardPage /></SuspenseWrap></AuthGuard>} />
 
           {/* App shell routes */}
           <Route element={<AuthGuard><AppShell /></AuthGuard>}>
@@ -327,6 +339,12 @@ const App = () => (
             <Route path="/analytics/revenue-intelligence" element={<RG path="/analytics"><MG moduleKey="analytics"><SM name="Revenue Intelligence"><RevenueIntelligencePage /></SM></MG></RG>} />
             <Route path="/ai/clinical-intelligence" element={<RG path="/ai/clinical-intelligence"><SM name="AI Clinical Intelligence"><AIClinicalIntelligencePage /></SM></RG>} />
             <Route path="/research" element={<RG path="/research"><SM name="Research Platform"><ResearchPlatformPage /></SM></RG>} />
+            {/* No <RG> here on purpose — routeRoles.ts has no module mapping for these paths yet,
+                so RoleGuard would fail-closed and could lock out doctors/CMOs who reach them today.
+                Being inside this block is enough to get the plan-entitlement check from <ModuleGate>
+                (mounted around AppShell's <Outlet/>), which is the gap this fixes. */}
+            <Route path="/hod-dashboard" element={<SM name="HOD Dashboard"><HODDashboardPage /></SM>} />
+            <Route path="/ceo-board" element={<SM name="CEO Board"><CEOBoardPage /></SM>} />
             <Route path="/telemedicine" element={<RG path="/telemedicine"><MG moduleKey="telemedicine"><SM name="Telemedicine"><TelemedicinePage /></SM></MG></RG>} />
             <Route path="/teleconsult/doctor" element={<RG path="/telemedicine"><MG moduleKey="telemedicine"><SM name="Teleconsult"><DoctorTeleconsultPage /></SM></MG></RG>} />
             <Route path="/inbox" element={<RG path="/inbox"><SM name="Inbox"><InboxPage /></SM></RG>} />

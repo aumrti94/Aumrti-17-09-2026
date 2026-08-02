@@ -18,6 +18,7 @@ import EmptyState from "@/components/EmptyState";
 import AppealLetterModal, { type AppealClaim } from "./AppealLetterModal";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { formatINR } from "@/lib/currency";
+import { printReceiptDoc } from "@/lib/receiptPrint";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { useConfigValues } from "@/hooks/useConfigValues";
 
@@ -188,27 +189,29 @@ const ClaimsStatus: React.FC<ClaimsStatusProps> = ({ initialFilter = "all" }) =>
   };
 
   const printTPAReceipt = (c: Claim) => {
+    if (!hospitalId) return;
     const fmtAmt = (n: number | null | undefined) => n != null ? formatINR(n) : "—";
-    const html = `<div style="font-family:Arial,sans-serif;padding:40px;max-width:640px;margin:0 auto">
-      <h2 style="margin:0 0 4px;color:#1e3a5f">TPA Claim Receipt</h2>
-      <p style="font-size:11px;color:#64748b;margin:0 0 16px">Generated on ${new Date().toLocaleString()}</p>
-      <table style="width:100%;font-size:13px;border-collapse:collapse">
-        <tr><td style="padding:5px 0;color:#64748b;width:40%">Claim Number</td><td style="padding:5px 0;font-weight:600">${c.claim_number || "—"}</td></tr>
-        <tr><td style="padding:5px 0;color:#64748b">Patient</td><td style="padding:5px 0">${c.patient_name}</td></tr>
-        <tr><td style="padding:5px 0;color:#64748b">TPA / Insurer</td><td style="padding:5px 0">${c.tpa_name}</td></tr>
-        ${c.policy_number ? `<tr><td style="padding:5px 0;color:#64748b">Policy Number</td><td style="padding:5px 0">${c.policy_number}</td></tr>` : ""}
-        <tr><td style="padding:5px 0;color:#64748b">Submitted On</td><td style="padding:5px 0">${c.submitted_at ? new Date(c.submitted_at).toLocaleDateString("en-IN") : "—"}</td></tr>
-        ${c.settlement_date ? `<tr><td style="padding:5px 0;color:#64748b">Settlement Date</td><td style="padding:5px 0">${new Date(c.settlement_date).toLocaleDateString("en-IN")}</td></tr>` : ""}
-        ${c.tpa_reference ? `<tr><td style="padding:5px 0;color:#64748b">TPA Reference</td><td style="padding:5px 0;font-family:monospace">${c.tpa_reference}</td></tr>` : ""}
-        <tr><td colspan="2"><hr style="margin:12px 0;border-color:#e2e8f0" /></td></tr>
-        <tr><td style="padding:5px 0;color:#64748b">Claimed Amount</td><td style="padding:5px 0">${fmtAmt(c.claimed_amount)}</td></tr>
-        <tr><td style="padding:5px 0;color:#64748b">Approved Amount</td><td style="padding:5px 0;font-weight:600;color:#15803d">${fmtAmt(c.approved_amount)}</td></tr>
-        ${c.settled_amount != null ? `<tr><td style="padding:5px 0;color:#64748b">Settled Amount</td><td style="padding:5px 0;font-size:16px;font-weight:700;color:#1e3a5f">${fmtAmt(c.settled_amount)}</td></tr>` : ""}
-        <tr><td style="padding:5px 0;color:#64748b">Status</td><td style="padding:5px 0;font-weight:600;text-transform:capitalize">${c.status.replace("_", " ")}</td></tr>
-      </table>
-    </div>`;
-    const w = window.open("", "_blank", "noopener,noreferrer,width=700,height=600");
-    if (w) { w.document.write(`<html><head><title>TPA Receipt - ${c.claim_number || c.id}</title><style>@media print{body{padding:0}}</style></head><body>${html}</body></html>`); w.document.close(); w.focus(); setTimeout(() => w.print(), 300); }
+    const row = (label: string, value: string, strong = false) =>
+      `<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;${strong ? "font-weight:700;" : ""}"><span style="color:#64748b">${label}</span><span>${value}</span></div>`;
+    const breakdown = `<div style="border-top:1px dashed #cbd5e1;padding-top:10px;margin-top:10px;">
+        ${row("Claimed Amount", fmtAmt(c.claimed_amount))}
+        ${row("Approved Amount", fmtAmt(c.approved_amount))}
+        ${c.submitted_at ? row("Submitted On", new Date(c.submitted_at).toLocaleDateString("en-IN")) : ""}
+        ${c.settlement_date ? row("Settlement Date", new Date(c.settlement_date).toLocaleDateString("en-IN")) : ""}
+        ${row("Status", c.status.replace("_", " "), true)}
+      </div>`;
+    // Shared structured receipt: the settled amount is the money received from the TPA.
+    void printReceiptDoc(hospitalId, {
+      title: "TPA CLAIM RECEIPT",
+      receiptNumber: c.claim_number || c.id,
+      date: new Date().toISOString(),
+      patientName: c.patient_name,
+      towards: c.policy_number ? `${c.tpa_name} · Policy ${c.policy_number}` : c.tpa_name,
+      amountReceived: c.settled_amount ?? c.approved_amount ?? 0,
+      reference: c.tpa_reference,
+      extraSections: breakdown,
+      amountInWordsPrefix: "Settled Rupees",
+    });
   };
 
   const logRejectionDetails = async (claim: Claim) => {

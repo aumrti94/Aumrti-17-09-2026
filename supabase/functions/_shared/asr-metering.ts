@@ -150,6 +150,14 @@ export async function recordAsrUsage(sb: SupabaseClient, usage: AsrUsage): Promi
         p_cost_usd:          costUsd,
         p_cost_inr:          costInr,
       });
+
+      // Draw the voice-scribe cost from the prepaid AI wallet (overage above the
+      // included allowance only). Fire-and-forget — never fails the call.
+      await sb.rpc("debit_ai_wallet_for_usage", {
+        p_hospital_id: usage.hospitalId,
+        p_feature_key: ASR_FEATURE_KEY,
+        p_cost_inr:    costInr,
+      });
     }
   } catch (err) {
     console.error("ASR metering failed (non-fatal):", err instanceof Error ? err.message : String(err));

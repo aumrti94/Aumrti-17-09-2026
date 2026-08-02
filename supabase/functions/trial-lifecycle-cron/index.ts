@@ -164,16 +164,32 @@ serve(async (req) => {
       }
     }
 
-    // ── 2. Suspend past_due accounts older than 7 days ────────────────────
-    const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    // ── 2. Suspend past_due accounts past the configured buffer ───────────
+    // Uses the durable past_due_since anchor (stamped by the webhook on halt)
+    // and the /platform-configured access_grace_days — the same buffer the
+    // access rule enforces. This only converts past_due → the harder
+    // `suspended` state (which cancels retries/notifies); the access rule
+    // already made the account read-only at the buffer boundary regardless of
+    // whether this cron fired. Legacy rows with no anchor fall back to updated_at.
+    const { data: billingSettings } = await db
+      .from("platform_billing_settings")
+      .select("access_grace_days")
+      .eq("id", 1)
+      .maybeSingle();
+    const graceDays = Number.isFinite(billingSettings?.access_grace_days)
+      ? Number(billingSettings!.access_grace_days) : 3;
+    const graceMs = graceDays * 24 * 60 * 60 * 1000;
 
     const { data: pastDue } = await db
       .from("hospital_subscriptions")
-      .select("hospital_id, updated_at")
-      .eq("status", "past_due")
-      .lt("updated_at", cutoff);
+      .select("hospital_id, past_due_since, updated_at")
+      .eq("status", "past_due");
 
+    const nowMs = Date.now();
     for (const row of (pastDue || [])) {
+      const anchor = row.past_due_since ?? row.updated_at;
+      if (!anchor || nowMs - new Date(anchor).getTime() <= graceMs) continue;
+
       await db
         .from("hospital_subscriptions")
         .update({ status: "suspended", updated_at: new Date().toISOString() })
@@ -184,7 +200,7 @@ serve(async (req) => {
         event_type:  "past_due_suspended",
         old_status:  "past_due",
         new_status:  "suspended",
-        metadata:    { past_due_since: row.updated_at },
+        metadata:    { past_due_since: row.past_due_since, grace_days: graceDays },
       }).catch(() => {});
 
       // Notify admin

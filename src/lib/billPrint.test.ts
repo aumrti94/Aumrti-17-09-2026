@@ -185,26 +185,62 @@ describe("renderBillHtml", () => {
       ...overrides,
     });
 
-  it("prints both sections, the patient block and the amount in words", () => {
+  const multiCat = [
+    item("procedure", "Day Care: Cataract", 45000),
+    item("consultation", "Surgeon Fee", 500),
+  ];
+
+  it("prints the detail section, the patient block and the amount in words", () => {
     const html = build();
-    expect(html).toContain("PROVISIONAL BILL");
     expect(html).toContain("DETAILED BREAKUP");
     expect(html).toContain("Sravani Beg");
     expect(html).toContain("UHID000055");
     expect(html).toContain("Rupees Fifty One Thousand Five Hundred Only");
   });
 
-  it("credits the advance and settles the balance to zero", () => {
+  it("drops the PARTICULARS summary for a single-category bill", () => {
+    // build()'s two items are both 'procedure' → one category, so the summary would just
+    // duplicate the one subtotal.
     const html = build();
+    expect(html).not.toContain("PARTICULARS");
+    expect(html).toContain("DETAILED BREAKUP");
+  });
+
+  it("keeps the PARTICULARS summary when there are 2+ categories", () => {
+    const html = build({ lineItems: multiCat, money: computeBillMoney({ lineItems: multiCat }) });
+    expect(html).toContain("PARTICULARS");
+    expect(html).toContain("DETAILED BREAKUP");
+  });
+
+  it("shows PAID IN FULL and hides Paid / Balance Due when fully settled", () => {
+    // Default build has netAdvance 51500 == total → fully paid.
+    const html = build();
+    expect(html).toContain("PAID IN FULL");
+    expect(html).not.toContain("Balance Due");
+    expect(html).not.toContain("Advance / Deposit");
+  });
+
+  it("shows Advance, Paid and Balance Due for a partial payment", () => {
+    const html = build({ money: computeBillMoney({ lineItems, netAdvance: 20000, directPaid: 1000 }) });
     expect(html).toContain("Advance / Deposit");
+    expect(html).toContain("Paid");
     expect(html).toContain("Balance Due");
-    expect(html).not.toContain("Refund Due to Patient");
+    expect(html).not.toContain("PAID IN FULL");
+    expect(html).toContain("30,500.00"); // 51500 − 20000 − 1000
   });
 
   it("shows a refund rather than a negative balance when over-collected", () => {
     const html = build({ money: computeBillMoney({ lineItems, netAdvance: 60000 }) });
     expect(html).toContain("Refund Due to Patient");
     expect(html).toContain("8,500.00");
+    expect(html).not.toContain("PAID IN FULL");
+  });
+
+  it("renders caller-supplied extraMeta rows in the details grid", () => {
+    const html = build({ extraMeta: [{ label: "Token", value: "A-5" }, { label: "Department", value: "Cardiology" }] });
+    expect(html).toContain("Token");
+    expect(html).toContain("A-5");
+    expect(html).toContain("Cardiology");
   });
 
   it("still renders a bill with no line items", () => {

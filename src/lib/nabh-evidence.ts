@@ -1,31 +1,64 @@
 import { supabase } from "@/integrations/supabase/client";
 import { callAI } from "./aiProvider";
 
-export type ComplianceStatus = "compliant" | "partial" | "non_compliant";
+/**
+ * The DB trigger validate_nabh_compliance_status accepts exactly these values.
+ * "partial" was previously in this union but is rejected by the trigger, so every
+ * such write raised and was swallowed by the catch below.
+ */
+export type ComplianceStatus = "compliant" | "partially_compliant" | "non_compliant";
+
+/** Legacy callers (and the AI) may still say "partial". */
+const normaliseStatus = (status: string): ComplianceStatus => {
+  if (status === "partial" || status === "partially_compliant") return "partially_compliant";
+  if (status === "non_compliant") return "non_compliant";
+  return "compliant";
+};
+
+export interface LogEvidenceResult {
+  ok: boolean;
+  error?: string;
+}
 
 /**
- * Auto-log NABH evidence for a given criterion.
- * Updates the nabh_criteria row matching hospitalId + criterionNumber.
+ * Append a NABH evidence record for a criterion.
+ *
+ * Writes to nabh_evidence_log, an append-only audit trail. It used to UPDATE
+ * nabh_criteria by (hospital_id, criterion_number) — a table that was never
+ * seeded, so all ~50 call sites across the app silently updated zero rows.
+ * Criterion *scores* are now owned by the indicator engine
+ * (public.run_nabh_auto_collection); this function records the evidence that a
+ * module event happened, which is what an accreditation audit trail needs.
+ *
+ * Returns a result rather than throwing: callers are module side-effects
+ * (lab verification, OT close, CSSD, consent…) that must never fail because
+ * accreditation logging failed.
  */
 export const logNABHEvidence = async (
   hospitalId: string,
   criterionNumber: string,
   evidenceText: string,
-  complianceStatus: ComplianceStatus = "compliant"
-) => {
+  complianceStatus: ComplianceStatus | "partial" = "compliant",
+): Promise<LogEvidenceResult> => {
+  if (!hospitalId || !criterionNumber) {
+    return { ok: false, error: "hospitalId and criterionNumber are required" };
+  }
   try {
-    await supabase
-      .from("nabh_criteria")
-      .update({
-        evidence_notes: evidenceText,
-        last_assessed: new Date().toISOString().split("T")[0],
-        compliance_status: complianceStatus,
-        auto_collected: true,
-      })
-      .eq("hospital_id", hospitalId)
-      .eq("criterion_number", criterionNumber);
-  } catch (e) {
+    const { error } = await (supabase as any).from("nabh_evidence_log").insert({
+      hospital_id: hospitalId,
+      criterion_number: criterionNumber,
+      description: evidenceText,
+      compliance_status: normaliseStatus(complianceStatus),
+      source: "module_event",
+    });
+    if (error) {
+      console.error("NABH evidence logging failed:", error.message);
+      return { ok: false, error: error.message };
+    }
+    return { ok: true };
+  } catch (e: any) {
     console.error("NABH evidence logging failed:", e);
+    return { ok: false, error: e?.message ?? String(e) };
   }
 };
 
@@ -51,13 +84,14 @@ ROM (Responsibilities of Management), PRE (Pre-operative Assessment), DIC (Disch
 Respond ONLY with valid JSON in this exact format:
 {"criterion": "COP.2", "status": "compliant", "rationale": "Brief explanation"}
 
-status must be one of: compliant, partial, non_compliant`;
+status must be one of: compliant, partially_compliant, non_compliant`;
 
     const response = await callAI({
       featureKey: "nabh_criteria_mapper",
       hospitalId,
       prompt,
-      outputFormat: "json",
+      // AIRequest has no outputFormat field, so passing one was a no-op. The
+      // prompt itself demands JSON and the response is regex-extracted below.
     });
 
     if (response.error || !response.text) return null;
@@ -66,7 +100,7 @@ status must be one of: compliant, partial, non_compliant`;
     const parsed = JSON.parse(match[0]);
     return {
       criterion: parsed.criterion || "",
-      status: (parsed.status as ComplianceStatus) || "compliant",
+      status: normaliseStatus(String(parsed.status ?? "compliant")),
       rationale: parsed.rationale || "",
     };
   } catch {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,31 +6,33 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { LineChart, Line, ResponsiveContainer } from "recharts";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
-import { Activity, BedDouble, Clock, ShieldAlert, TrendingUp, TrendingDown } from "lucide-react";
 import { useHospitalId } from "@/hooks/useHospitalId";
+import { LineChart, Line, ResponsiveContainer } from "recharts";
+import {
+  RefreshCw, Info, ArrowUp, ArrowDown, CheckCircle2, AlertTriangle, MinusCircle, Loader2,
+} from "lucide-react";
+import {
+  attainment, isOnTarget, formatIndicatorValue, formatFraction, deltaVsPrevious,
+  targetPrefix, type QualityIndicatorRow,
+} from "@/lib/qualityIndicators";
 
-interface Indicator {
-  id: string;
-  indicator_name: string;
-  category: string;
-  value: number;
-  unit: string;
-  target: number | null;
-  auto_calculated: boolean;
-  data_source: string | null;
+interface Definition {
+  indicator_code: string;
+  display_name: string;
+  nabh_chapter: string;
+  nabh_standard_code: string | null;
+  collection_mode: "auto" | "manual" | "hybrid";
+  denominator_description: string | null;
+  caveats: string | null;
+  sort_order: number;
 }
 
-interface AutoIndicator {
-  label: string;
+interface TrendPoint {
+  indicator_code: string;
+  period_start: string;
   value: number | null;
-  unit: string;
-  icon: React.ReactNode;
-  target: number;
-  lowerBetter: boolean;
-  loading: boolean;
-  prevValue?: number | null;
 }
 
 const categoryColors: Record<string, string> = {
@@ -42,153 +44,263 @@ const categoryColors: Record<string, string> = {
   financial: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
 };
 
-const lowerIsBetter = new Set(["Medication Error Rate (per 1000 doses)", "Patient Fall Rate (per 1000 patient days)", "Hospital Acquired Infection Rate", "Readmission Rate within 30 days", "OT Cancellation Rate"]);
+const MONTHS_OF_TREND = 12;
+
+const relativeTime = (iso: string | null): string => {
+  if (!iso) return "never";
+  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hour${hrs === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+};
+
+const periodLabel = (iso: string): string =>
+  new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", year: "numeric" });
+
+/**
+ * Status is conveyed by an icon AND a text label, never by colour alone —
+ * a colourblind or monochrome reader must get the same information.
+ */
+const StatusChip: React.FC<{ row: QualityIndicatorRow }> = ({ row }) => {
+  const onTarget = isOnTarget(row.value, row.target, row.direction);
+
+  if (row.value === null) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+        <MinusCircle size={11} /> Not measured
+      </span>
+    );
+  }
+  if (onTarget === null) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+        <Info size={11} /> Informational
+      </span>
+    );
+  }
+  if (onTarget) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-green-600 dark:text-green-400">
+        <CheckCircle2 size={11} /> On target
+      </span>
+    );
+  }
+  const att = attainment(row.value, row.target, row.direction);
+  const severe = att !== null && att < 50;
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-[10px] font-medium ${
+        severe ? "text-red-600 dark:text-red-400" : "text-amber-600 dark:text-amber-400"
+      }`}
+    >
+      <AlertTriangle size={11} /> Off target
+    </span>
+  );
+};
+
+const Sparkline: React.FC<{ points: TrendPoint[] }> = ({ points }) => {
+  const data = useMemo(
+    () => points.filter((p) => p.value !== null).map((p) => ({ v: Number(p.value) })),
+    [points],
+  );
+  // A single point is not a trend; render nothing rather than a misleading dot.
+  if (data.length < 2) return <div className="h-8" aria-hidden="true" />;
+  return (
+    <div className="h-8" aria-hidden="true">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ top: 4, right: 2, bottom: 4, left: 2 }}>
+          <Line
+            type="monotone"
+            dataKey="v"
+            stroke="hsl(var(--primary))"
+            strokeWidth={2}
+            dot={false}
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+};
 
 const QualityIndicatorsTab: React.FC = () => {
   const { toast } = useToast();
   const { hospitalId } = useHospitalId();
-  const [indicators, setIndicators] = useState<Indicator[]>([]);
+
+  const [rows, setRows] = useState<QualityIndicatorRow[]>([]);
+  const [defs, setDefs] = useState<Record<string, Definition>>({});
+  const [chapterNames, setChapterNames] = useState<Record<string, { name: string; order: number }>>({});
+  const [trends, setTrends] = useState<Record<string, TrendPoint[]>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [editModal, setEditModal] = useState<Indicator | null>(null);
+  const [recalculating, setRecalculating] = useState(false);
+  const [editRow, setEditRow] = useState<QualityIndicatorRow | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  // Auto-calculated indicators
-  const [autoIndicators, setAutoIndicators] = useState<AutoIndicator[]>([
-    { label: "Surgical Site Infection Rate", value: null, unit: "%", icon: <ShieldAlert size={18} />, target: 2, lowerBetter: true, loading: true },
-    { label: "Avg Length of Stay", value: null, unit: "days", icon: <BedDouble size={18} />, target: 5, lowerBetter: true, loading: true },
-    { label: "Bed Occupancy Rate", value: null, unit: "%", icon: <Activity size={18} />, target: 80, lowerBetter: false, loading: true },
-    { label: "OPD Avg Wait Time", value: null, unit: "min", icon: <Clock size={18} />, target: 30, lowerBetter: true, loading: true },
-  ]);
-
-  useEffect(() => {
-    loadIndicators();
-  }, []);
-
-  useEffect(() => {
-    if (hospitalId) loadAutoIndicators();
-  }, [hospitalId]);
-
-  const loadAutoIndicators = async () => {
+  const load = useCallback(async () => {
     if (!hospitalId) return;
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-    const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
+    setLoading(true);
 
-    const results = await Promise.allSettled([
-      // SSI Rate: infections / completed surgeries * 100
-      (async () => {
-        const [{ count: infections }, { count: surgeries }] = await Promise.all([
-          (supabase as any).from("clinical_alerts").select("id", { count: "exact", head: true })
-            .eq("hospital_id", hospitalId).eq("alert_type", "infection").gte("created_at", monthStart),
-          (supabase as any).from("ot_schedules").select("id", { count: "exact", head: true })
-            .eq("hospital_id", hospitalId).eq("status", "completed").gte("actual_end_time", monthStart),
-        ]);
-        return surgeries && surgeries > 0 ? ((infections || 0) / surgeries) * 100 : 0;
-      })(),
-      // ALOS
-      (async () => {
-        const { data } = await (supabase as any).from("admissions").select("admitted_at, discharged_at")
-          .eq("hospital_id", hospitalId).eq("status", "discharged").gte("discharged_at", monthStart);
-        if (!data || data.length === 0) return null;
-        const totalDays = data.reduce((sum: number, a: any) => {
-          const days = (new Date(a.discharged_at).getTime() - new Date(a.admitted_at).getTime()) / (1000 * 60 * 60 * 24);
-          return sum + days;
-        }, 0);
-        return Math.round((totalDays / data.length) * 10) / 10;
-      })(),
-      // Bed Occupancy
-      (async () => {
-        const [{ count: occupied }, { count: totalBeds }] = await Promise.all([
-          (supabase as any).from("admissions").select("id", { count: "exact", head: true })
-            .eq("hospital_id", hospitalId).eq("status", "active"),
-          (supabase as any).from("beds").select("id", { count: "exact", head: true })
-            .eq("hospital_id", hospitalId).eq("is_active", true),
-        ]);
-        return totalBeds && totalBeds > 0 ? Math.round(((occupied || 0) / totalBeds) * 100) : 0;
-      })(),
-      // OPD Wait Time
-      (async () => {
-        const { data } = await (supabase as any).from("opd_tokens").select("created_at, consultation_start_at")
-          .eq("hospital_id", hospitalId).eq("status", "completed").gte("visit_date", monthStart.slice(0, 10))
-          .not("consultation_start_at", "is", null).limit(200);
-        if (!data || data.length === 0) return null;
-        const totalMin = data.reduce((sum: number, t: any) => {
-          const diff = (new Date(t.consultation_start_at).getTime() - new Date(t.created_at).getTime()) / (1000 * 60);
-          return sum + Math.max(0, diff);
-        }, 0);
-        return Math.round(totalMin / data.length);
-      })(),
+    const trendFrom = new Date();
+    trendFrom.setMonth(trendFrom.getMonth() - (MONTHS_OF_TREND - 1));
+    trendFrom.setDate(1);
+    const trendFromISO = trendFrom.toISOString().slice(0, 10);
+
+    const [curRes, defRes, chapRes, trendRes] = await Promise.all([
+      // Explicit hospital_id alongside RLS, matching every other query here.
+      (supabase as any).from("quality_indicators_current").select("*").eq("hospital_id", hospitalId),
+      (supabase as any).from("quality_indicator_definitions").select("*").eq("is_active", true),
+      (supabase as any).from("nabh_chapter_names").select("*"),
+      (supabase as any)
+        .from("quality_indicators")
+        .select("indicator_code, period_start, value")
+        .eq("hospital_id", hospitalId)
+        .eq("period", "monthly")
+        .gte("period_start", trendFromISO)
+        .order("period_start"),
     ]);
 
-    setAutoIndicators(prev => prev.map((ind, i) => ({
-      ...ind,
-      value: results[i].status === "fulfilled" ? results[i].value : null,
-      loading: false,
-    })));
-  };
-
-  const loadIndicators = async () => {
-    const { data, error: queryError } = await supabase.from("quality_indicators").select("*").order("category");
-    if (queryError) {
-      setError(queryError.message);
-      toast({ title: "Failed to load indicators", description: queryError.message, variant: "destructive" });
+    const firstError = curRes.error || defRes.error || chapRes.error || trendRes.error;
+    if (firstError) {
+      setError(firstError.message);
       setLoading(false);
       return;
     }
-    setIndicators((data as any) || []);
+
+    setRows((curRes.data as QualityIndicatorRow[]) || []);
+    setDefs(
+      Object.fromEntries(((defRes.data as Definition[]) || []).map((d) => [d.indicator_code, d])),
+    );
+    setChapterNames(
+      Object.fromEntries(
+        ((chapRes.data as any[]) || []).map((c) => [
+          c.chapter_code,
+          { name: c.chapter_name, order: c.sort_order },
+        ]),
+      ),
+    );
+
+    const byCode: Record<string, TrendPoint[]> = {};
+    for (const p of ((trendRes.data as TrendPoint[]) || [])) {
+      (byCode[p.indicator_code] ||= []).push(p);
+    }
+    setTrends(byCode);
+
     setError(null);
     setLoading(false);
-  };
+  }, [hospitalId]);
 
-  const getValueColor = (ind: Indicator) => {
-    if (!ind.target) return "text-foreground";
-    const isLower = lowerIsBetter.has(ind.indicator_name);
-    const diff = isLower ? ind.target - ind.value : ind.value - ind.target;
-    const pctDiff = (diff / ind.target) * 100;
-    if (isLower) {
-      if (ind.value <= ind.target) return "text-green-600 dark:text-green-400";
-      if (pctDiff >= -20) return "text-amber-600 dark:text-amber-400";
-      return "text-red-600 dark:text-red-400";
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const recalculate = async () => {
+    if (!hospitalId) return;
+    setRecalculating(true);
+    const periodStart = new Date();
+    periodStart.setDate(1);
+    const { data, error: rpcError } = await (supabase as any).rpc(
+      "run_quality_indicator_collection",
+      { p_hospital_id: hospitalId, p_period_start: periodStart.toISOString().slice(0, 10) },
+    );
+    setRecalculating(false);
+
+    if (rpcError) {
+      toast({ title: "Recalculation failed", description: rpcError.message, variant: "destructive" });
+      return;
     }
-    if (ind.value >= ind.target) return "text-green-600 dark:text-green-400";
-    if (pctDiff >= -20) return "text-amber-600 dark:text-amber-400";
-    return "text-red-600 dark:text-red-400";
+    toast({
+      title: "Indicators recalculated",
+      description: `${data ?? 0} indicator${data === 1 ? "" : "s"} collected from source modules`,
+    });
+    void load();
   };
 
-  const getAutoColor = (ind: AutoIndicator) => {
-    if (ind.value === null) return "text-muted-foreground";
-    if (ind.lowerBetter) {
-      return ind.value <= ind.target ? "text-green-600 dark:text-green-400" : ind.value <= ind.target * 1.5 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
-    }
-    return ind.value >= ind.target ? "text-green-600 dark:text-green-400" : ind.value >= ind.target * 0.7 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
-  };
-
-  const handleUpdate = async () => {
-    if (!editModal) return;
+  const saveManualValue = async () => {
+    if (!editRow || !hospitalId) return;
     const val = parseFloat(editValue);
-    if (isNaN(val)) return;
-    await supabase.from("quality_indicators").update({ value: val }).eq("id", editModal.id);
+    if (!Number.isFinite(val)) {
+      toast({ title: "Enter a number", variant: "destructive" });
+      return;
+    }
+    setSaving(true);
+    // Upsert on the period key rather than updating by id, so the value is
+    // scoped to its period and survives the next collector run.
+    const { error: upsertError } = await (supabase as any)
+      .from("quality_indicators")
+      .upsert(
+        {
+          hospital_id: hospitalId,
+          indicator_code: editRow.indicator_code,
+          indicator_name: editRow.indicator_name,
+          category: editRow.category,
+          nabh_chapter: editRow.nabh_chapter,
+          value: val,
+          unit: editRow.unit,
+          direction: editRow.direction,
+          target: editRow.target,
+          benchmark: editRow.benchmark,
+          period: editRow.period,
+          period_start: editRow.period_start,
+          auto_calculated: false,
+          computed_at: new Date().toISOString(),
+        },
+        { onConflict: "hospital_id,indicator_code,period,period_start" },
+      );
+    setSaving(false);
+
+    if (upsertError) {
+      toast({ title: "Could not save", description: upsertError.message, variant: "destructive" });
+      return;
+    }
     toast({ title: "Indicator updated" });
-    setEditModal(null);
-    loadIndicators();
+    setEditRow(null);
+    void load();
   };
 
-  const grouped = indicators.reduce<Record<string, Indicator[]>>((acc, ind) => {
-    (acc[ind.category] = acc[ind.category] || []).push(ind);
-    return acc;
-  }, {});
+  const lastComputed = useMemo(() => {
+    const stamps = rows.map((r) => r.computed_at).filter(Boolean) as string[];
+    if (!stamps.length) return null;
+    return stamps.reduce((a, b) => (a > b ? a : b));
+  }, [rows]);
 
-  const sparkData = Array.from({ length: 6 }, (_, i) => ({ v: Math.random() * 50 + 30 }));
+  const chapters = useMemo(() => {
+    const grouped: Record<string, QualityIndicatorRow[]> = {};
+    for (const r of rows) {
+      const chapter = r.nabh_chapter || "Other";
+      (grouped[chapter] ||= []).push(r);
+    }
+    for (const list of Object.values(grouped)) {
+      list.sort(
+        (a, b) =>
+          (defs[a.indicator_code]?.sort_order ?? 999) - (defs[b.indicator_code]?.sort_order ?? 999),
+      );
+    }
+    return Object.entries(grouped).sort(
+      ([a], [b]) => (chapterNames[a]?.order ?? 999) - (chapterNames[b]?.order ?? 999),
+    );
+  }, [rows, defs, chapterNames]);
 
-  if (loading) return <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">Loading…</div>;
+  const measuredCount = rows.filter((r) => r.value !== null).length;
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
+        Loading indicators…
+      </div>
+    );
+  }
 
   if (error) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8">
         <div className="text-destructive text-sm font-medium">Failed to load quality indicators</div>
         <p className="text-xs text-muted-foreground text-center max-w-sm">{error}</p>
-        <Button size="sm" variant="outline" onClick={() => { setLoading(true); loadIndicators(); }}>
+        <Button size="sm" variant="outline" onClick={() => void load()}>
           Retry
         </Button>
       </div>
@@ -197,118 +309,186 @@ const QualityIndicatorsTab: React.FC = () => {
 
   return (
     <div className="flex-1 overflow-y-auto p-4">
-      {/* Auto-Calculated NABH Indicators */}
-      <div className="mb-6">
-        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-          Auto-Calculated (Current Month)
-        </h3>
-        <div className="grid grid-cols-4 gap-3">
-          {autoIndicators.map((ind) => (
-            <Card key={ind.label} className="border">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2 mb-2 text-muted-foreground">
-                  {ind.icon}
-                  <p className="text-[12px] font-semibold text-foreground leading-tight">{ind.label}</p>
-                </div>
-                {ind.loading ? (
-                  <div className="h-8 flex items-center"><span className="text-xs text-muted-foreground">Calculating…</span></div>
-                ) : (
-                  <div>
-                    <span className={`text-2xl font-bold ${getAutoColor(ind)}`}>
-                      {ind.value !== null ? (ind.unit === "%" || ind.unit === "min" ? Math.round(ind.value) : ind.value) : "—"}
-                    </span>
-                    <span className="text-sm text-muted-foreground ml-1">{ind.unit}</span>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">
-                      Target: {ind.lowerBetter ? "≤" : "≥"} {ind.target}{ind.unit}
-                    </p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          ))}
+      <div className="flex items-start justify-between gap-3 mb-4">
+        <div>
+          <p className="text-sm font-semibold text-foreground">NABH Quality Indicators</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            {measuredCount} of {rows.length} measured · collected from source modules ·
+            last computed {relativeTime(lastComputed)}
+          </p>
         </div>
+        <Button size="sm" variant="outline" onClick={recalculate} disabled={recalculating} className="gap-1.5 shrink-0">
+          {recalculating ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+          {recalculating ? "Recalculating…" : "Recalculate"}
+        </Button>
       </div>
 
-      {indicators.length === 0 ? (
+      {rows.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-3 p-8">
           <div className="text-2xl">📊</div>
-          <p className="text-sm font-medium text-foreground">No additional quality indicators configured</p>
+          <p className="text-sm font-medium text-foreground">No indicators collected yet</p>
           <p className="text-xs text-muted-foreground text-center max-w-sm">
-            Auto-calculated indicators above show live data. Additional manual indicators can be configured by admin.
+            Press Recalculate to compute this month's indicators from OPD, IPD, OT, lab,
+            radiology, pharmacy, infection control, HR and facility data.
           </p>
         </div>
       ) : (
-        Object.entries(grouped).map(([cat, inds]) => (
-          <div key={cat} className="mb-6">
+        chapters.map(([chapter, list]) => (
+          <div key={chapter} className="mb-6">
             <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-              {cat.replace("_", " ")}
+              {chapter} — {chapterNames[chapter]?.name || chapter}
             </h3>
-            <div className="grid grid-cols-2 gap-3">
-              {inds.map((ind) => (
-                <Card key={ind.id} className="border">
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between mb-2">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[13px] font-semibold text-foreground truncate">{ind.indicator_name}</p>
-                        <Badge variant="secondary" className={`text-[9px] mt-1 ${categoryColors[ind.category] || ""}`}>
-                          {ind.category.replace("_", " ")}
-                        </Badge>
-                      </div>
-                    </div>
-                    <div className="flex items-end justify-between">
-                      <div>
-                        <span className={`text-2xl font-bold ${getValueColor(ind)}`}>
-                          {Number(ind.value).toFixed(ind.unit === "%" ? 0 : 1)}
-                        </span>
-                        <span className="text-sm text-muted-foreground ml-0.5">{ind.unit}</span>
-                        {ind.target && (
-                          <p className="text-[11px] text-muted-foreground mt-0.5">
-                            Target: {Number(ind.target).toFixed(ind.unit === "%" ? 0 : 1)}{ind.unit}
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {list.map((row) => {
+                const def = defs[row.indicator_code];
+                const delta = deltaVsPrevious(trends[row.indicator_code] || [], row.direction);
+                const fraction = formatFraction(
+                  row.numerator,
+                  row.denominator,
+                  def?.denominator_description,
+                );
+                const isManual = def?.collection_mode === "manual";
+
+                return (
+                  <Card key={row.indicator_code} className="border">
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <div className="min-w-0">
+                          <p className="text-[13px] font-semibold text-foreground leading-tight">
+                            {row.indicator_name}
                           </p>
+                          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                            <Badge
+                              variant="secondary"
+                              className={`text-[9px] ${categoryColors[row.category] || ""}`}
+                            >
+                              {row.category.replace(/_/g, " ")}
+                            </Badge>
+                            <Badge variant="outline" className="text-[9px]">
+                              {isManual ? "Manual" : "Auto"}
+                            </Badge>
+                            {def?.nabh_standard_code && (
+                              <span className="text-[9px] text-muted-foreground">
+                                {def.nabh_standard_code}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        {def?.caveats && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                type="button"
+                                className="text-muted-foreground hover:text-foreground shrink-0"
+                                aria-label={`How ${row.indicator_name} is measured`}
+                              >
+                                <Info size={13} />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs text-[11px] leading-relaxed">
+                              {def.caveats}
+                            </TooltipContent>
+                          </Tooltip>
                         )}
                       </div>
-                      <div className="w-[80px] h-[40px]">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={sparkData}>
-                            <Line type="monotone" dataKey="v" stroke="hsl(var(--primary))" strokeWidth={1.5} dot={false} />
-                          </LineChart>
-                        </ResponsiveContainer>
+
+                      <div className="flex items-end gap-2">
+                        {/* Value wears text ink; status is carried by the chip below,
+                            so meaning never depends on the colour of the number. */}
+                        <span className="text-2xl font-bold text-foreground tabular-nums">
+                          {formatIndicatorValue(row.value, row.unit)}
+                        </span>
+                        {row.value !== null && (
+                          <span className="text-sm text-muted-foreground mb-0.5">{row.unit}</span>
+                        )}
+                        {delta && (
+                          <span
+                            className={`inline-flex items-center gap-0.5 text-[11px] mb-1 ${
+                              delta.improved === null
+                                ? "text-muted-foreground"
+                                : delta.improved
+                                  ? "text-green-600 dark:text-green-400"
+                                  : "text-red-600 dark:text-red-400"
+                            }`}
+                            title={`${delta.absolute > 0 ? "Up" : "Down"} ${Math.abs(delta.absolute)} vs previous period${
+                              delta.improved === null ? "" : delta.improved ? " (improving)" : " (worsening)"
+                            }`}
+                          >
+                            {delta.absolute > 0 ? <ArrowUp size={11} /> : <ArrowDown size={11} />}
+                            {Math.abs(delta.absolute)}
+                          </span>
+                        )}
                       </div>
-                    </div>
-                    {!ind.auto_calculated && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 text-xs mt-2 w-full"
-                        onClick={() => { setEditModal(ind); setEditValue(String(ind.value)); }}
-                      >
-                        Update Value
-                      </Button>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
+
+                      <div className="flex items-center justify-between gap-2 mt-1">
+                        <StatusChip row={row} />
+                        {row.target !== null && (
+                          <span className="text-[10px] text-muted-foreground">
+                            Target {targetPrefix(row.direction)} {row.target}
+                            {row.unit === "%" ? "%" : ""}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* The arithmetic behind the number, or why there isn't one. */}
+                      <p className="text-[10px] text-muted-foreground mt-1.5 min-h-[13px]">
+                        {fraction || row.notes || ""}
+                      </p>
+
+                      <Sparkline points={trends[row.indicator_code] || []} />
+
+                      <p className="text-[9px] text-muted-foreground">
+                        {periodLabel(row.period_start)} · {row.period}
+                      </p>
+
+                      {isManual && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 text-xs mt-2 w-full"
+                          onClick={() => {
+                            setEditRow(row);
+                            setEditValue(row.value === null ? "" : String(row.value));
+                          }}
+                        >
+                          Update value
+                        </Button>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           </div>
         ))
       )}
 
-      <Dialog open={!!editModal} onOpenChange={() => setEditModal(null)}>
+      <Dialog open={!!editRow} onOpenChange={() => setEditRow(null)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle className="text-sm">Update: {editModal?.indicator_name}</DialogTitle>
+            <DialogTitle className="text-sm">Update: {editRow?.indicator_name}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
+            {editRow && defs[editRow.indicator_code]?.caveats && (
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                {defs[editRow.indicator_code].caveats}
+              </p>
+            )}
             <div>
-              <Label className="text-xs">Value ({editModal?.unit})</Label>
+              <Label className="text-xs">
+                Value ({editRow?.unit}) for {editRow ? periodLabel(editRow.period_start) : ""}
+              </Label>
               <Input
                 type="number"
+                step="any"
                 value={editValue}
                 onChange={(e) => setEditValue(e.target.value)}
                 className="mt-1"
               />
             </div>
-            <Button onClick={handleUpdate} className="w-full" size="sm">Save</Button>
+            <Button onClick={saveManualValue} className="w-full" size="sm" disabled={saving}>
+              {saving ? "Saving…" : "Save"}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

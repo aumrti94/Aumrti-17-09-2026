@@ -21,6 +21,7 @@ export default defineConfig({
         "src/lib/billTotals.ts",
         "src/lib/clinicalCalculators.ts",
         "src/lib/currency.ts",
+        "src/lib/qualityIndicators.ts",
       ],
       // Ratchet FLOORS — set just under current actuals. Coverage may only rise.
       // A regression that drops a safety/finance lib below its floor fails CI.
@@ -33,6 +34,9 @@ export default defineConfig({
         // intentionally NOT unit-tested; the pure computeBillTotals() is fully
         // covered. Floor locks the pure function's tests in place.
         "src/lib/billTotals.ts": { statements: 20, branches: 80, functions: 50, lines: 20 },
+        // Mirrors public.qi_attainment / qi_band_status in SQL — the NABH
+        // criterion scores and the dashboard must never disagree, so this stays high.
+        "src/lib/qualityIndicators.ts": { statements: 100, branches: 96, functions: 100, lines: 100 },
       },
     },
   },

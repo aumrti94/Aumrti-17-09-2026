@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { useCapacityCheck } from "@/hooks/useCapacityCheck";
+import { BUCKETS } from "@/lib/storageUrls";
 import {
   ArrowLeft, Plus, X, Users, Stethoscope, HeartPulse,
   Receipt, Pill, TestTube, ClipboardList, Shield, Wrench, Trash2, ShieldCheck,
@@ -90,14 +91,6 @@ const DEFAULT_ROLE_CARDS: { role: AppRole; icon: React.ElementType; label: strin
   { role: "hospital_admin", icon: Shield,         label: "Admin / CEO" },
 ];
 
-/* Valid app_role enum values from Postgres — staff role MUST be one of these */
-const VALID_APP_ROLES = [
-  "super_admin", "hospital_admin", "doctor", "nurse", "receptionist",
-  "pharmacist", "lab_tech", "accountant", "billing_executive", "hr_manager",
-  "lab_technician", "radiologist", "cfo", "billing_staff",
-] as const;
-const VALID_APP_ROLES_SET = new Set<string>(VALID_APP_ROLES);
-
 /* ─── Bulk doctor row ─── */
 interface BulkRow { name: string; speciality: string; phone: string; dept_id: string; fee: string }
 const EMPTY_BULK: BulkRow = { name: "", speciality: "", phone: "", dept_id: "", fee: "" };
@@ -113,6 +106,8 @@ const SettingsStaffPage: React.FC = () => {
   const [filter, setFilter] = useState("all");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingAuthUserId, setEditingAuthUserId] = useState<string | null>(null);
+  const [editingOriginalEmail, setEditingOriginalEmail] = useState<string>("");
   const [form, setForm] = useState<StaffForm>(EMPTY_FORM);
   const [hiredApplicantId, setHiredApplicantId] = useState<string | null>(null);
 
@@ -142,6 +137,10 @@ const SettingsStaffPage: React.FC = () => {
   const [loginPassword, setLoginPassword] = useState("");
   const [creatingLogin, setCreatingLogin] = useState(false);
   const [resettingMfaId, setResettingMfaId] = useState<string | null>(null);
+  const [passwordModal, setPasswordModal] = useState<{ userId: string; userName: string; email: string } | null>(null);
+  const [newPasswordInput, setNewPasswordInput] = useState("");
+  const [settingPassword, setSettingPassword] = useState(false);
+  const [sendingResetLink, setSendingResetLink] = useState(false);
   const [drawerTab, setDrawerTab] = useState<"profile" | "privileges" | "access">("profile");
 
   // HPR verification state (per-open-drawer)
@@ -191,14 +190,13 @@ const SettingsStaffPage: React.FC = () => {
   });
 
   /* ─── Dynamic role cards + filter tabs ─── */
-  // Show the 7 system defaults plus any custom roles whose role_name maps to a
-  // valid Postgres app_role enum value. Custom roles outside the enum are ignored
-  // because users.role is a strict ENUM and would reject them.
+  // Show the 7 system defaults plus every other role_permissions row for this
+  // hospital (system or custom) — any role that exists there can be assigned.
   const ROLE_CARDS = useMemo(() => {
     const defaultRoleSet = new Set(DEFAULT_ROLE_CARDS.map((c) => c.role));
     const labelOverride = new Map<string, string>();
     (customRoles ?? []).forEach((r: any) => {
-      if (VALID_APP_ROLES_SET.has(r.role_name) && r.role_label) {
+      if (r.role_label) {
         labelOverride.set(r.role_name, r.role_label);
       }
     });
@@ -207,7 +205,7 @@ const SettingsStaffPage: React.FC = () => {
       label: labelOverride.get(c.role) || c.label,
     }));
     const extraCards = (customRoles ?? [])
-      .filter((r: any) => VALID_APP_ROLES_SET.has(r.role_name) && !defaultRoleSet.has(r.role_name))
+      .filter((r: any) => !defaultRoleSet.has(r.role_name))
       .map((r: any) => {
         const meta = ROLE_META[r.role_name];
         return {
@@ -233,8 +231,7 @@ const SettingsStaffPage: React.FC = () => {
     const roleCounts = new Map<string, number>();
     users.forEach((u) => {
       const r = u.role;
-      // Skip any legacy/invalid role values that aren't in the enum
-      if (!VALID_APP_ROLES_SET.has(r)) return;
+      if (!r) return;
       roleCounts.set(r, (roleCounts.get(r) || 0) + 1);
     });
     roleCounts.forEach((_, role) => {
@@ -313,8 +310,10 @@ const SettingsStaffPage: React.FC = () => {
 
   const saveStaff = useMutation({
     mutationFn: async () => {
-      // Guard: role must be a valid Postgres app_role enum value
-      if (!form.role || !VALID_APP_ROLES_SET.has(form.role)) {
+      // Guard: role must be selected — the dropdown is sourced from this
+      // hospital's role_permissions rows, and users_role_hospital_fkey is
+      // the DB-level backstop against anything invalid slipping through.
+      if (!form.role) {
         throw new Error("Please select a valid role before saving.");
       }
       // Phone validation: must be exactly 10 digits if provided
@@ -334,11 +333,32 @@ const SettingsStaffPage: React.FC = () => {
       }
       const hid = await getHospitalId();
       const deptId = getSafeDepartmentId();
+      let emailSyncWarning: string | null = null;
       if (editingId) {
+        // The users table and Supabase Auth store email independently — updating one
+        // doesn't touch the other. Without this, changing email here left the staff
+        // member unable to log in with the new address (Auth still had the old one).
+        const emailChanged = form.email.trim().toLowerCase() !== editingOriginalEmail.trim().toLowerCase();
+        // Falls back to the original email if the Auth sync below fails, so the two
+        // never drift apart — better to keep the old (working) login than silently
+        // break it while still saving the rest of the edit.
+        let emailForUpdate = form.email;
+        if (emailChanged && editingAuthUserId) {
+          const { data: { session } } = await supabase.auth.getSession();
+          const { data: emailResult, error: emailErr } = await supabase.functions.invoke("admin-set-staff-password", {
+            body: { user_id: editingId, new_email: form.email },
+            headers: { Authorization: `Bearer ${session?.access_token}` },
+          });
+          if (emailErr || emailResult?.error) {
+            emailForUpdate = editingOriginalEmail;
+            emailSyncWarning = `Everything else saved, but the login email couldn't be updated (${emailResult?.error || emailErr?.message || "server error"}). It's still set to ${editingOriginalEmail}.`;
+          }
+        }
+
         const { error } = await supabase.from("users").update({
           full_name: form.full_name,
           phone: form.phone || null,
-          email: form.email,
+          email: emailForUpdate,
           role: form.role as any,
           department_id: deptId,
           registration_number: form.registration_number || null,
@@ -449,9 +469,13 @@ const SettingsStaffPage: React.FC = () => {
         await saveOtFeeRow(hid, editingId, "surgeon_fee", "OT Surgeon Fee", form.ot_surgeon_fee);
         await saveOtFeeRow(hid, editingId, "anaesthesia_fee", "OT Anaesthetist Fee", form.ot_anaesthetist_fee);
       }
+      return { emailSyncWarning };
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       toast({ title: `${form.full_name} ${editingId ? "updated" : "added"} as ${ROLE_META[form.role]?.label ?? form.role} ✓` });
+      if (data?.emailSyncWarning) {
+        toast({ title: "Login email not changed", description: data.emailSyncWarning, variant: "destructive" });
+      }
       qc.invalidateQueries({ queryKey: ["settings-staff"] });
       closeDrawer();
     },
@@ -524,6 +548,59 @@ const SettingsStaffPage: React.FC = () => {
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
+
+  /* ─── Password reset ─── */
+  const openPasswordModal = (userId: string, userName: string, email: string | null) => {
+    setPasswordModal({ userId, userName, email: email || "" });
+    setNewPasswordInput("");
+  };
+
+  const closePasswordModal = () => {
+    setPasswordModal(null);
+    setNewPasswordInput("");
+  };
+
+  // Admin sets a new password directly — the staff member can log in with it immediately.
+  const handleSetPasswordDirect = async () => {
+    if (!passwordModal || newPasswordInput.length < 8) return;
+    setSettingPassword(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const { data, error } = await supabase.functions.invoke("admin-set-staff-password", {
+        body: { user_id: passwordModal.userId, new_password: newPasswordInput },
+        headers: { Authorization: `Bearer ${session?.access_token}` },
+      });
+      if (error || data?.error) throw new Error(data?.error || error?.message);
+      toast({ title: `Password updated for ${passwordModal.userName}`, description: "They can log in with the new password now." });
+      closePasswordModal();
+    } catch (err: any) {
+      toast({ title: "Failed to set password", description: err.message, variant: "destructive" });
+    } finally {
+      setSettingPassword(false);
+    }
+  };
+
+  // Alternative: email the staff member a self-service reset link instead of setting one directly.
+  const handleSendResetLink = async () => {
+    if (!passwordModal) return;
+    if (!passwordModal.email || passwordModal.email.includes("@placeholder.local")) {
+      toast({ title: "No real email on file", description: "Set a real email for this staff member before sending a reset link.", variant: "destructive" });
+      return;
+    }
+    setSendingResetLink(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(passwordModal.email, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (error) throw error;
+      toast({ title: `Reset link sent to ${passwordModal.userName}`, description: `They'll receive an email at ${passwordModal.email} to set a new password.` });
+      closePasswordModal();
+    } catch (err: any) {
+      toast({ title: "Failed to send reset link", description: err.message, variant: "destructive" });
+    } finally {
+      setSendingResetLink(false);
+    }
+  };
 
   /* ─── MFA reset handler ─── */
   const handleResetMfa = async (authUserId: string, userName: string) => {
@@ -653,6 +730,8 @@ const SettingsStaffPage: React.FC = () => {
   const openDrawer = async (user?: any) => {
     if (user) {
       setEditingId(user.id);
+      setEditingAuthUserId((user as any).auth_user_id ?? null);
+      setEditingOriginalEmail(user.email ?? "");
       // Fetch staff_profiles data for salary fields
       const { data: profile } = await (supabase as any)
         .from("staff_profiles").select("*").eq("user_id", user.id).maybeSingle();
@@ -702,6 +781,8 @@ const SettingsStaffPage: React.FC = () => {
       });
     } else {
       setEditingId(null);
+      setEditingAuthUserId(null);
+      setEditingOriginalEmail("");
       setForm({ ...EMPTY_FORM });
     }
     setHprResult(null);
@@ -709,7 +790,7 @@ const SettingsStaffPage: React.FC = () => {
     setDrawerOpen(true);
   };
 
-  const closeDrawer = () => { setDrawerOpen(false); setEditingId(null); setForm({ ...EMPTY_FORM }); setDrawerTab("profile"); setHprResult(null); setHprError(null); };
+  const closeDrawer = () => { setDrawerOpen(false); setEditingId(null); setEditingAuthUserId(null); setEditingOriginalEmail(""); setForm({ ...EMPTY_FORM }); setDrawerTab("profile"); setHprResult(null); setHprError(null); };
 
   const initials = (name: string) => name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2);
 
@@ -827,7 +908,12 @@ const SettingsStaffPage: React.FC = () => {
                       <div className="flex items-center justify-end gap-1">
                          <button onClick={() => openDrawer(u)} className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded hover:bg-muted">Edit</button>
                          <button
-                           onClick={() => toggleActive.mutate({ id: u.id, active: u.is_active })}
+                           onClick={() => {
+                             const msg = u.is_active
+                               ? `Deactivate ${u.full_name}? They will immediately lose access to the system.`
+                               : `Activate ${u.full_name}? They will regain access to the system.`;
+                             if (confirm(msg)) toggleActive.mutate({ id: u.id, active: u.is_active });
+                           }}
                            className="text-xs text-muted-foreground hover:text-destructive px-2 py-1 rounded hover:bg-muted"
                          >
                            {u.is_active ? "Deactivate" : "Activate"}
@@ -847,6 +933,14 @@ const SettingsStaffPage: React.FC = () => {
                          {(u as any).auth_user_id && (
                            <>
                              <span className="text-[11px] text-emerald-600 px-2 py-1 font-medium">✓ Can Login</span>
+                             {/* Password reset — use if staff forgot/lost their password */}
+                             <button
+                               onClick={() => openPasswordModal(u.id, u.full_name, u.email)}
+                               title="Set a new password or send a reset link"
+                               className="text-[11px] text-muted-foreground hover:text-primary px-2 py-1 rounded hover:bg-primary/10 font-medium"
+                             >
+                               Reset Password
+                             </button>
                              {/* MFA enable/disable toggle */}
                              <button
                                onClick={() => handleToggleMfa(u.id, (u as any).auth_user_id, u.full_name, !!(u as any).mfa_required)}
@@ -1203,13 +1297,15 @@ const SettingsStaffPage: React.FC = () => {
                     onChange={async (e) => {
                       const file = e.target.files?.[0];
                       if (!file || !editingId) return;
+                      if (!hospitalId) { alert("Hospital not resolved yet — please retry."); return; }
                       if (file.size > 5 * 1024 * 1024) { alert("File too large (max 5MB)"); return; }
-                      const { data: { user } } = await supabase.auth.getUser();
-                      const path = `credentials/${editingId}/${file.name}`;
-                      const { error: uploadErr } = await supabase.storage.from("hospital-assets").upload(path, file, { upsert: true });
+                      // Private bucket, hospitalId first so the RLS policy accepts
+                      // the write. The old `credentials/${editingId}/…` path on
+                      // public hospital-assets was blocked and exposed staff PII.
+                      const path = `${hospitalId}/credentials/${editingId}/${file.name}`;
+                      const { error: uploadErr } = await supabase.storage.from(BUCKETS.hospitalPrivate).upload(path, file, { upsert: true });
                       if (uploadErr) { alert("Upload failed: " + uploadErr.message); return; }
-                      const { data: urlData } = supabase.storage.from("hospital-assets").getPublicUrl(path);
-                      await supabase.from("users").update({ credential_doc_url: urlData.publicUrl } as any).eq("id", editingId);
+                      await supabase.from("users").update({ credential_doc_url: path } as any).eq("id", editingId);
                       alert("Document uploaded successfully");
                     }}
                     className="block w-full text-sm text-muted-foreground file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-primary/10 file:text-primary hover:file:bg-primary/20 cursor-pointer"
@@ -1356,6 +1452,60 @@ const SettingsStaffPage: React.FC = () => {
               >
                 {creatingLogin ? "Creating..." : "Create Login"}
               </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ─── RESET PASSWORD MODAL ─── */}
+      {passwordModal && (
+        <>
+          <div className="fixed inset-0 bg-black/30 z-40" onClick={closePasswordModal} />
+          <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-card rounded-xl border border-border shadow-xl w-full max-w-[420px] p-6">
+            <h2 className="text-lg font-bold text-foreground mb-1">Reset Password</h2>
+            <p className="text-sm text-muted-foreground mb-5">
+              Set a new password for {passwordModal.userName} directly, or send them a reset link instead.
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-[14px] font-medium text-muted-foreground mb-1 block">New Password</label>
+                <Input
+                  type="password"
+                  value={newPasswordInput}
+                  onChange={(e) => setNewPasswordInput(e.target.value)}
+                  placeholder="Minimum 8 characters"
+                  className="h-10"
+                />
+                {newPasswordInput.length > 0 && newPasswordInput.length < 8 && (
+                  <p className="text-[11px] text-destructive mt-1">Password must be at least 8 characters</p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 mt-6">
+              <button
+                onClick={handleSendResetLink}
+                disabled={sendingResetLink}
+                className="text-[13px] text-primary hover:underline font-medium disabled:opacity-40"
+              >
+                {sendingResetLink ? "Sending…" : "Email reset link instead"}
+              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={closePasswordModal}
+                  className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSetPasswordDirect}
+                  disabled={settingPassword || newPasswordInput.length < 8}
+                  className="px-5 py-2 rounded-lg bg-[hsl(222,55%,23%)] text-white text-sm font-semibold hover:opacity-90 active:scale-[0.97] disabled:opacity-40"
+                >
+                  {settingPassword ? "Setting…" : "Set Password"}
+                </button>
+              </div>
             </div>
           </div>
         </>
