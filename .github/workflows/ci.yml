@@ -15,7 +15,11 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          # Vite 8 / rolldown / @vitejs/plugin-react all require
+          # ^20.19.0 || >=22.12.0. On Node 18 rolldown's `import { styleText }
+          # from "node:util"` throws at parse time (styleText landed in 20.12),
+          # so vitest died loading vitest.config.ts before running a test.
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies

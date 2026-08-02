@@ -31,7 +31,9 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          # Must match ci.yml — this workflow builds with Vite, which requires
+          # ^20.19.0 || >=22.12.0. See the note in ci.yml.
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies

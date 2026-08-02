@@ -55,4 +55,17 @@ export default tseslint.config(
       "react-refresh/only-export-components": "off",
     },
   },
+  {
+    // react-refresh/only-export-components guards *Vite's* React Fast Refresh.
+    // Neither target below qualifies, so the rule measures nothing there:
+    //  - components/ui/** are vendored shadcn primitives, each pairing a
+    //    component with its `cva` variants object (buttonVariants, badgeVariants,
+    //    …). That pairing is upstream shadcn's own shape — splitting it would
+    //    turn every future shadcn update into a manual merge. (allowConstantExport
+    //    does not cover it: a cva() result is not a literal constant.)
+    //  - mobile/** is React Native/Expo, which ships its own Fast Refresh and is
+    //    never built by Vite.
+    files: ["src/components/ui/**/*.tsx", "mobile/**/*.{ts,tsx}"],
+    rules: { "react-refresh/only-export-components": "off" },
+  },
 );
