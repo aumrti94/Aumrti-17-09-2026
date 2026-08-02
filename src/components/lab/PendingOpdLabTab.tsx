@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { FlaskConical, Phone, RefreshCw, Loader2 } from "lucide-react";
+import { FlaskConical, Phone, RefreshCw, Loader2, BedDouble } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import StatusBadge from "@/components/shared/StatusBadge";
@@ -8,7 +8,12 @@ import { formatCurrency } from "@/lib/currency";
 
 interface Props {
   hospitalId: string;
-  onCreateOrder: (patient: { id: string; full_name: string; uhid: string }, testNames: string[], encounterId: string) => void;
+  onCreateOrder: (
+    patient: { id: string; full_name: string; uhid: string },
+    testNames: string[],
+    encounterId: string,
+    admissionId?: string | null,
+  ) => void;
   onCountChange?: (count: number) => void;
 }
 
@@ -49,7 +54,7 @@ const PendingOpdLabTab: React.FC<Props> = ({ hospitalId, onCreateOrder, onCountC
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <FlaskConical size={16} className="text-primary" />
-          <span className="text-[14px] font-semibold">Pending Lab Orders from OPD</span>
+          <span className="text-[14px] font-semibold">Pending Lab Orders</span>
           <Badge className="text-[10px] px-1.5 py-0 rounded-full bg-amber-100 text-amber-700 border-amber-200">
             {rows.length} patients
           </Badge>
@@ -60,7 +65,9 @@ const PendingOpdLabTab: React.FC<Props> = ({ hospitalId, onCreateOrder, onCountC
       </div>
 
       <p className="text-[12px] text-muted-foreground">
-        Doctors wrote these tests in today's OPD prescriptions but no lab order has been created yet.
+        Doctors wrote these tests in today's OPD prescriptions, or on an admitted patient's ward
+        orders, but no lab order has been created yet. Ward rows appear only under
+        pay-before-service — accrue-to-bill raises the order at commit.
       </p>
 
       {rows.length === 0 ? (
@@ -72,7 +79,7 @@ const PendingOpdLabTab: React.FC<Props> = ({ hospitalId, onCreateOrder, onCountC
         <div className="space-y-2">
           {rows.map((row) => (
             <div
-              key={row.encounterId}
+              key={row.admissionId || row.encounterId}
               className="border border-border rounded-lg bg-card px-4 py-3 flex items-start justify-between gap-3"
             >
               {/* Patient + tests */}
@@ -80,6 +87,11 @@ const PendingOpdLabTab: React.FC<Props> = ({ hospitalId, onCreateOrder, onCountC
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-[14px] font-semibold text-foreground">{row.patientName}</span>
                   <span className="text-[11px] text-muted-foreground font-mono">{row.uhid}</span>
+                  {row.admissionId && (
+                    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border border-blue-200 bg-blue-50 text-blue-700">
+                      <BedDouble size={9} /> {row.contextLabel}
+                    </span>
+                  )}
                   {row.phone && (
                     <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
                       <Phone size={10} /> {row.phone}
@@ -120,7 +132,8 @@ const PendingOpdLabTab: React.FC<Props> = ({ hospitalId, onCreateOrder, onCountC
                   onCreateOrder(
                     { id: row.patientId, full_name: row.patientName, uhid: row.uhid },
                     row.pendingLabTests,
-                    row.encounterId
+                    row.encounterId,
+                    row.admissionId
                   )
                 }
               >
@@ -130,6 +143,7 @@ const PendingOpdLabTab: React.FC<Props> = ({ hospitalId, onCreateOrder, onCountC
           ))}
         </div>
       )}
+
     </div>
   );
 };

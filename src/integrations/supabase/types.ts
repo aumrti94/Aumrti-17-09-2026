@@ -25713,11 +25713,12 @@ export type Database = {
       }
       prescriptions: {
         Row: {
+          admission_id: string | null
           advice_notes: string | null
           created_at: string | null
           doctor_id: string
           drugs: Json | null
-          encounter_id: string
+          encounter_id: string | null
           hospital_id: string
           id: string
           is_signed: boolean | null
@@ -25728,14 +25729,16 @@ export type Database = {
           review_date: string | null
           signed_at: string | null
           source: string | null
+          status: string
           whatsapp_sent: boolean | null
         }
         Insert: {
+          admission_id?: string | null
           advice_notes?: string | null
           created_at?: string | null
           doctor_id: string
           drugs?: Json | null
-          encounter_id: string
+          encounter_id?: string | null
           hospital_id: string
           id?: string
           is_signed?: boolean | null
@@ -25746,14 +25749,16 @@ export type Database = {
           review_date?: string | null
           signed_at?: string | null
           source?: string | null
+          status?: string
           whatsapp_sent?: boolean | null
         }
         Update: {
+          admission_id?: string | null
           advice_notes?: string | null
           created_at?: string | null
           doctor_id?: string
           drugs?: Json | null
-          encounter_id?: string
+          encounter_id?: string | null
           hospital_id?: string
           id?: string
           is_signed?: boolean | null
@@ -25764,9 +25769,17 @@ export type Database = {
           review_date?: string | null
           signed_at?: string | null
           source?: string | null
+          status?: string
           whatsapp_sent?: boolean | null
         }
         Relationships: [
+          {
+            foreignKeyName: "prescriptions_admission_id_fkey"
+            columns: ["admission_id"]
+            isOneToOne: false
+            referencedRelation: "admissions"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "prescriptions_doctor_id_fkey"
             columns: ["doctor_id"]

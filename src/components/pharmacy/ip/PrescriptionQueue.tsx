@@ -58,7 +58,7 @@ const PrescriptionQueue: React.FC<Props> = ({ hospitalId, selectedId, onSelect, 
     const { data: prescriptions } = await supabase
       .from("prescriptions")
       .select(`
-        id, drugs, patient_id, doctor_id, created_at,
+        id, drugs, patient_id, doctor_id, created_at, admission_id,
         patients!inner(full_name, uhid),
         users!prescriptions_doctor_id_fkey(full_name)
       `)
@@ -101,6 +101,19 @@ const PrescriptionQueue: React.FC<Props> = ({ hospitalId, selectedId, onSelect, 
         .eq("dispensing_id", d.id)
         .gt("quantity_dispensed", 0);
 
+      // A header raised from the IPD ward has no items yet — the drugs live in
+      // ipd_medications until a pharmacist opens it (DispensingWorkspace reads them the
+      // same way). Count those, or the queue advertises a real order as "0 drug(s)".
+      let drugCount = total || 0;
+      if (drugCount === 0 && d.admission_id) {
+        const { count: medCount } = await supabase
+          .from("ipd_medications")
+          .select("id", { count: "exact", head: true })
+          .eq("admission_id", d.admission_id)
+          .eq("is_active", true);
+        drugCount = medCount || 0;
+      }
+
       result.push({
         id: d.id,
         source: "dispensing",
@@ -109,7 +122,7 @@ const PrescriptionQueue: React.FC<Props> = ({ hospitalId, selectedId, onSelect, 
         ward_name,
         bed_number,
         status: d.status || "pending",
-        drug_count: total || 0,
+        drug_count: drugCount,
         dispensed_count: dispensed || 0,
         patient_id: d.patient_id,
         admission_id: d.admission_id || undefined,
@@ -123,6 +136,9 @@ const PrescriptionQueue: React.FC<Props> = ({ hospitalId, selectedId, onSelect, 
       const patient = pr.patients as any;
       const doctor = pr.users as any;
       const drugs = Array.isArray(pr.drugs) ? pr.drugs : [];
+      // A prescription can be signed for its lab/radiology orders alone. There is nothing for
+      // pharmacy to hand over, so it does not belong in this queue.
+      if (drugs.length === 0) continue;
 
       result.push({
         id: pr.id,
@@ -134,6 +150,10 @@ const PrescriptionQueue: React.FC<Props> = ({ hospitalId, selectedId, onSelect, 
         drug_count: drugs.length,
         dispensed_count: 0,
         patient_id: pr.patient_id,
+        // Carry the admission through, or DispensingWorkspace treats a ward prescription as
+        // an outpatient one: no pay-before-service gate, no ancillary charge, no
+        // pharmacy_cleared update.
+        admission_id: (pr as any).admission_id || undefined,
         prescription_id: pr.id,
         drugs: pr.drugs,
       });

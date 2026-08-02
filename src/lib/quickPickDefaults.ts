@@ -40,10 +40,13 @@ export const DEFAULT_LAB_TEMPLATES: string[] = [
   "Serum Creatinine", "Serum Electrolytes", "ECG",
 ];
 
-// Common studies doctors refer to third-party radiology centres
+// Common studies doctors refer to third-party radiology centres.
+// Names must match radiology_study_master verbatim (see the seed in
+// 20260903000003_radiology_study_master.sql) — an unmatched name is never ordered
+// and never billed, and the quick-pick editor now flags it as off-master.
 export const DEFAULT_RADIOLOGY_TEMPLATES: string[] = [
-  "Chest X-Ray PA", "USG Abdomen & Pelvis", "2D Echo with Doppler",
-  "MRI Brain Plain", "CT Chest Plain", "X-Ray KUB",
+  "X-Ray Chest PA View", "USG Abdomen + Pelvis", "2D Echo + Doppler",
+  "MRI Brain", "CT Chest", "X-Ray KUB",
 ];
 
 export const QUICK_PICK_DEFAULTS: Record<string, unknown[]> = {

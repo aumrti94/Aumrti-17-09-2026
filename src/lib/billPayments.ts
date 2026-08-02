@@ -3,6 +3,7 @@ import { autoPostJournalEntry } from "@/lib/accounting";
 import { logAudit } from "@/lib/auditLog";
 import { sendWhatsApp } from "@/lib/whatsapp-send";
 import { checkBillWritable } from "@/lib/lockedDay";
+import { releasePackageOrders } from "@/lib/packageOrders";
 
 export interface PaymentRow {
   mode: string;
@@ -118,6 +119,22 @@ export async function recordBillPayment(opts: RecordBillPaymentOpts): Promise<Re
 
   if (opts.newPaymentStatus === "paid" && opts.admissionId) {
     await supabase.from("admissions").update({ billing_cleared: true }).eq("id", opts.admissionId);
+  }
+
+  // A health package's lab/radiology orders are created at booking but held as "unbilled", so
+  // neither worklist shows them while the package is unpaid. Settling the bill is what puts the
+  // tests in front of the lab and the studies in front of the radiographer.
+  //
+  // Deliberately after the bills update and never fatal: the money has already been taken, so a
+  // failure here must not fail the payment. releasePackageOrders swallows its own errors and is
+  // idempotent, so a retry or a later payment still releases them.
+  if (opts.newPaymentStatus === "paid") {
+    const released = await releasePackageOrders(opts.billId);
+    if (released.lab > 0 || released.radiology > 0) {
+      console.info(
+        `Package paid — released ${released.lab} lab and ${released.radiology} radiology order(s) to the worklists.`
+      );
+    }
   }
 
   if (opts.sendReceipt && opts.patientId) {

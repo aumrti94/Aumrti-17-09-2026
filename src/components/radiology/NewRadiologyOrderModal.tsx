@@ -9,6 +9,7 @@ import { postAncillaryOrderCharges } from "@/lib/ancillaryCharges";
 import { fetchIpdAncillaryPolicy, resolveChargePaymentStatus } from "@/lib/ipdAncillaryGate";
 import AdmissionLinker from "@/components/shared/AdmissionLinker";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
+import { getPrescribedPending } from "@/lib/prescribedPending";
 import { printBillById } from "@/lib/billPrint";
 import { cn } from "@/lib/utils";
 import { calcGST, roundCurrency } from "@/lib/currency";
@@ -245,44 +246,28 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
       setPendingStudyNames([]);
       return;
     }
-    const today = new Date().toISOString().split("T")[0];
     if (linkedEncounterId) { setLinkedEncounter(linkedEncounterId); return; }
 
-    supabase.from("opd_encounters").select("id")
-      .eq("hospital_id", hospitalId).eq("patient_id", selectedPatient.id).eq("visit_date", today)
-      .order("created_at", { ascending: false })
-      .then(({ data }) => {
-        if (!data?.length) return;
-        const allEncIds = data.map((e: any) => e.id);
-        setLinkedEncounter(allEncIds[0]);
-        setLinkInfo(allEncIds.length > 1
-          ? `🔗 Linked to today's OPD encounters (${allEncIds.length} doctors)`
-          : "🔗 Linked to today's OPD encounter");
-
-        if (!preselectedNamesRef.current.length && !preselectionDone.current) {
-          Promise.all([
-            (supabase as any).from("prescriptions").select("radiology_orders").in("encounter_id", allEncIds),
-            supabase.from("radiology_orders").select("study_name")
-              .eq("hospital_id", hospitalId).eq("patient_id", selectedPatient.id).eq("order_date", today),
-          ]).then(([{ data: rxList }, { data: existingOrders }]: any[]) => {
-            const allNames: string[] = [...new Set<string>(
-              (rxList || []).flatMap((rx: any) =>
-                ((rx.radiology_orders as any[]) || []).map((r: any) => r.study_name as string).filter(Boolean)
-              )
-            )];
-            const alreadyOrdered = new Set<string>(
-              (existingOrders || []).map((o: any) => (o.study_name || "").toLowerCase().trim())
-            );
-            const pending = allNames.filter(n => !alreadyOrdered.has(n.toLowerCase().trim()));
-            if (pending.length > 0) setPendingStudyNames(pending);
-          });
-        }
-      });
+    // Shared with the lab modal — resolves today's OPD encounters, or falls back to the
+    // patient's current admission. The old inline query bailed out when there was no
+    // encounter today, so an inpatient's studies never pre-selected.
+    let cancelled = false;
+    getPrescribedPending(hospitalId, selectedPatient.id, "radiology", {
+      preferredAdmissionId: linkedAdmissionId,
+    }).then((res) => {
+      if (cancelled) return;
+      setLinkedEncounter(res.encounterIds[0] ?? null);
+      setLinkInfo(res.linkLabel);
+      if (!preselectedNamesRef.current.length && !preselectionDone.current && res.names.length > 0) {
+        setPendingStudyNames(res.names);
+      }
+    });
+    return () => { cancelled = true; };
 
     // Admission linking is handled by <AdmissionLinker> below — it resolves ALL active
     // admissions and lets the user pick when there is more than one, instead of grabbing an
     // arbitrary one here (which silently billed charges to the wrong stay).
-  }, [selectedPatient, hospitalId, linkedEncounterId]);
+  }, [selectedPatient, hospitalId, linkedEncounterId, linkedAdmissionId]);
 
   const toggleStudy = useCallback((study: StudyMaster) => {
     setSelectedStudies(prev => {

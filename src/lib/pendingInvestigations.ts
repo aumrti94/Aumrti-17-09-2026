@@ -5,7 +5,12 @@ export interface PendingInvestigationRow {
   patientName: string;
   uhid: string;
   phone: string | null;
+  /** The OPD encounter. Empty string for a ward row — use `admissionId` instead. */
   encounterId: string;
+  /** Set for a ward row; null for an OPD one. The two are mutually exclusive. */
+  admissionId: string | null;
+  /** "OPD" or the ward/bed, for the row's context chip. */
+  contextLabel: string;
   encounterDate: string;    // YYYY-MM-DD
   encounterTime: string;    // HH:MM en-IN
   doctorName: string;
@@ -14,12 +19,36 @@ export interface PendingInvestigationRow {
   estimatedRevenue: number; // sum of lab_test_master.fee + radiology_study_master.fee for pending names
 }
 
+interface FeeMaps {
+  labFeeMap: Record<string, number>;
+  radFeeMap: Record<string, number>;
+}
+
+/** Fee lookups for revenue estimation. Best-effort — an unconfigured test is worth 0. */
+async function fetchFeeMaps(hospitalId: string): Promise<FeeMaps> {
+  const [{ data: labMaster }, { data: radMaster }] = await Promise.all([
+    (supabase as any).from("lab_test_master")
+      .select("test_name, fee").eq("hospital_id", hospitalId).eq("is_active", true),
+    (supabase as any).from("radiology_study_master")
+      .select("study_name, fee").eq("hospital_id", hospitalId).eq("is_active", true),
+  ]);
+  const labFeeMap: Record<string, number> = {};
+  for (const t of labMaster || []) labFeeMap[String(t.test_name).toLowerCase().trim()] = Number(t.fee) || 0;
+  const radFeeMap: Record<string, number> = {};
+  for (const s of radMaster || []) radFeeMap[String(s.study_name).toLowerCase().trim()] = Number(s.fee) || 0;
+  return { labFeeMap, radFeeMap };
+}
+
 /**
- * Returns one row per OPD encounter that has prescribed investigations
- * (in prescriptions.lab_orders / .radiology_orders) which have NOT yet been
- * converted to real lab_orders / radiology_orders rows.
+ * One row per context (an OPD encounter, or an admission) that has prescribed investigations
+ * in prescriptions.lab_orders / .radiology_orders which have NOT yet been converted to real
+ * lab_orders / radiology_orders rows.
  *
  * Comparison is case-insensitive name matching.
+ *
+ * Ward rows only ever appear under pay-before-service: accrue-to-bill raises the order at
+ * commit, so nothing is left prescribed-but-not-ordered. An empty ward section on a default
+ * install is the correct result, not a bug.
  */
 export async function getPendingInvestigations(
   hospitalId: string,
@@ -33,7 +62,11 @@ export async function getPendingInvestigations(
     .gte("visit_date", dateRange.start)
     .lte("visit_date", dateRange.end);
 
-  if (!encounters?.length) return [];
+  // No OPD encounters in range doesn't mean no work — the wards may still have pending
+  // investigations, so fall through to those rather than returning empty.
+  if (!encounters?.length) {
+    return getPendingWardInvestigations(hospitalId, await fetchFeeMaps(hospitalId));
+  }
 
   const encounterIds: string[] = encounters.map((e: any) => e.id);
 
@@ -63,7 +96,9 @@ export async function getPendingInvestigations(
       ((rx.lab_orders as any[]) || []).length > 0 ||
       ((rx.radiology_orders as any[]) || []).length > 0
   );
-  if (!activePrescriptions.length) return [];
+  if (!activePrescriptions.length) {
+    return getPendingWardInvestigations(hospitalId, await fetchFeeMaps(hospitalId));
+  }
 
   const activeEncIds: string[] = [...new Set<string>(
     activePrescriptions.map((rx: any) => rx.encounter_id as string)
@@ -101,24 +136,7 @@ export async function getPendingInvestigations(
   }
 
   // 6. Fee maps for revenue estimation (best-effort — 0 if not configured)
-  const [{ data: labMaster }, { data: radMaster }] = await Promise.all([
-    (supabase as any)
-      .from("lab_test_master")
-      .select("test_name, fee")
-      .eq("hospital_id", hospitalId)
-      .eq("is_active", true),
-    (supabase as any)
-      .from("radiology_study_master")
-      .select("study_name, fee")
-      .eq("hospital_id", hospitalId)
-      .eq("is_active", true),
-  ]);
-
-  const labFeeMap: Record<string, number> = {};
-  for (const t of labMaster || []) labFeeMap[t.test_name.toLowerCase().trim()] = Number(t.fee) || 0;
-
-  const radFeeMap: Record<string, number> = {};
-  for (const s of radMaster || []) radFeeMap[s.study_name.toLowerCase().trim()] = Number(s.fee) || 0;
+  const { labFeeMap, radFeeMap } = await fetchFeeMaps(hospitalId);
 
   // 7. Encounter map for O(1) lookup
   const encMap: Record<string, any> = {};
@@ -162,6 +180,8 @@ export async function getPendingInvestigations(
       uhid: patient?.uhid || "",
       phone: patient?.phone || null,
       encounterId: rx.encounter_id as string,
+      admissionId: null,
+      contextLabel: "OPD",
       encounterDate: enc.visit_date as string,
       encounterTime,
       doctorName: doctorMap[enc.doctor_id as string] || "—",
@@ -171,6 +191,10 @@ export async function getPendingInvestigations(
     });
   }
 
+  // Ward rows join the same list — the counter works one worklist, not two.
+  const wardRows = await getPendingWardInvestigations(hospitalId, { labFeeMap, radFeeMap });
+  results.push(...wardRows);
+
   // Sort newest encounter date first, then by time
   results.sort((a, b) => {
     const dc = b.encounterDate.localeCompare(a.encounterDate);
@@ -178,4 +202,114 @@ export async function getPendingInvestigations(
   });
 
   return results;
+}
+
+/**
+ * Ward equivalent of the above: investigations a doctor put on an admitted patient's
+ * prescription that have not yet become real orders.
+ *
+ * These exist only under pay-before-service — accrue-to-bill creates the order at commit, so
+ * nothing is left pending. That is why this list is empty on a default install, and it is
+ * correct for it to be.
+ */
+async function getPendingWardInvestigations(
+  hospitalId: string,
+  fees: FeeMaps
+): Promise<PendingInvestigationRow[]> {
+  const { data: rxRows } = await (supabase as any)
+    .from("prescriptions")
+    .select("id, admission_id, patient_id, doctor_id, created_at, lab_orders, radiology_orders")
+    .eq("hospital_id", hospitalId)
+    .not("admission_id", "is", null);
+
+  const active = (rxRows || []).filter((rx: any) =>
+    ((rx.lab_orders as any[]) || []).length > 0 || ((rx.radiology_orders as any[]) || []).length > 0
+  );
+  if (!active.length) return [];
+
+  const admissionIds: string[] = [...new Set<string>(active.map((rx: any) => rx.admission_id as string))];
+
+  const [{ data: admissions }, { data: labOrders }, { data: radOrders }] = await Promise.all([
+    (supabase as any).from("admissions")
+      .select("id, admitted_at, patient_id, admitting_doctor_id, status, patients(full_name, uhid, phone), wards(name), beds(bed_number)")
+      .in("id", admissionIds),
+    (supabase as any).from("lab_orders")
+      .select("admission_id, lab_order_items(lab_test_master:test_id(test_name))")
+      .in("admission_id", admissionIds).neq("status", "cancelled"),
+    (supabase as any).from("radiology_orders")
+      .select("admission_id, study_name")
+      .in("admission_id", admissionIds).neq("status", "cancelled"),
+  ]);
+
+  const admMap: Record<string, any> = {};
+  for (const a of admissions || []) admMap[a.id] = a;
+
+  const orderedLab: Record<string, Set<string>> = {};
+  for (const lo of labOrders || []) {
+    (orderedLab[lo.admission_id] ??= new Set());
+    for (const i of lo.lab_order_items || []) {
+      const n = i.lab_test_master?.test_name;
+      if (n) orderedLab[lo.admission_id].add(String(n).toLowerCase().trim());
+    }
+  }
+  const orderedRad: Record<string, Set<string>> = {};
+  for (const ro of radOrders || []) {
+    (orderedRad[ro.admission_id] ??= new Set());
+    if (ro.study_name) orderedRad[ro.admission_id].add(String(ro.study_name).toLowerCase().trim());
+  }
+
+  // Doctor names in one round-trip, same as the OPD path.
+  const doctorIds: string[] = [...new Set<string>(
+    (admissions || []).map((a: any) => a.admitting_doctor_id).filter(Boolean)
+  )];
+  const doctorMap: Record<string, string> = {};
+  if (doctorIds.length > 0) {
+    const { data: docs } = await supabase.from("users").select("id, full_name").in("id", doctorIds);
+    for (const d of docs || []) doctorMap[d.id] = d.full_name;
+  }
+
+  const rows: PendingInvestigationRow[] = [];
+  for (const rx of active) {
+    const adm = admMap[rx.admission_id as string];
+    // Discharged since the draft was written — nothing to collect on the ward.
+    if (!adm || adm.status !== "active") continue;
+
+    const ol = orderedLab[rx.admission_id as string] ?? new Set<string>();
+    const or = orderedRad[rx.admission_id as string] ?? new Set<string>();
+
+    const pendingLabTests = ((rx.lab_orders as any[]) || [])
+      .map((l: any) => l.test_name as string).filter(Boolean)
+      .filter((n: string) => !ol.has(n.toLowerCase().trim()));
+    const pendingRadiologyStudies = ((rx.radiology_orders as any[]) || [])
+      .map((r: any) => r.study_name as string).filter(Boolean)
+      .filter((n: string) => !or.has(n.toLowerCase().trim()));
+
+    if (!pendingLabTests.length && !pendingRadiologyStudies.length) continue;
+
+    const patient = adm.patients as any;
+    const when: string = rx.created_at || adm.admitted_at;
+    const ward = (adm.wards as any)?.name || "Ward";
+    const bed = (adm.beds as any)?.bed_number;
+
+    rows.push({
+      patientId: adm.patient_id as string,
+      patientName: patient?.full_name || "Unknown",
+      uhid: patient?.uhid || "",
+      phone: patient?.phone || null,
+      encounterId: "",
+      admissionId: rx.admission_id as string,
+      contextLabel: bed ? `${ward} · ${bed}` : ward,
+      encounterDate: when ? new Date(when).toISOString().split("T")[0] : "",
+      encounterTime: when
+        ? new Date(when).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })
+        : "",
+      doctorName: doctorMap[adm.admitting_doctor_id as string] || "—",
+      pendingLabTests,
+      pendingRadiologyStudies,
+      estimatedRevenue:
+        pendingLabTests.reduce((s, n) => s + (fees.labFeeMap[n.toLowerCase().trim()] || 0), 0) +
+        pendingRadiologyStudies.reduce((s, n) => s + (fees.radFeeMap[n.toLowerCase().trim()] || 0), 0),
+    });
+  }
+  return rows;
 }

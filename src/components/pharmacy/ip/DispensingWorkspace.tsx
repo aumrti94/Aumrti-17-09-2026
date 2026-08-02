@@ -577,6 +577,10 @@ const DispensingWorkspace: React.FC<Props> = ({ hospitalId, prescription, onDisp
           status: willHandOverNow ? "dispensed" : "awaiting_payment",
           total_amount: totalAmount,
           net_amount: totalAmount,
+          // A ward-raised header carries the prescriber in dispensed_by (the column is NOT
+          // NULL and no pharmacist existed yet). Claim it now so the audit trail names
+          // whoever actually handled the drugs.
+          dispensed_by: userData.id,
         })
         .eq("id", dispensingId!);
 

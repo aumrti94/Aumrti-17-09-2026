@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FlaskConical } from "lucide-react";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
+import FieldDictationButton from "@/components/voice/FieldDictationButton";
 
 interface Props {
   open: boolean;
@@ -26,6 +27,10 @@ const AntibioticJustificationModal: React.FC<Props> = ({
     iv_to_oral_plan: false, duration_days: "",
   });
   const [saving, setSaving] = useState(false);
+
+  /** Append dictated speech to whatever the doctor already typed, never replace it. */
+  const appendDictation = (field: "indication" | "de_escalation_plan") => (text: string) =>
+    setForm(f => ({ ...f, [field]: f[field] + (f[field] ? " " : "") + text }));
 
   const handleSave = async () => {
     if (!form.indication.trim()) return;
@@ -69,9 +74,16 @@ const AntibioticJustificationModal: React.FC<Props> = ({
 
           <div>
             <label className="text-xs font-medium">Clinical Indication *</label>
-            <textarea className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background resize-none" rows={2}
-              placeholder="e.g. Community-acquired pneumonia, suspected MRSA…"
-              value={form.indication} onChange={e => setForm(f => ({ ...f, indication: e.target.value }))} />
+            <div className="relative mt-1">
+              <textarea className="w-full border rounded-md pl-3 pr-11 py-2 text-sm bg-background resize-none" rows={2}
+                placeholder="e.g. Community-acquired pneumonia, suspected MRSA…"
+                value={form.indication} onChange={e => setForm(f => ({ ...f, indication: e.target.value }))} />
+              <FieldDictationButton
+                lang="en-IN"
+                onTranscript={appendDictation("indication")}
+                className="absolute bottom-2 right-2"
+              />
+            </div>
           </div>
 
           <label className="flex items-center gap-2 text-sm cursor-pointer">
@@ -114,9 +126,16 @@ const AntibioticJustificationModal: React.FC<Props> = ({
 
           <div>
             <label className="text-xs font-medium">De-escalation Plan</label>
-            <textarea className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background resize-none" rows={2}
-              placeholder="Narrow spectrum once culture available…"
-              value={form.de_escalation_plan} onChange={e => setForm(f => ({ ...f, de_escalation_plan: e.target.value }))} />
+            <div className="relative mt-1">
+              <textarea className="w-full border rounded-md pl-3 pr-11 py-2 text-sm bg-background resize-none" rows={2}
+                placeholder="Narrow spectrum once culture available…"
+                value={form.de_escalation_plan} onChange={e => setForm(f => ({ ...f, de_escalation_plan: e.target.value }))} />
+              <FieldDictationButton
+                lang="en-IN"
+                onTranscript={appendDictation("de_escalation_plan")}
+                className="absolute bottom-2 right-2"
+              />
+            </div>
           </div>
 
           <div className="flex gap-2 justify-end">

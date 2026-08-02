@@ -56,6 +56,7 @@ const RadiologyPage: React.FC = () => {
   const [pendingOrderPatient, setPendingOrderPatient] = useState<PendingOpdRadOrder["patient"] | null>(null);
   const [pendingOrderStudyNames, setPendingOrderStudyNames] = useState<string[]>([]);
   const [pendingOrderEncounterId, setPendingOrderEncounterId] = useState<string | null>(null);
+  const [pendingOrderAdmissionId, setPendingOrderAdmissionId] = useState<string | null>(null);
   const [mainTab, setMainTab] = useState<"worklist" | "pending_opd" | "tat_dashboard">("worklist");
   const [pendingOpdCount, setPendingOpdCount] = useState(0);
 
@@ -170,10 +171,12 @@ const RadiologyPage: React.FC = () => {
           <PendingOpdRadiologyTab
             hospitalId={hospitalId}
             onCountChange={setPendingOpdCount}
-            onCreateOrder={(patient, studyNames, encounterId) => {
+            onCreateOrder={(patient, studyNames, encounterId, admissionId) => {
               setPendingOrderPatient(patient);
               setPendingOrderStudyNames(studyNames);
-              setPendingOrderEncounterId(encounterId);
+              // A ward row has no encounter; passing "" would link the order to nothing.
+              setPendingOrderEncounterId(encounterId || null);
+              setPendingOrderAdmissionId(admissionId ?? null);
               setShowNewOrder(true);
             }}
           />
@@ -234,6 +237,7 @@ const RadiologyPage: React.FC = () => {
           preselectedPatient={pendingOrderPatient ?? undefined}
           preselectedStudyNames={pendingOrderStudyNames}
           linkedEncounterId={pendingOrderEncounterId}
+          linkedAdmissionId={pendingOrderAdmissionId}
         />
       )}
     </div>

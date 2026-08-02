@@ -10,6 +10,7 @@ import { postAncillaryOrderCharges } from "@/lib/ancillaryCharges";
 import { fetchIpdAncillaryPolicy, resolveChargePaymentStatus } from "@/lib/ipdAncillaryGate";
 import AdmissionLinker from "@/components/shared/AdmissionLinker";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
+import { getPrescribedPending } from "@/lib/prescribedPending";
 import { printBillById } from "@/lib/billPrint";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -218,59 +219,34 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
       .then(({ data }) => { setPatients((data as any) || []); setShowPatientResults(true); });
   }, [debouncedPatientSearch, hospitalId]);
 
-  // Auto-link encounter / admission — and auto-fetch OPD prescription tests (Lab module flow)
+  // Auto-link encounter / admission — and pre-select whatever the doctor prescribed.
+  //
+  // getPrescribedPending resolves the patient's context: today's OPD encounters, or (for an
+  // admitted patient) the current admission. This used to be an inline opd_encounters query
+  // that bailed out when the patient had no encounter today, which is exactly the case for an
+  // inpatient — so ward orders never pre-selected and the counter had nothing to bill.
   useEffect(() => {
     if (!selectedPatient) {
       setLinkedEncounter(null); setLinkedAdmission(null); setLinkInfo(null); setPendingTestNames([]);
       return;
     }
-    const today = new Date().toISOString().split("T")[0];
-    // Fetch ALL of today's OPD encounters for this patient (multiple doctors)
-    supabase.from("opd_encounters").select("id")
-      .eq("hospital_id", hospitalId).eq("patient_id", selectedPatient.id).eq("visit_date", today)
-      .order("created_at", { ascending: false })
-      .then(({ data }) => {
-        if (!data?.length) return;
-        const allEncIds = data.map((e: any) => e.id);
-        const primaryEncId = allEncIds[0]; // most recent as primary link
-        setLinkedEncounter(primaryEncId);
-        setLinkInfo(
-          allEncIds.length > 1
-            ? `🔗 Linked to today's OPD encounters (${allEncIds.length} doctors)`
-            : "🔗 Linked to today's OPD encounter"
-        );
-        // Lab module flow: fetch prescriptions from ALL encounters and merge
-        if (!preselectedNamesRef.current.length && !preselectionDone.current) {
-          Promise.all([
-            // All prescriptions across all encounters
-            (supabase as any).from("prescriptions")
-              .select("lab_orders")
-              .in("encounter_id", allEncIds),
-            // Already-ordered tests across all encounters
-            (supabase as any).from("lab_orders")
-              .select("lab_order_items(lab_test_master:test_id(test_name))")
-              .in("encounter_id", allEncIds),
-          ]).then(([{ data: rxList }, { data: existingOrders }]: any[]) => {
-            // Merge lab_orders from all doctors, deduplicate by name
-            const allNames: string[] = [...new Set<string>(
-              (rxList || []).flatMap((rx: any) =>
-                ((rx.lab_orders as any[]) || []).map((l: any) => l.test_name).filter(Boolean)
-              )
-            )];
-            const alreadyOrdered = new Set<string>(
-              (existingOrders || []).flatMap((o: any) =>
-                (o.lab_order_items || []).map((i: any) => (i.lab_test_master?.test_name || "").toLowerCase().trim())
-              )
-            );
-            const pending = allNames.filter(n => !alreadyOrdered.has(n.toLowerCase().trim()));
-            if (pending.length > 0) setPendingTestNames(pending);
-          });
-        }
-      });
-    // Admission linking is handled by <AdmissionLinker> below — it resolves ALL active
+    let cancelled = false;
+    getPrescribedPending(hospitalId, selectedPatient.id, "lab", {
+      preferredAdmissionId: linkedAdmissionId,
+    }).then((res) => {
+      if (cancelled) return;
+      // Most recent encounter is the primary link; null for an admitted patient.
+      setLinkedEncounter(res.encounterIds[0] ?? null);
+      setLinkInfo(res.linkLabel);
+      if (!preselectedNamesRef.current.length && !preselectionDone.current && res.names.length > 0) {
+        setPendingTestNames(res.names);
+      }
+    });
+    return () => { cancelled = true; };
+    // Admission linking itself stays with <AdmissionLinker> below — it resolves ALL active
     // admissions and lets the user pick when there is more than one, instead of grabbing an
     // arbitrary one here (which silently billed charges to the wrong stay).
-  }, [selectedPatient, hospitalId]);
+  }, [selectedPatient, hospitalId, linkedAdmissionId]);
 
   const addTest = (test: Test) => {
     if (!selectedTests.find(t => t.id === test.id)) setSelectedTests(prev => [...prev, test]);

@@ -25,8 +25,6 @@ interface Props {
   patientAge?: number;
   patientGender?: string;
   encounterId?: string | null;
-  onCommit?: () => void;
-  isSaving?: boolean;
   encounter?: EncounterData;
   onEncounterChange?: (partial: Partial<EncounterData>) => void;
 }
@@ -65,7 +63,7 @@ interface DrugSafetyMeta {
   tooltip: string;
 }
 
-const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, patientAllergies = [], encounterId, onCommit, isSaving, encounter, onEncounterChange }) => {
+const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, patientAllergies = [], encounterId, encounter, onEncounterChange }) => {
   const { toast } = useToast();
   const routeOptions     = useConfigValues("drug_routes");
   const frequencyOptions = useConfigValues("drug_frequencies");
@@ -687,6 +685,8 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
                   onSave={saveLabTpl}
                   onReset={resetLabTpl}
                   label="quick lab tests"
+                  suggestions={labMaster}
+                  suggestionLabel="Lab Test Master"
                 />
               )}
 
@@ -821,6 +821,8 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
                   onSave={saveRadTpl}
                   onReset={resetRadTpl}
                   label="quick radiology studies"
+                  suggestions={radMaster}
+                  suggestionLabel="Radiology Study Master"
                 />
               )}
 
@@ -939,27 +941,10 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
         )}
       </div>
 
-      {/* Action button if onCommit is provided */}
-      {onCommit && (
-        <div className="absolute bottom-4 right-[280px] z-10">
-          <button
-            onClick={onCommit}
-            disabled={isSaving || (prescription.drugs.length === 0 && prescription.lab_orders.length === 0 && prescription.radiology_orders.length === 0)}
-            className="flex items-center gap-2 bg-[#10B981] text-white px-6 py-2.5 rounded-lg shadow-lg hover:bg-[#059669] disabled:opacity-50 disabled:cursor-not-allowed font-semibold transition-all transform hover:scale-105 active:scale-95"
-          >
-            {isSaving ? (
-              <span className="flex items-center gap-2">
-                <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                Committing...
-              </span>
-            ) : (
-              <span className="flex items-center gap-2">
-                <CheckCircle2 size={18} /> Commit to IPD Record
-              </span>
-            )}
-          </button>
-        </div>
-      )}
+      {/* The IPD "Commit to IPD Record" button used to float here, absolutely
+          positioned over the test-chip list. It now lives in the IPD workspace's
+          bottom action bar (IPDWorkspace.tsx), which is where the other
+          admission-level actions already sit and where it covers nothing. */}
 
       {/* Safety alert modal */}
       {showSafetyModal && safetyResult && pendingDrug && (

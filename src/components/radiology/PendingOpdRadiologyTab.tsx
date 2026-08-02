@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { ScanLine, Phone, RefreshCw, Loader2 } from "lucide-react";
+import { ScanLine, Phone, RefreshCw, Loader2, BedDouble } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { getPendingInvestigations, type PendingInvestigationRow } from "@/lib/pendingInvestigations";
@@ -10,7 +10,8 @@ interface Props {
   onCreateOrder: (
     patient: { id: string; full_name: string; uhid: string },
     studyNames: string[],
-    encounterId: string
+    encounterId: string,
+    admissionId?: string | null,
   ) => void;
   onCountChange?: (count: number) => void;
 }
@@ -52,7 +53,7 @@ const PendingOpdRadiologyTab: React.FC<Props> = ({ hospitalId, onCreateOrder, on
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <ScanLine size={16} className="text-primary" />
-          <span className="text-[14px] font-semibold">Pending Radiology Orders from OPD</span>
+          <span className="text-[14px] font-semibold">Pending Radiology Orders</span>
           <Badge className="text-[10px] px-1.5 py-0 rounded-full bg-amber-100 text-amber-700 border-amber-200">
             {rows.length} patients
           </Badge>
@@ -63,7 +64,9 @@ const PendingOpdRadiologyTab: React.FC<Props> = ({ hospitalId, onCreateOrder, on
       </div>
 
       <p className="text-[12px] text-muted-foreground">
-        Doctors wrote these radiology studies in today's OPD prescriptions but no radiology order has been created yet.
+        Doctors wrote these studies in today's OPD prescriptions, or on an admitted patient's ward
+        orders, but no radiology order has been created yet. Ward rows appear only under
+        pay-before-service — accrue-to-bill raises the order at commit.
       </p>
 
       {rows.length === 0 ? (
@@ -75,7 +78,7 @@ const PendingOpdRadiologyTab: React.FC<Props> = ({ hospitalId, onCreateOrder, on
         <div className="space-y-2">
           {rows.map((row) => (
             <div
-              key={row.encounterId}
+              key={row.admissionId || row.encounterId}
               className="border border-border rounded-lg bg-card px-4 py-3 flex items-start justify-between gap-3"
             >
               {/* Patient + studies */}
@@ -83,6 +86,11 @@ const PendingOpdRadiologyTab: React.FC<Props> = ({ hospitalId, onCreateOrder, on
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-[14px] font-semibold text-foreground">{row.patientName}</span>
                   <span className="text-[11px] text-muted-foreground font-mono">{row.uhid}</span>
+                  {row.admissionId && (
+                    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border border-blue-200 bg-blue-50 text-blue-700">
+                      <BedDouble size={9} /> {row.contextLabel}
+                    </span>
+                  )}
                   {row.phone && (
                     <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
                       <Phone size={10} /> {row.phone}
@@ -123,7 +131,8 @@ const PendingOpdRadiologyTab: React.FC<Props> = ({ hospitalId, onCreateOrder, on
                   onCreateOrder(
                     { id: row.patientId, full_name: row.patientName, uhid: row.uhid },
                     row.pendingRadiologyStudies,
-                    row.encounterId
+                    row.encounterId,
+                    row.admissionId
                   )
                 }
               >

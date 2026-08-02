@@ -17,7 +17,7 @@ type Step = "select_package" | "patient_details" | "payment" | "confirmed";
 
 interface Package {
   id: string; package_name: string; description: string; price: number;
-  duration_minutes: number; hospital_id: string;
+  estimated_hours: number | null; hospital_id: string;
 }
 
 interface Hospital { id: string; name: string; city: string; }
@@ -41,7 +41,9 @@ export default function PublicBookingPage() {
   useEffect(() => {
     if (!selectedHospital) { setPackages([]); return; }
     setLoadingPackages(true);
-    supabase.from("health_packages").select("id, package_name, description, price, duration_minutes, hospital_id")
+    // `duration_minutes` does not exist on health_packages — selecting it 400d the whole
+    // query, so this public page listed no packages at all. The real column is estimated_hours.
+    supabase.from("health_packages").select("id, package_name, description, price, estimated_hours, hospital_id")
       .eq("hospital_id", selectedHospital).eq("is_active", true).order("price")
       .then(({ data }) => { setPackages(data || []); setLoadingPackages(false); });
   }, [selectedHospital]);
@@ -195,7 +197,7 @@ export default function PublicBookingPage() {
                               <div className="flex-1">
                                 <p className="font-semibold text-foreground">{pkg.package_name}</p>
                                 {pkg.description && <p className="text-sm text-muted-foreground mt-0.5">{pkg.description}</p>}
-                                {pkg.duration_minutes && <p className="text-xs text-muted-foreground mt-1">Duration: {pkg.duration_minutes} min</p>}
+                                {pkg.estimated_hours ? <p className="text-xs text-muted-foreground mt-1">Duration: approx. {pkg.estimated_hours} hr</p> : null}
                               </div>
                               <Badge className="text-base font-bold px-3 py-1 bg-primary/10 text-primary border-0">
                                 <IndianRupee className="h-3.5 w-3.5 mr-0.5" />{pkg.price.toLocaleString("en-IN")}

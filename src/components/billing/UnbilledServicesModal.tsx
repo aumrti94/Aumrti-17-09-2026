@@ -15,6 +15,7 @@ interface PharmacyRow {
   unit_price: number;
   gst_percent: number;
   total_price: number;
+  dedupe_key: string;
 }
 
 interface LabRow {
@@ -22,6 +23,7 @@ interface LabRow {
   test_id: string | null;
   test_name: string;
   fee: number;
+  dedupe_key: string;
 }
 
 interface RadRow {
@@ -29,6 +31,7 @@ interface RadRow {
   study_name: string;
   modality_type: string | null;
   fee: number;
+  dedupe_key: string;
 }
 
 interface Props {
@@ -65,7 +68,7 @@ const UnbilledServicesModal: React.FC<Props> = ({ bill, hospitalId, onClose, onA
       if (dispIds.length > 0) {
         const { data: items } = await (supabase as any)
           .from("pharmacy_dispensing_items")
-          .select("dispensing_id, drug_name, quantity_dispensed, unit_price, gst_percent, total_price")
+          .select("id, dispensing_id, drug_name, quantity_dispensed, unit_price, gst_percent, total_price")
           .in("dispensing_id", dispIds);
         pharmRows = (items || []).map((i: any) => ({
           dispensing_id: i.dispensing_id,
@@ -74,6 +77,7 @@ const UnbilledServicesModal: React.FC<Props> = ({ bill, hospitalId, onClose, onA
           unit_price: Number(i.unit_price) || 0,
           gst_percent: Number(i.gst_percent) || 0,
           total_price: Number(i.total_price) || 0,
+          dedupe_key: `pharmacy:dispense-item:${i.id}`,
         }));
       }
 
@@ -88,7 +92,7 @@ const UnbilledServicesModal: React.FC<Props> = ({ bill, hospitalId, onClose, onA
       if (labOrderIds.length > 0) {
         const { data: items } = await supabase
           .from("lab_order_items")
-          .select("lab_order_id, test_id")
+          .select("id, lab_order_id, test_id")
           .in("lab_order_id", labOrderIds);
         const testIds = Array.from(new Set((items || []).map((i: any) => i.test_id).filter(Boolean)));
         const { data: tests } = testIds.length
@@ -102,6 +106,7 @@ const UnbilledServicesModal: React.FC<Props> = ({ bill, hospitalId, onClose, onA
             test_id: i.test_id,
             test_name: t?.test_name || "Lab Test",
             fee: Number(t?.fee) || 0,
+            dedupe_key: `lab:${i.id}`,
           };
         });
       }
@@ -122,19 +127,43 @@ const UnbilledServicesModal: React.FC<Props> = ({ bill, hospitalId, onClose, onA
         study_name: r.study_name,
         modality_type: r.modality_type,
         fee: modMap.get(r.modality_id) || 0,
+        dedupe_key: `radiology:${r.id}`,
       }));
 
-      setPharmacy(pharmRows);
-      setLabs(labRows);
-      setRads(radRows);
+      // Drop anything already charged. The `billed` boolean above is only one of two ways a
+      // service gets paid for: orders committed from the IPD ward post their charge through
+      // postAncillaryOrderCharges, which writes a source_dedupe_key. Filtering on the boolean
+      // alone re-offered those here — pre-selected — and billed the patient a second time.
+      const allKeys = [
+        ...pharmRows.map((r) => r.dedupe_key),
+        ...labRows.map((r) => r.dedupe_key),
+        ...radRows.map((r) => r.dedupe_key),
+      ];
+      let chargedKeys = new Set<string>();
+      if (allKeys.length > 0) {
+        const { data: existing } = await (supabase as any)
+          .from("bill_line_items")
+          .select("source_dedupe_key")
+          .eq("hospital_id", hospitalId)
+          .in("source_dedupe_key", allKeys);
+        chargedKeys = new Set((existing || []).map((e: any) => e.source_dedupe_key));
+      }
+
+      const freshPharm = pharmRows.filter((r) => !chargedKeys.has(r.dedupe_key));
+      const freshLabs = labRows.filter((r) => !chargedKeys.has(r.dedupe_key));
+      const freshRads = radRows.filter((r) => !chargedKeys.has(r.dedupe_key));
+
+      setPharmacy(freshPharm);
+      setLabs(freshLabs);
+      setRads(freshRads);
       // Default all checked
-      setSelectedPharm(new Set(pharmRows.map((_, idx) => String(idx))));
-      setSelectedLab(new Set(labRows.map((_, idx) => String(idx))));
-      setSelectedRad(new Set(radRows.map((r) => r.id)));
+      setSelectedPharm(new Set(freshPharm.map((_, idx) => String(idx))));
+      setSelectedLab(new Set(freshLabs.map((_, idx) => String(idx))));
+      setSelectedRad(new Set(freshRads.map((r) => r.id)));
       setLoading(false);
     };
     load();
-  }, [bill.admission_id]);
+  }, [bill.admission_id, hospitalId]);
 
   const togglePharm = (key: string) => {
     const next = new Set(selectedPharm);
@@ -189,6 +218,9 @@ const UnbilledServicesModal: React.FC<Props> = ({ bill, hospitalId, onClose, onA
         total_amount: p.total_price || taxable + gstAmt,
         source_module: "pharmacy",
         source_record_id: p.dispensing_id,
+        // Stamp the same key the ancillary charge path and the discharge sweep use, so
+        // whichever runs second recognises this line and skips it.
+        source_dedupe_key: p.dedupe_key,
       });
       dispIdsToMark.add(p.dispensing_id);
     });
@@ -210,6 +242,7 @@ const UnbilledServicesModal: React.FC<Props> = ({ bill, hospitalId, onClose, onA
         total_amount: l.fee,
         source_module: "lab",
         source_record_id: l.lab_order_id,
+        source_dedupe_key: l.dedupe_key,
       });
       labOrderIdsToMark.add(l.lab_order_id);
     });
@@ -231,6 +264,7 @@ const UnbilledServicesModal: React.FC<Props> = ({ bill, hospitalId, onClose, onA
         total_amount: r.fee,
         source_module: "radiology",
         source_record_id: r.id,
+        source_dedupe_key: r.dedupe_key,
       });
       radIdsToMark.add(r.id);
     });

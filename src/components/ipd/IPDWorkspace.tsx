@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { hasTabAccess, hasActionAccess } from "@/lib/tabPermissions";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
-import { BedDouble, ExternalLink, ArrowUpRight, Printer, FileText, MonitorDot } from "lucide-react";
+import { BedDouble, ExternalLink, ArrowUpRight, Printer, FileText, MonitorDot, CheckCircle2, Save } from "lucide-react";
 import { printDocument, printHeader, printAmount } from "@/lib/printUtils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -103,6 +103,10 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
   const [latestNews2, setLatestNews2] = useState<number | null>(null);
   const [prescription, setPrescription] = useState<PrescriptionData>(emptyPrescription);
   const [savingOrders, setSavingOrders] = useState(false);
+  /** Row id of this admission's `prescriptions` draft, once saved. */
+  const [prescriptionId, setPrescriptionId] = useState<string | null>(null);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const rxSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { registerScreen, unregisterScreen } = useVoiceScribe();
   const { show: showWaNotif, card: waCard } = useWhatsAppNotification();
 
@@ -232,6 +236,114 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
       });
   }, [bed, showBloodRequest]);
 
+  // The admission id, resolved for hooks. `admissionId` below is declared after this
+  // component's early returns, so it is not in scope up here — but hooks must run
+  // unconditionally, so they read it straight off the bed instead.
+  const draftAdmissionId = bed?.admission?.id ?? null;
+
+  // ── Rx & Orders draft ───────────────────────────────────────────────────────
+  //
+  // The ward draft has to live in `prescriptions`, not just React state, for two reasons:
+  // it must survive a tab switch, and it is the ONLY thing the Lab / Radiology / IP Pharmacy
+  // screens read in order to pre-select what the doctor ordered. OPD has done this all along
+  // (ConsultationWorkspace.autoSavePrescription); IPD never did, which is why ward orders
+  // reached no module. Keyed on admission_id — see the prescriptions_one_context CHECK.
+
+  const saveIpdPrescription = useCallback(async (
+    data: PrescriptionData,
+    opts?: { commit?: boolean }
+  ): Promise<string | null> => {
+    if (!hospitalId || !userId || !patient || !draftAdmissionId) return null;
+    const payload = {
+      hospital_id: hospitalId,
+      admission_id: draftAdmissionId,
+      encounter_id: null,
+      patient_id: patient.id,
+      doctor_id: userId,
+      prescription_date: new Date().toISOString().split("T")[0],
+      drugs: JSON.parse(JSON.stringify(data.drugs)),
+      lab_orders: JSON.parse(JSON.stringify(data.lab_orders)),
+      radiology_orders: JSON.parse(JSON.stringify(data.radiology_orders)),
+      advice_notes: data.advice_notes || null,
+      review_date: data.review_date || null,
+      status: opts?.commit ? "committed" : "draft",
+      // Deliberately NOT the OPD rule (drugs.length > 0). PrescriptionQueue lists every
+      // `is_signed` prescription, so signing a draft would push half-typed orders at a
+      // pharmacist. Only a commit signs.
+      is_signed: !!opts?.commit,
+    };
+    try {
+      if (prescriptionId) {
+        const { error } = await supabase.from("prescriptions")
+          .update(payload as never).eq("id", prescriptionId);
+        if (error) throw error;
+        return prescriptionId;
+      }
+      const { data: row, error } = await supabase.from("prescriptions")
+        .upsert([payload] as never, { onConflict: "admission_id" })
+        .select("id").maybeSingle();
+      if (error) throw error;
+      if (row) { setPrescriptionId(row.id); return row.id; }
+      return null;
+    } catch (err: any) {
+      // A silent failure here is what leaves the lab counter with nothing to bill, so unlike
+      // OPD (which only console.errors) this surfaces.
+      console.error("IPD prescription save failed:", err?.message || err);
+      throw err;
+    }
+  }, [hospitalId, userId, patient, draftAdmissionId, prescriptionId]);
+
+  // Restore the draft when the admission opens.
+  useEffect(() => {
+    if (!hospitalId || !draftAdmissionId) return;
+    let cancelled = false;
+    supabase.from("prescriptions")
+      .select("id, drugs, lab_orders, radiology_orders, advice_notes, review_date, status")
+      .eq("hospital_id", hospitalId)
+      .eq("admission_id", draftAdmissionId)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled || error || !data) return;
+        setPrescriptionId(data.id);
+        setPrescription({
+          drugs: (data.drugs as unknown as DrugEntry[]) || [],
+          lab_orders: (data.lab_orders as unknown as LabOrder[]) || [],
+          radiology_orders: (data.radiology_orders as unknown as RadiologyOrder[]) || [],
+          advice_notes: (data.advice_notes as string) || "",
+          review_date: (data.review_date as string) || "",
+          is_signed: false,
+        });
+      });
+    return () => { cancelled = true; };
+  }, [hospitalId, draftAdmissionId]);
+
+  /** Debounced draft write — mirrors OPD's 2s cadence so the modules see selections promptly. */
+  const updatePrescription = useCallback((partial: Partial<PrescriptionData>) => {
+    setPrescription((prev) => {
+      const next = { ...prev, ...partial };
+      if (rxSaveTimer.current) clearTimeout(rxSaveTimer.current);
+      rxSaveTimer.current = setTimeout(() => {
+        saveIpdPrescription(next).catch(() => {/* surfaced by Save Draft / Commit */});
+      }, 2000);
+      return next;
+    });
+  }, [saveIpdPrescription]);
+
+  useEffect(() => () => { if (rxSaveTimer.current) clearTimeout(rxSaveTimer.current); }, []);
+
+  const handleSaveDraft = async () => {
+    if (rxSaveTimer.current) { clearTimeout(rxSaveTimer.current); rxSaveTimer.current = null; }
+    setSavingDraft(true);
+    try {
+      await saveIpdPrescription(prescription);
+      toast({ title: "Draft saved" });
+    } catch (err: any) {
+      toast({ title: "Couldn't save draft", description: err?.message, variant: "destructive" });
+    } finally {
+      setSavingDraft(false);
+    }
+  };
+
   // Voice Scribe Integration
   useEffect(() => {
     const fillFn = (data: Record<string, unknown>) => {
@@ -256,20 +368,32 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
       });
 
       if (drugs.length > 0 || labOrders.length > 0 || radOrders.length > 0) {
-        setPrescription((prev) => ({
-          ...prev,
-          drugs: [...prev.drugs, ...drugs],
-          lab_orders: [...prev.lab_orders, ...labOrders],
-          radiology_orders: [...prev.radiology_orders, ...radOrders],
-          advice_notes: (data.advice_notes as string) || (data.follow_up as string) || prev.advice_notes,
-        }));
-        setActiveTab("rx_orders");
-        toast({ title: "Voice scribe populated Rx & Orders" });
+        // Goes through updatePrescription, not setPrescription, so dictated orders are
+        // persisted like typed ones — otherwise they would live only in memory and the
+        // Lab / Radiology modules would never see them.
+        setPrescription((prev) => {
+          const next: PrescriptionData = {
+            ...prev,
+            drugs: [...prev.drugs, ...drugs],
+            lab_orders: [...prev.lab_orders, ...labOrders],
+            radiology_orders: [...prev.radiology_orders, ...radOrders],
+            advice_notes: (data.advice_notes as string) || (data.follow_up as string) || prev.advice_notes,
+          };
+          if (rxSaveTimer.current) clearTimeout(rxSaveTimer.current);
+          rxSaveTimer.current = setTimeout(() => {
+            saveIpdPrescription(next).catch(() => {/* surfaced by Save Draft / Commit */});
+          }, 2000);
+          return next;
+        });
+        // No setActiveTab here. applyToCurrentScreen fires EVERY registered filler, so
+        // jumping to Rx & Orders yanked the user off Notes or Ward Round mid-dictation.
+        // The orders are staged; the doctor decides when to look at them.
+        toast({ title: "Voice scribe staged orders in Rx & Orders" });
       }
     };
     registerScreen("ipd_workspace", fillFn);
     return () => unregisterScreen("ipd_workspace");
-  }, [registerScreen, unregisterScreen]);
+  }, [registerScreen, unregisterScreen, saveIpdPrescription]);
 
   // ── ICU ward detection ──────────────────────────────────────────────────────
   const [isIcuWard, setIsIcuWard] = React.useState(false);
@@ -546,6 +670,16 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
 
     setSavingOrders(true);
     try {
+      // Policy first — it decides whether lab/radiology are ordered here at all.
+      const policy = await fetchIpdAncillaryPolicy(hospitalId);
+      const labPrePaid = policy.lab.mode === "pre_paid";
+      const radPrePaid = policy.radiology.mode === "pre_paid";
+
+      // Persist and sign the prescription before anything else. Under pay-before-service this
+      // row IS the order — the Lab / Radiology modules read it to pre-select the tests and
+      // take payment, exactly as they do for an OPD encounter.
+      const rxId = await saveIpdPrescription(prescription, { commit: true });
+
       if (hasDrugs) {
         const medsToInsert = prescription.drugs.map(d => ({
           hospital_id: hospitalId, admission_id: admissionId,
@@ -557,21 +691,71 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
         }));
         const { error: medErr } = await supabase.from("ipd_medications").insert(medsToInsert);
         if (medErr) throw medErr;
+
+        // ipd_medications alone is invisible to pharmacy — PrescriptionQueue is built from
+        // pharmacy_dispensing headers and unlinked prescriptions, neither of which the ward
+        // writes. Open a pending header so the order reaches the counter; DispensingWorkspace
+        // then reads the admission's active ipd_medications to populate it.
+        const { data: openDisp, error: dispLookupErr } = await supabase
+          .from("pharmacy_dispensing")
+          .select("id")
+          .eq("hospital_id", hospitalId)
+          .eq("admission_id", admissionId)
+          .eq("dispensing_type", "ip")
+          .in("status", ["pending", "partial", "processing"])
+          .limit(1);
+        if (dispLookupErr) throw dispLookupErr;
+
+        // Re-committing on the same admission must top up the existing queue row, not spawn
+        // a second one — the pharmacist would otherwise see the same patient twice.
+        if (!openDisp || openDisp.length === 0) {
+          const { error: dispErr } = await supabase.from("pharmacy_dispensing").insert({
+            hospital_id: hospitalId,
+            patient_id: patient.id,
+            admission_id: admissionId,
+            dispensing_type: "ip",
+            status: "pending",
+            // Linking the prescription lets PrescriptionQueue's existing `linkedIds` dedupe
+            // suppress the signed prescription row, so the pharmacist sees one entry, not two.
+            prescription_id: rxId,
+            // NOT NULL on the table. The prescriber owns the row until a pharmacist acts on
+            // it; DispensingWorkspace overwrites this with the real dispenser on confirm.
+            dispensed_by: userId,
+          } as never);
+          if (dispErr) throw dispErr;
+        } else if (rxId) {
+          await supabase.from("pharmacy_dispensing")
+            .update({ prescription_id: rxId } as never)
+            .eq("id", openDisp[0].id);
+        }
       }
 
-      // Charges are posted here, at ORDER time, rather than swept in at discharge. The
-      // hospital's per-service policy decides what that means (see lib/ipdAncillaryGate.ts):
-      // post_paid keeps today's behaviour (accrues to the admission bill, settled at
-      // discharge); pre_paid marks the charge pending_payment and the ward's gate holds the
-      // service until a cashier collects. The dedupe keys match the discharge sweep's exactly,
-      // so the sweep recognises these lines and does not add them again.
-      const policy = await fetchIpdAncillaryPolicy(hospitalId);
+      // WHO CREATES THE LAB / RADIOLOGY ORDER depends on the hospital's payment policy
+      // (Settings → IPD Ancillary Payment, see lib/ipdAncillaryGate.ts):
+      //
+      //   post_paid — the charge accrues to the admission bill and is settled at discharge,
+      //     so there is nobody to collect from and no reason to wait. Commit creates the
+      //     order and posts the charge, as it always has.
+      //
+      //   pre_paid — the attendant pays at the counter BEFORE the service. Creating the
+      //     order here as well would double it: the module would create a second order and
+      //     a second bill line when it takes the cash. So commit deliberately does nothing
+      //     but leave the items on the prescription for the module to pull.
+      //
+      // The dedupe keys on the post_paid path match the discharge sweep's exactly, so the
+      // sweep recognises those lines and does not add them again.
 
-      if (hasLabs) {
+      // Tests syncLabOrders could not resolve to a master row. They are never ordered and
+      // never billed, so they must survive the post-commit reset below — otherwise the only
+      // trace is a toast that vanishes, and the test is silently lost.
+      let unmatchedLabs: string[] = [];
+
+      if (hasLabs && !labPrePaid) {
         const labSync = await syncLabOrders({
           hospitalId, patientId: patient.id, orderedBy: userId, admissionId,
           items: prescription.lab_orders,
         });
+        unmatchedLabs = labSync.unmatched;
         if (labSync.unmatched.length > 0) {
           toast({
             title: `${labSync.unmatched.length} lab test(s) not in the test master — not ordered`,
@@ -590,14 +774,18 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
 
         // Mark as billed so orders appear in Lab Queue immediately. The charge now exists on
         // the bill from this moment, whatever the payment mode.
+        //
+        // `billed` is the legacy boolean UnbilledServicesModal filters on. Without it that
+        // modal re-offers these orders at discharge, pre-selected, and inserts a second set
+        // of bill lines — charging the patient twice for one test.
         await supabase.from("lab_orders")
-          .update({ billing_status: "billed", payment_status: charged.paymentStatus } as never)
+          .update({ billing_status: "billed", billed: true, payment_status: charged.paymentStatus } as never)
           .eq("admission_id", admissionId)
           .eq("hospital_id", hospitalId)
           .eq("billing_status", "unbilled");
       }
 
-      if (hasRads) {
+      if (hasRads && !radPrePaid) {
         const radSync = await syncRadiologyOrders({
           hospitalId, patientId: patient.id, orderedBy: userId, admissionId,
           items: prescription.radiology_orders,
@@ -609,22 +797,42 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
         });
         if (!charged.ok) throw new Error(charged.error || "Radiology charges could not be posted");
 
+        // `billed: true` for the same reason as the lab update above.
         await supabase.from("radiology_orders")
-          .update({ billing_status: "billed", payment_status: charged.paymentStatus } as never)
+          .update({ billing_status: "billed", billed: true, payment_status: charged.paymentStatus } as never)
           .eq("admission_id", admissionId)
           .eq("hospital_id", hospitalId)
           .eq("billing_status", "unbilled");
       }
 
-      const prePaid = hasLabs && policy.lab.mode === "pre_paid"
-        || hasRads && policy.radiology.mode === "pre_paid";
+      const awaitingCounter = (hasLabs && labPrePaid) || (hasRads && radPrePaid);
       toast({
         title: "Orders committed",
-        description: prePaid
-          ? "Medications active in MAR. Lab/Radiology orders registered — payment is due at the counter before the service is performed."
+        description: awaitingCounter
+          ? "Medications active in MAR. Lab/Radiology await payment — the attendant pays at the counter, where the order is raised."
           : "Medications active in MAR. Lab/Radiology orders registered and charges added to IPD bill.",
       });
-      setPrescription(emptyPrescription);
+
+      // Clear only what actually became an order.
+      //  - post_paid lab/radiology → ordered, so they go.
+      //  - pre_paid lab/radiology → MUST stay: they are what the Lab/Radiology module reads to
+      //    pre-select and bill. Clearing them here is precisely the bug being fixed.
+      //  - unmatched tests → stay either way, flagged by AvailabilityBadge, so the doctor can
+      //    correct the name or have it added to the master and commit again.
+      const stillUnmatched = new Set(unmatchedLabs.map((n) => n.toLowerCase()));
+      const keptLabs = labPrePaid
+        ? prescription.lab_orders
+        : prescription.lab_orders.filter((l) => stillUnmatched.has(l.test_name.toLowerCase()));
+      const keptRads = radPrePaid ? prescription.radiology_orders : [];
+      const nextPrescription: PrescriptionData = {
+        ...emptyPrescription,
+        lab_orders: keptLabs,
+        radiology_orders: keptRads,
+      };
+      setPrescription(nextPrescription);
+      // Persist the cleared state, or the drugs just moved to the MAR would be re-committed
+      // on the next save and the module would still see stale items.
+      await saveIpdPrescription(nextPrescription, { commit: true });
       onRefresh();
     } catch (err: any) {
       toast({ title: "Commit failed", description: err.message, variant: "destructive" });
@@ -829,13 +1037,11 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
           <TabsContent value="rx_orders" className="h-full m-0">
             <RxOrdersTab
               prescription={prescription}
-              onChange={(p) => setPrescription(prev => ({ ...prev, ...p }))}
+              onChange={updatePrescription}
               hospitalId={hospitalId}
               patientAllergies={patient?.allergies ? patient.allergies.split(",").map(a => a.trim()) : []}
               patientAge={patientAge || undefined}
               patientGender={patient?.gender || undefined}
-              onCommit={handleCommitOrders}
-              isSaving={savingOrders}
             />
           </TabsContent>
           <TabsContent value="investigations" className="h-full m-0">
@@ -926,7 +1132,16 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
       {/* Bottom action bar */}
       <div className="flex-shrink-0 h-14 bg-card border-t border-border px-4 flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <VoiceDictationButton sessionType="ipd_workspace" size="sm" />
+          {/* Dictation belongs to the narrative tabs. Elsewhere the mic had nowhere to write,
+              so it only ever produced a surprise jump to Rx & Orders. Ward Round used to
+              carry its own second mic inside the tab; this is now the only one. */}
+          {(activeTab === "notes" || activeTab === "wardround") && (
+            <VoiceDictationButton
+              sessionType={activeTab === "wardround" ? "ward_round" : "nursing_note"}
+              patientId={patient?.id}
+              size="sm"
+            />
+          )}
           <ClinicalCalculatorPanel onInsertToNote={(text) => {
             window.dispatchEvent(new CustomEvent("insert-clinical-note", { detail: text }));
           }} />
@@ -963,6 +1178,38 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
           )}
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0">
+          {/* Commit lives here, not floating inside RxOrdersTab where it covered the
+              test-chip list. Scoped to the tab whose content it commits. */}
+          {activeTab === "rx_orders" && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleSaveDraft}
+              disabled={savingDraft}
+              className="text-xs h-8"
+            >
+              <Save size={14} className="mr-1" /> {savingDraft ? "Saving..." : "Save Draft"}
+            </Button>
+          )}
+          {activeTab === "rx_orders" && (
+            <Button
+              size="sm"
+              onClick={handleCommitOrders}
+              disabled={savingOrders || (prescription.drugs.length === 0 && prescription.lab_orders.length === 0 && prescription.radiology_orders.length === 0)}
+              className="text-xs h-8 bg-[#10B981] text-white hover:bg-[#059669] disabled:opacity-50 disabled:cursor-not-allowed font-semibold"
+            >
+              {savingOrders ? (
+                <>
+                  <div className="h-3.5 w-3.5 mr-1 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Committing...
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 size={14} className="mr-1" /> Commit to IPD Record
+                </>
+              )}
+            </Button>
+          )}
           {hasActionAccess("ipd", "initiate_discharge", permissions, role) && (
             <Button
               size="sm"

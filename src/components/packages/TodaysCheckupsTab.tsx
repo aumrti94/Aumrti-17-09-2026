@@ -11,6 +11,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { CheckCircle2, Circle, PlayCircle, Stethoscope, FlaskConical, Activity } from "lucide-react";
 import { useHospitalId } from '@/hooks/useHospitalId';
+import { getCurrentUserRowId } from "@/lib/currentUser";
+import { parseComponents, componentsOfType } from "@/lib/packageComponents";
+import { resolveComponentNames, stationKeys, readStagedOrders } from "@/lib/packageOrders";
 
 const STATIONS = ["Reception", "Vitals", "Lab", "ECG", "X-Ray", "USG", "Doctor", "Report"];
 
@@ -23,6 +26,10 @@ interface VitalsForm {
 
 export default function TodaysCheckupsTab({ onRefreshKPIs }: Props) {
   const { hospitalId } = useHospitalId();
+  // lab_orders.ordered_by FKs to public.users.id, which is NOT the auth uid. This used to be
+  // passed the hospital id, putting a hospital in a user column.
+  const [userId, setUserId] = useState<string | null>(null);
+  useEffect(() => { getCurrentUserRowId().then(setUserId); }, []);
   const [bookings, setBookings] = useState<any[]>([]);
   const [vitalsModal, setVitalsModal] = useState<any | null>(null);
   const [stationModal, setStationModal] = useState<{ booking: any; station: string } | null>(null);
@@ -100,56 +107,63 @@ export default function TodaysCheckupsTab({ onRefreshKPIs }: Props) {
   };
 
   const createLabOrders = async (booking: any) => {
-    const components = Array.isArray(booking.health_packages?.components) ? booking.health_packages.components : [];
-    const labComponents = components.filter((c: any) =>
-      typeof c === "string" ? c.toLowerCase().includes("blood") || c.toLowerCase().includes("urine") || c.toLowerCase().includes("test") || c.toLowerCase().includes("cbc") || c.toLowerCase().includes("sugar") || c.toLowerCase().includes("lipid") || c.toLowerCase().includes("thyroid") || c.toLowerCase().includes("liver") || c.toLowerCase().includes("kidney") || c.toLowerCase().includes("hba1c")
-      : false
-    );
-    
-    // Try to create lab orders for matching tests
-    if (labComponents.length > 0) {
-      for (const testName of labComponents) {
-        const { data: test } = await supabase
-          .from("lab_test_master")
-          .select("id")
-          .eq("hospital_id", hospitalId)
-          .ilike("test_name", `%${testName}%`)
-          .limit(1)
-          .maybeSingle();
-        
-        if (test) {
-          const { data: order } = await supabase.from("lab_orders").insert({
-            hospital_id: hospitalId,
-            patient_id: booking.patient_id,
-            ordered_by: hospitalId,
-            status: "ordered",
-            priority: "routine",
-            clinical_notes: `Health package: ${booking.health_packages?.package_name} — ${testName}`,
-          } as any).select("id").maybeSingle();
+    // Components are stored as objects ({name, type, source_id, …}). This used to test
+    // `typeof c === "string"` and keyword-match the text, so it matched nothing and always
+    // reported "No lab components found" — the tests were never ordered from this station.
+    const components = parseComponents(booking.health_packages?.components);
+    const labComponents = componentsOfType(components, "lab_test");
 
-          if (order) {
-            await supabase.from("lab_order_items").insert({
-              hospital_id: hospitalId,
-              lab_order_id: order.id,
-              test_id: test.id,
-              status: "ordered",
-            } as any);
-            await supabase.from("lab_samples").insert({
-              hospital_id: hospitalId,
-              lab_order_id: order.id,
-              sample_type: "blood",
-              barcode: `BC-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
-              status: "pending",
-            } as any);
-          }
-        }
-      }
-      toast.success(`${labComponents.length} lab orders created`);
-    } else {
-      toast.info("No lab components found in package — marking station complete");
+    if (labComponents.length === 0) {
+      toast.info("No lab components in this package — marking station complete");
+      await advanceStation(booking, { lab_orders_created: 0 });
+      return;
     }
-    
-    await advanceStation(booking, { lab_orders_created: labComponents.length });
+
+    // Booking already staged these orders. syncLabOrders only dedupes against an encounter or
+    // an admission (a package has neither), so calling it again here would create a SECOND set
+    // of orders for the same tests. Advance the station instead.
+    const alreadyStaged = readStagedOrders(booking.components_done).lab;
+    if (alreadyStaged.length > 0) {
+      toast.info(`${alreadyStaged.length} lab order(s) already raised for this package`);
+      await advanceStation(booking, { lab_orders_created: 0 });
+      return;
+    }
+
+    let created = 0;
+    try {
+      // Fallback for bookings made before orders were staged at booking time.
+      //
+      // syncLabOrders resolves against lab_test_master, creates header + item + sample
+      // atomically through the create_lab_order_with_items RPC, and logs NABH evidence. The
+      // hand-rolled inserts this replaces bypassed the RPC, skipped billing, and wrote the
+      // hospital id into lab_orders.ordered_by (a users column).
+      const names = await resolveComponentNames(
+        hospitalId, labComponents, "lab_test_master", "test_name");
+      const { syncLabOrders } = await import("@/lib/investigationSync");
+      const res = await syncLabOrders({
+        hospitalId,
+        patientId: booking.patient_id,
+        orderedBy: userId || "",
+        encounterId: null,
+        admissionId: null,
+        items: names.map((n) => ({
+          test_name: n,
+          urgency: "routine",
+          clinical_indication: `Health Package: ${booking.health_packages?.package_name || ""}`,
+        })),
+      });
+      created = res.created;
+      if (res.unmatched.length > 0) {
+        toast.warning(`Not in test master (order manually): ${res.unmatched.join(", ")}`);
+      }
+      toast.success(`${created} lab order(s) created`);
+    } catch (e) {
+      console.error("Package lab order creation failed:", e);
+      toast.error("Could not create lab orders");
+      return;
+    }
+
+    await advanceStation(booking, { lab_orders_created: created });
   };
 
   const saveStationNotes = async () => {
@@ -186,7 +200,9 @@ export default function TodaysCheckupsTab({ onRefreshKPIs }: Props) {
       {bookings.length === 0 && <p className="text-center text-muted-foreground py-8">No checkups scheduled for today</p>}
       {bookings.map((b) => {
         const done = b.components_done || {};
-        const doneCount = Object.keys(done).length;
+        // stationKeys drops reserved "__"-prefixed entries (the staged order ids the booking
+        // records), so they never count as a completed station.
+        const doneCount = stationKeys(done).length;
         const totalStations = STATIONS.length;
         const pct = Math.round((doneCount / totalStations) * 100);
         const patient = b.patients;

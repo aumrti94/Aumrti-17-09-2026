@@ -40,7 +40,17 @@ const MODULE_LABELS: Record<string, string> = {
   nursing: "Nursing", pharmacy: "Pharmacy",
 };
 
-export default function PendingCollectionsPanel({ dateRange }: { dateRange?: BillingDateRange }) {
+interface PendingCollectionsPanelProps {
+  dateRange?: BillingDateRange;
+  /**
+   * Pin the panel to one source_module and hide the module picker. Used when the panel is
+   * embedded inside that module's own screen (Lab, Radiology), where "all modules" would be
+   * noise. Omit it for the billing desk, which wants everything.
+   */
+  lockedModule?: string;
+}
+
+export default function PendingCollectionsPanel({ dateRange, lockedModule }: PendingCollectionsPanelProps) {
   const { hospitalId } = useHospitalId();
   // Depend on the primitives, not the object — the reload must key off the dates
   // themselves, so a caller that rebuilds the range object each render can't loop us.
@@ -49,7 +59,7 @@ export default function PendingCollectionsPanel({ dateRange }: { dateRange?: Bil
   const [items, setItems] = useState<PendingItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
-  const [moduleFilter, setModuleFilter] = useState("all");
+  const [moduleFilter, setModuleFilter] = useState(lockedModule ?? "all");
   const [paying, setPaying] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
 
@@ -327,17 +337,19 @@ export default function PendingCollectionsPanel({ dateRange }: { dateRange?: Bil
             className="pl-9 h-9"
           />
         </div>
-        <Select value={moduleFilter} onValueChange={setModuleFilter}>
-          <SelectTrigger className="w-40 h-9">
-            <SelectValue placeholder="All modules" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Modules</SelectItem>
-            {modules.map(m => (
-              <SelectItem key={m} value={m}>{MODULE_LABELS[m] || m}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {!lockedModule && (
+          <Select value={moduleFilter} onValueChange={setModuleFilter}>
+            <SelectTrigger className="w-40 h-9">
+              <SelectValue placeholder="All modules" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Modules</SelectItem>
+              {modules.map(m => (
+                <SelectItem key={m} value={m}>{MODULE_LABELS[m] || m}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </div>
 
       {/* List */}

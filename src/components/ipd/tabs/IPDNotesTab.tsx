@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useVoiceScribe } from "@/hooks/useVoiceScribe";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,6 +29,31 @@ const IPDNotesTab: React.FC<Props> = ({ admissionId, hospitalId, userId, patient
   const [showSaveTpl, setShowSaveTpl] = useState(false);
   const [tplName, setTplName] = useState("");
   const [tplShare, setTplShare] = useState(false);
+
+  // Voice scribe. The bottom-bar mic is mounted on this tab, so dictation must land here
+  // rather than in Rx & Orders. The scribe's shape varies by session type, so take the
+  // narrative fields it does return and append them — never overwrite what is being typed.
+  const { registerScreen, unregisterScreen } = useVoiceScribe();
+  useEffect(() => {
+    const fillFn = (data: Record<string, unknown>) => {
+      const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : "");
+      const narrative = [
+        str(data.note),
+        str(data.narrative),
+        str(data.subjective),
+        str(data.objective),
+        str(data.assessment),
+        str(data.plan),
+        str(data.advice_notes),
+      ].filter(Boolean).join("\n");
+      if (!narrative) return;
+      setShowForm(true);
+      setDraft((prev) => (prev.trim() ? `${prev.trimEnd()}\n${narrative}` : narrative));
+      toast({ title: "Voice scribe added to the note" });
+    };
+    registerScreen("ipd_notes", fillFn);
+    return () => unregisterScreen("ipd_notes");
+  }, [registerScreen, unregisterScreen]);
 
   // Copy Previous — pre-fill the draft from the most recent note (a fresh, editable note).
   const handleCopyPrevious = () => {

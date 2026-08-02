@@ -72,6 +72,7 @@ const LabPage: React.FC = () => {
   const [pendingOrderPatient, setPendingOrderPatient] = useState<PendingOpdLabOrder["patient"] | null>(null);
   const [pendingOrderTestNames, setPendingOrderTestNames] = useState<string[]>([]);
   const [pendingOrderEncounterId, setPendingOrderEncounterId] = useState<string | null>(null);
+  const [pendingOrderAdmissionId, setPendingOrderAdmissionId] = useState<string | null>(null);
 
   const fetchHospitalId = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -186,10 +187,12 @@ const LabPage: React.FC = () => {
           <PendingOpdLabTab
             hospitalId={hospitalId}
             onCountChange={setPendingOpdCount}
-            onCreateOrder={(patient, testNames, encounterId) => {
+            onCreateOrder={(patient, testNames, encounterId, admissionId) => {
               setPendingOrderPatient(patient);
               setPendingOrderTestNames(testNames);
-              setPendingOrderEncounterId(encounterId);
+              // A ward row has no encounter; passing "" would link the order to nothing.
+              setPendingOrderEncounterId(encounterId || null);
+              setPendingOrderAdmissionId(admissionId ?? null);
               setShowNewOrder(true);
             }}
           />
@@ -288,6 +291,7 @@ const LabPage: React.FC = () => {
           preselectedPatient={pendingOrderPatient ?? undefined}
           preselectedTestNames={pendingOrderTestNames}
           linkedEncounterId={pendingOrderEncounterId}
+          linkedAdmissionId={pendingOrderAdmissionId}
         />
       )}
     </div>

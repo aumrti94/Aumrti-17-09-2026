@@ -11,6 +11,8 @@ import { useHospitalId } from '@/hooks/useHospitalId';
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { autoPostJournalEntry } from "@/lib/accounting";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
+import { parseComponents, componentsOfType } from "@/lib/packageComponents";
+import { resolveComponentNames, STAGED_ORDERS_KEY } from "@/lib/packageOrders";
 
 interface Props { open: boolean; onClose: () => void; }
 
@@ -24,9 +26,16 @@ export default function BookPackageModal({ open, onClose }: Props) {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    supabase.from("health_packages").select("id, package_name, price, package_type, included_tests, included_radiology, included_services")
+    // `included_tests` / `included_radiology` / `included_services` were selected here for a
+    // long time and DO NOT EXIST on health_packages. PostgREST 400d the whole query, so this
+    // list was always empty and no package could be booked. The real column is `components`.
+    supabase.from("health_packages")
+      .select("id, package_name, price, package_type, components")
       .eq("hospital_id", hospitalId).eq("is_active", true).order("display_order")
-      .then(({ data }) => setPackages(data || []));
+      .then(({ data, error }) => {
+        if (error) { console.error("Load packages failed:", error.message); return; }
+        setPackages(data || []);
+      });
   }, [hospitalId]);
 
   const book = async () => {
@@ -110,26 +119,35 @@ export default function BookPackageModal({ open, onClose }: Props) {
         postedBy: userId || "",
       });
 
-      // 6. Auto-create constituent orders
+      // 6. Stage the constituent orders.
+      //
+      // They are created NOW (so the coordinator can see what the day holds) but both
+      // syncLabOrders and syncRadiologyOrders write billing_status: "unbilled", and both
+      // worklists filter `.neq("billing_status","unbilled")` — so nothing reaches the lab or
+      // the radiographer until the package is actually paid for. releasePackageOrders() in
+      // lib/packageOrders.ts flips them the moment the bill settles.
+      const components = parseComponents(selectedPkg.components);
+      const labNames = await resolveComponentNames(
+        hospitalId, componentsOfType(components, "lab_test"), "lab_test_master", "test_name");
+      const radNames = await resolveComponentNames(
+        hospitalId, componentsOfType(components, "radiology"), "radiology_study_master", "study_name");
+
       let labCount = 0;
       let radCount = 0;
+      const stagedLabIds: string[] = [];
+      const stagedRadIds: string[] = [];
+      const indication = `Health Package: ${selectedPkg.package_name}`;
 
-      // Lab orders from included_tests
-      const includedTests: string[] = Array.isArray(selectedPkg.included_tests)
-        ? selectedPkg.included_tests
-        : [];
-      if (includedTests.length > 0 && hospitalId) {
+      if (labNames.length > 0 && hospitalId) {
         try {
           const { syncLabOrders } = await import("@/lib/investigationSync");
           const labSync = await syncLabOrders({
-            hospitalId,
-            patientId,
-            orderedBy: userId || "",
-            encounterId: null,
-            admissionId: null,
-            items: includedTests.map(t => ({ test_name: t, urgency: "routine", clinical_indication: `Health Package: ${selectedPkg.package_name}` })),
+            hospitalId, patientId, orderedBy: userId || "",
+            encounterId: null, admissionId: null,
+            items: labNames.map(t => ({ test_name: t, urgency: "routine", clinical_indication: indication })),
           });
           labCount = labSync.created;
+          stagedLabIds.push(...labSync.orderIds);
           if (labSync.unmatched.length > 0) {
             toast.warning(`Not in test master (order manually): ${labSync.unmatched.join(", ")}`);
           }
@@ -138,31 +156,37 @@ export default function BookPackageModal({ open, onClose }: Props) {
         }
       }
 
-      // Radiology orders from included_radiology
-      const includedRad: string[] = Array.isArray(selectedPkg.included_radiology)
-        ? selectedPkg.included_radiology
-        : [];
-      if (includedRad.length > 0 && hospitalId) {
+      if (radNames.length > 0 && hospitalId) {
         try {
           const { syncRadiologyOrders } = await import("@/lib/investigationSync");
           const radSync = await syncRadiologyOrders({
-            hospitalId,
-            patientId,
-            orderedBy: userId || "",
-            encounterId: null,
-            admissionId: null,
-            items: includedRad.map(r => ({ study_name: r, urgency: "routine", clinical_indication: `Health Package: ${selectedPkg.package_name}` })),
+            hospitalId, patientId, orderedBy: userId || "",
+            encounterId: null, admissionId: null,
+            items: radNames.map(r => ({ study_name: r, urgency: "routine", clinical_indication: indication })),
           });
           radCount = radSync.created;
+          stagedRadIds.push(...radSync.orderIds);
         } catch (e) {
           console.error("Package radiology order sync error:", e);
         }
       }
 
+      // 7. Link the bill and the staged orders to the booking. `bill_id` existed on
+      //    package_bookings but was never populated — it is what payment matches on.
+      await supabase.from("package_bookings").update({
+        bill_id: bill.id,
+        components_done: {
+          [STAGED_ORDERS_KEY]: { lab: stagedLabIds, radiology: stagedRadIds },
+        },
+      } as never).eq("id", booking.id);
+
       const parts = [`Package booked — ₹${fee.toLocaleString("en-IN")}`];
       if (labCount > 0) parts.push(`${labCount} lab orders`);
       if (radCount > 0) parts.push(`${radCount} radiology orders`);
       toast.success(parts.join(" + "));
+      if (labCount > 0 || radCount > 0) {
+        toast.info("Orders are held until the package is paid — they appear in the Lab / Radiology worklists on payment.");
+      }
       onClose();
     } catch (err) {
       console.error("Package booking error:", err);

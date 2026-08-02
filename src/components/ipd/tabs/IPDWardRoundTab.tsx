@@ -8,7 +8,6 @@ import { toast } from "@/hooks/use-toast";
 import { ChevronDown, ChevronUp, Mic, AlertTriangle, FlaskConical, PillBottle, RefreshCw, LayoutTemplate, Plus, Trash2 } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import VoiceDictationButton from "@/components/voice/VoiceDictationButton";
 import { useVoiceScribe } from "@/hooks/useVoiceScribe";
 import { useNoteTemplates } from "@/hooks/useNoteTemplates";
 import OnboardingTour from "@/components/onboarding/OnboardingTour";
@@ -481,8 +480,10 @@ const IPDWardRoundTab: React.FC<Props> = ({ admissionId, hospitalId, userId, pat
           </div>
         )}
 
-        <div data-tour="doctor-ward-round-notes" className="flex items-center justify-between mt-2">
-          <VoiceDictationButton sessionType="ward_round" patientId={patientId} size="sm" />
+        {/* The dictation mic lives in the workspace's bottom action bar (IPDWorkspace),
+            which mounts it on this tab. Having one here too meant two mics on screen. The
+            registerScreen("ward_round") filler above still receives the transcript. */}
+        <div data-tour="doctor-ward-round-notes" className="flex items-center justify-end mt-2">
           <Button size="sm" onClick={handleSave} disabled={saving} className="bg-[#1A2F5A] hover:bg-[#152647] text-xs h-8">
             {saving ? "Saving..." : "Save Round Note"}
           </Button>
