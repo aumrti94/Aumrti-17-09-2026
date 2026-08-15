@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Mail, Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
-import { getErrorMessage } from "@/lib/errorMessage";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import ForgotPasswordModal from "./ForgotPasswordModal";
 import MFAEnrollmentModal from "@/components/auth/MFAEnrollmentModal";
 import MFAVerifyModal from "@/components/auth/MFAVerifyModal";
@@ -69,6 +69,22 @@ const LoginPage: React.FC = () => {
   const [errorMsg, setErrorMsg]     = useState("");
   const [failCount, setFailCount]   = useState(0);
   const [forgotOpen, setForgotOpen] = useState(false);
+
+  // HospitalContext resolves role/permissions/cache independently, in response to the same
+  // SIGNED_IN event this page's own sign-in flow reacts to. Its query set is heavier
+  // (Promise.all of role_permissions + entitlement + overrides), so navigating as soon as
+  // THIS page's own (lighter/faster) checks finish can land the user on a page before
+  // HospitalContext has written its session cache or resolved permissions.
+  const { loading: ctxLoading } = useHospitalContext();
+  const ctxLoadingRef = useRef(ctxLoading);
+  useEffect(() => { ctxLoadingRef.current = ctxLoading; }, [ctxLoading]);
+
+  const waitForContextReady = async (timeoutMs = 8000) => {
+    const start = Date.now();
+    while (ctxLoadingRef.current && Date.now() - start < timeoutMs) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
 
   // Social login: which providers the platform admin has enabled (gates the buttons).
   const [enabledProviders, setEnabledProviders] = useState<Set<string>>(new Set());
@@ -292,6 +308,7 @@ const LoginPage: React.FC = () => {
       }
 
       // MFA not required or device already trusted — go straight in
+      await waitForContextReady();
       finalNavigate(role, fullName);
     } catch (err: any) {
       // Email not yet verified — offer to resend instead of counting as a credential failure.
@@ -304,17 +321,15 @@ const LoginPage: React.FC = () => {
       }
       const newFails = failCount + 1;
       setFailCount(newFails);
-      // Wrong email/password stays generic on purpose (never leak which part is wrong).
-      // Other failures (network, server, rate-limit) show the exact reason.
-      const isCredentialError =
-        err?.code === "invalid_credentials" ||
-        /invalid login credentials|invalid credentials/i.test(err?.message || "");
+      // Wrong email/password/unknown-email must ALL show the identical generic message —
+      // never derive it from the raw Supabase error text, which leaks which part was wrong
+      // and is fragile to GoTrue error-shape changes across versions/providers. Only the
+      // two cases already special-cased above (unconfirmed email, lockout) are safe to
+      // disclose distinctly; everything else defaults to the generic message.
       if (newFails >= 5) {
         setErrorMsg("Account locked for 15 minutes. Contact your admin.");
-      } else if (isCredentialError) {
-        setErrorMsg("Invalid credentials. Please try again.");
       } else {
-        setErrorMsg(getErrorMessage(err));
+        setErrorMsg("Invalid credentials. Please try again.");
       }
     } finally {
       setLoading(false);
@@ -435,7 +450,7 @@ const LoginPage: React.FC = () => {
             </div>
 
             {errorMsg && (
-              <p className="text-[13px] text-destructive bg-destructive/10 px-3 py-2 rounded-lg">{errorMsg}</p>
+              <p data-testid="login-error" className="text-[13px] text-destructive bg-destructive/10 px-3 py-2 rounded-lg">{errorMsg}</p>
             )}
 
             {unverifiedEmail && (
@@ -560,8 +575,9 @@ const LoginPage: React.FC = () => {
           factorId={mfaFactorId}
           userId={mfaUserId}
           userName={mfaUserName}
-          onVerified={() => {
+          onVerified={async () => {
             setShowMfaVerify(false);
+            await waitForContextReady();
             finalNavigate(mfaRole, mfaUserName);
           }}
         />
@@ -574,6 +590,7 @@ const LoginPage: React.FC = () => {
           onEnrolled={async () => {
             // After enrollment the session is already aal2 — navigate directly
             setShowMfaEnroll(false);
+            await waitForContextReady();
             finalNavigate(mfaRole, mfaUserName);
           }}
         />

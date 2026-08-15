@@ -27,7 +27,7 @@ import {
   CalendarDays, IndianRupee, TestTube, Pill, FileText, ClipboardCheck, BookOpen,
   Bell as BellIcon, Workflow, ShieldCheck, ListChecks, Settings2, MessageSquare,
   PlayCircle, CalendarClock, Smartphone, FileSpreadsheet, Landmark, HardDrive, KeyRound,
-  Cpu, Tv2, Monitor, Languages, LayoutGrid, Stethoscope, Network, Boxes,
+  Cpu, Tv2, Monitor, Languages, Stethoscope, Network, Boxes,
 } from "lucide-react";
 import type { ElementType } from "react";
 import { PERMISSION_MODULES } from "./moduleRegistry";
@@ -166,16 +166,6 @@ export const SETTINGS_CATALOG: SettingsEntry[] = [
     icon: CreditCard, title: "Plan & Billing", desc: "Your current plan, usage, invoices",
     route: "/settings/plan", group: "Plan & Modules", modules: [], crossCutting: true,
     keywords: ["subscription", "upgrade", "invoice", "licence", "license", "usage", "quota", "renewal"],
-  },
-  {
-    icon: LayoutGrid, title: "Modules Config", desc: "Enable or disable modules and their tabs for this hospital",
-    route: "/settings/modules", group: "Plan & Modules", modules: [], crossCutting: true,
-    keywords: ["enable module", "disable module", "turn on", "turn off", "entitlement", "feature toggle", "tabs"],
-  },
-  {
-    icon: Settings2, title: "Product Mode", desc: "Switch between clinic, hospital and chain operating modes",
-    route: "/settings/product-mode", group: "Plan & Modules", modules: [], crossCutting: true,
-    keywords: ["clinic mode", "hospital mode", "chain", "operating mode", "preset"],
   },
   {
     icon: Cpu, title: "AI Features & Attestation", desc: "Enable/disable AI per feature, DPA compliance, doctor attestation policy",
@@ -713,8 +703,6 @@ const CROSS_CUTTING_HINTS: Record<string, string> = {
   "/settings/notifications":    "SMS, email and push alerts for {m}",
   "/settings/approvals":        "discount, refund and override approvals for {m}",
   "/settings/plan":             "whether {m} is included in your plan",
-  "/settings/modules":          "turn {m} and its tabs on or off",
-  "/settings/product-mode":     "operating mode that shapes {m}",
   "/settings/ai-features":      "AI features available inside {m}",
   "/settings/change-log":       "audit trail of {m} configuration changes",
   "/settings/backup":           "export {m} data",

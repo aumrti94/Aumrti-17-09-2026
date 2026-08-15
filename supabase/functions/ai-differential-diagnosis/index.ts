@@ -11,7 +11,23 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const { chief_complaint, vitals, examination, age, gender, history, patient_context, hospital_id } = await req.json();
+    // Auth verification — this is SaMD Class B clinical decision support; it must only be
+    // reachable by an authenticated hospital user, and billing must be attributed correctly.
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const anonClient = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!);
+    const { data: { user }, error: authError } = await anonClient.auth.getUser(authHeader.replace("Bearer ", ""));
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const { chief_complaint, vitals, examination, age, gender, history, patient_context } = await req.json();
 
     if (!chief_complaint) {
       return new Response(JSON.stringify({ error: "chief_complaint is required" }), {
@@ -19,11 +35,25 @@ serve(async (req) => {
       });
     }
 
+    // Resolve hospital from the authenticated user — never trust hospital_id from the request body.
+    const sbAuth = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const { data: userData } = await sbAuth
+      .from("users")
+      .select("hospital_id")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
+    if (!userData) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const hospital_id = userData.hospital_id;
+
     // Resolve AI config: the platform (global) config is DB-backed and does not
     // actually use hospital_id, so always try it first, then fall back to env.
     const config =
       (await resolveAiConfig(hospital_id || "", "differential_diagnosis", 1000)) ??
-      resolveAiConfigFromEnv(1000);
+      resolveAiConfigFromEnv(1000, hospital_id || undefined, "differential_diagnosis");
 
     if (!config) {
       return new Response(JSON.stringify({ error: "No AI provider configured. Go to Settings → API Hub." }), {

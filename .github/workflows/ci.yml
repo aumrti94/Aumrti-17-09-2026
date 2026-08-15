@@ -23,10 +23,13 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm install --legacy-peer-deps
+        run: npm ci --legacy-peer-deps
 
       - name: Lint
         run: npm run lint
+
+      - name: RLS coverage check
+        run: npm run check:rls-coverage
 
       - name: Unit tests
         run: npm run test:coverage

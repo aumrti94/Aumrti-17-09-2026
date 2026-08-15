@@ -268,9 +268,40 @@ serve(async (req) => {
     return new Response("Method Not Allowed", { status: 405 });
   }
 
+  // ── X-Hub-Signature-256 verification ─────────────────────────────────────
+  // The GET challenge above only proves whoever REGISTERED the webhook knew the verify
+  // token — it says nothing about who is POSTing to this (public) URL afterwards. Without
+  // this check, anyone who finds the function URL can forge "incoming WhatsApp message"
+  // payloads and trigger AI-cost-incurring bot replies / DB writes attributed to any phone
+  // number. Fails CLOSED: an unconfigured app secret rejects every POST rather than skipping
+  // the check, matching Meta's own webhook security requirement.
+  const rawBody = await req.text();
+  const appSecret = Deno.env.get("META_APP_SECRET");
+  if (!appSecret) {
+    console.error("[whatsapp-bot] META_APP_SECRET not set — rejecting request");
+    return new Response("Webhook not configured", { status: 500 });
+  }
+  const signatureHeader = req.headers.get("x-hub-signature-256");
+  if (!signatureHeader?.startsWith("sha256=")) {
+    return new Response("Missing signature", { status: 401 });
+  }
+  const hmacKey = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(appSecret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const mac = await crypto.subtle.sign("HMAC", hmacKey, new TextEncoder().encode(rawBody));
+  const computed = Array.from(new Uint8Array(mac)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  if (computed !== signatureHeader.slice("sha256=".length)) {
+    console.error("[whatsapp-bot] Signature mismatch — possible forgery attempt");
+    return new Response("Invalid signature", { status: 401 });
+  }
+
   let body: { object?: string; entry?: MetaWebhookEntry[] };
   try {
-    body = await req.json();
+    body = JSON.parse(rawBody);
   } catch {
     return new Response("Bad Request", { status: 400 });
   }

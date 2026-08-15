@@ -1,13 +1,27 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { ChevronDown, ChevronUp, Printer } from "lucide-react";
 import type { OpdToken } from "@/pages/opd/OPDPage";
 import { printDocument, printHeader } from "@/lib/printUtils";
+import PatientHistorySection from "@/components/clinical/PatientHistorySection";
 
 interface Props {
   token: OpdToken;
   encounterId: string | null;
+  userId: string;
+  /**
+   * Appends the digest summary to the encounter's History of Present Illness.
+   * Supplied only inside a consultation — the same panel is mounted in the patient
+   * record at registration, where there is no encounter to write to.
+   */
+  onInsertToHpi?: (text: string) => void;
+  /**
+   * The consultation holds its own copy of the digest to feed the AI Guidance cards.
+   * Fired whenever this tab changes it (a scan finished, a doctor attested) so the two
+   * copies cannot disagree about whether the history is verified.
+   */
+  onDigestChange?: () => void;
 }
 
 interface PastEncounter {
@@ -37,7 +51,7 @@ const CONDITION_CHIPS = [
   "Hypothyroidism", "CKD", "Epilepsy", "Arthritis",
 ];
 
-const HistoryTab: React.FC<Props> = ({ token, encounterId }) => {
+const HistoryTab: React.FC<Props> = ({ token, encounterId, userId, onInsertToHpi, onDigestChange }) => {
   const [conditions, setConditions] = useState<string[]>(token.patient?.chronic_conditions || []);
   const [condInput, setCondInput] = useState("");
   const [pastVisits, setPastVisits] = useState<PastEncounter[]>([]);
@@ -81,6 +95,24 @@ const HistoryTab: React.FC<Props> = ({ token, encounterId }) => {
     supabase.from("patients").update({ chronic_conditions: next }).eq("id", token.patient_id);
   };
 
+  /**
+   * Bulk add from the scanned-records digest. One write rather than N, and matched
+   * case-insensitively so "Diabetes" from an outside discharge summary does not land
+   * next to the "diabetes" a receptionist already typed.
+   */
+  const addConditions = useCallback((names: string[]) => {
+    setConditions((prev) => {
+      const seen = new Set(prev.map((c) => c.trim().toLowerCase()));
+      const additions = names
+        .map((n) => n.trim())
+        .filter((n) => n && !seen.has(n.toLowerCase()) && (seen.add(n.toLowerCase()), true));
+      if (additions.length === 0) return prev;
+      const next = [...prev, ...additions];
+      void supabase.from("patients").update({ chronic_conditions: next }).eq("id", token.patient_id);
+      return next;
+    });
+  }, [token.patient_id]);
+
   const removeCondition = (name: string) => {
     const next = conditions.filter((c) => c !== name);
     setConditions(next);
@@ -111,6 +143,21 @@ const HistoryTab: React.FC<Props> = ({ token, encounterId }) => {
           ))}
         </div>
       </div>
+
+      {/* Records from other hospitals — scan, read, and the resulting timeline.
+          Sits above Previous OPD Visits because for a new patient it is the ONLY
+          history there is: "Previous OPD Visits" only ever knows about this hospital. */}
+      {token.hospital_id && (
+        <PatientHistorySection
+          patientId={token.patient_id}
+          hospitalId={token.hospital_id}
+          userId={userId}
+          encounterId={encounterId}
+          onInsertToHpi={onInsertToHpi}
+          onAddChronicConditions={addConditions}
+          onDigestChange={onDigestChange}
+        />
+      )}
 
       {/* Previous Visits */}
       <div>

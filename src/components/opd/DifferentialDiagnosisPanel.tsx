@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -38,6 +38,12 @@ interface Props {
   hospitalId?: string | null;
   patientId?: string | null;
   encounterId?: string | null;
+  /**
+   * Bump to re-run the differential. Used by the Clarifying Questions card once its answers
+   * have been written into the HPI: the `history` prop has already changed by then, so a plain
+   * regenerate is all that is needed — there is no separate "refine" prompt or endpoint.
+   */
+  refreshSignal?: number;
   onSelectDiagnosis?: (diagnosis: string, icd10: string) => void;
 }
 
@@ -52,7 +58,7 @@ const CONFIDENCE_COLOR = (c: number) =>
 
 const DifferentialDiagnosisPanel: React.FC<Props> = ({
   chiefComplaint, age, gender, vitals, examination, history, patientContext,
-  hospitalId, patientId, encounterId,
+  hospitalId, patientId, encounterId, refreshSignal,
   onSelectDiagnosis,
 }) => {
   const ddxEnabled = useAIFeatureFlag("differential_dx");
@@ -60,15 +66,6 @@ const DifferentialDiagnosisPanel: React.FC<Props> = ({
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [pendingDiff, setPendingDiff] = useState<Differential | null>(null);
-
-  if (!ddxEnabled) {
-    return (
-      <div className="border rounded-lg px-3 py-2.5 bg-muted/30 flex items-center gap-2">
-        <Stethoscope className="h-4 w-4 text-muted-foreground" />
-        <span className="text-xs text-muted-foreground">AI Differential Diagnosis is disabled by your administrator.</span>
-      </div>
-    );
-  }
 
   const generate = async () => {
     if (!chiefComplaint.trim()) {
@@ -87,6 +84,38 @@ const DifferentialDiagnosisPanel: React.FC<Props> = ({
     }
     setLoading(false);
   };
+
+  // Re-run when the Clarifying Questions card signals that new history has landed. Deliberately
+  // depends on `refreshSignal` ALONE: the parent batches the HPI write and the bump into one
+  // render, so this callback already closes over the updated `history`. Adding `generate` to the
+  // deps would re-run on every keystroke in the complaint field instead.
+  //
+  // Must sit ABOVE the `ddxEnabled` early return — a hook after a conditional return is a
+  // rules-of-hooks violation that only bites when the flag flips mid-session. Which is also why
+  // it re-checks `ddxEnabled` itself: sitting above the return means it still runs when the card
+  // is withheld, and without that guard a refine would silently spend on an AI call for a card
+  // the doctor cannot even see.
+  //
+  // The ref makes "fire exactly once per bump" explicit rather than leaving it to dep stability:
+  // useAIFeatureFlag resolves asynchronously, so ddxEnabled can settle AFTER a refine and would
+  // otherwise re-trigger the effect — a second, duplicate, billable AI call.
+  const handledRefreshRef = useRef(0);
+  useEffect(() => {
+    if (!refreshSignal || !ddxEnabled) return;
+    if (handledRefreshRef.current === refreshSignal) return;
+    handledRefreshRef.current = refreshSignal;
+    void generate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshSignal, ddxEnabled]);
+
+  if (!ddxEnabled) {
+    return (
+      <div className="border rounded-lg px-3 py-2.5 bg-muted/30 flex items-center gap-2">
+        <Stethoscope className="h-4 w-4 text-muted-foreground" />
+        <span className="text-xs text-muted-foreground">AI Differential Diagnosis is disabled by your administrator.</span>
+      </div>
+    );
+  }
 
   return (
     <div className="border rounded-lg bg-card overflow-hidden">

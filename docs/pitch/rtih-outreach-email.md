@@ -2,8 +2,13 @@
 
 > Fill every `[bracket]` before sending — Udyam number, phone, city.
 > Attach `Aumrti_RTIH_Amaravati_Pitch_Deck.pdf`, exported from
-> `aumrti-rtih-ap-pitch-deck.html` (deck is submission-ready: placeholders removed,
-> logo and website applied, no clipped slides).
+> `aumrti-rtih-ap-pitch-deck.html`.
+>
+> **The deck is 13 slides, restructured to the Office of Mr. Ratan N. Tata pitch
+> template.** It is NOT yet submission-ready: it contains 49 amber placeholders
+> (`class="fill"`) covering pricing, 3-year projections, market sizing, founder
+> capital and the funding ask. Open the HTML in a browser — anything rendered in
+> amber with a dashed underline still needs a real number. See the checklist below.
 
 **To:** _confirm the official RTIH Amaravati address from their website / notification_
 
@@ -104,7 +109,34 @@ sending a third email.
 
 ## Pre-send checklist
 
+**Email**
+
 - [ ] Recipient address confirmed from RTIH's official site — not guessed
-- [ ] Deck exported to PDF, all 7 slides render
-- [ ] Every `[bracket]` filled — especially the Udyam number
+- [ ] Every `[bracket]` in the email filled — especially the Udyam number
 - [ ] Test copy sent to yourself and read on a phone
+
+**Deck — fill these before exporting the PDF**
+
+Open `aumrti-rtih-ap-pitch-deck.html` in a browser. Every value still shown in
+amber with a dashed underline is unfilled. Work slide by slide:
+
+- [ ] **Slide 2 — Problem.** Name the hospitals and roles you actually spoke to.
+      One verbatim quote from a real conversation beats any statistic here. This
+      is the template's "validate the problem with real life examples" requirement
+      and currently the weakest slide in the deck.
+- [ ] **Slide 6 — Revenue Model.** Your per-bed price, AI unit price, and
+      implementation fee. Then build the 3-year table from two defensible numbers:
+      price × hospitals you can realistically onboard per year. No hockey stick.
+- [ ] **Slide 7 — Target Market.** Hospital counts for TAM/SAM from the National
+      Health Profile (CBHI) and the AP state health directory. Multiply by your
+      slide 6 price.
+- [ ] **Slide 9 — RCM.** Leave the KPI baselines bracketed until the pilot starts —
+      these get filled *from* the pilot, not before it.
+- [ ] **Slide 10 — Milestones.** Year-3 hospital count, team size, Year-5 ARR.
+- [ ] **Slide 11 — Funding.** Personal capital invested, months of full-time effort,
+      and the ask. Set the ask from a real 12-month budget, then make the use-of-funds
+      percentages match.
+- [ ] **Slide 12 — Team.** Your degree, prior company, years of experience, and why
+      you started this.
+- [ ] **Slides 1 and 13** — phone, email, city.
+- [ ] Re-export to PDF and confirm **all 13 slides render with zero amber text**

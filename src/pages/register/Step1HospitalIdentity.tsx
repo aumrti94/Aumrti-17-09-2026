@@ -72,8 +72,12 @@ const Step1HospitalIdentity: React.FC<Props> = ({ data, onChange, otpRequired })
           <Input
             type="tel"
             value={data.phone}
-            onChange={(e) => onChange({ phone: e.target.value, phoneVerified: false, phoneOtpToken: "" })}
+            onChange={(e) => {
+              const digits = e.target.value.replace(/\D/g, "").slice(0, 10);
+              onChange({ phone: digits, phoneVerified: false, phoneOtpToken: "" });
+            }}
             placeholder="+91 98765 43210"
+            maxLength={10}
             className="mt-1.5"
           />
           {otpRequired && (

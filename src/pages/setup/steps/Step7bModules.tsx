@@ -24,9 +24,9 @@ const DEFAULT_MODULES: Module[] = [
   { key: "inventory",   label: "Inventory",          description: "Stores, purchase orders, consumption tracking",   enabled: true },
   { key: "quality",     label: "Quality & NABH",     description: "NABH matrix, audits, incidents, quality metrics", enabled: true },
   { key: "analytics",   label: "Analytics",          description: "Revenue, clinical, and operational dashboards",   enabled: true },
-  { key: "portal",      label: "Patient Portal",     description: "Patient login, reports, appointment booking",     enabled: true },
+  { key: "patient_portal", label: "Patient Portal",  description: "Patient login, reports, appointment booking",     enabled: true },
   { key: "telemedicine",label: "Telemedicine",       description: "Video consultations and online OPD",             enabled: false },
-  { key: "hod",         label: "HOD Control Tower",  description: "Department-wise real-time dashboards for HODs",  enabled: true },
+  { key: "hod_dashboard", label: "HOD Control Tower", description: "Department-wise real-time dashboards for HODs", enabled: true },
   { key: "inbox",       label: "Inbox",              description: "Internal messaging and clinical notifications",   enabled: true },
 ];
 
@@ -34,11 +34,11 @@ const DEFAULT_MODULES: Module[] = [
 // These are DEFAULTS the user can still toggle — full hospitals (Private/Government/
 // Trust/Corporate/Other) fall through to "all modules on".
 const CATEGORY_PRESETS: Record<string, string[]> = {
-  "Clinic":           ["opd", "pharmacy", "lab", "billing", "inventory", "portal", "inbox"],
-  "Dental Clinic":    ["opd", "pharmacy", "billing", "inventory", "portal", "inbox"],
-  "AYUSH Center":     ["opd", "pharmacy", "billing", "inventory", "portal", "inbox"],
-  "Specialty Center": ["opd", "lab", "radiology", "pharmacy", "billing", "insurance", "inventory", "analytics", "portal", "inbox"],
-  "Nursing Home":     ["opd", "ipd", "pharmacy", "lab", "billing", "inventory", "hr", "portal", "inbox"],
+  "Clinic":           ["opd", "pharmacy", "lab", "billing", "inventory", "patient_portal", "inbox"],
+  "Dental Clinic":    ["opd", "pharmacy", "billing", "inventory", "patient_portal", "inbox"],
+  "AYUSH Center":     ["opd", "pharmacy", "billing", "inventory", "patient_portal", "inbox"],
+  "Specialty Center": ["opd", "lab", "radiology", "pharmacy", "billing", "insurance", "inventory", "analytics", "patient_portal", "inbox"],
+  "Nursing Home":     ["opd", "ipd", "pharmacy", "lab", "billing", "inventory", "hr", "patient_portal", "inbox"],
 };
 
 interface Props {

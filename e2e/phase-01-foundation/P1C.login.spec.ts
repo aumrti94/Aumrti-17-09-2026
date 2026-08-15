@@ -28,13 +28,16 @@ test.describe('P1C — Login & session', () => {
     await page.goto('/login');
     await fillLogin(page, staff.email, 'WrongPass@2026');
     await page.waitForTimeout(2500);
-    const wrongPasswordMsg = (await page.locator('body').innerText())
+    // Scoped to the error banner itself, not the whole page — the page also renders a
+    // live clock (updates every second), which would make a full-body text comparison
+    // flaky/false-failing even when the actual error messages are identical.
+    const wrongPasswordMsg = (await page.getByTestId('login-error').innerText())
       .replace(staff.email, '<email>');
 
     await page.goto('/login');
     await fillLogin(page, 'nosuchuser-qa@example.com', 'WrongPass@2026');
     await page.waitForTimeout(2500);
-    const unknownEmailMsg = (await page.locator('body').innerText())
+    const unknownEmailMsg = (await page.getByTestId('login-error').innerText())
       .replace('nosuchuser-qa@example.com', '<email>');
 
     expect(new URL(page.url()).pathname).toBe('/login');
@@ -46,12 +49,13 @@ test.describe('P1C — Login & session', () => {
 
   test('TC-P1C-004 empty credentials are rejected', async ({ page }) => {
     await page.goto('/login');
-    await page
+    const submitButton = page
       .getByRole('button', { name: /sign in|log ?in|continue/i })
       .or(page.locator('button[type="submit"]'))
-      .first()
-      .click();
-    await page.waitForTimeout(1500);
+      .first();
+    // The button is intentionally disabled until both fields are filled — clicking a
+    // disabled button never fires, so assert the disabled state directly instead.
+    await expect(submitButton).toBeDisabled();
     expect(new URL(page.url()).pathname).toBe('/login');
   });
 

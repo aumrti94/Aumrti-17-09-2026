@@ -1059,10 +1059,9 @@ Use formal committee-minutes language. Be concise but complete.`;
                       </Button>
                     </div>
                     {agendaPreview ? (
-                      <div
-                        className="rounded border border-border p-4 min-h-[400px] bg-card overflow-auto text-sm prose prose-sm max-w-none"
-                        dangerouslySetInnerHTML={{ __html: editAgenda }}
-                      />
+                      <div className="rounded border border-border p-4 min-h-[400px] bg-card overflow-auto text-sm prose prose-sm max-w-none whitespace-pre-wrap">
+                        {editAgenda}
+                      </div>
                     ) : (
                       <Textarea className="text-sm h-full min-h-[400px] resize-none font-mono"
                         placeholder="Enter agenda items…"
@@ -1086,10 +1085,9 @@ Use formal committee-minutes language. Be concise but complete.`;
                       </div>
                     </div>
                     {minutesPreview ? (
-                      <div
-                        className="rounded border border-border p-4 min-h-[360px] bg-card overflow-auto text-sm prose prose-sm max-w-none"
-                        dangerouslySetInnerHTML={{ __html: editMinutes }}
-                      />
+                      <div className="rounded border border-border p-4 min-h-[360px] bg-card overflow-auto text-sm prose prose-sm max-w-none whitespace-pre-wrap">
+                        {editMinutes}
+                      </div>
                     ) : (
                       <Textarea className="text-sm h-full min-h-[360px] resize-none"
                         placeholder="Record discussion points, decisions made, and key outcomes…"

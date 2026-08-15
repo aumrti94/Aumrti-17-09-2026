@@ -110,6 +110,12 @@ Before Phase 1, once:
    - `Console Error` — open DevTools (F12) → Console, copy any red text verbatim
    - `Screenshot` — Y/N (mandatory Y on FAIL)
 
+   > **Automated cases fill these four columns for you.** Any case whose `Playwright Spec`
+   > column names a spec gets its result written by the run itself — see step 8. You only
+   > hand-fill the cases that are `MANUAL-ONLY` or have no spec yet. `Notes` and `Defect ID`
+   > are always yours: the machine reports what happened, you decide what it means and which
+   > bug it belongs to, and a re-run never overwrites either.
+
 5. **Verify in Supabase.** Every row has a `Supabase Verify` column telling you the exact
    table and filter to check.
 
@@ -126,16 +132,51 @@ Before Phase 1, once:
 8. **Lock it.** Once the phase is green, its Playwright specs are run so it can never
    silently regress:
    ```bash
-   npm run qa:phase1                    # the whole phase
+   npm run qa:phase2:track              # run phase 2, then write results into the tracker
+   npm run qa:phase1                    # run only, no tracker refresh
    npx playwright test -g "TC-P1E"      # one section
    npx playwright test --ui             # interactive
    ```
 
-   > **On first run, expect selector failures.** The specs use accessible-name lookups
-   > (`getByLabel(/email/i)` etc.) rather than test IDs, because your components don't
-   > carry test IDs yet. Where a label doesn't match, the spec fails on the *selector*,
-   > not on your app. Fix the selector — that's a one-line change and normal for a first
-   > automation pass. Do not log those as product defects.
+   Every run writes `docs/qa/results/latest.json`, and `npm run qa:tracker` merges it into
+   `AUMRTI_QA_TRACKER.xlsx` — filling `Status`, `Actual Result`, `Console Error` and
+   `Screenshot` for every case a spec covers, which in turn makes the Summary sheet's
+   `% Pass` and `GATE` columns real. `qa:phase2:track` does both in one step.
+
+   > **Do not pass `--reporter=` on the command line if you want results recorded.** That
+   > flag REPLACES the whole reporter list from `playwright.config.ts`, including the one
+   > that writes `latest.json`, so the run looks normal and silently records nothing. Use
+   > the plain commands above. (`--list` runs record nothing either, by design — an empty
+   > run must never overwrite a real one's results.)
+
+   > **Where several tests share one case ID, the worst status wins.** `TC-P2L-010` is
+   > backed by 25 checks (the Wards screen plus every ward-type, bed-status and
+   > bed-category value); one red check makes the row FAIL and `Actual Result` records
+   > `(24/25 checks passed)` plus the first failing check by name.
+
+   > **Phase 2's five defect locks are now regression locks.** Authoring Phase 2 found four
+   > settings screens that showed a success toast and wrote nothing, plus a bed-status
+   > dropdown missing a value the database supports. All five were fixed, so these specs are
+   > expected to PASS — a failure means the fix has regressed, not that the test is stale.
+   > Each is marked `REGRESSION LOCK` with its `BUG-P2-NNN` in the spec. Do not quarantine
+   > them as flaky. See PHASE_MAP.md for the table.
+
+   > **Phase 2 holds strict 1:1 parity: every case has exactly one test, and vice versa.**
+   > Check it with `node scripts/qa-parity-check.mjs 02`. The same script enforces the CSV
+   > quality bar — no blank `mock data`, no unfalsifiable Expected Result, no
+   > `Supabase Verify: None` on a case that writes. Run it before every commit that touches
+   > `docs/qa/cases/` or `e2e/phase-02-settings/`.
+   >
+   > It also refuses **template-literal test titles**. A title built with `${…}` carries no
+   > parseable `TC#`, so its result can never reach a tracker row — the case reads as "not
+   > tested yet" forever. Loop bodies are fine; loop-generated titles are not.
+
+   > **A selector failure is framework work, not a product defect.** These components carry
+   > no test IDs, and their labels have no `htmlFor`, so `e2e/phase-02-settings/settings-locators.ts`
+   > finds a control by matching its visible `<label>` text and walking up to the nearest
+   > ancestor that contains a control. When a field cannot be found, the spec says so and
+   > names the label it looked for — fix the label text in `settings-forms.ts`. Do not log
+   > it as a bug against the app.
 
 9. **Move to the next phase.** Its scenarios and cases get written then — deliberately, so
    they're informed by what broke in this one.

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { X, Plus, AlertTriangle, ShieldX, CheckCircle2, Pencil, RotateCcw } from "lucide-react";
-import type { PrescriptionData, DrugEntry, LabOrder, RadiologyOrder, EncounterData, OrderAvailability } from "../ConsultationWorkspace";
+import type { PrescriptionData, DrugEntry, LabOrder, RadiologyOrder, OrderAvailability } from "../ConsultationWorkspace";
 import { checkDrugSafety, type DrugSafetyResult } from "@/lib/drugSafetyCheck";
 import DrugSafetyAlertModal from "@/components/opd/DrugSafetyAlertModal";
 import AllergyBanner from "@/components/clinical/AllergyBanner";
@@ -25,8 +25,6 @@ interface Props {
   patientAge?: number;
   patientGender?: string;
   encounterId?: string | null;
-  encounter?: EncounterData;
-  onEncounterChange?: (partial: Partial<EncounterData>) => void;
 }
 
 
@@ -63,7 +61,7 @@ interface DrugSafetyMeta {
   tooltip: string;
 }
 
-const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, patientAllergies = [], encounterId, encounter, onEncounterChange }) => {
+const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, patientAllergies = [], encounterId }) => {
   const { toast } = useToast();
   const routeOptions     = useConfigValues("drug_routes");
   const frequencyOptions = useConfigValues("drug_frequencies");
@@ -895,50 +893,6 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
           </div>
         </div>
 
-        {/* Plan, Follow-up & Advice */}
-        {encounter && onEncounterChange && (
-          <div className="border-t border-border p-4 space-y-3">
-            <div>
-              <label className="text-xs font-bold text-slate-700 mb-1 block">Plan &amp; Investigations</label>
-              <textarea
-                value={encounter.soap_plan}
-                onChange={(e) => onEncounterChange({ soap_plan: e.target.value })}
-                placeholder="Management plan, investigations advised, referrals..."
-                className="w-full min-h-[70px] border border-slate-200 rounded-lg p-3 text-sm resize-none focus:border-[#1A2F5A] focus:ring-2 focus:ring-[#1A2F5A]/10 outline-none"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-bold text-slate-700 mb-1 block">Advice &amp; Instructions</label>
-              <textarea
-                value={prescription.advice_notes}
-                onChange={(e) => onChange({ advice_notes: e.target.value })}
-                placeholder="Advice and instructions for the patient..."
-                className="w-full min-h-[60px] border border-slate-200 rounded-lg p-3 text-sm resize-none focus:border-[#1A2F5A] focus:ring-2 focus:ring-[#1A2F5A]/10 outline-none"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-bold text-slate-700 mb-1 block">Follow-up</label>
-                <input
-                  type="text"
-                  value={encounter.follow_up_notes}
-                  onChange={(e) => onEncounterChange({ follow_up_notes: e.target.value })}
-                  placeholder="e.g. Follow up with MRI report"
-                  className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:border-[#1A2F5A]"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-bold text-slate-700 mb-1 block">Review date</label>
-                <input
-                  type="date"
-                  value={prescription.review_date}
-                  onChange={(e) => onChange({ review_date: e.target.value })}
-                  className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:border-[#1A2F5A]"
-                />
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* The IPD "Commit to IPD Record" button used to float here, absolutely

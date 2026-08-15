@@ -4,6 +4,7 @@ import { BrowserRouter, Route, Routes, Navigate, useNavigate } from "react-route
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import GlobalFieldDictation from "@/components/voice/GlobalFieldDictation";
 import AppShell from "@/components/layout/AppShell";
 import LandingPage from "./pages/LandingPage";
 import LoginPage from "./pages/login/LoginPage";
@@ -55,7 +56,6 @@ const SettingsWhatsAppPage = lazy(() => import("./pages/settings/SettingsWhatsAp
 const SettingsLanguagePage = lazy(() => import("./pages/settings/SettingsLanguagePage"));
 const SettingsPlanPage = lazy(() => import("./pages/settings/SettingsPlanPage"));
 const SettingsShiftsPage = lazy(() => import("./pages/settings/SettingsShiftsPage"));
-const SettingsModulesPage = lazy(() => import("./pages/settings/SettingsModulesPage"));
 const SettingsDoctorSchedulesPage = lazy(() => import("./pages/settings/SettingsDoctorSchedulesPage"));
 const SettingsLabTestsPage = lazy(() => import("./pages/settings/SettingsLabTestsPage"));
 const SettingsConsentFormsPage = lazy(() => import("./pages/settings/SettingsConsentFormsPage"));
@@ -143,7 +143,6 @@ const SettingsAILanguagePage = lazy(() => import("./pages/settings/SettingsAILan
 const SettingsInventoryPage = lazy(() => import("./pages/settings/SettingsInventoryPage"));
 const SettingsConfigValuesPage = lazy(() => import("./pages/settings/SettingsConfigValuesPage"));
 const IntegrationsHubPage = lazy(() => import("./pages/settings/IntegrationsHubPage"));
-const SettingsProductModePage = lazy(() => import("./pages/settings/SettingsProductModePage"));
 const ABDMConsentPage = lazy(() => import("./pages/ABDMConsentPage"));
 const ForecastsPage = lazy(() => import("./pages/analytics/ForecastsPage"));
 const PatientJoinPage        = lazy(() => import("./pages/teleconsult/PatientJoinPage"));
@@ -270,6 +269,7 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
+      <GlobalFieldDictation />
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <Routes>
           {/* Public routes */}
@@ -366,7 +366,6 @@ const App = () => (
             <Route path="/settings/support" element={<RG path="/settings"><SM name="Support"><SettingsSupportPage /></SM></RG>} />
             <Route path="/settings/training" element={<RG path="/settings"><SM name="Training Videos"><SettingsTrainingPage /></SM></RG>} />
             <Route path="/settings/shifts" element={<RG path="/settings"><SM name="Shifts"><SettingsShiftsPage /></SM></RG>} />
-            <Route path="/settings/modules" element={<RG path="/settings"><SM name="Modules Config"><SettingsModulesPage /></SM></RG>} />
             <Route path="/settings/doctor-schedules" element={<RG path="/settings"><SM name="Doctor Schedules"><SettingsDoctorSchedulesPage /></SM></RG>} />
             <Route path="/settings/lab-tests" element={<RG path="/settings"><SM name="Lab Tests"><SettingsLabTestsPage /></SM></RG>} />
             <Route path="/settings/consent-forms" element={<RG path="/settings"><SM name="Consent Forms"><SettingsConsentFormsPage /></SM></RG>} />
@@ -398,7 +397,6 @@ const App = () => (
             <Route path="/settings/white-label" element={<RG path="/settings"><SM name="White-Label Branding"><SettingsWhiteLabelPage /></SM></RG>} />
             <Route path="/settings/api-hub" element={<RG path="/settings"><SM name="API Hub"><APIConfigHubPage /></SM></RG>} />
             <Route path="/settings/integrations" element={<RG path="/settings/integrations"><SM name="Integrations Console"><IntegrationsHubPage /></SM></RG>} />
-            <Route path="/settings/product-mode" element={<RG path="/settings/product-mode"><SM name="Product Mode"><SettingsProductModePage /></SM></RG>} />
             <Route path="/settings/icd-codes" element={<RG path="/settings"><SM name="ICD Codes"><SettingsICDCodesPage /></SM></RG>} />
             <Route path="/settings/radiology" element={<RG path="/settings"><SM name="Radiology Settings"><SettingsRadiologyPage /></SM></RG>} />
             <Route path="/settings/day-care-procedures" element={<RG path="/settings"><SM name="Day Care Procedures"><SettingsDayCareProceduresPage /></SM></RG>} />

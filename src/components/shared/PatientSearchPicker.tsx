@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useHospitalContext } from "@/hooks/useHospitalContext";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,7 @@ interface Patient {
 }
 
 interface Props {
-  hospitalId: string;
+  hospitalId?: string; // optional — falls back to the logged-in user's hospital
   value: string; // patient_id
   onChange: (patientId: string) => void;
   onRegisterNew?: () => void;
@@ -30,43 +31,54 @@ const PatientSearchPicker: React.FC<Props> = ({
   const [searching, setSearching] = useState(false);
   const [open, setOpen] = useState(false);
   const [displayName, setDisplayName] = useState(selectedLabel || "");
+  const [error, setError] = useState("");
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Callers that don't have the hospital id on hand may omit the prop; never
+  // query with an empty string — hospital_id is a uuid column and "" makes
+  // Postgres reject the whole request (22P02), which looks like "no results".
+  const { hospitalId: ctxHospitalId } = useHospitalContext();
+  const effectiveHospitalId = hospitalId || ctxHospitalId || "";
+
   // If value set externally, try to resolve display name
   useEffect(() => {
-    if (value && !displayName) {
-      supabase.from("patients").select("full_name, uhid").eq("id", value).maybeSingle().then(({ data }) => {
+    if (value && !displayName && effectiveHospitalId) {
+      // Scoped by hospital_id as defense-in-depth, not just RLS — this query is driven by an
+      // externally-supplied `value` prop, so a future RLS regression on `patients` should not
+      // silently turn this into a cross-tenant name/UHID leak.
+      supabase.from("patients").select("full_name, uhid").eq("id", value).eq("hospital_id", effectiveHospitalId).maybeSingle().then(({ data }) => {
         if (data) setDisplayName(`${data.full_name} (${data.uhid})`);
       });
     }
     if (!value) setDisplayName("");
-  }, [value, displayName]);
+  }, [value, displayName, effectiveHospitalId]);
 
   useEffect(() => {
     if (selectedLabel) setDisplayName(selectedLabel);
   }, [selectedLabel]);
 
   useEffect(() => {
-    if (!search.trim() || search.length < 2) { setResults([]); return; }
+    if (!search.trim() || search.length < 2 || !effectiveHospitalId) { setResults([]); setError(""); return; }
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
       setSearching(true);
       const q = `%${search.trim()}%`;
-      const { data, error } = await supabase
+      const { data, error: qErr } = await supabase
         .from("patients")
         .select("id, full_name, uhid, phone, gender")
-        .eq("hospital_id", hospitalId)
+        .eq("hospital_id", effectiveHospitalId)
         .eq("is_active", true)
         .or(`full_name.ilike.${q},uhid.ilike.${q}`)
         .order("created_at", { ascending: false })
         .limit(20);
-      if (error) console.error("Patient search error:", error.message);
+      if (qErr) console.error("Patient search error:", qErr.message);
+      setError(qErr?.message || "");
       setResults(data || []);
       setSearching(false);
     }, 300);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [search, hospitalId]);
+  }, [search, effectiveHospitalId]);
 
   // Close on outside click
   useEffect(() => {
@@ -101,7 +113,9 @@ const PatientSearchPicker: React.FC<Props> = ({
       {open && (search.length >= 2) && (
         <div className="absolute z-50 w-full mt-1 bg-popover border border-border rounded-md shadow-lg max-h-[200px] overflow-y-auto">
           {searching && <div className="p-3 text-xs text-muted-foreground text-center">Searching…</div>}
-          {!searching && results.length === 0 && <div className="p-3 text-xs text-muted-foreground text-center">No patients found</div>}
+          {!searching && !effectiveHospitalId && <div className="p-3 text-xs text-muted-foreground text-center">Loading hospital context…</div>}
+          {!searching && effectiveHospitalId && error && <div className="p-3 text-xs text-destructive text-center">Search failed: {error}</div>}
+          {!searching && effectiveHospitalId && !error && results.length === 0 && <div className="p-3 text-xs text-muted-foreground text-center">No patients found</div>}
           {results.map(p => (
             <button
               key={p.id}

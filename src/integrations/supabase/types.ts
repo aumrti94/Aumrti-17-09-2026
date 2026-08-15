@@ -20548,6 +20548,7 @@ export type Database = {
       }
       opd_encounters: {
         Row: {
+          ai_clarifying_questions: Json | null
           chief_complaint: string | null
           consultation_bill_id: string | null
           consultation_billed: boolean
@@ -20577,6 +20578,7 @@ export type Database = {
           vitals: Json | null
         }
         Insert: {
+          ai_clarifying_questions?: Json | null
           chief_complaint?: string | null
           consultation_bill_id?: string | null
           consultation_billed?: boolean
@@ -20606,6 +20608,7 @@ export type Database = {
           vitals?: Json | null
         }
         Update: {
+          ai_clarifying_questions?: Json | null
           chief_complaint?: string | null
           consultation_bill_id?: string | null
           consultation_billed?: boolean

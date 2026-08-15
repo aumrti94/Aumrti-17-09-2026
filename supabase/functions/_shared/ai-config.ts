@@ -75,8 +75,17 @@ export interface AiConfig {
    * was invisible, which made any AI budget meaningless. Attaching the
    * identity to the config makes metering the default rather than something
    * each new function has to remember.
+   *
+   * patientId / encounterId are OPTIONAL and set by the caller AFTER resolveAiConfig
+   * returns (resolveAiConfig has no way to know them). They exist because ai-proxy
+   * already writes both onto ai_usage_logs while this path did not — leaving every
+   * dedicated-edge-function AI call unattributable to a patient, which is exactly what
+   * Ananya's rule ("AI inputs/outputs involving PHI must be logged with a consent
+   * reference") requires. Safe to set on the returned object: finalize() caches the
+   * config WITHOUT a meter and attaches a fresh one per call, so mutating what you get
+   * back touches a per-call spread, never the shared cache.
    */
-  meter?: { hospitalId: string; featureKey: string };
+  meter?: { hospitalId: string; featureKey: string; patientId?: string; encounterId?: string };
 }
 
 // Azure AI Foundry serves different model families through different API surfaces:
@@ -419,7 +428,7 @@ export function estimateAiCostUsd(model: string, usage: ChatUsage): number {
 // Exported so the streaming path can meter a streamed call exactly like a buffered one —
 // callAiChatStream deliberately does not meter itself, since the caller owns the timing.
 export async function recordAiUsage(
-  meter: { hospitalId: string; featureKey: string },
+  meter: { hospitalId: string; featureKey: string; patientId?: string; encounterId?: string },
   provider: string,
   model: string,
   usage: ChatUsage,
@@ -452,6 +461,10 @@ export async function recordAiUsage(
       estimated_cost_inr: costInr,
       latency_ms: latencyMs ?? null,
       success: true,
+      // Null for the callers that don't know them — matches ai-proxy, which has always
+      // written these two. Columns added in 20260607000001_fix_missing_tables.sql.
+      patient_id: meter.patientId ?? null,
+      encounter_id: meter.encounterId ?? null,
     });
 
     await sb.rpc("upsert_ai_cost_daily", {
@@ -1085,6 +1098,234 @@ export async function callAiVision(
     void recordAiUsage(config.meter, config.provider, config.model, result.usage, Date.now() - startedAt);
   }
   return result.content;
+}
+
+/**
+ * A document the model reads natively — an image, or a PDF as a first-class
+ * document block rather than base64 stuffed into a text prompt.
+ *
+ * Mirrors the `attachments` contract ai-proxy has served the BROWSER since it was
+ * written (src/lib/aiProvider.ts AIAttachment). This module — the path every
+ * dedicated edge function uses — never had one: callAiVision takes a SINGLE image
+ * and shapes it as an image block, so a PDF sent through it is handed to Claude as
+ * `{type:"image", media_type:"application/pdf"}`, which the API rejects outright.
+ * Any server-side feature that had to read a PDF was therefore blocked from this
+ * path entirely.
+ */
+export interface AiAttachment {
+  kind: "image" | "pdf";
+  mediaType: string; // "image/png", "image/jpeg", "application/pdf"
+  data: string;      // base64, WITHOUT the "data:...;base64," prefix
+}
+
+/**
+ * Can this config read a PDF as a document, rather than needing it rasterised
+ * to images first?
+ *
+ * Callers must check BEFORE spending: OpenAI's chat-completions surface silently
+ * accepts a request whose PDF attachment it cannot see, answers from the text
+ * prompt alone, and bills for it. On a transcription task that produces a
+ * confident, entirely invented page — the worst possible failure here. Better to
+ * refuse the call than to pay for a hallucination.
+ */
+export function supportsPdfDocuments(config: AiConfig): boolean {
+  const p = normalizeProviderKey(config.provider);
+  if (p === "claude" || p === "gemini") return true;
+  // Azure: only the Anthropic surface takes document blocks. The OpenAI-compatible
+  // and foundry_models surfaces have the same blind spot as OpenAI proper.
+  if (p === "azure") return resolveAzureSurface(config.azureSurface, config.model) === "anthropic";
+  return false;
+}
+
+async function callAiDocumentRaw(
+  config: AiConfig,
+  attachments: AiAttachment[],
+  textPrompt: string,
+  maxTokens?: number,
+  temperature?: number,
+): Promise<ChatResult> {
+  const maxTok = maxTokens ?? config.maxTokens;
+  const temp = temperature ?? config.temperature;
+  const provider = normalizeProviderKey(config.provider);
+  const hasPdf = attachments.some((a) => a.kind === "pdf");
+
+  if (hasPdf && !supportsPdfDocuments(config)) {
+    throw new Error(
+      `Provider ${config.provider} (model ${config.model}) cannot read PDF documents. ` +
+      `Route this feature to Claude or Gemini in platform_ai_provider_config.`,
+    );
+  }
+
+  if (provider === "claude") {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": config.apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        // Document blocks live behind this beta flag. Harmless when no PDF is
+        // attached, so it is unconditional rather than another branch to get wrong.
+        "anthropic-beta": "pdfs-2024-09-25",
+      },
+      body: JSON.stringify({
+        model: config.model,
+        max_tokens: maxTok,
+        temperature: temp,
+        messages: [{
+          role: "user",
+          content: [
+            ...attachments.map((a) =>
+              a.kind === "pdf"
+                ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: a.data } }
+                : { type: "image", source: { type: "base64", media_type: a.mediaType, data: a.data } }),
+            { type: "text", text: textPrompt },
+          ],
+        }],
+      }),
+    });
+    if (!res.ok) throw new Error(`Claude document error ${res.status}: ${await res.text()}`);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    return { content: data.content?.[0]?.text || "", usage: extractUsage(data, "claude") };
+  }
+
+  if (provider === "gemini") {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.model}:generateContent?key=${config.apiKey}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            ...attachments.map((a) => ({
+              inline_data: { mime_type: a.kind === "pdf" ? "application/pdf" : a.mediaType, data: a.data },
+            })),
+            { text: textPrompt },
+          ],
+        }],
+        // thinkingBudget:0 for the same reason as callAiChatWithUsageRaw: hidden
+        // reasoning is charged against the output budget and truncates the answer.
+        generationConfig: { maxOutputTokens: maxTok, temperature: temp, thinkingConfig: { thinkingBudget: 0 } },
+      }),
+    });
+    if (res.status === 429) throw new Error("AI quota exceeded — the AI provider key has hit its rate limit / quota. Check provider billing.");
+    if (!res.ok) throw new Error(`Gemini document error ${res.status}: ${await res.text()}`);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    return { content: data.candidates?.[0]?.content?.parts?.[0]?.text || "", usage: extractUsage(data, "gemini") };
+  }
+
+  if (provider === "openai" || provider === "openrouter") {
+    // Images only — the PDF case already threw above.
+    const url = provider === "openrouter"
+      ? "https://openrouter.ai/api/v1/chat/completions"
+      : "https://api.openai.com/v1/chat/completions";
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json", ...(provider === "openrouter" ? { "X-Title": "Aumrti HMS" } : {}) },
+      body: JSON.stringify({
+        model: config.model,
+        max_tokens: maxTok,
+        temperature: temp,
+        messages: [{
+          role: "user",
+          content: [
+            ...attachments.map((a) => ({ type: "image_url", image_url: { url: `data:${a.mediaType};base64,${a.data}` } })),
+            { type: "text", text: textPrompt },
+          ],
+        }],
+      }),
+    });
+    if (!res.ok) throw new Error(`${provider} document error ${res.status}: ${await res.text()}`);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    return { content: data.choices?.[0]?.message?.content || "", usage: extractUsage(data, provider) };
+  }
+
+  if (provider === "azure") {
+    const { url, surface, useResponses } = buildAzureUrl({
+      endpoint: config.endpoint,
+      model: config.model,
+      apiVersion: config.apiVersion,
+      apiStyle: config.apiStyle,
+      surface: config.azureSurface,
+    });
+    const headers = azureHeaders(surface, config.apiKey);
+    if (surface === "anthropic") headers["anthropic-beta"] = "pdfs-2024-09-25";
+
+    let body: Record<string, unknown>;
+    if (surface === "anthropic") {
+      body = {
+        model: config.model,
+        max_tokens: azureMaxOutputTokens(maxTok),
+        temperature: temp,
+        messages: [{
+          role: "user",
+          content: [
+            ...attachments.map((a) =>
+              a.kind === "pdf"
+                ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: a.data } }
+                : { type: "image", source: { type: "base64", media_type: a.mediaType, data: a.data } }),
+            { type: "text", text: textPrompt },
+          ],
+        }],
+      };
+    } else if (useResponses) {
+      body = {
+        model: config.model,
+        max_output_tokens: azureMaxOutputTokens(maxTok),
+        input: [{
+          role: "user",
+          content: [
+            { type: "input_text", text: textPrompt },
+            ...attachments.map((a) => ({ type: "input_image", image_url: `data:${a.mediaType};base64,${a.data}` })),
+          ],
+        }],
+      };
+    } else {
+      body = {
+        ...(surface === "foundry_models" || !config.apiVersion ? { model: config.model } : {}),
+        max_tokens: azureMaxOutputTokens(maxTok),
+        messages: [{
+          role: "user",
+          content: [
+            ...attachments.map((a) => ({ type: "image_url", image_url: { url: `data:${a.mediaType};base64,${a.data}` } })),
+            { type: "text", text: textPrompt },
+          ],
+        }],
+      };
+    }
+
+    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(`Azure document error ${res.status}: ${await res.text()}`);
+    const data = await res.json();
+    return parseAzureResponse(surface, useResponses, data);
+  }
+
+  throw new Error(`Provider ${config.provider} does not support document input`);
+}
+
+/**
+ * Read one or more documents (images and/or PDFs) with a text instruction.
+ *
+ * Metered like every other call in this module when the config carries a `meter`.
+ * Document reads are the most expensive calls the platform makes — a 15-page PDF
+ * costs roughly what a hundred text prompts do — so leaving this path unmetered
+ * would understate precisely the spend that matters most (Ishaan).
+ */
+export async function callAiDocument(
+  config: AiConfig,
+  attachments: AiAttachment[],
+  textPrompt: string,
+  maxTokens?: number,
+  temperature?: number,
+): Promise<ChatResult> {
+  const startedAt = Date.now();
+  const result = await callAiDocumentRaw(config, attachments, textPrompt, maxTokens, temperature);
+  if (config.meter) {
+    void recordAiUsage(config.meter, config.provider, config.model, result.usage, Date.now() - startedAt);
+  }
+  return result;
 }
 
 /**

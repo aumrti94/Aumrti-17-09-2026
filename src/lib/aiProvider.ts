@@ -1,6 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
 import { isAIFeatureAllowed } from "./aiEntitlement";
-import { resolveAzureSurface, buildAzureEndpointUrl, azureRequestHeaders, azureMaxOutputTokens } from "./azureFoundry";
 
 /**
  * Safely parses a Fetch response as JSON, handling cases where the body might be empty, 
@@ -76,15 +75,6 @@ export interface AIResponse {
   error?: string;
 }
 
-interface ProviderCallParams {
-  apiKey: string;
-  model: string;
-  prompt: string;
-  systemPrompt?: string;
-  maxTokens: number;
-  temperature: number;
-}
-
 const PROVIDER_LABELS: Record<string, string> = {
   claude: "Anthropic (Claude)",
   openai: "OpenAI",
@@ -151,6 +141,9 @@ export const FEATURE_LABELS: Record<string, string> = {
   lab_sample_mixup: "Lab Sample Mix-up Detector",
   // ── Clinical ──
   differential_diagnosis: "Differential Diagnosis",
+  clarifying_questions: "AI Clarifying Questions",
+  history_document_extract: "Old Records — Page Extraction",
+  history_digest: "Old Records — History Timeline",
   generate_clinical_note: "Clinical Note Generator",
   adr_detector: "ADR Detector",
   discharge_summary_structured: "Discharge Summary (Structured)",
@@ -285,267 +278,6 @@ export const KNOWN_SERVICES = [
   { service_key: "pmjay", service_name: "Ayushman Bharat / PM-JAY (NHA)", emoji: "🏥", endpoint: "bis.pmjay.gov.in" },
 ];
 
-// ── Provider implementations ──────────────────────────
-
-const callClaude = async (params: ProviderCallParams): Promise<AIResponse> => {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": params.apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({
-      model: params.model,
-      max_tokens: params.maxTokens,
-      temperature: params.temperature,
-      ...(params.systemPrompt ? { system: params.systemPrompt } : {}),
-      messages: [{ role: "user", content: params.prompt }],
-    }),
-  });
-  const data = await safeParseJson(response, "Claude");
-  if (data.error) throw new Error(data.error.message);
-  return {
-    text: data.content?.[0]?.text || "",
-    provider: "claude",
-    model: params.model,
-    tokens_used: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
-  };
-};
-
-const callOpenAI = async (params: ProviderCallParams): Promise<AIResponse> => {
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${params.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: params.model,
-      max_tokens: params.maxTokens,
-      temperature: params.temperature,
-      messages: [
-        ...(params.systemPrompt ? [{ role: "system" as const, content: params.systemPrompt }] : []),
-        { role: "user" as const, content: params.prompt },
-      ],
-    }),
-  });
-  const data = await safeParseJson(response, "OpenAI");
-  if (data.error) throw new Error(data.error.message);
-  return {
-    text: data.choices?.[0]?.message?.content || "",
-    provider: "openai",
-    model: params.model,
-    tokens_used: data.usage?.total_tokens,
-  };
-};
-
-const callGemini = async (params: ProviderCallParams): Promise<AIResponse> => {
-  // Use v1beta so thinkingConfig is honored. thinkingBudget:0 disables Gemini
-  // 2.5/3 "thinking" — without it the model is slow and truncates at MAX_TOKENS.
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${params.model}:generateContent?key=${params.apiKey}`;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: params.prompt }] }],
-      generationConfig: {
-        maxOutputTokens: params.maxTokens,
-        temperature: params.temperature,
-        thinkingConfig: { thinkingBudget: 0 },
-      },
-    }),
-  });
-  const data = await safeParseJson(response, "Gemini");
-  if (data.error) throw new Error(data.error.message);
-  return {
-    text: data.candidates?.[0]?.content?.parts?.[0]?.text || "",
-    provider: "gemini",
-    model: params.model,
-    tokens_used: data.usageMetadata?.totalTokenCount,
-  };
-};
-
-const callPerplexity = async (params: ProviderCallParams): Promise<AIResponse> => {
-  const response = await fetch("https://api.perplexity.ai/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${params.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: params.model,
-      max_tokens: params.maxTokens,
-      messages: [{ role: "user", content: params.prompt }],
-    }),
-  });
-  const data = await safeParseJson(response, "Perplexity");
-  if (data.error) throw new Error(data.error.message);
-  return {
-    text: data.choices?.[0]?.message?.content || "",
-    provider: "perplexity",
-    model: params.model,
-  };
-};
-
-// ── Azure OpenAI (India Central — DPDP compliant) ─────
-interface AzureConfig {
-  endpoint: string;
-  deployment: string;
-  apiKey: string;
-  apiVersion?: string; // optional — blank uses the newer /openai/v1 surface (no api-version needed)
-  apiStyle?: "chat_completions" | "responses"; // optional — "responses" only valid when apiVersion is blank
-  surface?: string; // optional — "auto"|"openai"|"anthropic"|"foundry_models" (which Foundry surface)
-}
-
-// Azure Responses API returns output as a list of typed items rather than choices[0].message.content.
-export const extractResponsesOutputText = (data: Record<string, unknown>): string => {
-  if (typeof data.output_text === "string") return data.output_text;
-  const output = Array.isArray(data.output) ? data.output : [];
-  const parts: string[] = [];
-  for (const item of output) {
-    if (item?.type !== "message" || !Array.isArray(item.content)) continue;
-    for (const c of item.content) {
-      if (c?.type === "output_text" && typeof c.text === "string") parts.push(c.text);
-    }
-  }
-  return parts.join("");
-};
-
-const getAzureConfigFromEnv = (): AzureConfig | null => {
-  const env = import.meta.env as Record<string, string | undefined>;
-  const endpoint = env.VITE_AZURE_OPENAI_ENDPOINT;
-  const deployment = env.VITE_AZURE_OPENAI_DEPLOYMENT;
-  const apiKey = env.VITE_AZURE_OPENAI_API_KEY;
-  const apiVersion = env.VITE_AZURE_OPENAI_API_VERSION || undefined;
-  if (!endpoint || !deployment || !apiKey) return null;
-  return { endpoint: endpoint.replace(/\/$/, ""), deployment, apiKey, apiVersion };
-};
-
-const callAzureOpenAI = async (
-  cfg: AzureConfig,
-  request: AIRequest,
-  temperature = 0.3,
-): Promise<AIResponse> => {
-  const { url, surface, useV1, useResponses } = buildAzureEndpointUrl({
-    endpoint: cfg.endpoint,
-    deployment: cfg.deployment,
-    apiVersion: cfg.apiVersion,
-    apiStyle: cfg.apiStyle,
-    surface: cfg.surface,
-  });
-  const headers = azureRequestHeaders(surface, cfg.apiKey);
-  // GPT-5 / o-series reasoning models reject the `temperature` sampling param on Azure.
-  const reasoning = /^(o[0-9]|gpt-5)/i.test(cfg.deployment || "");
-  const azImages = (request.attachments || []).filter((a) => a.kind === "image");
-  let body: Record<string, unknown>;
-  if (surface === "anthropic") {
-    // Claude on Foundry: Anthropic Messages API (image source blocks).
-    const anthContent = azImages.length
-      ? [
-          { type: "text", text: request.prompt },
-          ...azImages.map((a) => ({ type: "image", source: { type: "base64", media_type: a.mediaType, data: a.data } })),
-        ]
-      : request.prompt;
-    body = {
-      model: cfg.deployment,
-      max_tokens: azureMaxOutputTokens(request.maxTokens || 500),
-      temperature,
-      ...(request.systemPrompt ? { system: request.systemPrompt } : {}),
-      messages: [{ role: "user", content: anthContent }],
-    };
-  } else if (useResponses) {
-    const responsesInput = azImages.length
-      ? [
-          {
-            role: "user",
-            content: [
-              { type: "input_text", text: request.prompt },
-              ...azImages.map((a) => ({ type: "input_image", image_url: `data:${a.mediaType};base64,${a.data}` })),
-            ],
-          },
-        ]
-      : request.prompt;
-    body = {
-      model: cfg.deployment,
-      input: responsesInput,
-      ...(request.systemPrompt ? { instructions: request.systemPrompt } : {}),
-      // Reasoning models bill hidden reasoning against this budget — give headroom + cap effort.
-      max_output_tokens: azureMaxOutputTokens(request.maxTokens || 500),
-      ...(reasoning ? { reasoning: { effort: "low" } } : { temperature }),
-    };
-  } else {
-    // OpenAI-compatible (chat) or foundry_models (/models) — both use image_url blocks.
-    const chatContent = azImages.length
-      ? [
-          { type: "text", text: request.prompt },
-          ...azImages.map((a) => ({ type: "image_url", image_url: { url: `data:${a.mediaType};base64,${a.data}` } })),
-        ]
-      : request.prompt;
-    const includeModel = surface === "foundry_models" || useV1; // classic deployment carries model in URL
-    body = {
-      ...(includeModel ? { model: cfg.deployment } : {}),
-      messages: [
-        ...(request.systemPrompt ? [{ role: "system", content: request.systemPrompt }] : []),
-        { role: "user", content: chatContent },
-      ],
-      max_tokens: azureMaxOutputTokens(request.maxTokens || 500),
-      ...(reasoning ? {} : { temperature }),
-    };
-  }
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
-  const data = await safeParseJson(res, "Azure OpenAI");
-  if (!res.ok) {
-    return {
-      text: "",
-      provider: "azure_openai",
-      model: cfg.deployment,
-      error: data?.error?.message || "Azure OpenAI error",
-    };
-  }
-  if (surface === "anthropic") {
-    const blocks = Array.isArray(data.content) ? data.content : [];
-    return {
-      text: blocks.filter((c: any) => c?.type === "text").map((c: any) => c.text).join(""),
-      provider: "azure_openai",
-      model: cfg.deployment,
-      tokens_used: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
-    };
-  }
-  return {
-    text: useResponses ? extractResponsesOutputText(data) : (data.choices?.[0]?.message?.content || ""),
-    provider: "azure_openai",
-    model: cfg.deployment,
-    tokens_used: useResponses
-      ? (data.usage?.total_tokens ?? (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0))
-      : data.usage?.total_tokens,
-  };
-};
-
-// ── ENV fallback keys ──────────────────────────
-
-const ENV_KEYS: Record<string, string> = {
-  claude: "VITE_ANTHROPIC_KEY",
-  openai: "VITE_OPENAI_KEY",
-  azure_openai: "VITE_AZURE_OPENAI_API_KEY",
-  gemini: "VITE_GEMINI_KEY",
-  perplexity: "VITE_PERPLEXITY_KEY",
-  openrouter: "VITE_OPENROUTER_KEY",
-  sarvam: "VITE_SARVAM_KEY",
-  bhashini: "VITE_BHASHINI_KEY",
-};
-
-const getEnvKey = (provider: string): string | undefined => {
-  const envVar = ENV_KEYS[provider];
-  if (!envVar) return undefined;
-  return (import.meta.env as Record<string, string>)[envVar] || undefined;
-};
-
 // ── Main callAI function ──────────────────────────
 
 export const callAI = async (request: AIRequest): Promise<AIResponse> => {
@@ -573,15 +305,6 @@ export const callAI = async (request: AIRequest): Promise<AIResponse> => {
         .eq("is_active", true)
         .maybeSingle();
       activeConfig = defaultConfig;
-    }
-
-    // Step 2: Azure-from-env fast path for DPDP data residency. The secret key only
-    // ever comes from a build-time env var here — never from the DB in the browser
-    // (the global Azure key in platform_ai_keys is admin-only and routes via ai-proxy).
-    const azureEnvCfg = getAzureConfigFromEnv();
-    if (azureEnvCfg && (!activeConfig || activeConfig.provider === "azure_openai" || activeConfig.provider === "openai")) {
-      const temp = Number(activeConfig?.temperature) || 0.3;
-      return await callAzureOpenAI(azureEnvCfg, request, temp);
     }
 
     if (!activeConfig) {

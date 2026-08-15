@@ -154,7 +154,8 @@ Organised by the module you're about to test. Configure the whole row before you
 | `hospital_abdm_config` | [SettingsABDMPage](../../src/pages/settings/SettingsABDMPage.tsx) | ABDM edge functions fail quietly |
 | Notification preferences, escalation rules | [SettingsNotificationsPage](../../src/pages/settings/SettingsNotificationsPage.tsx) | No escalation |
 | HL7 / analyser connectors | [SettingsHL7Page](../../src/pages/settings/SettingsHL7Page.tsx), [IntegrationsHubPage](../../src/pages/settings/IntegrationsHubPage.tsx) | Analyser results don't arrive |
-| `product_modes`, module toggles | [SettingsModulesPage](../../src/pages/settings/SettingsModulesPage.tsx), [SettingsProductModePage](../../src/pages/settings/SettingsProductModePage.tsx) | Routes 404 or show the plan gate |
+| Module entitlement (`plan_features`, `hospital_feature_overrides`) — what a hospital is *allowed* to have per its plan | Platform console → Hospital → **Modules** / Plans Manager. There is no hospital-side screen for this by design | Routes show the plan gate |
+| Module on/off + product mode (`product_modes`) — which of its *entitled* modules a hospital actually enables, and its business-type preset | [SettingsModulesPage](../../src/pages/settings/SettingsModulesPage.tsx), [SettingsProductModePage](../../src/pages/settings/SettingsProductModePage.tsx) — hospital-side screens that exist and have existed since the first commit. **Currently unreachable:** both files and their `App.tsx` routes (`/settings/modules`, `/settings/product-mode`) are removed from the working tree, uncommitted — not a deliberate design decision. `e2e/phase-02-settings/settings.helpers.ts` and `settings-forms.ts` exclude both routes pending resolution | Sidebar/module list may not reflect what the hospital actually wants enabled |
 
 ---
 

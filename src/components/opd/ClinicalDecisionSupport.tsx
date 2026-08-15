@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { callAI } from "@/lib/aiProvider";
+import { toast } from "sonner";
 import { useAIFeature } from "@/hooks/useAIFeature";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -11,6 +12,16 @@ interface Props {
   patientAge?: number;
   patientGender?: string;
   comorbidities?: string[];
+  /**
+   * The patient's history from the outside records they brought in, pre-formatted and
+   * length-capped by formatDigestForPrompt (src/lib/historyDigest.ts).
+   *
+   * Matters most here of the three cards: "first-line treatment" is the wrong answer for a
+   * patient who has already failed first line, and drug cautions are meaningless without
+   * knowing what they are already taking. Neither fact exists anywhere in this hospital's
+   * own records for a new patient.
+   */
+  priorHistory?: string;
   hospitalId: string | null;
   onAddLabOrder?: (testName: string) => void;
 }
@@ -25,7 +36,7 @@ interface CDSResult {
 }
 
 const ClinicalDecisionSupport: React.FC<Props> = ({
-  diagnosis, icdCode, patientAge, patientGender, comorbidities,
+  diagnosis, icdCode, patientAge, patientGender, comorbidities, priorHistory,
   hospitalId, onAddLabOrder,
 }) => {
   const __aiOn = useAIFeature("icd_coding");
@@ -49,18 +60,26 @@ const ClinicalDecisionSupport: React.FC<Props> = ({
 Diagnosis: ${diagnosis} ${icdCode ? `(${icdCode})` : ""}
 Patient: ${patientAge || "Unknown"}yrs, ${patientGender || "Unknown"}
 Comorbidities: ${comorbidities?.join(", ") || "None"}
-
+${priorHistory ? `\n${priorHistory}\nAccount for what this patient is already taking and what has already been tried: do not propose a first-line agent they have already failed, and flag any interaction with their current medications under drug_cautions.\n` : ""}
 Return ONLY JSON:
 {"first_line_treatment":"...","investigations_recommended":["CBC","LFT"],"drug_cautions":["Avoid NSAIDs if renal impairment"],"referral_triggers":["Refer cardiology if EF < 40%"],"guideline_source":"AHA 2023","red_flags":["Chest pain radiating to jaw"]}`,
         maxTokens: 300,
       });
 
-      if (response.error) return;
+      // Never fail silently. This used to be a bare `return` inside a swallowing catch: the
+      // doctor clicked Generate, the spinner stopped, nothing appeared and nothing was logged —
+      // which teaches doctors to distrust the whole AI Guidance tab.
+      if (response.error) {
+        toast.error("Could not generate guidance. Check AI configuration.");
+        return;
+      }
       const parsed = JSON.parse(
         response.text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim()
       );
       setResult(parsed);
-    } catch { /* graceful */ } finally {
+    } catch {
+      toast.error("AI returned an unreadable response. Try again.");
+    } finally {
       setLoading(false);
     }
   };

@@ -129,6 +129,9 @@ test.describe('P1E — RBAC route matrix', () => {
   }
 
   test('TC-P1E-027 every role reaches the core routes', async ({ page, loginAs }) => {
+    // 15 roles x 5 core routes, each via a full UI login + isRouteBlocked's mandatory
+    // 1200ms settle wait — comfortably exceeds the global 60s default on sleep time alone.
+    test.setTimeout(180_000);
     const failures: string[] = [];
     for (const { role } of MATRIX) {
       await loginAs(role);
@@ -160,7 +163,11 @@ test.describe('P1E — RBAC route matrix', () => {
     await loginAs('nurse');
 
     const dataRequests: string[] = [];
+    // Only attribute requests while still on/navigating to the blocked route — RoleGuard
+    // redirects to /dashboard on denial (a client-side SPA swap, no reload), and /dashboard
+    // has its own legitimate data fetches that must not be misattributed to /accounts.
     page.on('request', req => {
+      if (new URL(page.url()).pathname.replace(/\/$/, '') !== '/accounts') return;
       const u = req.url();
       if (/\/rest\/v1\/(bills|journal_entries|chart_of_accounts|bill_payments)/.test(u)) {
         dataRequests.push(u);

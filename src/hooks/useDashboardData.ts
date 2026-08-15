@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useHospitalContext } from "@/hooks/useHospitalContext";
+import { hasAccess } from "@/lib/routeRoles";
 
 export interface DashboardKPIs {
   totalPatients: number;
@@ -32,15 +33,19 @@ export function useDashboardData() {
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
   const { toast } = useToast();
-  const { hospitalId: ctxHospitalId } = useHospitalContext();
-  // Use a ref so fetchAll always reads the latest hospitalId without stale closure issues.
+  const { hospitalId: ctxHospitalId, role: ctxRole, permissions: ctxPermissions } = useHospitalContext();
+  // Use refs so fetchAll always reads the latest values without stale closure issues.
   const hospitalIdRef = useRef<string | null>(null);
+  const roleRef = useRef<string | null>(null);
+  const permissionsRef = useRef<Record<string, any> | null>(null);
   // Debounce timer for realtime-triggered refetches.
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   if (ctxHospitalId && ctxHospitalId !== hospitalIdRef.current) {
     hospitalIdRef.current = ctxHospitalId;
   }
+  roleRef.current = ctxRole;
+  permissionsRef.current = ctxPermissions;
 
   const fetchAll = useCallback(async () => {
     try {
@@ -54,6 +59,14 @@ export function useDashboardData() {
       const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
       const lastMonthStart = lastMonth.toISOString().split("T")[0];
       const lastMonthEndStr = lastMonthEnd.toISOString().split("T")[0];
+
+      // Revenue figures require billing or accounts view access — same check
+      // cardVisible("/billing","card_revenue") already applies at render time; extending
+      // it to the fetch itself means an unauthorized role's browser never receives the
+      // data at all, not just fails to display it.
+      const revenueAllowed =
+        hasAccess("/billing", roleRef.current, permissionsRef.current) ||
+        hasAccess("/accounts", roleRef.current, permissionsRef.current);
 
       // Fire all queries in parallel with Promise.allSettled for resilience.
       // Revenue queries use server-side SUM to avoid transferring all rows.
@@ -74,13 +87,17 @@ export function useDashboardData() {
         // 6: OPD seen/completed (count only)
         supabase.from("opd_visits").select("*", { count: "exact", head: true }).eq("hospital_id", hid).eq("visit_date", today).eq("status", "completed"),
         // 7: Revenue MTD — paid/partial bills only (client-side sum for reliability)
-        supabase.from("bills").select("paid_amount").eq("hospital_id", hid)
-          .gte("bill_date", monthStart).in("payment_status", ["paid", "partial"])
-          .neq("bill_type", "pharmacy"),
+        revenueAllowed
+          ? supabase.from("bills").select("paid_amount").eq("hospital_id", hid)
+              .gte("bill_date", monthStart).in("payment_status", ["paid", "partial"])
+              .neq("bill_type", "pharmacy")
+          : Promise.resolve({ data: [] as any[] }),
         // 8: Revenue last month
-        supabase.from("bills").select("paid_amount").eq("hospital_id", hid)
-          .gte("bill_date", lastMonthStart).lte("bill_date", lastMonthEndStr)
-          .in("payment_status", ["paid", "partial"]).neq("bill_type", "pharmacy"),
+        revenueAllowed
+          ? supabase.from("bills").select("paid_amount").eq("hospital_id", hid)
+              .gte("bill_date", lastMonthStart).lte("bill_date", lastMonthEndStr)
+              .in("payment_status", ["paid", "partial"]).neq("bill_type", "pharmacy")
+          : Promise.resolve({ data: [] as any[] }),
         // 9: Total doctors
         supabase.from("users").select("*", { count: "exact", head: true }).eq("hospital_id", hid)
           .eq("role", "doctor").eq("is_active", true),
@@ -90,15 +107,19 @@ export function useDashboardData() {
         // 11: Critical alerts
         supabase.from("clinical_alerts").select("id", { count: "exact", head: true }).eq("hospital_id", hid)
           .eq("is_acknowledged", false),
-        // 12: Pharmacy retail MTD
-        (supabase as any).from("pharmacy_dispensing").select("net_amount").eq("hospital_id", hid)
-          .eq("dispensing_type", "retail").eq("status", "dispensed")
-          .gte("created_at", monthStart),
+        // 12: Pharmacy retail MTD — same revenue-permission gate as the bills queries above.
+        revenueAllowed
+          ? (supabase as any).from("pharmacy_dispensing").select("net_amount").eq("hospital_id", hid)
+              .eq("dispensing_type", "retail").eq("status", "dispensed")
+              .gte("created_at", monthStart)
+          : Promise.resolve({ data: [] as any[] }),
         // 13: Pharmacy retail last month
-        (supabase as any).from("pharmacy_dispensing").select("net_amount").eq("hospital_id", hid)
-          .eq("dispensing_type", "retail").eq("status", "dispensed")
-          .gte("created_at", lastMonthStart)
-          .lte("created_at", lastMonthEndStr + "T23:59:59"),
+        revenueAllowed
+          ? (supabase as any).from("pharmacy_dispensing").select("net_amount").eq("hospital_id", hid)
+              .eq("dispensing_type", "retail").eq("status", "dispensed")
+              .gte("created_at", lastMonthStart)
+              .lte("created_at", lastMonthEndStr + "T23:59:59")
+          : Promise.resolve({ data: [] as any[] }),
       ]);
 
       const val = <T,>(idx: number, fallback: T): T => {

@@ -11,9 +11,25 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const { patient_id, hospital_id } = await req.json();
-    if (!patient_id || !hospital_id) {
-      return new Response(JSON.stringify({ error: "patient_id and hospital_id required" }), {
+    // Auth verification — this endpoint returns PHI (diagnoses, allergies, medications),
+    // so it must never be reachable without a valid session.
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const anonClient = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!);
+    const { data: { user }, error: authError } = await anonClient.auth.getUser(authHeader.replace("Bearer ", ""));
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const { patient_id } = await req.json();
+    if (!patient_id) {
+      return new Response(JSON.stringify({ error: "patient_id required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -23,18 +39,40 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Fetch patient record
+    // Resolve hospital from the authenticated user — never trust hospital_id from the request body.
+    const { data: userData } = await sb
+      .from("users")
+      .select("hospital_id")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
+    if (!userData) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const hospital_id = userData.hospital_id;
+
+    // Fetch patient record — scoped to the caller's own hospital, so a patient_id
+    // belonging to another hospital resolves to nothing rather than leaking PHI.
     const { data: patient } = await sb
       .from("patients")
       .select("full_name, dob, gender, allergy_history")
       .eq("id", patient_id)
+      .eq("hospital_id", hospital_id)
       .maybeSingle();
+
+    if (!patient) {
+      return new Response(JSON.stringify({ error: "Not found" }), {
+        status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     // Fetch recent OPD encounters (last 5)
     const { data: encounters } = await sb
       .from("opd_encounters")
       .select("chief_complaint, diagnosis, icd10_code, soap_plan")
       .eq("patient_id", patient_id)
+      .eq("hospital_id", hospital_id)
       .order("created_at", { ascending: false })
       .limit(5);
 
@@ -43,6 +81,7 @@ serve(async (req) => {
       .from("prescriptions")
       .select("items")
       .eq("patient_id", patient_id)
+      .eq("hospital_id", hospital_id)
       .order("created_at", { ascending: false })
       .limit(3);
 
@@ -51,6 +90,7 @@ serve(async (req) => {
       .from("care_plans")
       .select("condition, status")
       .eq("patient_id", patient_id)
+      .eq("hospital_id", hospital_id)
       .eq("status", "active");
 
     // Fetch allergy records
@@ -58,6 +98,7 @@ serve(async (req) => {
       .from("allergy_records")
       .select("allergen, severity, reaction")
       .eq("patient_id", patient_id)
+      .eq("hospital_id", hospital_id)
       .eq("status", "active")
       .limit(10);
 

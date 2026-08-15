@@ -19,7 +19,6 @@ import {
   getModuleKeyForPath,
   isModuleKeyAllowed,
 } from "@/hooks/useSubscriptionConfig";
-import { useProductMode } from "@/hooks/useProductMode";
 
 /** Chip filters: everything, only-what-this-hospital-has, or a single category. */
 type Filter = "All" | "My" | ModuleCategory;
@@ -30,16 +29,15 @@ const ModulesPage: React.FC = () => {
   const [activeFilter, setActiveFilter] = useState<Filter>("All");
   const { role, permissions } = useHospitalId();
   const { enabledModules, isLoading: subLoading } = useSubscriptionConfig();
-  const { isModuleEnabled, loadingMode } = useProductMode();
 
   // Mirror the central <ModuleGate> decision so a locked card matches exactly
-  // what happens on click (plan/subscription + product-mode). Optimistic (unlocked)
+  // what happens on click (plan + Platform feature overrides). Optimistic (unlocked)
   // while access data is still loading, to avoid a flash of lock icons.
   const isModuleLocked = (route: string): boolean => {
-    if (subLoading || loadingMode) return false;
+    if (subLoading) return false;
     const key = getModuleKeyForPath(route);
     if (!key) return false; // non-gateable module (dashboard, settings, …) → never locked
-    return !(isModuleKeyAllowed(key, enabledModules) && isModuleEnabled(key));
+    return !isModuleKeyAllowed(key, enabledModules);
   };
 
   // The full catalogue this user's ROLE may see. Locked-by-plan modules stay in the
@@ -54,7 +52,7 @@ const ModulesPage: React.FC = () => {
   const myModules = useMemo(
     () => roleModules.filter((m) => !isModuleLocked(m.route)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [roleModules, enabledModules, subLoading, loadingMode, isModuleEnabled],
+    [roleModules, enabledModules, subLoading],
   );
 
   const recentModuleRoutes = getRecentModules();

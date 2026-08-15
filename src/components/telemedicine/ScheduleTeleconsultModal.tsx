@@ -83,16 +83,19 @@ const ScheduleTeleconsultModal: React.FC<Props> = ({ open, onOpenChange, onCreat
     onCreated();
     onOpenChange(false);
 
-    // Open WhatsApp invite with portal join link
-    if (phone) {
+    // Open WhatsApp invite with the app's own join page — never the raw meet.jit.si room
+    // URL. The app's /join/:sessionId page is the only path that authorizes access via a
+    // narrow, time-windowed check (see 20261013000013_teleconsult_public_join.sql); the raw
+    // Jitsi URL has no such check, so it must never be the thing patients receive.
+    if (phone && newSession?.id) {
       const doctor = doctors.find(d => d.id === doctorId);
-      const joinUrl = newSession?.id
-        ? `${window.location.origin}/join/${newSession.id}`
-        : `https://meet.jit.si/HMS-${roomId}`;
+      const joinUrl = `${window.location.origin}/join/${newSession.id}`;
       const msg = `🏥 Teleconsult Scheduled!\n\nDoctor: ${doctor?.full_name || "Doctor"}\nDate: ${date}\nTime: ${time}\nDuration: ${duration} min\n\nJoin here: ${joinUrl}\n\nPlease join 5 minutes early.`;
       const clean = phone.replace(/\D/g, "");
       const intl = clean.startsWith("91") ? clean : `91${clean}`;
       window.open(`https://wa.me/${intl}?text=${encodeURIComponent(msg)}`, "_blank", "noopener,noreferrer");
+    } else if (phone && !newSession?.id) {
+      toast({ title: "Session created, but the WhatsApp invite link could not be generated", description: "Open the teleconsult from the schedule and copy the join link manually.", variant: "destructive" });
     }
 
     // Reset

@@ -34,7 +34,12 @@ export default defineConfig({
 
   reporter: [
     ['html', { outputFolder: 'playwright-report', open: 'never' }],
-    ['json', { outputFile: 'playwright-report/results.json' }],
+    // Deliberately NOT inside playwright-report/ — the html reporter clears that folder,
+    // and results.json only survived there because of reporter registration order.
+    ['json', { outputFile: 'test-results/results.json' }],
+    // Writes docs/qa/results/latest.json, which build-tracker.mjs merges into the
+    // workbook's Status / Actual Result / Console Error / Screenshot columns.
+    ['./e2e/reporters/tracker-reporter.ts'],
     ['list'],
   ],
 
@@ -55,11 +60,17 @@ export default defineConfig({
       testDir: './e2e/phase-01-foundation',
       use: { ...devices['Desktop Chrome'] },
     },
-    // Phases 02-15 are added here as each phase's specs are written.
+    {
+      name: 'phase-02-settings',
+      testDir: './e2e/phase-02-settings',
+      use: { ...devices['Desktop Chrome'] },
+    },
+    // Phases 03-15 are added here as each phase's specs are written.
     // See docs/qa/PHASE_MAP.md.
     {
       name: 'tablet',
-      testDir: './e2e/phase-01-foundation',
+      testDir: './e2e',
+      testMatch: /phase-\d{2}-[^/]+\/.*\.spec\.ts$/,
       grep: /@tablet/,
       use: { ...devices['iPad (gen 7)'] },
     },

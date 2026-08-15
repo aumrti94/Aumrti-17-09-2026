@@ -6,7 +6,7 @@ import {
   LogOut, HeartPulse, Activity, FolderOpen, X, CalendarDays, Building2, ShieldCheck, Wrench, Users, UserCircle,
 } from "lucide-react";
 import { useCredentialAlert } from "@/hooks/useCredentialAlert";
-import { useProductMode } from "@/hooks/useProductMode";
+import { useSubscriptionConfig, isModuleKeyAllowed } from "@/hooks/useSubscriptionConfig";
 import { cn } from "@/lib/utils";
 import { useSidebar } from "@/hooks/useSidebar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -74,13 +74,15 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ isMobileOverlay, onClose }) => 
   const [userInitials, setUserInitials] = useState("U");
   const [pendingConsentCount, setPendingConsentCount] = useState(0);
 
-  const { isModuleEnabled } = useProductMode();
+  // Entitlement comes from the Platform console only (plan + feature overrides),
+  // the same decision <ModuleGate> enforces on the route itself.
+  const { enabledModules, isLoading: subLoading } = useSubscriptionConfig();
   const isCollapsed = isMobileOverlay ? false : collapsed;
 
   const filterItems = (items: SidebarItem[]) =>
     items.filter((item) =>
       hasAccess(item.path, role, permissions) &&
-      (!item.moduleKey || isModuleEnabled(item.moduleKey)) &&
+      (!item.moduleKey || subLoading || isModuleKeyAllowed(item.moduleKey, enabledModules)) &&
       (!item.actionKey || hasActionAccess("dashboard", item.actionKey, permissions, role))
     );
 

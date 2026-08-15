@@ -144,6 +144,21 @@ export const HospitalProvider = ({ children }: { children: React.ReactNode }) =>
     const resolve = async () => {
       try {
         setLoading(true);
+
+        // getUser() throws AuthSessionMissingError for anonymous visitors — that's
+        // expected on public pages like /register, not an error. getSession() never
+        // throws, so check it first and only call getUser()/log when a session
+        // genuinely exists.
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          setHospitalId(null);
+          setRole(null);
+          setPermissions(null);
+          setFullName(null);
+          setLoading(false);
+          return;
+        }
+
         const { data: { user }, error: authError } = await supabase.auth.getUser();
 
         if (authError) {

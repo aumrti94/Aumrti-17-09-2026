@@ -11,8 +11,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import PatientSearchPicker from "@/components/shared/PatientSearchPicker";
+import { useHospitalId } from "@/hooks/useHospitalId";
 
 const AndrologyTab = () => {
+  const { hospitalId, userId } = useHospitalId();
   const [reports, setReports] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
@@ -44,10 +46,10 @@ const AndrologyTab = () => {
 
   const handleSave = async () => {
     if (!patientId) { toast.error("Patient is required"); return; }
+    if (!hospitalId) { toast.error("User session not found"); return; }
     setSaving(true);
-    const { data: userData } = await supabase.from("users").select("id, hospital_id").limit(1).maybeSingle();
     const { error } = await supabase.from("andrology_reports").insert({
-      hospital_id: userData?.hospital_id,
+      hospital_id: hospitalId,
       patient_id: patientId,
       test_date: new Date().toISOString().split("T")[0],
       volume_ml: volume ? parseFloat(volume) : null,
@@ -61,7 +63,7 @@ const AndrologyTab = () => {
       dfi_percent: dfi ? parseFloat(dfi) : null,
       icsi_indicated: icsiIndicated,
       report_notes: reportNotes || null,
-      reported_by: userData?.id,
+      reported_by: userId,
     });
     if (error) { console.error(error); toast.error("Failed to save report"); }
     else {
@@ -132,7 +134,7 @@ const AndrologyTab = () => {
           <div className="space-y-3">
             <div>
               <Label className="text-xs">Patient *</Label>
-              <PatientSearchPicker hospitalId="" value={patientId} onChange={(id) => setPatientId(id)} />
+              <PatientSearchPicker hospitalId={hospitalId || ""} value={patientId} onChange={(id) => setPatientId(id)} />
             </div>
             <div className="grid grid-cols-3 gap-2">
               <div><Label className="text-xs">Volume (mL) ≥1.4</Label><Input type="number" step="0.01" value={volume} onChange={(e) => setVolume(e.target.value)} /></div>

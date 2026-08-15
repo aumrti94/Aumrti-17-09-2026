@@ -31,7 +31,9 @@ test.describe('P1G — Plan & subscription gating', () => {
     const { isRouteBlocked } = await import('../fixtures/auth.fixture');
     await loginAs('hospital_admin', { hospital: 'B' });
 
-    const viaMenu = await page.getByRole('link', { name: /oncology|ivf|research/i }).count();
+    // Nav/module-card items render as <button>, never <a>, in AppSidebar.tsx and
+    // ModulesPage.tsx.
+    const viaMenu = await page.getByRole('button', { name: /oncology|ivf|research/i }).count();
     const viaUrl = await isRouteBlocked(page, '/research');
 
     if (viaMenu === 0 && !viaUrl) {

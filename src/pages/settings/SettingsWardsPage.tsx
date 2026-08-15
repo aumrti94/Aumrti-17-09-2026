@@ -322,6 +322,9 @@ const SettingsWardsPage: React.FC = () => {
               const statusColor = bed.status === "available" ? "border-emerald-200 bg-emerald-50"
                 : bed.status === "occupied" ? "border-red-200 bg-red-50"
                 : bed.status === "maintenance" ? "border-amber-200 bg-amber-50"
+                // Terminal cleaning between patients is an infection-control state, not a
+                // generic "other" — a nurse scanning the grid must tell it from reserved.
+                : bed.status === "cleaning" ? "border-sky-200 bg-sky-50"
                 : "border-border bg-muted/30";
               const updateBedField = async (field: string, value: any) => {
                 await (supabase as any).from("beds").update({ [field]: value }).eq("id", bed.id);
@@ -351,8 +354,11 @@ const SettingsWardsPage: React.FC = () => {
                   <select value={bed.status} onChange={(e) => updateBedStatus.mutate({ id: bed.id, status: e.target.value })}
                     className="h-7 w-full rounded border border-input bg-background px-2 text-xs">
                     <option value="available">Available</option>
+                    <option value="cleaning">Cleaning</option>
                     <option value="maintenance">Maintenance</option>
                     <option value="reserved">Reserved</option>
+                    {/* Occupied is set by admitting a patient, never by hand — offered so the
+                        current state is visible, disabled so it cannot be selected. */}
                     <option value="occupied" disabled>Occupied</option>
                   </select>
                   <select value={bed.bed_category || "general"} onChange={(e) => updateBedField("bed_category", e.target.value)}

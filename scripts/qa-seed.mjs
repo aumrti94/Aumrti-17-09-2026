@@ -143,7 +143,7 @@ function buildPlan() {
       { table: 'radiology_modalities',   n: isFull ? MOCK.radiologyModalities.length : 0,what: 'created BEFORE studies' },
       { table: 'radiology_study_master', n: isFull ? MOCK.radiologyStudies.length : 0,   what: 'incl. 2 obstetric variants for the PCPNDT test' },
       { table: 'payer_masters',          n: isFull ? MOCK.payers.length : 0,             what: 'self / TPA / govt / corporate with ceilings' },
-      { table: 'hospital_config_values', n: isFull ? Object.keys(MOCK.configValues).length : 0, what: 'drug routes + frequencies' },
+      { table: 'hospital_config_values', n: isFull ? Object.values(MOCK.configValues).reduce((a, v) => a + v.length, 0) : 0, what: 'drug routes + frequencies, one row per value' },
       { table: 'hospital_settings',      n: isFull ? 2 : 0,                              what: 'discount approval rules + IPD ancillary payment' },
       { table: 'patients',               n: patients.length,         what: `${GUARD.uhidPrefix}NNNN synthetic records` },
     ].filter(s => s.n > 0);
@@ -165,7 +165,7 @@ function printPlan(plan, env) {
   info('Will ONLY write to hospitals whose name starts with:');
   GUARD.hospitalNamePrefixes.forEach(p => console.log(`      ${c.g('•')} "${p}"`));
   info(`Patients seeded with UHID prefix  ${GUARD.uhidPrefix}`);
-  info(`Logins seeded with email prefix   ${GUARD.emailPrefix}`);
+  info(`Logins seeded with email prefix   ${GUARD.emailPrefixes.join(', ')}`);
   info('No unscoped delete or update is ever issued.');
   console.log('');
 
@@ -225,21 +225,78 @@ async function resolveHospital(db, h, { create }) {
 }
 
 /**
- * Upsert helper. Every call is hospital-scoped by construction: `rows` must
- * already carry hospital_id, and we assert that before sending.
+ * Insert-or-update helper, keyed by natural columns rather than a real DB
+ * unique constraint. Several QA target tables (lab_test_master,
+ * radiology_modalities, beds, ...) have no unique constraint PostgREST can
+ * use as an ON CONFLICT target, so a genuine upsert() 400s with "no unique or
+ * exclusion constraint matching the ON CONFLICT specification". Reading the
+ * existing rows first and branching insert vs. update sidesteps that
+ * entirely and needs nothing more than hospital_id scoping to stay safe.
+ *
+ * Every call is hospital-scoped by construction: `rows` must already carry
+ * hospital_id, and we assert that before sending.
  */
-async function upsert(db, table, rows, conflict, hospitalId) {
+async function upsertByKey(db, table, rows, keyCols, hospitalId) {
   if (!rows.length) return 0;
   const stray = rows.filter(r => r.hospital_id !== hospitalId);
   if (stray.length) {
     die(`Internal guard tripped: ${stray.length} row(s) for "${table}" carry the wrong hospital_id.`);
   }
-  const { error } = await db.from(table).upsert(rows, { onConflict: conflict, ignoreDuplicates: false });
-  if (error) {
-    warn(`${table}: ${error.message}`);
-    return 0;
+
+  const { data: existing, error: selErr } = await db
+    .from(table).select(['id', ...keyCols].join(',')).eq('hospital_id', hospitalId);
+  if (selErr) { warn(`${table}: ${selErr.message}`); return 0; }
+
+  const keyOf = row => keyCols.map(k => String(row[k])).join('');
+  const existingId = new Map((existing ?? []).map(r => [keyOf(r), r.id]));
+
+  const toInsert = [];
+  const toUpdate = [];
+  for (const row of rows) {
+    const id = existingId.get(keyOf(row));
+    if (id) toUpdate.push({ id, ...row });
+    else toInsert.push(row);
   }
-  return rows.length;
+
+  let n = 0;
+  if (toInsert.length) {
+    const { data, error } = await db.from(table).insert(toInsert).select('id');
+    if (error) warn(`${table} insert: ${error.message}`);
+    else n += data.length;
+  }
+  for (const { id, ...rest } of toUpdate) {
+    const { error } = await db.from(table).update(rest).eq('id', id);
+    if (error) warn(`${table} update ${id}: ${error.message}`);
+    else n++;
+  }
+  return n;
+}
+
+// mock-data.json's own vocabulary doesn't match these DB-level CHECK/ENUM constraints
+// (verified live: department_type = clinical|administrative|support, ward_type has no
+// "deluxe", drug_master.schedule_type has no "NDPS" — NDPS drugs are Schedule X under the
+// Drugs and Cosmetics Rules, payer_masters.payer_type has no "self"/"govt"). Map at the
+// seed boundary rather than touching the fixture file, which is the human-readable source
+// of truth other docs already cite by these exact values.
+const DEPARTMENT_TYPE = { clinical: 'clinical', diagnostic: 'clinical', support: 'support' };
+const WARD_TYPE = { general: 'general', semi_private: 'semi_private', private: 'private', deluxe: 'private', icu: 'icu' };
+const DRUG_SCHEDULE_TYPE = { OTC: 'OTC', H: 'H', H1: 'H1', NDPS: 'X' };
+function payerType(p) {
+  if (p.type === 'tpa') return 'tpa';
+  if (p.type === 'corporate') return 'corporate';
+  if (p.type === 'self') return 'cash';
+  if (/pmjay/i.test(p.name)) return 'pmjay';
+  if (/cghs/i.test(p.name)) return 'cghs';
+  return 'other'; // ECHS and anything else govt-but-unclassified
+}
+
+/** 22:00 -> 06:00 must read as 8h, not -16h. */
+function shiftDurationHours(start, end) {
+  const [sh, sm] = start.split(':').map(Number);
+  const [eh, em] = end.split(':').map(Number);
+  let mins = (eh * 60 + em) - (sh * 60 + sm);
+  if (mins <= 0) mins += 24 * 60;
+  return Math.round((mins / 60) * 100) / 100;
 }
 
 async function seedHospital(db, key) {
@@ -255,17 +312,21 @@ async function seedHospital(db, key) {
   const wards = isFull ? MOCK.wards : MOCK.wards.slice(0, 1);
 
   let n;
-  n = await upsert(db, 'departments',
-    departments.map(d => ({ hospital_id: hid, name: d.name, code: d.code, is_active: true })),
-    'hospital_id,name', hid);
+  n = await upsertByKey(db, 'departments',
+    departments.map(d => ({ hospital_id: hid, name: d.name, type: DEPARTMENT_TYPE[d.type] ?? 'clinical', is_active: true })),
+    ['name'], hid);
   if (n) ok(`departments        ${n}`);
 
-  n = await upsert(db, 'wards',
+  const { data: deptRows } = await db
+    .from('departments').select('id, name').eq('hospital_id', hid);
+  const deptId = Object.fromEntries((deptRows ?? []).map(d => [d.name, d.id]));
+
+  n = await upsertByKey(db, 'wards',
     wards.map(w => ({
-      hospital_id: hid, name: w.name, ward_type: w.category,
-      bed_category: w.category, rate_per_day: w.ratePerDay, is_active: true,
+      hospital_id: hid, name: w.name, type: WARD_TYPE[w.category] ?? 'general',
+      rate_per_day: w.ratePerDay, total_beds: isFull ? w.bedCount : 4, is_active: true,
     })),
-    'hospital_id,name', hid);
+    ['name'], hid);
   if (n) ok(`wards              ${n}  ${c.dim('(all with rate_per_day)')}`);
 
   const { data: wardRows } = await db
@@ -278,48 +339,77 @@ async function seedHospital(db, key) {
       beds.push({
         hospital_id: hid, ward_id: wardId[w.name] ?? null,
         bed_number: `${w.bedPrefix}-${String(i).padStart(2, '0')}`,
-        bed_category: w.category, status: 'available',
+        bed_category: WARD_TYPE[w.category] ?? 'general', status: 'available', is_active: true,
       });
     }
   }
-  n = await upsert(db, 'beds', beds, 'hospital_id,bed_number', hid);
+  n = await upsertByKey(db, 'beds', beds, ['bed_number'], hid);
   if (n) ok(`beds               ${n}`);
 
   if (!isFull) {
-    n = await upsert(db, 'patients',
+    n = await upsertByKey(db, 'patients',
       MOCK.patients.filter(p => p.hospital === key).map(p => patientRow(p, hid)),
-      'hospital_id,uhid', hid);
+      ['uhid'], hid);
     if (n) ok(`patients           ${n}`);
     info('Hospital B is deliberately minimal — it exists to prove isolation.');
     return;
   }
 
-  n = await upsert(db, 'shift_master',
-    MOCK.shifts.map(s => ({ hospital_id: hid, name: s.name, start_time: s.start, end_time: s.end })),
-    'hospital_id,name', hid);
+  n = await upsertByKey(db, 'shift_master',
+    MOCK.shifts.map(s => ({
+      hospital_id: hid, shift_name: s.name, shift_code: s.name.slice(0, 3).toUpperCase(),
+      start_time: s.start, end_time: s.end,
+      duration_hours: shiftDurationHours(s.start, s.end),
+      shift_type: s.name.toLowerCase(), is_active: true,
+    })),
+    ['shift_name'], hid);
   if (n) ok(`shift_master       ${n}`);
 
-  n = await upsert(db, 'service_master',
+  n = await upsertByKey(db, 'service_master',
     MOCK.services.map(s => ({
-      hospital_id: hid, name: s.name, code: s.code, category: s.category,
-      rate: s.rate, gst_applicable: s.gstApplicable, gst_percent: s.gstPercent,
+      hospital_id: hid, name: s.name, category: s.category,
+      fee: s.rate, gst_applicable: s.gstApplicable, gst_percent: s.gstPercent,
       hsn_code: s.hsn, is_active: true,
     })),
-    'hospital_id,code', hid);
+    ['name'], hid);
   if (n) ok(`service_master     ${n}  ${c.dim('(all with HSN)')}`);
 
-  n = await upsert(db, 'drug_master',
+  // Per-doctor consultation fees. Needs the doctor's users.id and the
+  // department's id, both resolved by name against what was just seeded.
+  const { data: userRows } = await db
+    .from('users').select('id, full_name').eq('hospital_id', hid);
+  const doctorId = Object.fromEntries((userRows ?? []).map(u => [u.full_name, u.id]));
+
+  const feeRows = MOCK.doctorFees
+    .filter(f => doctorId[f.doctor])
+    .map(f => ({
+      hospital_id: hid, name: `${f.doctor} Consultation`, category: 'consultation',
+      fee: f.consultation, follow_up_fee: f.followUp, emergency_fee: f.emergency,
+      ipd_consultation_fee: f.ipdVisit, validity_days: f.validityDays,
+      doctor_id: doctorId[f.doctor], department_id: deptId[f.department] ?? null,
+      gst_applicable: false, gst_percent: 0, is_active: true,
+    }));
+  const skippedDoctors = MOCK.doctorFees.filter(f => !doctorId[f.doctor]).map(f => f.doctor);
+  n = await upsertByKey(db, 'service_master', feeRows, ['doctor_id'], hid);
+  if (n) ok(`service_master     ${n}  ${c.dim('(per-doctor consultation fees)')}`);
+  if (skippedDoctors.length) {
+    warn(`per-doctor fees skipped — no users row for: ${skippedDoctors.join(', ')} ` +
+      `(staff logins are created separately; see the note at the end of this run)`);
+  }
+
+  n = await upsertByKey(db, 'drug_master',
     MOCK.drugs.map(d => ({
-      hospital_id: hid, brand_name: d.brand, generic_name: d.generic,
-      dosage_form: d.form, strength: d.strength, schedule: d.schedule,
-      mrp: d.mrp, gst_percent: d.gst, is_active: true,
+      hospital_id: hid, drug_name: d.brand, generic_name: d.generic,
+      dosage_forms: [d.form], standard_doses: [d.strength],
+      drug_schedule: d.schedule, schedule_type: DRUG_SCHEDULE_TYPE[d.schedule] ?? 'other',
+      is_ndps: d.schedule === 'NDPS', gst_percent: d.gst, is_active: true,
     })),
-    'hospital_id,brand_name', hid);
+    ['drug_name'], hid);
   if (n) ok(`drug_master        ${n}  ${c.dim('(2 NDPS, 1 Schedule H1)')}`);
 
   const { data: drugRows } = await db
-    .from('drug_master').select('id, brand_name').eq('hospital_id', hid);
-  const drugId = Object.fromEntries((drugRows ?? []).map(d => [d.brand_name, d.id]));
+    .from('drug_master').select('id, drug_name').eq('hospital_id', hid);
+  const drugId = Object.fromEntries((drugRows ?? []).map(d => [d.drug_name, d.id]));
 
   const explicit = new Set(MOCK.drugBatches.map(b => b.drug));
   const batches = [
@@ -331,65 +421,111 @@ async function seedHospital(db, key) {
     })),
   ].filter(b => drugId[b.drug]);
 
-  n = await upsert(db, 'drug_batches',
+  n = await upsertByKey(db, 'drug_batches',
     batches.map(b => {
       const d = MOCK.drugs.find(x => x.brand === b.drug);
       return {
         hospital_id: hid, drug_id: drugId[b.drug], batch_number: b.batch,
-        quantity_available: b.qty, expiry_date: b.expiry, status: b.status,
+        quantity_received: b.qty, quantity_available: b.qty,
+        expiry_date: b.expiry, status: b.status,
+        cost_price: Math.round((d?.mrp ?? 0) * 0.7 * 100) / 100,
         mrp: d?.mrp ?? 0, sale_price: d?.mrp ?? 0, gst_percent: d?.gst ?? 12,
         is_active: true,
       };
     }),
-    'hospital_id,batch_number', hid);
+    ['batch_number'], hid);
   if (n) ok(`drug_batches       ${n}  ${c.dim('(1 expired, 1 quarantined, FEFO pair)')}`);
 
-  n = await upsert(db, 'lab_test_master',
+  n = await upsertByKey(db, 'lab_test_master',
     MOCK.labTests.map(t => ({
       hospital_id: hid, test_name: t.name, test_code: t.code,
       sample_type: t.sampleType, fee: t.fee, unit: t.unit || null,
       normal_min: t.normalMin, normal_max: t.normalMax,
       tat_minutes: t.tatMinutes, is_active: true,
     })),
-    'hospital_id,test_code', hid);
+    ['test_name'], hid);
   if (n) ok(`lab_test_master    ${n}  ${c.dim('(with fees + normal ranges)')}`);
 
-  n = await upsert(db, 'radiology_modalities',
+  n = await upsertByKey(db, 'lab_test_groups',
+    MOCK.labTestGroups.map(g => ({
+      hospital_id: hid, group_name: g.name,
+      group_code: g.name.replace(/[^A-Za-z0-9]+/g, '-').toUpperCase(),
+      category: 'panel', fee: g.fee,
+      tat_minutes: Math.max(...g.members.map(code =>
+        MOCK.labTests.find(t => t.code === code)?.tatMinutes ?? 0)),
+      is_active: true,
+    })),
+    ['group_code'], hid);
+  if (n) ok(`lab_test_groups    ${n}  ${c.dim('(Fever Panel at a group price)')}`);
+
+  n = await upsertByKey(db, 'radiology_modalities',
     MOCK.radiologyModalities.map(m => ({
       hospital_id: hid, name: m.name, modality_type: m.type, is_active: true,
     })),
-    'hospital_id,name', hid);
+    ['name'], hid);
   if (n) ok(`radiology_modalities ${n}`);
 
   const { data: modRows } = await db
-    .from('radiology_modalities').select('id, name').eq('hospital_id', hid);
+    .from('radiology_modalities').select('id, name, modality_type').eq('hospital_id', hid);
   const modId = Object.fromEntries((modRows ?? []).map(m => [m.name, m.id]));
+  const modType = Object.fromEntries((modRows ?? []).map(m => [m.name, m.modality_type]));
 
-  n = await upsert(db, 'radiology_study_master',
+  n = await upsertByKey(db, 'radiology_study_master',
     MOCK.radiologyStudies.map(s => ({
-      hospital_id: hid, name: s.name, modality_id: modId[s.modality] ?? null,
+      hospital_id: hid, study_name: s.name, modality_id: modId[s.modality] ?? null,
+      modality_type: modType[s.modality] ?? null,
       fee: s.fee, sort_order: s.sortOrder, is_active: true,
     })),
-    'hospital_id,name', hid);
+    ['study_name'], hid);
   if (n) ok(`radiology_studies  ${n}  ${c.dim('(2 obstetric variants for PCPNDT)')}`);
 
-  n = await upsert(db, 'payer_masters',
+  n = await upsertByKey(db, 'payer_masters',
     MOCK.payers.map(p => ({
-      hospital_id: hid, name: p.name, payer_type: p.type, is_active: true,
+      hospital_id: hid, payer_name: p.name, payer_type: payerType(p), is_active: true,
     })),
-    'hospital_id,name', hid);
+    ['payer_name'], hid);
   if (n) ok(`payer_masters      ${n}`);
+  warn(
+    'payer_masters has no room_rent_ceiling / co_payment_value / deductible columns in the ' +
+    'live schema — MOCK.payers.roomCeiling/coPayPercent/deductible are NOT written anywhere. ' +
+    'Any case asserting a payer ceiling from the database (e.g. the HDFC ERGO ₹4,000/day ' +
+    'ceiling) needs that finding resolved before it can pass.',
+  );
 
-  n = await upsert(db, 'hospital_config_values',
-    Object.entries(MOCK.configValues).map(([k, v]) => ({
-      hospital_id: hid, config_key: k, config_value: v,
-    })),
-    'hospital_id,config_key', hid);
-  if (n) ok(`config_values      ${n}  ${c.dim('(drug routes + frequencies)')}`);
+  const configRows = [];
+  for (const [category, values] of Object.entries(MOCK.configValues)) {
+    values.forEach((value, i) => configRows.push({
+      hospital_id: hid, category, value, label: value, sort_order: i, is_active: true,
+    }));
+  }
+  n = await upsertByKey(db, 'hospital_config_values', configRows, ['category', 'value'], hid);
+  if (n) ok(`hospital_config_values ${n}  ${c.dim('(drug routes + frequencies, one row per value)')}`);
 
-  n = await upsert(db, 'patients',
+  // Matches the shape SettingsApprovalsPage / IPD_ANCILLARY_POLICY_KEY actually read/write.
+  n = await upsertByKey(db, 'hospital_settings',
+    [
+      {
+        hospital_id: hid, key: 'discount_approval_rules',
+        value: JSON.stringify({
+          t1_amount: 500, t1_pct: 5, t2_amount: 2000, t2_pct: 15,
+          t2_roles: ['billing_executive'], t3_roles: ['cfo'],
+        }),
+      },
+      {
+        hospital_id: hid, key: 'ipd_ancillary_payment',
+        value: JSON.stringify({
+          pharmacy: { mode: 'post_paid', receipt: 'consolidated' },
+          lab: { mode: 'post_paid', receipt: 'consolidated' },
+          radiology: { mode: 'post_paid', receipt: 'consolidated' },
+        }),
+      },
+    ],
+    ['key'], hid);
+  if (n) ok(`hospital_settings  ${n}  ${c.dim('(discount approval rules + IPD ancillary payment)')}`);
+
+  n = await upsertByKey(db, 'patients',
     MOCK.patients.filter(p => p.hospital === key).map(p => patientRow(p, hid)),
-    'hospital_id,uhid', hid);
+    ['uhid'], hid);
   if (n) ok(`patients           ${n}  ${c.dim('(incl. allergy, CGHS, obstetric, duplicate)')}`);
 }
 
@@ -398,7 +534,7 @@ function patientRow(p, hid) {
   dob.setFullYear(dob.getFullYear() - p.age);
   return {
     hospital_id: hid, uhid: p.uhid, full_name: p.name,
-    gender: p.sex, date_of_birth: dob.toISOString().slice(0, 10),
+    gender: p.sex, dob: dob.toISOString().slice(0, 10),
     phone: p.phone || null,
     allergies: p.allergies?.length ? p.allergies.join(', ') : null,
     is_active: true,
@@ -412,9 +548,10 @@ async function verify(db) {
     const row = await resolveHospital(db, h, { create: false });
     if (!row) { fail(`Hospital ${key} "${h.name}" — not found. Run without --verify to create it.`); continue; }
     ok(`Hospital ${key} "${h.name}"  ${c.dim(row.id)}`);
-    for (const t of ['departments', 'wards', 'beds', 'service_master', 'drug_master',
-                     'drug_batches', 'lab_test_master', 'radiology_study_master',
-                     'payer_masters', 'patients']) {
+    for (const t of ['departments', 'wards', 'beds', 'shift_master', 'service_master',
+                     'drug_master', 'drug_batches', 'lab_test_master', 'lab_test_groups',
+                     'radiology_modalities', 'radiology_study_master',
+                     'payer_masters', 'hospital_config_values', 'hospital_settings', 'patients']) {
       const { count, error } = await db
         .from(t).select('*', { count: 'exact', head: true }).eq('hospital_id', row.id);
       if (error) warn(`${t.padEnd(24)} ${error.message}`);

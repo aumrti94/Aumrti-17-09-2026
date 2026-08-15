@@ -1,6 +1,5 @@
 import React, { useState } from "react";
-import { cn } from "@/lib/utils";
-import { Mic, Pencil } from "lucide-react";
+import { Pencil } from "lucide-react";
 import type { EncounterData } from "../ConsultationWorkspace";
 import DiagnosisPanel from "../DiagnosisPanel";
 import { useDoctorQuickPicks } from "@/hooks/useDoctorQuickPicks";
@@ -25,7 +24,6 @@ const SkeletonChips = () => (
 );
 
 const ExaminationTab: React.FC<Props> = ({ encounter, onChange, encounterId, hospitalId, patientId, userId, seedDiagnosis }) => {
-  const [recording, setRecording] = useState(false);
   const [showManager, setShowManager] = useState(false);
 
   const { items: examFindings, isLoading, save, reset } = useDoctorQuickPicks<string>("exam_findings");
@@ -33,24 +31,6 @@ const ExaminationTab: React.FC<Props> = ({ encounter, onChange, encounterId, hos
   const appendToExam = (text: string) => {
     const cur = encounter.examination_notes;
     onChange({ examination_notes: cur + (cur ? ", " : "") + text });
-  };
-
-  const handleVoice = (field: "examination_notes" | "soap_objective") => {
-    const SR = (window as unknown as Record<string, unknown>).SpeechRecognition || (window as unknown as Record<string, unknown>).webkitSpeechRecognition;
-    if (!SR) return;
-    const recognition = new (SR as new () => { lang: string; continuous: boolean; interimResults?: boolean; onresult: ((e: { results: { 0: { 0: { transcript: string } } } }) => void) | null; onerror: (() => void) | null; onend: (() => void) | null; start: () => void })();
-    recognition.lang = "en-IN";
-    recognition.continuous = false;
-    setRecording(true);
-    recognition.onresult = (e) => {
-      const text = e.results[0][0].transcript;
-      const cur = field === "examination_notes" ? encounter.examination_notes : encounter.soap_objective;
-      onChange({ [field]: cur + (cur ? " " : "") + text });
-      setRecording(false);
-    };
-    recognition.onerror = () => setRecording(false);
-    recognition.onend = () => setRecording(false);
-    recognition.start();
   };
 
   return (
@@ -104,20 +84,12 @@ const ExaminationTab: React.FC<Props> = ({ encounter, onChange, encounterId, hos
       {/* Systemic Examination */}
       <div>
         <label className="text-xs font-bold text-slate-700 mb-1 block">Systemic Examination / Clinical Notes</label>
-        <div className="relative">
-          <textarea
-            value={encounter.soap_objective}
-            onChange={(e) => onChange({ soap_objective: e.target.value })}
-            className="w-full min-h-[90px] border border-slate-200 rounded-lg p-3 text-sm resize-none focus:border-[#1A2F5A] focus:ring-2 focus:ring-[#1A2F5A]/10 outline-none"
-            placeholder="Systemic examination findings..."
-          />
-          <button
-            onClick={() => handleVoice("soap_objective")}
-            className={cn("absolute bottom-3 right-3 w-8 h-8 rounded-full flex items-center justify-center", recording ? "bg-red-500 animate-pulse" : "bg-[#1A2F5A] hover:bg-[#152647]")}
-          >
-            <Mic className="h-3.5 w-3.5 text-white" />
-          </button>
-        </div>
+        <textarea
+          value={encounter.soap_objective}
+          onChange={(e) => onChange({ soap_objective: e.target.value })}
+          className="w-full min-h-[90px] border border-slate-200 rounded-lg p-3 text-sm resize-none focus:border-[#1A2F5A] focus:ring-2 focus:ring-[#1A2F5A]/10 outline-none"
+          placeholder="Systemic examination findings..."
+        />
       </div>
 
       {/* Multi-Diagnosis Panel */}

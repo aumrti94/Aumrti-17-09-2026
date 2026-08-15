@@ -6,11 +6,21 @@ import { ProductModeContext } from "@/hooks/useProductMode";
 
 const CACHE_PREFIX = "hms_pmode_";
 
+/**
+ * Product mode is a DESCRIPTIVE label for the deployment (hospital / clinic /
+ * diagnostic / pharmacy / institute) — it does not gate anything.
+ *
+ * It used to: `product_modes.enabled_modules` was read as an exhaustive allowlist,
+ * so every module key absent from that partial list — "settings" included, plus every
+ * specialty the hospital-side editors never rendered — resolved as "disabled for your
+ * deployment". That locked hospitals out of Settings, the one screen that could have
+ * undone it. Module access now has exactly one source of truth: the Platform console
+ * (plan features + hospital_feature_overrides), resolved by useSubscriptionConfig.
+ */
 export const ProductModeProvider = ({ children }: { children: React.ReactNode }) => {
   const { hospitalId, loading: ctxLoading } = useHospitalContext();
   const queryClient = useQueryClient();
   const [productMode, setProductMode] = useState("hospital");
-  const [enabledModules, setEnabledModules] = useState<string[] | null>(null);
   const [loadingMode, setLoadingMode] = useState(true);
 
   const fetchMode = async (hid: string) => {
@@ -18,24 +28,21 @@ export const ProductModeProvider = ({ children }: { children: React.ReactNode })
     const cached = sessionStorage.getItem(cacheKey);
     if (cached) {
       try {
-        const { mode, modules } = JSON.parse(cached);
+        const { mode } = JSON.parse(cached);
         setProductMode(mode || "hospital");
-        setEnabledModules(modules ?? null);
         setLoadingMode(false);
         return;
       } catch { /* ignore */ }
     }
     const { data } = await (supabase as any)
       .from("product_modes")
-      .select("mode, enabled_modules")
+      .select("mode")
       .eq("hospital_id", hid)
       .maybeSingle();
     const mode = data?.mode || "hospital";
-    const modules: string[] | null = data?.enabled_modules ?? null;
     setProductMode(mode);
-    setEnabledModules(modules);
     setLoadingMode(false);
-    try { sessionStorage.setItem(cacheKey, JSON.stringify({ mode, modules })); } catch { /* ignore */ }
+    try { sessionStorage.setItem(cacheKey, JSON.stringify({ mode })); } catch { /* ignore */ }
   };
 
   useEffect(() => {
@@ -102,11 +109,8 @@ export const ProductModeProvider = ({ children }: { children: React.ReactNode })
     fetchMode(hospitalId);
   };
 
-  const isModuleEnabled = (key: string) =>
-    !enabledModules || enabledModules.includes(key);
-
   return (
-    <ProductModeContext.Provider value={{ productMode, enabledModules, loadingMode, isModuleEnabled, refreshMode }}>
+    <ProductModeContext.Provider value={{ productMode, loadingMode, refreshMode }}>
       {children}
     </ProductModeContext.Provider>
   );

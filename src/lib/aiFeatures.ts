@@ -69,6 +69,16 @@ export const AI_FEATURE_DEFS: AIFeatureDef[] = [
   { key: "lab_sample_mixup", label: "Lab Sample Mix-up Detector", description: "AI detection of likely sample mix-ups" },
   // Clinical
   { key: "differential_diagnosis", label: "Differential Diagnosis", description: "AI differential-diagnosis suggestions" },
+  { key: "clarifying_questions", label: "AI Clarifying Questions", description: "High-yield DDx-discriminating questions for OPD history-taking" },
+  // Old-records ingestion. Two keys, because they fail and cost differently: page
+  // extraction is per-page and dominates the bill, the digest runs once per bag.
+  // Withholding extraction withholds the whole feature; withholding only the digest
+  // leaves the doctor the verbatim transcriptions, which is still useful.
+  // The tier rows (history_document_extract_fast / _accurate) are model routing in
+  // platform_ai_provider_config and are deliberately NOT listed here — an admin
+  // toggling this off must not need to know they exist.
+  { key: "history_document_extract", label: "Old Records — Page Extraction", description: "Reads patient-supplied outside records (prescriptions, discharge summaries, reports) page by page" },
+  { key: "history_digest", label: "Old Records — History Timeline", description: "Merges extracted outside records into one date-ordered patient history" },
   { key: "generate_clinical_note", label: "Clinical Note Generator", description: "AI-generated clinical notes" },
   { key: "adr_detector", label: "ADR Detector", description: "AI adverse-drug-reaction detection" },
   { key: "discharge_summary_structured", label: "Discharge Summary (Structured)", description: "AI structured discharge-summary drafting" },

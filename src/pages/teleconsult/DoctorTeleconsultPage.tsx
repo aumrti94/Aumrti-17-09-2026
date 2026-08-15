@@ -39,6 +39,7 @@ const EMPTY_ENCOUNTER: EncounterData = {
   examination_notes: "", soap_subjective: "", soap_objective: "",
   soap_assessment: "", soap_plan: "", diagnosis: "", icd10_code: "",
   follow_up_date: "", follow_up_notes: "",
+  ai_clarifying_questions: null,
 };
 
 const EMPTY_PRESCRIPTION: PrescriptionData = {

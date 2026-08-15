@@ -50,7 +50,6 @@ ROUTE_ROLES['/settings/change-log']  = ['super_admin', 'hospital_admin'];
 ROUTE_ROLES['/settings/tv-display']    = ['super_admin', 'hospital_admin', 'receptionist'];
 ROUTE_ROLES['/settings/ai-languages']  = ['super_admin', 'hospital_admin'];
 ROUTE_ROLES['/settings/integrations']  = ['super_admin', 'hospital_admin'];
-ROUTE_ROLES['/settings/product-mode']  = ['super_admin', 'hospital_admin'];
 ROUTE_ROLES['/analytics/forecasts']            = ['super_admin', 'hospital_admin', 'cfo', 'doctor'];
 ROUTE_ROLES['/analytics/population-health']    = ['super_admin', 'hospital_admin', 'doctor', 'quality_officer', 'quality_manager'];
 ROUTE_ROLES['/analytics/revenue-intelligence'] = ['super_admin', 'hospital_admin', 'cfo'];
@@ -133,6 +132,11 @@ function resolveModPerms(permissions: Record<string, any>, moduleKey: string): a
   return undefined;
 }
 
+/** Find the longest keyed entry in `keys` that `path` is an exact match or sub-path of. */
+function findParentPath(keys: string[], path: string): string | undefined {
+  return keys.find(p => path === p || path.startsWith(p + "/"));
+}
+
 /**
  * Checks if a role (or specifically its permissions) has access to a path
  */
@@ -162,9 +166,7 @@ export function hasAccess(
     let moduleKey = ROUTE_TO_MODULE[normalizedPath];
 
     if (!moduleKey) {
-      const parentPath = Object.keys(ROUTE_TO_MODULE).find(p =>
-        normalizedPath === p || normalizedPath.startsWith(p + "/")
-      );
+      const parentPath = findParentPath(Object.keys(ROUTE_TO_MODULE), normalizedPath);
       if (parentPath) {
         moduleKey = ROUTE_TO_MODULE[parentPath];
       }
@@ -189,8 +191,16 @@ export function hasAccess(
     return false;
   }
 
-  // 3. Fallback to Static System Definitions (only when no permissions row configured)
-  const allowedRoles = ROUTE_ROLES[normalizedPath];
+  // 3. Fallback to Static System Definitions (only when no permissions row configured).
+  // Mirrors the dynamic branch's parent-prefix fallback above: a sub-route with no exact
+  // ROUTE_ROLES entry inherits its parent module's allowed roles, so a future /accounts/*
+  // (or any module's) sub-page doesn't silently deny everyone until someone remembers to
+  // add it explicitly.
+  let allowedRoles = ROUTE_ROLES[normalizedPath];
+  if (!allowedRoles) {
+    const parentPath = findParentPath(Object.keys(ROUTE_ROLES), normalizedPath);
+    if (parentPath) allowedRoles = ROUTE_ROLES[parentPath];
+  }
   if (!allowedRoles) return false;
 
   return allowedRoles.includes(role);

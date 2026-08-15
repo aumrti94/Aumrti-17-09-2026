@@ -36,6 +36,7 @@ export const MODULE_TABS: Record<string, TabDef[]> = {
     { key: "examination", label: "Examination" },
     { key: "guidance", label: "AI Guidance" },
     { key: "rx_orders", label: "Rx & Orders" },
+    { key: "plan_advice", label: "Plan & Advice" },
     { key: "history", label: "History" },
   ],
   ipd: [

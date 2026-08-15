@@ -15,6 +15,7 @@ import ComplaintTab from "./tabs/ComplaintTab";
 import VitalsTab from "./tabs/VitalsTab";
 import ExaminationTab from "./tabs/ExaminationTab";
 import RxOrdersTab from "./tabs/RxOrdersTab";
+import PlanAdviceTab from "./tabs/PlanAdviceTab";
 import HistoryTab from "./tabs/HistoryTab";
 import OverdueFollowupBanner from "@/components/clinical/OverdueFollowupBanner";
 import { getSpecialtySheet, specialtyTabMeta } from "@/lib/specialtyDetection";
@@ -22,6 +23,8 @@ import ObstetricSheet from "@/components/specialty/ObstetricSheet";
 import ReferralLetterModal from "@/components/opd/ReferralLetterModal";
 import DifferentialDiagnosisPanel from "@/components/opd/DifferentialDiagnosisPanel";
 import ClinicalDecisionSupport from "@/components/opd/ClinicalDecisionSupport";
+import ClarifyingQuestionsPanel from "@/components/opd/ClarifyingQuestionsPanel";
+import type { ClarifyingQuestionsState } from "@/components/opd/ClarifyingQuestionsPanel";
 import NeonatalSheet from "@/components/specialty/NeonatalSheet";
 import AnaesthesiaSheet from "@/components/specialty/AnaesthesiaSheet";
 import OphthalmologySheet from "@/components/specialty/OphthalmologySheet";
@@ -32,6 +35,7 @@ import { loadOrderCatalogue, resolveOrders } from "@/lib/orderCatalogue";
 import { printDocument, printHeader } from "@/lib/printUtils";
 import { logRecordAccess } from "@/lib/ims";
 import { translateText, getHospitalLanguages, ALL_PATIENT_LANGUAGES, buildBilingualHtml } from "@/lib/translateUtils";
+import { useCurrentHistoryDigest, formatDigestForPrompt, digestComorbidities } from "@/lib/historyDigest";
 
 interface Props {
   token: OpdToken | null;
@@ -58,6 +62,12 @@ export interface EncounterData {
   icd10_code: string;
   follow_up_date: string;
   follow_up_notes: string;
+  /**
+   * AI Guidance → Clarifying Questions. Persisted so the card survives a tab switch and a
+   * re-opened consultation without re-spending on an AI call (unlike the differential, which
+   * is held in the panel's own state and lost whenever the tab unmounts).
+   */
+  ai_clarifying_questions: ClarifyingQuestionsState | null;
 }
 
 export interface PrescriptionData {
@@ -123,6 +133,7 @@ const emptyEncounter: EncounterData = {
   examination_notes: "", soap_subjective: "", soap_objective: "",
   soap_assessment: "", soap_plan: "", diagnosis: "", icd10_code: "",
   follow_up_date: "", follow_up_notes: "",
+  ai_clarifying_questions: null,
 };
 
 const emptyPrescription: PrescriptionData = {
@@ -136,12 +147,13 @@ const BASE_TABS = [
   { key: "examination", label: "Examination" },
   { key: "guidance", label: "AI Guidance" },
   { key: "rx_orders", label: "Rx & Orders" },
+  { key: "plan_advice", label: "Plan & Advice" },
   { key: "history", label: "History" },
 ] as const;
 
 const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onTokenUpdate, onTokenPatch, showPatientDetails, onTogglePatientDetails }) => {
   const { toast } = useToast();
-  const { registerScreen, unregisterScreen } = useVoiceScribe();
+  const { registerScreen, unregisterScreen, rawTranscript, currentPatientId } = useVoiceScribe();
   const { permissions, role } = useHospitalContext();
   const [activeTab, setActiveTab] = useState("complaint");
   const [encounter, setEncounter] = useState<EncounterData>(emptyEncounter);
@@ -153,6 +165,22 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
   const [diagnosisSeed, setDiagnosisSeed] = useState<{
     text: string; icd10_code: string; nonce: number; isAiSuggested?: boolean; basis?: string;
   } | null>(null);
+  // Bumped by the Clarifying Questions card once its answers are written into the HPI, to ask
+  // the differential to re-run against the richer history. Both updates happen in one handler
+  // so React batches them into a single render — the DDx panel's effect then closes over the
+  // NEW `history` prop. Bumping this in a separate tick would re-run against the stale HPI.
+  const [ddxRefreshSignal, setDdxRefreshSignal] = useState(0);
+
+  /**
+   * The patient's history built from the outside records they brought in — loaded once per
+   * patient and fed to all three AI Guidance cards.
+   *
+   * Patient-scoped, not encounter-scoped: a bag scanned at the front desk last year is still
+   * the best history this consultation has, and for a new patient it is the ONLY one.
+   */
+  const { digest: historyDigest, refresh: refreshHistoryDigest } =
+    useCurrentHistoryDigest(token?.patient_id ?? null);
+  const historyDigestText = useMemo(() => formatDigestForPrompt(historyDigest), [historyDigest]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
@@ -227,6 +255,25 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
     ];
     return all.filter((t) => hasTabAccess("opd", t.key, permissions, role));
   }, [specialty, permissions, role]);
+
+  /**
+   * The doctor-patient conversation, for the AI Clarifying Questions card.
+   *
+   * The scribe panel is app-global and survives a patient switch, so `rawTranscript` may
+   * belong to a DIFFERENT patient than the one on screen. Sending that to the model would be
+   * a cross-patient PHI leak, so the transcript is only released when the scribe's own
+   * `currentPatientId` matches this token's patient. This guard lives here rather than in the
+   * card so there is exactly one place it can be got wrong.
+   *
+   * Truncated to the last 4,000 characters: the tail is the most recent — and most relevant —
+   * part of the consultation, and a hard cap bounds both token spend and how much PHI leaves
+   * the building. Never persisted; see migration 20261012000030.
+   */
+  const scribeTranscript = useMemo(() => {
+    if (!token?.patient_id || !currentPatientId) return "";
+    if (currentPatientId !== token.patient_id) return "";
+    return rawTranscript.slice(-4000);
+  }, [rawTranscript, currentPatientId, token?.patient_id]);
 
   // Auto-reset activeTab to first available if current tab is no longer visible
   useEffect(() => {
@@ -422,6 +469,8 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
           icd10_code: enc.icd10_code || "",
           follow_up_date: enc.follow_up_date || "",
           follow_up_notes: enc.follow_up_notes || "",
+          ai_clarifying_questions:
+            (enc.ai_clarifying_questions as unknown as ClarifyingQuestionsState | null) ?? null,
         });
 
         // Fetch prescription
@@ -479,6 +528,8 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
         icd10_code: data.icd10_code || null,
         follow_up_date: data.follow_up_date || null,
         follow_up_notes: data.follow_up_notes || null,
+        ai_clarifying_questions:
+          (data.ai_clarifying_questions ?? null) as unknown as import("@/integrations/supabase/types").Json,
         updated_at: new Date().toISOString(),
       };
 
@@ -592,6 +643,23 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
     });
   }, [autoSaveEncounter]);
   updateEncounterRef.current = updateEncounter;
+
+  /**
+   * Append the scanned-records summary to the HPI.
+   *
+   * Mirrors applyQuestionsToHpi in ClarifyingQuestionsPanel: the block is delimited and
+   * re-applying REPLACES rather than stacks, so a doctor who presses it twice does not end
+   * up with two copies of the patient's outside history in the note. The `g` flag means a
+   * pre-existing duplicate self-heals on the next apply.
+   */
+  const insertHistoryDigestToHpi = useCallback((text: string) => {
+    const BLOCK_RE = /\n*--- Previous records \(from outside documents[^)]*\) ---\n[\s\S]*?\n--- end ---/g;
+    const stripped = (encounterRef.current.history_of_present_illness || "")
+      .replace(BLOCK_RE, "").replace(/\n{3,}/g, "\n\n").trimEnd();
+    updateEncounter({
+      history_of_present_illness: stripped ? `${stripped}\n\n${text}` : text,
+    });
+  }, [updateEncounter]);
 
   const handlePrintPrescription = () => {
     if (!token || !hospitalInfo) {
@@ -1299,9 +1367,21 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
                 vitals={encounter.vitals as Record<string, any>}
                 age={patientAge ?? undefined}
                 gender={token?.patient?.gender ?? undefined}
+                // The digest rides on the EXISTING patientContext prop rather than a new one:
+                // the differential already treats this field as "everything else known about
+                // the patient", which is exactly what the outside records are.
+                patientContext={
+                  [
+                    token?.patient?.chronic_conditions?.length
+                      ? `Known chronic conditions: ${token.patient.chronic_conditions.join(", ")}`
+                      : null,
+                    historyDigestText,
+                  ].filter(Boolean).join("\n\n") || undefined
+                }
                 hospitalId={hospitalId}
                 patientId={token?.patient_id ?? null}
                 encounterId={encounterId}
+                refreshSignal={ddxRefreshSignal}
                 onSelectDiagnosis={(diagnosis, icd10) =>
                   updateEncounter({ diagnosis, icd10_code: icd10 })
                 }
@@ -1313,6 +1393,33 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
               </div>
             )}
 
+            {/* Clarifying Questions — narrows the case BEFORE a diagnosis exists, which is
+                the gap the other two cards leave. Needs only a chief complaint. */}
+            {hospitalId && encounter.chief_complaint ? (
+              <ClarifyingQuestionsPanel
+                encounter={encounter}
+                onChange={updateEncounter}
+                hospitalId={hospitalId}
+                patientId={token?.patient_id ?? null}
+                encounterId={encounterId}
+                age={patientAge ?? undefined}
+                gender={token?.patient?.gender ?? undefined}
+                allergies={token?.patient?.allergies ?? undefined}
+                chronicConditions={token?.patient?.chronic_conditions?.join(", ") || undefined}
+                voiceTranscript={scribeTranscript}
+                // Stops it asking "have you been diagnosed with diabetes?" when a 2023
+                // discharge summary in the patient's bag already says so — that lands under
+                // already_known instead, which is what makes the card feel like it read the chart.
+                priorHistoryDigest={historyDigestText}
+                onRefineDdx={() => setDdxRefreshSignal((n) => n + 1)}
+              />
+            ) : (
+              <div className="border rounded-lg px-3 py-2.5 bg-muted/30 flex items-center gap-2">
+                <Stethoscope className="h-4 w-4 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">Enter a chief complaint to generate clarifying questions.</span>
+              </div>
+            )}
+
             {/* Clinical Guidance — needs a diagnosis */}
             {encounter.diagnosis && hospitalId ? (
               <ClinicalDecisionSupport
@@ -1320,6 +1427,12 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
                 icdCode={encounter.icd10_code || ""}
                 patientAge={patientAge || undefined}
                 patientGender={token?.patient?.gender || undefined}
+                // Problems documented in outside records are comorbidities whether or not
+                // anyone at this hospital has typed them into the chronic-conditions chips yet.
+                comorbidities={digestComorbidities(historyDigest, token?.patient?.chronic_conditions ?? [])}
+                // First-line treatment has to account for what the patient is already on and
+                // what has already failed — both of which live only in the outside records.
+                priorHistory={historyDigestText}
                 hospitalId={hospitalId}
                 onAddLabOrder={addLabOrder}
               />
@@ -1331,8 +1444,17 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
             )}
           </div>
         )}
-        {activeTab === "rx_orders" && <RxOrdersTab prescription={prescription} onChange={updatePrescription} hospitalId={hospitalId} patientAllergies={token?.patient?.allergies ? token.patient.allergies.split(",").map(a => a.trim()) : []} diagnosis={encounter.diagnosis} icdCode={encounter.icd10_code} patientAge={patientAge || undefined} patientGender={token?.patient?.gender || undefined} encounter={encounter} onEncounterChange={updateEncounter} />}
-        {activeTab === "history" && <HistoryTab token={token} encounterId={encounterId} />}
+        {activeTab === "rx_orders" && <RxOrdersTab prescription={prescription} onChange={updatePrescription} hospitalId={hospitalId} patientAllergies={token?.patient?.allergies ? token.patient.allergies.split(",").map(a => a.trim()) : []} diagnosis={encounter.diagnosis} icdCode={encounter.icd10_code} patientAge={patientAge || undefined} patientGender={token?.patient?.gender || undefined} />}
+        {activeTab === "plan_advice" && <PlanAdviceTab prescription={prescription} onChange={updatePrescription} encounter={encounter} onEncounterChange={updateEncounter} />}
+        {activeTab === "history" && (
+          <HistoryTab
+            token={token}
+            encounterId={encounterId}
+            userId={userId ?? ""}
+            onInsertToHpi={insertHistoryDigestToHpi}
+            onDigestChange={refreshHistoryDigest}
+          />
+        )}
         {activeTab === "specialty" && specialty === 'obstetric' && hospitalId && (
           <ObstetricSheet patientId={token.patient_id} hospitalId={hospitalId} encounterId={encounterId} />
         )}

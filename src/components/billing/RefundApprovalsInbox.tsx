@@ -172,13 +172,14 @@ const RefundApprovalsInbox: React.FC<Props> = ({ hospitalId, onBillSelect, dateR
       postedBy: currentUserId || "",
     });
 
-    const { error } = await (supabase as any).from("refund_payables").update({
-      status: "processed",
-      approved_by: currentUserId,
-      processed_at: new Date().toISOString(),
-    }).eq("id", row.id);
+    // Authorization is re-checked server-side in this RPC — the UI's canApproveRefund gate
+    // above is UX only, not the security boundary (see 20261013000014_...sql).
+    const { error } = await (supabase as any).rpc("approve_or_reject_refund_payable", {
+      p_refund_id: row.id,
+      p_action: "approve",
+    });
     if (error) {
-      toast({ title: "Failed to approve refund", variant: "destructive" });
+      toast({ title: "Failed to approve refund", description: error.message, variant: "destructive" });
     } else {
       toast({ title: `Refund of ${formatINR(row.amount)} processed for ${row.patient?.full_name || "patient"}` });
     }
@@ -192,12 +193,18 @@ const RefundApprovalsInbox: React.FC<Props> = ({ hospitalId, onBillSelect, dateR
       return;
     }
     setProcessingId(row.id);
-    await (supabase as any).from("refund_payables").update({
-      status: "rejected",
-      approved_by: currentUserId,
-      processed_at: new Date().toISOString(),
-      rejection_reason: rejectionReason || "Rejected by approver",
-    }).eq("id", row.id);
+    const { error } = await (supabase as any).rpc("approve_or_reject_refund_payable", {
+      p_refund_id: row.id,
+      p_action: "reject",
+      p_rejection_reason: rejectionReason || null,
+    });
+    if (error) {
+      toast({ title: "Failed to reject refund", description: error.message, variant: "destructive" });
+      setRejectingId(null);
+      setRejectionReason("");
+      setProcessingId(null);
+      return;
+    }
     toast({ title: "Refund request rejected" });
     setRejectingId(null);
     setRejectionReason("");

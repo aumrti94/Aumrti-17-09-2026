@@ -17,6 +17,9 @@ dist-ssr
 coverage/
 playwright-report/
 test-results/
+# Raw Playwright results the tracker reads. The workbook it produces
+# (docs/qa/tracker/AUMRTI_QA_TRACKER.xlsx) is the tracked artifact of record.
+docs/qa/results/
 
 # Editor directories and files
 .vscode/*
@@ -29,6 +32,7 @@ test-results/
 *.sln
 *.sw?
 .env
+.env.local
 .env.test
 e2e/.auth/
 mcp_config.json

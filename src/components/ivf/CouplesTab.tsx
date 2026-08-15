@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import PatientSearchPicker from "@/components/shared/PatientSearchPicker";
+import { useHospitalId } from "@/hooks/useHospitalId";
 
 interface Props {
   showRegister: boolean;
@@ -18,6 +19,7 @@ interface Props {
 }
 
 const CouplesTab = ({ showRegister, onCloseRegister, onRefreshKPIs }: Props) => {
+  const { hospitalId, userId } = useHospitalId();
   const [couples, setCouples] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedCouple, setSelectedCouple] = useState<any>(null);
@@ -51,18 +53,17 @@ const CouplesTab = ({ showRegister, onCloseRegister, onRefreshKPIs }: Props) => 
     if (!femaleId) { toast.error("Female patient is required"); return; }
     if (!consentObtained) { toast.error("ICMR ART Act 2021 requires informed consent before any ART procedure"); return; }
 
-    setSaving(true);
-    const { data: userData } = await supabase.from("users").select("id, hospital_id").limit(1).maybeSingle();
-    if (!userData) { toast.error("User session not found"); setSaving(false); return; }
+    if (!hospitalId) { toast.error("User session not found"); return; }
 
+    setSaving(true);
     const code = `ART-${new Date().getFullYear()}-${String(couples.length + 1).padStart(3, "0")}`;
 
     const { error } = await supabase.from("art_couples").insert({
-      hospital_id: userData.hospital_id,
+      hospital_id: hospitalId,
       couple_code: code,
       female_patient_id: femaleId,
       male_patient_id: maleId || null,
-      treating_doctor: userData.id,
+      treating_doctor: userId,
       indication: indication || null,
       amh_level: amh ? parseFloat(amh) : null,
       afc_count: afc ? parseInt(afc) : null,
@@ -142,7 +143,7 @@ const CouplesTab = ({ showRegister, onCloseRegister, onRefreshKPIs }: Props) => 
             <div>
               <Label>Female Patient *</Label>
               <PatientSearchPicker
-                hospitalId=""
+                hospitalId={hospitalId || ""}
                 value={femaleId}
                 onChange={(id) => { setFemaleId(id); }}
               />
@@ -150,7 +151,7 @@ const CouplesTab = ({ showRegister, onCloseRegister, onRefreshKPIs }: Props) => 
             <div>
               <Label>Male Patient</Label>
               <PatientSearchPicker
-                hospitalId=""
+                hospitalId={hospitalId || ""}
                 value={maleId}
                 onChange={(id) => { setMaleId(id); }}
               />

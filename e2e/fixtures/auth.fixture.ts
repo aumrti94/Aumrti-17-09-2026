@@ -17,14 +17,32 @@ export interface AumrtiFixtures {
 }
 
 export const test = base.extend<AumrtiFixtures>({
-  consoleErrors: async ({ page }, use) => {
+  /**
+   * Collected red console text.
+   *
+   * `auto: true` so it runs for EVERY test, not only the handful that name it — the
+   * tracker has a "Console Error" column for every case, and a fixture nobody requests
+   * fills none of them.
+   *
+   * The teardown attaches what it found, because the array lives in the worker process
+   * and a reporter can only see what reaches TestResult.attachments.
+   */
+  consoleErrors: [async ({ page }, use, testInfo) => {
     const errors: string[] = [];
     page.on('console', msg => {
       if (msg.type() === 'error') errors.push(msg.text());
     });
     page.on('pageerror', err => errors.push(`[pageerror] ${err.message}`));
+
     await use(errors);
-  },
+
+    if (errors.length) {
+      await testInfo.attach('console-errors', {
+        body: errors.join('\n'),
+        contentType: 'text/plain',
+      });
+    }
+  }, { auto: true }],
 
   loginAs: async ({ page }, use) => {
     await use(async (role, opts = {}) => {
@@ -97,8 +115,14 @@ export async function isRouteBlocked(page: Page, path: string): Promise<boolean>
   const wanted = path.split('?')[0].replace(/\/$/, '');
   if (landed !== wanted) return true;        // redirected away
 
+  // Word-boundary'd so this never false-positives on benign page content that merely
+  // contains "permission" (e.g. a "Roles & Permissions" settings card). Includes
+  // ModuleGate's actual copy ("Module Not Enabled" / "not included in your current
+  // plan") since ModuleGate denies via a same-URL content swap rather than a redirect
+  // (unlike RoleGuard, which is already caught by the URL check above), so this text
+  // match is the only way to detect that case.
   const denial = page.getByText(
-    /access denied|not authoris|not authoriz|permission|forbidden|no access|upgrade your plan|not included in your plan|404|not found/i,
+    /access denied|not authoris|not authoriz|forbidden|no access|\bno permission\b|permission denied|insufficient permission|module not enabled|not included in .*?plan|upgrade your plan|404|not found/i,
   );
   return (await denial.count()) > 0;
 }

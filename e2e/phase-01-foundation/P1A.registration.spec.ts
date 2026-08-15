@@ -155,6 +155,7 @@ test.describe('P1A — Hospital registration', () => {
 
     await F.fullName(page).fill(A.adminName);
     await F.email(page).fill(A.adminEmail);
+    await pickSelect(page, /Select designation/i, A.designation);
 
     for (const weak of ['pass', 'password', '12345678']) {
       await F.password(page).fill(weak);

@@ -199,6 +199,20 @@ serve(async (req: Request) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
+    // Enforce hospital isolation — a caller may only spend/attribute AI usage against their
+    // own hospital's entitlement and wallet, never one named in the request body. Without
+    // this, any authenticated user at Hospital A could pass Hospital B's hospitalId and
+    // bypass A's restrictions or debit B's ai_wallet. super_admin is exempt (platform ops).
+    const { data: callerUser } = await adminClient
+      .from("users")
+      .select("role, hospital_id")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
+    if (!callerUser) return json({ error: "Forbidden" }, 403);
+    if (callerUser.hospital_id !== hospitalId && callerUser.role !== "super_admin") {
+      return json({ error: "Cross-hospital access denied" }, 403);
+    }
+
     // AI entitlement floor — enforce the platform/hospital "AI Features" master switch
     // (and per-feature toggles) HERE, server-side, before any provider call. The browser
     // callAI() gate can be bypassed by invoking edge functions directly, so this is the

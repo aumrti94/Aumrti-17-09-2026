@@ -85,7 +85,10 @@ export const LEGACY_MODULE_PARENT: Record<string, string> = {
   pharmacy_retail: "pharmacy",
   day_closure: "billing",
   payments: "billing",
-  accounts: "billing",
+  // "accounts" deliberately has NO legacy-parent fallback: ledger/journal access is
+  // materially more sensitive than billing-collection view access, and unlike the other
+  // entries here, accounts is a first-class, actively-used canonical module — it must
+  // require its own explicit role_permissions grant, never inherit from "billing".
   pmjay: "insurance",
   blood_bank: "ipd",
   cssd: "ipd",

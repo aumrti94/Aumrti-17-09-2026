@@ -75,7 +75,7 @@ const AntibioticJustificationModal: React.FC<Props> = ({
           <div>
             <label className="text-xs font-medium">Clinical Indication *</label>
             <div className="relative mt-1">
-              <textarea className="w-full border rounded-md pl-3 pr-11 py-2 text-sm bg-background resize-none" rows={2}
+              <textarea data-no-dictation className="w-full border rounded-md pl-3 pr-11 py-2 text-sm bg-background resize-none" rows={2}
                 placeholder="e.g. Community-acquired pneumonia, suspected MRSA…"
                 value={form.indication} onChange={e => setForm(f => ({ ...f, indication: e.target.value }))} />
               <FieldDictationButton
@@ -127,7 +127,7 @@ const AntibioticJustificationModal: React.FC<Props> = ({
           <div>
             <label className="text-xs font-medium">De-escalation Plan</label>
             <div className="relative mt-1">
-              <textarea className="w-full border rounded-md pl-3 pr-11 py-2 text-sm bg-background resize-none" rows={2}
+              <textarea data-no-dictation className="w-full border rounded-md pl-3 pr-11 py-2 text-sm bg-background resize-none" rows={2}
                 placeholder="Narrow spectrum once culture available…"
                 value={form.de_escalation_plan} onChange={e => setForm(f => ({ ...f, de_escalation_plan: e.target.value }))} />
               <FieldDictationButton

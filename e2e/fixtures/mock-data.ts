@@ -97,6 +97,15 @@ export interface MockData {
     ipdAncillaryPayment: 'pre_paid' | 'post_paid';
   };
   patients: Patient[];
+  phase2: {
+    _note: string;
+    entry: Record<string, { _kind: 'create' | 'update' | 'toggle' | 'filter' } & Record<string, unknown>>;
+    dropdowns: Record<string, string[]> & { _note: string };
+    edit: Record<string, unknown>;
+    invalid: Record<string, unknown>;
+    crossTenantProbe: { name: string; code: string };
+    labTestGroup: { name: string; fee: number; members: string[]; membersSum: number };
+  };
   commonValues: {
     standardAdvance: number; standardConsultation: number;
     discountBelowThreshold: number; discountAboveThreshold: number;

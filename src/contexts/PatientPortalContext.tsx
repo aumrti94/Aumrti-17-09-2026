@@ -22,7 +22,7 @@ export const PatientPortalProvider: React.FC<{ children: ReactNode }> = ({ child
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { setLoading(false); return; }
 
-      const stored = localStorage.getItem(STORAGE_KEY);
+      const stored = sessionStorage.getItem(STORAGE_KEY);
       if (stored) {
         try {
           const parsed = JSON.parse(stored) as { patient: PatientSummary; hospital: PortalHospital };
@@ -36,10 +36,10 @@ export const PatientPortalProvider: React.FC<{ children: ReactNode }> = ({ child
             setPatient(parsed.patient);
             setHospital(parsed.hospital);
           } else {
-            localStorage.removeItem(STORAGE_KEY);
+            sessionStorage.removeItem(STORAGE_KEY);
           }
         } catch {
-          localStorage.removeItem(STORAGE_KEY);
+          sessionStorage.removeItem(STORAGE_KEY);
         }
       }
       setLoading(false);
@@ -49,12 +49,12 @@ export const PatientPortalProvider: React.FC<{ children: ReactNode }> = ({ child
   const activate = (p: PatientSummary, h: PortalHospital) => {
     setPatient(p);
     setHospital(h);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ patient: p, hospital: h }));
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ patient: p, hospital: h }));
   };
 
   const logout = async () => {
     await supabase.auth.signOut();
-    localStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem(STORAGE_KEY);
     setPatient(null);
     setHospital(null);
   };

@@ -365,6 +365,168 @@ Default for testing: **`post_paid`**.
 Scenarios **P6-S03**, **P7-S12** and **P5-S03** switch it to `pre_paid` and re-run — these
 are genuinely different code paths including whether pharmacy stock decrements at all.
 
+### Settings dropdown option lists
+
+Exhaustive option lists for every settings dropdown/select/radio that offers a fixed, finite
+set of choices — mirrored in `e2e/fixtures/mock-data.json` under `phase2.dropdowns`.
+
+**Every value gets its own tracker row and its own Playwright test**, in the section that owns
+the screen: ward types and bed statuses in `P2D.structure.wards.spec.ts`, the six Language &
+Region controls in `P2B.identity.language.spec.ts`, all 23 dropdown categories in
+`P2D.structure.config-values.spec.ts`. Same rule as drug routes and frequencies above — test
+every value, not a sample. `BUG-P2-001` was a single missing option in a single dropdown, and
+sampling would have walked straight past it.
+
+**Ward Type — Settings → Wards & Beds:** `general` · `private` · `semi_private` · `icu` ·
+`nicu` · `picu` · `hdu` · `surgical` · `maternity` · `emergency` · `daycare` (11 — the full
+`ward_type` database enum)
+
+> ✅ **Bed Status — `BUG-P2-001`, found and FIXED during Phase 2 authoring.** The `bed_status`
+> enum has **5** values — `available` · `occupied` · `reserved` · `maintenance` · `cleaning` —
+> but the per-bed Status dropdown in `SettingsWardsPage.tsx` rendered only 4 `<option>`
+> elements and never offered `cleaning`, so a ward finishing terminal cleaning between
+> patients had no correct status and staff marked the bed available while it was still dirty.
+> `cleaning` is now offered, with its own colour so it reads distinctly from `reserved`.
+> `occupied` remains present-but-disabled by design — a bed becomes occupied by admitting a
+> patient, never by editing a dropdown. Locked by `TC-P2D-017` (all five values offered),
+> `TC-P2D-018` (occupied not hand-selectable) and `TC-P2D-020` (`cleaning` persists).
+>
+> This is exactly the class of defect that sampling one dropdown value would have missed —
+> which is why Phase 2 gives every option value its own case.
+
+**Bed Category — Settings → Wards & Beds → Beds view:** `general` · `semi_private` ·
+`private` · `icu` · `nicu` · `sicu` · `picu` · `hdu` · `isolation` (9 — free-text column, no
+database enum)
+
+**Language & Region — Settings → Language & Region** (✅ `BUG-P2-004`, found and FIXED during
+Phase 2 authoring — every field below was enterable and selectable, the toast said saved, and
+none of it survived a reload because the screen had no target table at all. It now persists to
+`hospital_settings.language_region`. Locked by `TC-P2B-018`, and by one case per option value
+at `TC-P2B-019` … `TC-P2B-040`):
+- **Interface Language:** `English` · `Hindi (हिन्दी)` · `Telugu (తెలుగు)` ·
+  `Tamil (தமிழ்)` · `Kannada (ಕನ್ನಡ)` · `Malayalam (മലയാളం)` · `Marathi (मराठी)` (7)
+- **Date Format:** `DD/MM/YYYY` · `MM/DD/YYYY` · `YYYY-MM-DD` (3)
+- **Time Format:** `12-hour (2:30 PM)` · `24-hour (14:30)` (2)
+- **Currency:** `₹ Indian Rupee (INR)` · `AED (UAE)` · `USD` · `GBP` (4)
+- **Timezone:** `Asia/Kolkata (IST)` · `Asia/Dubai (GST)` · `America/New_York (EST)` ·
+  `Europe/London (GMT)` (4)
+- **Number Format:** `Indian (1,00,000)` · `International (100,000)` (2)
+
+**UHID Date Format — Settings → Hospital Profile:** `YYYYMMDD` (full date) · `YYYY` (year
+only) · `NONE` (no date) (3) — changes the shape of every new patient UHID issued from the
+moment it saves.
+
+**Preferred Patient Languages — Settings → Hospital Profile:** `Hindi` · `Telugu` · `Tamil` ·
+`Kannada` · `Marathi` · `Malayalam` · `Bengali` · `Gujarati` · `Odia` · `Punjabi` (10 —
+`English` is always included and cannot be removed)
+
+**Notification Channel — Settings → Notification Config, per alert type:** `In-App` ·
+`WhatsApp` · `Both` (3) — ✅ `BUG-P2-003`, found and FIXED during Phase 2 authoring. The fields
+were enterable but Save ran a fake 500ms `setTimeout` and wrote nothing. It now persists to
+`hospital_settings.notification_config`; `notification_preferences` was rejected as the target
+because it is per-**patient** channel booleans and cannot express a per-alert-type channel map.
+
+**Scheduled Reports — Settings → Scheduled Reports:**
+- **Report Type:** `Daily Executive Summary` · `Daily Collection Summary` ·
+  `Weekly OPD Report` · `Weekly Outstanding Receivables` · `Monthly Revenue Report` ·
+  `Monthly Revenue by Department` · `Monthly NABH Quality Report` · `Custom Report` (8)
+- **Frequency:** `Daily` · `Weekly` · `Monthly` (3)
+- **Format:** `PDF` · `Excel` · `Both` · `HTML (in email)` (4)
+
+**Payment Gateway — Settings → Integrations Console:** `Razorpay` · `PayU` ·
+`PhonePe for Business` · `CCAvenue` (4)
+
+**Vitals Monitor Vendor — Settings → HL7/FHIR** (only visible once "Auto-populate ICU
+Flowsheet from Bedside Monitors" is toggled on): `Mindray (BeneVision)` ·
+`Philips IntelliVue` · `GE Healthcare` · `Dräger` · `Nihon Kohden` (5)
+
+**Configurable Dropdown categories — Settings → Configurable Dropdowns:** 23 categories
+across 6 groups (Clinical, HR & Payroll, Finance, Diagnostics, Operations, Structure) —
+`admission_types` · `allergy_types` · `insurance_types` · `drug_routes` · `drug_frequencies` ·
+`dialysis_complications` · `death_manner_types` · `record_requester_types` ·
+`home_care_services` · `physio_modalities` · `leave_types` · `attendance_statuses` ·
+`tpa_companies` · `government_schemes` · `claim_denial_categories` · `claim_rejection_codes` ·
+`lab_test_categories` · `sample_types` · `housekeeping_task_types` ·
+`housekeeping_area_types` · `equipment_categories` · `inventory_categories` ·
+`department_types`. Each must be reachable via its `?cat=` deep link — `drug_routes` and
+`drug_frequencies` are documented in full above; `lab_test_categories` in particular also
+feeds the category filter on Settings → Lab Test Master, so a change here ripples into a
+second screen.
+
+---
+
+## Phase 2 additions — rows you CREATE during Settings testing
+
+Everything above this point is written by `scripts/qa-seed.mjs` before Phase 2 starts.
+That matters: a Phase 2 "create" case that re-enters a seeded row will be rejected as a
+duplicate, which looks like a product bug and is not one.
+
+**So every create / edit / delete case in Phase 2 uses the rows below instead.** They are
+chosen so each one also proves something downstream. Delete them at the end of the phase
+(or re-run `npm run qa:seed`) so Phase 3 starts from the seeded baseline.
+
+### New master rows
+
+| Screen | Row to create | Deliberate property |
+|---|---|---|
+| Departments | `Nephrology` · `NEPH` · Clinical | Then re-enter `General Medicine` for the duplicate-name negative |
+| Wards & Beds | `Nephrology Ward` · `general` · rate/day `₹3,500` · beds `NW-01`, `NW-02` | The `rate_per_day` → IPD room-charge hop. Also the "delete a ward that still has beds" negative |
+| Shifts | `Night Relief` · `22:00`–`06:00` | Crosses midnight — the boundary case |
+| Staff / Doctors | `Dr. Rakesh Iyer` · Nephrology · cons `₹900` · follow-up `₹400` · validity `5 days` · emergency `₹1,400` · IPD visit `₹700` | Creating a doctor must also create the `service_master` fee row |
+| Service Rates | `Dialysis Catheter Insertion` · `PROC-DCI` · procedure · `₹4,500` · Exempt · HSN `999312` | Normal, complete row |
+| Service Rates | `Physiotherapy Session (Home)` · `SERV-PHYH` · service · `₹800` · 18% · **HSN left blank** | The GST hard-block negative — once the hospital GSTIN is set, a bill carrying this line must refuse to finalise |
+| Drug Formulary | `Nefrosave` · N-Acetylcysteine + Taurine · Tablet · 600mg · Schedule H · `₹210.00` · 12% | Drug created with **no batch** — must be invisible to the dispenser |
+| Lab Test Master | `Serum Phosphorus` · `PHOS` · Serum · `₹220` · mg/dL · `2.5–4.5` · 120 min | Complete row |
+| Lab Test Master | `Serum Magnesium` · `MG` · Serum · `₹240` · mg/dL · **normal range left blank** | No range → no abnormal flag and **no critical alert**. The negative that proves the range field matters |
+| Lab Test Groups | `Renal Panel` · `₹650` · CREAT + UREA + K + PHOS | Individual sum is `₹750`; the group price must win |
+| Radiology | Modality `Fluoroscopy` (`fluoro`), then study `Fluoroscopy Barium Swallow` · `₹2,800` | Create the **study first** to prove the "No studies configured" ordering trap, then do it correctly |
+| Payer Masters | `Niva Bupa Health` · `tpa` · ceiling `₹4,500/day` · co-pay 15% · deductible `₹2,000` | A third distinct ceiling/co-pay combination |
+| Config Values | Drug route `Nasogastric`; drug frequency `Q12H` | Must appear in the OPD Rx dropdowns immediately |
+| ICD-10 Codes | `N18.5` — Chronic kidney disease, stage 5 | Searchable in the diagnosis picker |
+| Day Care Procedures | `Haemodialysis Session (Day Care)` · `₹2,200` | Must appear in the day-care procedure picker |
+| Bank Accounts | `Aarogya Ops — HDFC` · A/c `50100123456789` · IFSC `HDFC0001234` | IFSC format validation |
+| Consent Forms | `Haemodialysis Consent` | Must appear in the procedure consent picker |
+| Store Locations | `Nephrology Sub-Store` | Must appear as a transfer destination |
+| Clinical Thresholds | Serum Potassium critical high `6.0` | Overrides the default — a lower critical bar than the seeded one |
+
+### Edit targets
+
+Edit these rather than the seeded rows, so a failed edit never corrupts the baseline:
+
+| Screen | Change | Verify |
+|---|---|---|
+| Departments | `Nephrology` → `Nephrology & Dialysis` | `departments.name` changed in the DB, not just the toast |
+| Wards | `Nephrology Ward` rate `₹3,500` → `₹4,200` | An admission created **after** the change bills `₹4,200`; one created before is unaffected |
+| Service Rates | `PROC-DCI` `₹4,500` → `₹5,200` | New charges use `₹5,200`; already-raised charges do not retro-change |
+| Payer Masters | `Niva Bupa Health` co-pay 15% → 25% | `payer_masters` row updated |
+
+### Deliberately invalid input — for the validation negatives
+
+Type these expecting rejection. If any is **accepted**, that is the defect.
+
+| Field | Invalid value | Why |
+|---|---|---|
+| Hospital GSTIN | `36AAAAA0000A1Z` (14 chars) | GSTIN is exactly 15 characters |
+| Hospital GSTIN | `36AAACT2727Q1ZX` with a wrong check digit | Format-valid, checksum-invalid |
+| Pincode | `50003` (5 digits) | Indian pincodes are 6 digits |
+| Phone | `987650000` (9 digits) / `98765000012` (11) | Both sides of the 10-digit boundary |
+| IFSC | `HDFC001234` (10 chars) | IFSC is 11 characters, 5th char is `0` |
+| HSN code | `99` | HSN is 4, 6 or 8 digits |
+| GST percent | `-5` and `101` | Outside 0–100 |
+| Ward rate/day | `-100` and `0` | A negative or zero room rate is never valid |
+| Consultation fee | `abc` | Non-numeric into a money field |
+| Bed number | `NW-01` (again, same ward) | Duplicate within a ward |
+| Department code | `NEPH` (again) | Duplicate code |
+| Staff email | `rakesh.iyer@` | Malformed |
+| Shift times | start `22:00`, end `22:00` | Zero-length shift |
+| Normal range | min `5.0`, max `2.0` | Min above max |
+| Discount rule | approval threshold `120%` | Outside 0–100 |
+
+> **₹ and dates:** every amount is typed as a plain number (`3500`, not `₹3,500`) but must
+> *render* as `₹3,500.00` in `en-IN` grouping. Every date is entered and displayed as
+> **DD/MM/YYYY**. A screen that renders `3,500.00` without the symbol, or `08/10/2026` as
+> `10/08/2026`, is a defect — see `formatCurrency()` in `src/lib/currency.ts`.
+
 ---
 
 ## Patients — 40 records

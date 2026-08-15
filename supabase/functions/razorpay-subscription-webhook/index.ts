@@ -99,28 +99,31 @@ serve(async (req) => {
     await getRazorpaySubscriptionKeys(db);
 
   // ── HMAC-SHA256 signature verification ───────────────────────────────────
-  if (secret) {
-    if (!signature) {
-      console.warn("Missing x-razorpay-signature header");
-      return new Response("Missing signature", { status: 401 });
-    }
-    const key = await crypto.subtle.importKey(
-      "raw",
-      new TextEncoder().encode(secret),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign"]
-    );
-    const mac  = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(rawBody));
-    const computed = Array.from(new Uint8Array(mac))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-    if (computed !== signature) {
-      console.error("Signature mismatch — possible forgery attempt");
-      return new Response("Invalid signature", { status: 401 });
-    }
-  } else {
-    console.warn("RAZORPAY_SUBSCRIPTION_WEBHOOK_SECRET not set — skipping signature check");
+  // Fails CLOSED: an unconfigured secret must reject every request, not skip the check —
+  // otherwise a misconfigured environment would silently accept forged subscription/refund
+  // events from anyone who finds this URL.
+  if (!secret) {
+    console.error("RAZORPAY_SUBSCRIPTION_WEBHOOK_SECRET not set — rejecting request");
+    return new Response("Webhook secret not configured", { status: 500 });
+  }
+  if (!signature) {
+    console.warn("Missing x-razorpay-signature header");
+    return new Response("Missing signature", { status: 401 });
+  }
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const mac  = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(rawBody));
+  const computed = Array.from(new Uint8Array(mac))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  if (computed !== signature) {
+    console.error("Signature mismatch — possible forgery attempt");
+    return new Response("Invalid signature", { status: 401 });
   }
 
   let payload: any;

@@ -1,0 +1,14 @@
+{
+  "name": "aumrti-pitch-deck",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Generator for the Aumrti RTIH Amaravati investor pitch deck (.pptx).",
+  "scripts": {
+    "build": "node build.mjs",
+    "verify": "node verify.mjs"
+  },
+  "dependencies": {
+    "pptxgenjs": "^4.0.1"
+  }
+}

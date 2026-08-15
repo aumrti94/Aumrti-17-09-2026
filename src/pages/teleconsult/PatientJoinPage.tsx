@@ -54,16 +54,15 @@ const PatientJoinPage: React.FC = () => {
 
   const fetchSession = useCallback(async () => {
     if (!sessionId) return;
+    // This page is public/unauthenticated — teleconsult_sessions RLS only grants access to
+    // logged-in staff, so a genuine patient must go through the narrow, time-windowed RPC
+    // rather than a direct table read (see 20261013000013_teleconsult_public_join.sql).
     const { data } = await (supabase as any)
-      .from("teleconsult_sessions")
-      .select("id, room_id, scheduled_at, duration_minutes, status, patient_phone, hospital_id, patients(full_name), users!doctor_id(full_name)")
-      .eq("id", sessionId)
+      .rpc("get_teleconsult_join_info", { p_session_id: sessionId })
       .maybeSingle();
     if (data) {
       setSession(data);
-      // Fetch hospital name
-      const { data: hosp } = await supabase.from("hospitals").select("name").eq("id", data.hospital_id).maybeSingle();
-      if (hosp?.name) setHospitalName(hosp.name);
+      if (data.hospital_name) setHospitalName(data.hospital_name);
       // Auto-join if already in_progress
       if (data.status === "in_progress" || data.status === "waiting") {
         setJoined(true);
@@ -100,10 +99,7 @@ const PatientJoinPage: React.FC = () => {
   const handleJoin = async () => {
     if (!session || joining) return;
     setJoining(true);
-    await (supabase as any)
-      .from("teleconsult_sessions")
-      .update({ status: "waiting", patient_joined_at: new Date().toISOString() })
-      .eq("id", session.id);
+    await (supabase as any).rpc("mark_teleconsult_patient_joined", { p_session_id: session.id });
     setSession((prev: any) => ({ ...prev, status: "waiting" }));
     setJoined(true);
     setJoining(false);
@@ -129,8 +125,8 @@ const PatientJoinPage: React.FC = () => {
     );
   }
 
-  const patientName = session.patients?.full_name || "Patient";
-  const doctorName = session.users?.full_name ? `Dr. ${session.users.full_name}` : "Your Doctor";
+  const patientName = session.patient_first_name || "Patient";
+  const doctorName = session.doctor_name ? `Dr. ${session.doctor_name}` : "Your Doctor";
   const statusInfo = STATUS_INFO[session.status] || STATUS_INFO.scheduled;
   const canJoin = ["scheduled", "waiting", "in_progress"].includes(session.status);
   const isTerminal = ["completed", "cancelled", "missed"].includes(session.status);

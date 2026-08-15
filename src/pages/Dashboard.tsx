@@ -102,6 +102,9 @@ const Dashboard: React.FC = () => {
   // linked module is reachable AND its card tab is not withheld; buttons gate on actions.
   const cardVisible = (route: string, cardKey: string) =>
     hasAccess(route, role, permissions) && hasTabAccess("dashboard", cardKey, permissions, role);
+  // Revenue figures require billing or accounts view access — mirrors the same check now
+  // applied in useDashboardData's revenue queries, so the fetch and the render agree.
+  const revenueAllowed = hasAccess("/billing", role, permissions) || hasAccess("/accounts", role, permissions);
   const panelVisible = (panelKey: string) => hasTabAccess("dashboard", panelKey, permissions, role);
   const actionAllowed = (actionKey: string) => hasActionAccess("dashboard", actionKey, permissions, role);
 
@@ -465,7 +468,7 @@ const Dashboard: React.FC = () => {
 
       {/* ROW 2 — Three panels */}
       <div className="grid grid-cols-1 lg:grid-cols-[3fr_3fr_2fr] gap-3 flex-1 min-h-0">
-        {panelVisible("panel_revenue") && <RevenueChart />}
+        {panelVisible("panel_revenue") && revenueAllowed && <RevenueChart />}
         {panelVisible("panel_beds") && <BedOccupancy />}
         {panelVisible("panel_alerts") && <AlertsPanel kpis={kpis} />}
       </div>

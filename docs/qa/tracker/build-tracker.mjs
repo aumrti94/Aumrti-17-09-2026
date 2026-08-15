@@ -31,6 +31,17 @@ const CASES_DIR = path.join(QA_DIR, 'cases');
 const OUT_FILE = path.join(__dirname, 'AUMRTI_QA_TRACKER.xlsx');
 const MERGE = !process.argv.includes('--no-merge');
 
+/**
+ * Automated results from the Playwright run (e2e/reporters/tracker-reporter.ts).
+ * `--results <path>` overrides; `--no-results` ignores them entirely.
+ */
+const NO_RESULTS = process.argv.includes('--no-results');
+const RESULTS_FILE = (() => {
+  const i = process.argv.indexOf('--results');
+  if (i !== -1 && process.argv[i + 1]) return path.resolve(process.argv[i + 1]);
+  return path.join(QA_DIR, 'results', 'latest.json');
+})();
+
 /* ------------------------------------------------------------------ *
  * Column contract — the 14 you specified, then the 7 additions.
  * Order here is the order in the sheet. Do not reorder without also
@@ -150,12 +161,71 @@ function readPhaseCSVs() {
 }
 
 /* ------------------------------------------------------------------ *
+ * Automated results from the Playwright run.
+ *
+ * Column ownership is split on purpose:
+ *   MACHINE owns Status / Actual Result / Console Error / Screenshot — a fresh run
+ *     is more trustworthy than a stale hand-typed value, so it overwrites.
+ *   HUMAN owns Notes and Defect ID — deciding what a failure MEANS and which bug it
+ *     belongs to is triage, and the reporter never invents a defect number.
+ * ------------------------------------------------------------------ */
+const MACHINE_COLS = {
+  status: 'Status(PASS/FAIL/BLOCKED)',
+  actual: 'Actual Result(What happened)',
+  consoleError: 'Console Error(Copy-paste red text)',
+  screenshot: 'Screenshot(Y/N)',
+};
+
+function readAutomatedResults() {
+  if (NO_RESULTS || !fs.existsSync(RESULTS_FILE)) return null;
+  try {
+    const payload = JSON.parse(fs.readFileSync(RESULTS_FILE, 'utf8'));
+    if (!payload || typeof payload.cases !== 'object') return null;
+    return payload;
+  } catch (e) {
+    console.warn(`  ! Could not read automated results (${e.message}). Continuing without them.`);
+    return null;
+  }
+}
+
+/**
+ * Fold automated results into the answers map, respecting the ownership split above.
+ * Runs AFTER the workbook read so machine columns win over the previous run's values,
+ * and BEFORE the CSV merge so both land in the sheet together.
+ */
+function applyAutomatedResults(answers, results, csvTcs) {
+  if (!results) return { applied: 0, orphaned: [] };
+  let applied = 0;
+  const orphaned = [];
+
+  for (const [tc, r] of Object.entries(results.cases)) {
+    if (!csvTcs.has(tc)) { orphaned.push(tc); continue; }
+
+    const kept = answers.get(tc) ?? {};
+
+    if (r.status) kept[MACHINE_COLS.status] = String(r.status).toUpperCase();
+    if (r.actual) kept[MACHINE_COLS.actual] = r.actual;
+    kept[MACHINE_COLS.consoleError] = r.consoleError || '';
+    kept[MACHINE_COLS.screenshot] = r.screenshot === 'Y' ? 'Y' : 'N';
+
+    // Notes: only fill when the human has not written anything there.
+    if (r.notes && !String(kept['Notes'] ?? '').trim()) kept['Notes'] = r.notes;
+    // Defect ID is never touched.
+
+    answers.set(tc, kept);
+    applied += 1;
+  }
+  return { applied, orphaned };
+}
+
+/* ------------------------------------------------------------------ *
  * Read back what the tester has already typed, so we never destroy it.
  * ------------------------------------------------------------------ */
 async function readExistingAnswers() {
   const answers = new Map();      // TC# -> { col: value }
+  const goLive = new Map();       // "Category||Scenario" -> { status, notes }
   let defects = [];
-  if (!MERGE || !fs.existsSync(OUT_FILE)) return { answers, defects };
+  if (!MERGE || !fs.existsSync(OUT_FILE)) return { answers, defects, goLive };
 
   try {
     const wb = new ExcelJS.Workbook();
@@ -198,12 +268,31 @@ async function readExistingAnswers() {
         if (vals.some(v => v !== null && v !== undefined && String(v).trim() !== '')) defects.push(vals);
       });
     }
+
+    // Go-Live Readiness is rebuilt from a hardcoded list every run, so anything typed
+    // into its Status/Evidence columns used to be destroyed. Keyed on Category+Scenario
+    // because the sheet has no ID column.
+    const gl = wb.getWorksheet('Go-Live Readiness');
+    if (gl) {
+      gl.eachRow((row, n) => {
+        if (n === 1) return;
+        const cell = c => {
+          const v = row.getCell(c).value;
+          const s = v && typeof v === 'object' && 'result' in v ? v.result : v;
+          return s === null || s === undefined ? '' : String(s).trim();
+        };
+        const key = `${cell(1)}||${cell(2)}`;
+        const status = cell(4);
+        const notes = cell(5);
+        if ((status || notes) && cell(1) !== 'VERDICT') goLive.set(key, { status, notes });
+      });
+    }
   } catch (e) {
     console.warn(`  ! Could not read the existing workbook (${e.message}).`);
     console.warn('    Generating fresh. Your old file has NOT been deleted — rename it if you need it.');
-    return { answers: new Map(), defects: [] };
+    return { answers: new Map(), defects: [], goLive: new Map() };
   }
-  return { answers, defects };
+  return { answers, defects, goLive };
 }
 
 /* ------------------------------------------------------------------ *
@@ -501,7 +590,7 @@ const GO_LIVE = [
   ['Regression', 'R7', 'Cross-tenant sweep'],
 ];
 
-function buildGoLive(wb) {
+function buildGoLive(wb, goLiveAnswers = new Map()) {
   const sheet = wb.addWorksheet('Go-Live Readiness', { properties: { defaultRowHeight: 18 } });
   sheet.columns = [
     { header: 'Category', key: 'c', width: 16 },
@@ -512,8 +601,11 @@ function buildGoLive(wb) {
   ];
   styleHeader(sheet, TEAL);
 
+  // Status and Evidence are hand-typed here and were previously wiped on every
+  // rebuild, because readExistingAnswers() only scanned sheets named "Phase NN".
   GO_LIVE.forEach(([c, s, w]) => {
-    const row = sheet.addRow({ c, s, w, st: '', n: '' });
+    const prev = goLiveAnswers.get(`${c}||${s}`) ?? {};
+    const row = sheet.addRow({ c, s, w, st: prev.status ?? '', n: prev.notes ?? '' });
     row.getCell('w').alignment = { wrapText: true, vertical: 'top' };
     row.getCell('n').alignment = { wrapText: true, vertical: 'top' };
   });
@@ -614,7 +706,7 @@ async function main() {
     process.exit(1);
   }
 
-  const { answers, defects } = await readExistingAnswers();
+  const { answers, defects, goLive } = await readExistingAnswers();
 
   /*
    * Notes is a shared column: this script seeds guidance into it from the CSV,
@@ -644,13 +736,38 @@ async function main() {
   }
   if (defects.length) console.log(`  Preserving ${defects.length} defect log row(s).`);
 
+  /*
+   * Automated results land last so a fresh Playwright run supersedes the previous
+   * run's machine columns, while Notes and Defect ID stay with whoever typed them.
+   */
+  const results = readAutomatedResults();
+  if (results) {
+    const { applied, orphaned } = applyAutomatedResults(answers, results, csvByTc);
+    console.log(
+      `\n  Automated results from ${path.relative(process.cwd(), RESULTS_FILE).replace(/\\/g, '/')} ` +
+      `(run ${results.finishedAt ?? 'unknown'}):`,
+    );
+    console.log(`    Applied to ${applied} case(s).`);
+    if (orphaned.length) {
+      console.log(`    ${orphaned.length} result(s) had no matching CSV row and were ignored: ${orphaned.slice(0, 5).join(', ')}${orphaned.length > 5 ? '…' : ''}`);
+    }
+    if (results.unmappedTests?.length) {
+      console.log(
+        `    ${results.unmappedTests.length} test(s) carry no TC# in their title, so they cannot ` +
+        `fill a row. Largest known cause: P1E's role-matrix loop titles ("TC-P1E <role> …").`,
+      );
+    }
+  } else if (!NO_RESULTS) {
+    console.log('\n  No automated results found — run the suite first to auto-fill Status/Actual Result.');
+  }
+
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Aumrti QA';
   wb.created = new Date();
 
   buildSummary(wb, phases);
   buildScenarioStatus(wb, phases);
-  buildGoLive(wb);
+  buildGoLive(wb, goLive);
   phases.forEach(ph => buildPhaseSheet(wb, ph, answers));
   buildDefectLog(wb, defects);
 

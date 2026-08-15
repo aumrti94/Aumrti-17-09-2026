@@ -51,9 +51,11 @@ const Register: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    (supabase as any).rpc("get_signup_otp_enabled").then(({ data: enabled }: { data: boolean | null }) => {
-      setOtpRequired(enabled === true);
-    });
+    (supabase as any).rpc("get_signup_otp_enabled")
+      .then(({ data: enabled }: { data: boolean | null }) => {
+        setOtpRequired(enabled === true);
+      })
+      .catch(() => setOtpRequired(false));
   }, []);
 
   const update = (partial: Partial<RegistrationData>) =>

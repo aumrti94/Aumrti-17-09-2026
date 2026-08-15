@@ -10,7 +10,6 @@ import BulkPasteAddModal from "@/components/settings/BulkPasteAddModal";
 import { useConfigValues } from "@/hooks/useConfigValues";
 import { cn } from "@/lib/utils";
 import { useSubscriptionConfig, isModuleKeyAllowed } from "@/hooks/useSubscriptionConfig";
-import { useProductMode } from "@/hooks/useProductMode";
 import { moduleDepartmentLinks } from "@/lib/moduleDepartments";
 
 const COMMON_DEPTS = [
@@ -35,7 +34,6 @@ const SettingsDepartmentsPage: React.FC = () => {
   const [bulkOpen, setBulkOpen] = useState(false);
 
   const { enabledModules } = useSubscriptionConfig();
-  const { isModuleEnabled } = useProductMode();
 
   const { data: departments, isLoading } = useQuery({
     queryKey: ["settings-departments"],
@@ -148,15 +146,14 @@ const SettingsDepartmentsPage: React.FC = () => {
   const showBanner = !isLoading && (departments?.length ?? 0) < 3 && availableCommon.length > 0;
 
   // Departments implied by the specialized/clinical modules this hospital runs.
-  // Only modules the hospital can actually access (plan-entitled AND toggled on)
-  // are considered. We keep BOTH the ones already set up and the ones still
+  // Only modules the hospital can actually access (entitled by plan / Platform
+  // override) are considered. We keep BOTH the ones already set up and the ones still
   // missing, so the full module→department mapping is visible (a hidden row
   // reads as "module missing" even when the department already exists).
   const moduleDeptRows = useMemo(() => {
     const map = new Map<string, { department: string; modules: string[]; exists: boolean }>();
     for (const link of moduleDepartmentLinks()) {
-      const accessible = isModuleKeyAllowed(link.moduleKey, enabledModules) && isModuleEnabled(link.moduleKey);
-      if (!accessible) continue;
+      if (!isModuleKeyAllowed(link.moduleKey, enabledModules)) continue;
       const row = map.get(link.department);
       if (row) {
         if (!row.modules.includes(link.moduleName)) row.modules.push(link.moduleName);
@@ -169,7 +166,7 @@ const SettingsDepartmentsPage: React.FC = () => {
       }
     }
     return [...map.values()].sort((a, b) => a.department.localeCompare(b.department));
-  }, [enabledModules, isModuleEnabled, existingNames]);
+  }, [enabledModules, existingNames]);
 
   const moduleDeptMissing = moduleDeptRows.filter((r) => !r.exists);
   const moduleDeptPresent = moduleDeptRows.filter((r) => r.exists);

@@ -7,6 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import { X, Phone, MapPin, Shield, Heart, Pencil, Trash2, FileJson, Loader2, Info } from "lucide-react";
 import ChronicDiseaseSection from "@/components/clinical/ChronicDiseaseSection";
 import PatientDocuments from "@/components/clinical/PatientDocuments";
+import PatientHistorySection from "@/components/clinical/PatientHistorySection";
 import { REFUND_PAYMENT_STATUSES } from "@/lib/billStatus";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -422,6 +423,20 @@ const PatientDetailDrawer: React.FC<Props> = ({ patient, onClose, onUpdated, onD
                   </div>
                 )}
               </Section>
+
+              {/* The registration-desk scanning path. This is the mount that decides whether
+                  the feature is used at all: by the time the patient reaches the doctor, the
+                  timeline should already be built (Rohit). */}
+              {hospitalId && currentUserId && (
+                <Section title="Records from Other Hospitals">
+                  <PatientHistorySection
+                    patientId={patient.id}
+                    hospitalId={hospitalId}
+                    userId={currentUserId}
+                    hideHeading
+                  />
+                </Section>
+              )}
 
               {hospitalId && currentUserId && (
                 <PatientDocuments patientId={patient.id} hospitalId={hospitalId} userId={currentUserId} />
