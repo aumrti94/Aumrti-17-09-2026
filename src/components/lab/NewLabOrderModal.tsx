@@ -11,6 +11,7 @@ import { fetchIpdAncillaryPolicy, resolveChargePaymentStatus } from "@/lib/ipdAn
 import AdmissionLinker from "@/components/shared/AdmissionLinker";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { getPrescribedPending } from "@/lib/prescribedPending";
+import { resolveTreatingDoctor } from "@/lib/encounterLink";
 import { printBillById } from "@/lib/billPrint";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -93,6 +94,10 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
   const [linkedEncounter, setLinkedEncounter] = useState<string | null>(null);
   const [linkedAdmission, setLinkedAdmission] = useState<string | null>(linkedAdmissionId || null);
   const [linkInfo, setLinkInfo] = useState<string | null>(null);
+  // Who the released report goes back to. See the picker in the render for why this exists.
+  const [referringDoctorId, setReferringDoctorId] = useState<string | null>(null);
+  const [resolvedDoctorName, setResolvedDoctorName] = useState<string | null>(null);
+  const [doctors, setDoctors] = useState<{ id: string; full_name: string }[]>([]);
 
   // Resolve the hospital's lab payment mode once, for the button label + branch. Pre-paid means
   // "collect before the sample is drawn", so an admitted patient's order goes through the same
@@ -248,6 +253,36 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
     // arbitrary one here (which silently billed charges to the wrong stay).
   }, [selectedPatient, hospitalId, linkedAdmissionId]);
 
+  // Doctor list for the referring-doctor picker.
+  useEffect(() => {
+    (supabase as any)
+      .from("users")
+      .select("id, full_name")
+      .eq("hospital_id", hospitalId)
+      .eq("role", "doctor")
+      .eq("is_active", true)
+      .order("full_name")
+      .then(({ data }: any) => setDoctors(data || []));
+  }, [hospitalId]);
+
+  // Default the referring doctor to the treating doctor of whichever visit this order was
+  // linked to, so a released result has a clinician to go back to.
+  useEffect(() => {
+    if (!linkedEncounter && !linkedAdmission) {
+      setResolvedDoctorName(null);
+      return;
+    }
+    let cancelled = false;
+    resolveTreatingDoctor({ encounterId: linkedEncounter, admissionId: linkedAdmission })
+      .then(({ doctorId, doctorName }) => {
+        if (cancelled) return;
+        setResolvedDoctorName(doctorName);
+        // Only fill a blank — never overwrite a doctor the user picked by hand.
+        setReferringDoctorId((prev) => prev ?? doctorId);
+      });
+    return () => { cancelled = true; };
+  }, [linkedEncounter, linkedAdmission]);
+
   const addTest = (test: Test) => {
     if (!selectedTests.find(t => t.id === test.id)) setSelectedTests(prev => [...prev, test]);
   };
@@ -390,7 +425,12 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
       const { data: order, error: orderErr } = await supabase.from("lab_orders").insert({
         hospital_id: hospitalId,
         patient_id: selectedPatient!.id,
+        // `ordered_by` is RLS-checked: lab_orders_insert asserts it equals the calling user's
+        // users.id, so it must stay the desk user who keyed this in. The clinician who actually
+        // asked for the test goes in referring_doctor_id, which is what the result-ready
+        // notification and the doctor's Reports tab read (falling back to ordered_by).
         ordered_by: userData.id,
+        referring_doctor_id: referringDoctorId || null,
         priority,
         clinical_notes: clinicalNotes || null,
         encounter_id: linkedEncounter,
@@ -517,7 +557,10 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
       const { data: order, error: orderErr } = await supabase.from("lab_orders").insert({
         hospital_id: hospitalId,
         patient_id: selectedPatient!.id,
+        // ordered_by = the calling user (RLS), referring_doctor_id = who asked for it.
+        // See the post-paid insert above.
         ordered_by: userData.id,
+        referring_doctor_id: referringDoctorId || null,
         priority,
         clinical_notes: clinicalNotes || null,
         encounter_id: linkedEncounter,
@@ -729,6 +772,32 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
                   preferredAdmissionId={linkedAdmissionId}
                   onChange={setLinkedAdmission}
                 />
+
+                {/* Referring doctor — this is who the report goes back to.
+                    `ordered_by` used to be whoever was logged in at the lab bench, so a
+                    released result had no clinician to notify and the Reports tab had no
+                    doctor to attribute the order to. Defaults to the treating doctor of the
+                    linked visit; editable for a direct-to-lab walk-in. */}
+                {selectedPatient && (
+                  <div className="mt-3">
+                    <label className="text-sm font-medium text-foreground">Referring Doctor</label>
+                    <select
+                      value={referringDoctorId || ""}
+                      onChange={(e) => setReferringDoctorId(e.target.value || null)}
+                      className="w-full h-10 mt-1 rounded-lg border border-border bg-background px-3 text-sm"
+                    >
+                      <option value="">— No referring doctor (report goes to no one) —</option>
+                      {doctors.map((d) => (
+                        <option key={d.id} value={d.id}>Dr {d.full_name}</option>
+                      ))}
+                    </select>
+                    {resolvedDoctorName && referringDoctorId && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Auto-filled from the linked visit — the report will be sent to Dr {resolvedDoctorName}.
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Priority */}

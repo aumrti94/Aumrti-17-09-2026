@@ -274,35 +274,90 @@ broken. See [SETTINGS_PREREQ_MATRIX.md](SETTINGS_PREREQ_MATRIX.md).
 
 ### Lab test master — Settings → Lab Tests
 
-| Test | Code | Sample | Fee | Unit | Normal range | TAT |
-|---|---|---|---|---|---|---|
-| Complete Blood Count | `CBC` | EDTA Blood | `₹350` | — | — | 120 min |
-| Haemoglobin | `HB` | EDTA Blood | `₹120` | g/dL | 13.0–17.0 | 60 min |
-| Fasting Blood Sugar | `FBS` | Fluoride | `₹80` | mg/dL | 70–100 | 60 min |
-| Post Prandial Blood Sugar | `PPBS` | Fluoride | `₹80` | mg/dL | 70–140 | 60 min |
-| HbA1c | `HBA1C` | EDTA Blood | `₹550` | % | 4.0–5.6 | 240 min |
-| Serum Creatinine | `CREAT` | Serum | `₹180` | mg/dL | 0.7–1.3 | 120 min |
-| Blood Urea | `UREA` | Serum | `₹150` | mg/dL | 15–40 | 120 min |
-| **Serum Potassium** | `K` | Serum | `₹200` | mEq/L | 3.5–5.1 | 60 min |
-| Serum Sodium | `NA` | Serum | `₹200` | mEq/L | 135–145 | 60 min |
-| Liver Function Test | `LFT` | Serum | `₹650` | — | — | 240 min |
-| Lipid Profile | `LIPID` | Serum | `₹700` | — | — | 240 min |
-| Thyroid Profile | `TSH` | Serum | `₹450` | µIU/mL | 0.4–4.0 | 240 min |
-| Urine Routine | `URINE` | Urine | `₹150` | — | — | 120 min |
-| Dengue NS1 | `DENG` | Serum | `₹800` | — | Negative | 180 min |
-| Blood Culture | `BCULT` | Culture Bottle | `₹1,200` | — | No growth | 4320 min |
+> ⚠️ **This table was a fourth catalogue and it had drifted.** It documented codes that do
+> not exist (`FBS`, `PPBS`, `UREA`, `LIPID`, `URINE`, `BCULT`, `DENG`), a potassium panic
+> pair of `<2.8 / >6.0` where the real one is `2.5 / 6.5`, and a sodium floor of `135`
+> where the real one is `136` — while telling you never to invent test data. The whole
+> point of `src/lib/labTestCatalog.ts` was to end exactly this. The rows below are now
+> **derived from it**; if you need a test that is not listed, read the catalogue or
+> `e2e/fixtures/mock-data.json` → `labTests` (194 tests), never invent one.
 
-> **Serum Potassium is the critical-value test.** Scenario **P5-S07** enters `7.2` (normal
-> 3.5–5.1) and the critical alert must fire immediately. **Serum Creatinine** is the delta
-> check — enter `0.9`, then `4.5` on the same patient.
+**Source of truth:** `src/lib/labTestCatalog.ts` → generated into `e2e/fixtures/mock-data.json`
+and the `lab_test_catalog_default` seed. `npm run check:lab-catalog` fails CI if they drift.
+
+| Test | Code | Category | Sample | Fee | Unit | Normal range | **Critical** | Auto-verify | TAT |
+|---|---|---|---|---|---|---|---|---|---|
+| Haemoglobin | `HB` | Haematology | EDTA Blood | `₹120` | g/dL | M 13.0–17.0 / F 12.0–15.0 | <7.0 / >20.0 | ✓ | 60 min |
+| Total Leucocyte Count | `TLC` | Haematology | EDTA Blood | `₹120` | x10^3/µL | 4.0–11.0 | <2.0 / >30.0 | ✓ | 60 min |
+| Platelet Count | `PLT` | Haematology | EDTA Blood | `₹130` | x10^3/µL | 150–400 | <50 / >1000 | ✓ | 60 min |
+| Blood Sugar Fasting | `BSF` | Biochemistry | Fluoride Blood | `₹80` | mg/dL | 70–100 | <40 / >500 | ✓ | 60 min |
+| Blood Sugar Post Prandial | `BSPP` | Biochemistry | Fluoride Blood | `₹80` | mg/dL | 70–140 | <40 / >500 | ✓ | 60 min |
+| HbA1c | `HBA1C` | Biochemistry | EDTA Blood | `₹500` | % | 4.0–5.7 | — | ✗ | 240 min |
+| Serum Creatinine | `CREAT` | Biochemistry | Serum | `₹150` | mg/dL | M 0.7–1.3 / F 0.6–1.1 | >5.0 | ✗ | 120 min |
+| Blood Urea | `BU` | Biochemistry | Serum | `₹130` | mg/dL | 15–40 | >200 | ✗ | 120 min |
+| **Serum Potassium** | `K` | Biochemistry | Serum | `₹150` | mEq/L | 3.5–5.0 | **<2.5 / >6.5** | ✗ | 60 min |
+| Serum Sodium | `NA` | Biochemistry | Serum | `₹150` | mEq/L | 136–145 | <120 / >160 | ✗ | 60 min |
+| Serum Lactate | `LACT` | Biochemistry | Fluoride Blood | `₹600` | mmol/L | 0.5–2.2 | >4.0 | ✗ | 60 min |
+| Troponin I | `TROPI` | Cardiac Markers | Serum | `₹900` | ng/mL | 0.0–0.04 | >0.04 | ✗ | 60 min |
+| TSH | `TSH` | Endocrinology | Serum | `₹300` | µIU/mL | 0.4–4.0 | <0.1 / >100.0 | ✗ | 240 min |
+| Urine Routine & Microscopy | `URM` | Clinical Pathology | Urine | `₹150` | report | — | — | ✗ | 60 min |
+| Dengue NS1 Antigen | `DNS1` | Serology | Serum | `₹800` | report | — | — | ✗ | 240 min |
+| Blood Culture & Sensitivity | `BCUL` | Microbiology | Culture Bottle | `₹1,200` | report | — | — | ✗ | 4320 min |
+
+> **CBC, LFT, KFT, Lipid Profile and Serum Electrolytes are GROUPS, not tests.** They used
+> to be both — a single `unit: 'report'` row *and* a panel, at the same price — so a CBC
+> came back as one unitless blob that no analyte inside could be flagged, delta-checked or
+> auto-verified against, and it could be billed twice. The rows are retired (deactivated,
+> not deleted); order them from the **Test Groups / Panels** tab. Prescribing "CBC" still
+> works: `investigationSync` falls back to a group lookup by name.
+
+> 🔴 **The critical column is not decoration — it is what makes critical-value alerting exist
+> at all.** `LabResultWorkspace.calcFlag()` derives `CH`/`CL` from `critical_low`/`critical_high`
+> **alone**, and only a `CH`/`CL` flag writes a `clinical_alerts` row or blocks release. A test
+> seeded with a normal range but no critical range makes a potassium of 7.2 flag a harmless
+> `"H"` — no alert, no block, released unchallenged, and every screen looking entirely normal.
+> The seeder omitted these columns until Phase 5; if you are on an older seed, re-run
+> `npm run qa:seed`.
+
+> **Serum Potassium is the critical-value test.** Scenario **P5-S07** enters `7.2` and the
+> alert must fire. The boundary pair is `5.0` (= `normal_max`, must flag `N`) and `5.1`
+> (must flag `H`); the critical boundary is `6.5` (= `critical_high`, must flag **`H`** —
+> `flagResult` compares strictly greater-than) and `6.6` (must flag `CH`).
+>
+> These boundaries were previously written as 5.1/5.2 and 6.0/6.1 against a potassium row
+> that does not exist. A boundary case tested against the wrong number certifies nothing.
+>
+> **Serum Creatinine is the delta check** — `0.9`, then `4.5` on the same patient, a swing far
+> past the hardcoded 50% threshold. `1.1` is the negative sibling that must **not** flag.
+
+> **Auto-verify (`autoverify_eligible`) defaults to FALSE in the database.** Without the ✓ above
+> being seeded, `evaluateAutoVerify` refuses every result at rule 1 — which looks identical to
+> correct conservative behaviour while meaning P5-S09 is untestable.
 
 **Lab test group:**
 
-| Group | Fee | Members |
-|---|---|---|
-| Fever Panel | `₹1,100` | CBC, Urine Routine, Dengue NS1 |
+| Group | Fee | Members | Member sum |
+|---|---|---|---|
+| Fever Panel | `₹1,100` | CBC, Urine Routine, Dengue NS1 | ₹1,300 |
 
-> Note ₹1,100 vs the ₹1,300 individual sum — the group price must win. That's **P5-S04**.
+> ₹1,100 vs the ₹1,300 individual sum — the group price must win. That's **P5-S04**.
+>
+> **The members must exist as `lab_test_group_items` rows, not just as prose here.** A group
+> with no member rows is a price with no contents: `fetchRates()` detects a covered group by
+> checking every member is in the selection, so with zero members the group is never applied and
+> every panel silently bills as the sum of its parts.
+
+**Dual validation — `lab_dual_validation_config`:**
+
+| Category | Requires two validators | Validator role |
+|---|---|---|
+| Biochemistry | ✓ | `doctor` |
+
+> There is **no settings screen anywhere in the product** that writes this table; the seeder
+> inserts the row directly. Only ONE category is seeded on purpose — `LabResultWorkspace` reads
+> the config with `.some(...)`, so any dual-validation category flips the *whole order* into
+> two-person mode, and seeding every category would mean no order in the tenant could ever take
+> the single-validator path.
 
 ### Radiology — Settings → Radiology
 
@@ -576,6 +631,144 @@ Phone numbers are `98765` + the record number, so they're easy to search.
 | `PT-QA-0038` | Vikram Chauhan | 28 M | Self Pay | **ophthalmology** — refraction, IOL | P12 |
 | `PT-QA-0039` | Anand Verma | 43 M | Self Pay | **blood transfusion** — cross-match | P10 |
 | `PT-QA-0040` | Kalpana Iyer | 49 F | Star Health | **claim denied → appeal** 🔴 | P9-S10 |
+
+---
+
+## Phase 3 additions — rows you TYPE IN during Patient & Records testing
+
+Everything in the table above (`PT-QA-0001` … `PT-QA-0040`) is seeded before Phase 3 starts
+and is reused wherever a case just needs an **existing** record — `PT-QA-0002` for full-detail
+edit/ABHA-linking cases, `PT-QA-0015` for the unknown/MLC patient, `PT-QA-0016`/`PT-QA-0017`
+for the mother+newborn pair, `PT-QA-0029` for the pre-existing deliberate duplicate of
+`PT-QA-0001`, `PT-QA-0030` for the Hospital-B cross-tenant probe.
+
+**Cases that must create a brand-new record** (registration, kiosk, portal, ABHA linking,
+edits) use `e2e/fixtures/mock-data.json`'s `phase3` block instead, so the manual case and its
+Playwright twin type the same values:
+
+| Block | Used for |
+|---|---|
+| `phase3.registration.full` | `TC-P3A-003` full-detail registration — Kavya Prasad |
+| `phase3.registration.sameDaySecond` | `TC-P3A-005` UHID sequence — the second same-day registration |
+| `phase3.registration.ageOnly` | `TC-P3A-015` age-only entry → computed DOB |
+| `phase3.registration.cghs` | `TC-P3A-016` patient category reveals the CGHS Beneficiary No. field |
+| `phase3.registration.aadhaar` | `TC-P3A-017` Aadhaar stored digits-only and masked |
+| `phase3.registration.receptionistEntry` | `TC-P3A-019` a receptionist can register a patient |
+| `phase3.registration.invalid` | The name/phone/DOB validation negatives and boundaries |
+| `phase3.duplicate.probeName` / `probePhone` / `nearDuplicateName` | Section 3B — the de-dup gap cases |
+| `phase3.emergency.*` | Section 3C — Emergency Registration complaint text |
+| `phase3.newborn.fullName` | `TC-P3C-011` — the baby is registered as an ordinary new patient named "B/O Kavya Prasad" |
+| `phase3.abha.sandboxValid` / `tooShort` | Section 3D — ABHA verify cases |
+| `phase3.kiosk.*` | Section 3E — kiosk registration and wrong-OTP |
+| `phase3.portal.*` | Section 3F — portal login emails and self-service create-profile |
+| `phase3.edit.newPhone` / `invalidPhone` | Section 3G — edit + audit trail |
+| `phase3.documents.sampleFileName` | Section 3I — document upload (the file bytes are generated in-spec, not stored here) |
+
+Delete anything these cases create at the end of the phase (or re-run `npm run qa:seed`) so
+Phase 4 starts from the seeded baseline.
+
+---
+
+## Phase 4 additions — rows you TYPE IN during OPD testing
+
+**Phase 4 creates almost no new patients.** Every one of the 24 OPD scenarios reuses a seeded
+`PT-QA-NNNN` record that is already tagged for it in the patients table above — that tagging was
+done for exactly this phase. The map:
+
+| Patient | Drives |
+|---|---|
+| `PT-QA-0001` Ramesh Kumar | the baseline walk-in, both follow-up windows, and the two-tokens-one-day scenario |
+| `PT-QA-0003` Anitha Menon | the pre-booked appointment and the second-token collision check |
+| `PT-QA-0004` Vinod Agarwal | TPA / Star Health payer capture |
+| `PT-QA-0005` Lakshmi Devi | PMJAY beneficiary |
+| `PT-QA-0006` R. Subramanian | CGHS **with** a referral letter — the bill must finalise |
+| `PT-QA-0007` K. Venkatesan | CGHS **without** a referral — the bill must be hard-blocked |
+| `PT-QA-0009` Baby Aarav Sharma | paediatric weight-based dosing (7.2 kg) |
+| `PT-QA-0010` Krishnamurthy Iyer | polypharmacy interaction alert |
+| `PT-QA-0011` Fatima Begum | the penicillin-allergy contraindication and its override |
+| `PT-QA-0012` Deepa Nair | obstetric ultrasound → PCPNDT Form F |
+| `PT-QA-0013` Ganesh Pawar | partial payment, leaves owing |
+| `PT-QA-0014` Mohan Rao | the discount approval threshold, both sides and the boundary |
+| `PT-QA-0021` Sarita Joshi | corporate-panel payer |
+| `PT-QA-0032` Arun Prakash | MLC presenting at OPD, and the 10-year retention |
+| `PT-QA-0036` Geetha Krishnan | physiotherapy referral |
+| `PT-QA-0030` Rohan Kulkarni | Hospital-B cross-tenant probe |
+
+The values a case actually **types** live in `e2e/fixtures/mock-data.json`'s `phase4` block, so
+the manual case and its Playwright twin enter identical text:
+
+| Block | Used for |
+|---|---|
+| `phase4.walkIn` | The one brand-new patient registered at the OPD desk (Ramanjaneyulu Gadde), plus the department/doctor names every flow selects |
+| `phase4.invalid` | Section 4A's name / age / phone validation negatives |
+| `phase4.consultation` | Complaint, HPI, examination, diagnosis and ICD-10 code (`J06.9`) typed in Sections 4E–4I |
+| `phase4.prescription.primary` / `secondary` | Dolo 650 and Pan 40 — the ordinary prescription and the quantity-calculation cases |
+| `phase4.prescription.ndps` | Morphine Sulphate — the NDPS dual-verification warning |
+| `phase4.prescription.paediatric` | Crocin Syrup at 7.2 kg — weight-based dosing |
+| `phase4.prescription.unknownDrug` | `Zzzmycin 999`, deliberately absent from `drug_master` |
+| `phase4.drugSafety` | The allergy pair (generic **Amoxicillin** vs brand **Mox 500**), the combination brand, the safe alternative, the override reason and the interaction probe |
+| `phase4.orders` | Lab tests, the deliberately misspelled `Compleet Blood Kount`, and the three USG names that decide whether a Form F fires |
+| `phase4.payer` | CGHS/ECHS beneficiary numbers and the referring wellness centre |
+| `phase4.money` | Partial payment ₹300, the discount reason, and the UPI reference |
+| `phase4.followUp` | The day offsets that probe the validity window — 5, **7** (boundary), 8 and 12 |
+| `phase4.mlc` | Police station and the assault complaint |
+| `phase4.teleconsult` / `referral` / `sameDay` / `crossTenant` | Sections 4J, 4I, 4K and 4L respectively |
+
+> **Vitals and discount percentages are NOT duplicated here.** They come from `commonValues`
+> (`standardVitals`, `sepsisVitals`, `discountBelowThreshold`…) so one edit changes every phase
+> that uses them.
+>
+> **The discount thresholds are read from the database, not from this book.** `DiscountTab`
+> decides the tier with two conditions ANDed — `amount <= t1_amount && pct <= t1_pct` — so a
+> percentage on its own does not tell you which tier it lands in. With the seeded t1 of
+> ₹500 / 5%, a 15% discount is **not** free; it needs a billing executive. Section 4H therefore
+> reads `hospital_settings.discount_approval_rules` and computes the percentages to test from it.
+
+Delete anything these cases create (the one new patient, and every token, encounter,
+prescription, order and bill) at the end of the phase, or re-run `npm run qa:seed`, so Phase 5
+starts from the seeded baseline.
+
+---
+
+## Phase 5 additions — rows you TYPE IN during Lab & Radiology testing
+
+**Phase 5 creates no new patients either.** All 16 scenarios reuse the seeded set:
+
+| Patient | Drives |
+|---|---|
+| `PT-QA-0001` Ramesh Kumar | the baseline lab journey, the Fever Panel, sample rejection and recollection, the plain chest X-ray and the AI impression |
+| `PT-QA-0012` Deepa Nair | the obstetric ultrasound and every PCPNDT Form F case (22 weeks pregnant) |
+| `PT-QA-0022` Gopal Krishna | the delta check — CKD, so a creatinine of 0.9 rising to 4.5 is the story his chart tells |
+| `PT-QA-0018` Sharma Ji | the IPD ancillary paths, post-paid **and** pre-paid, and the payment-gate override |
+| `PT-QA-0030` Rohan Kulkarni | the Hospital-B cross-tenant probe |
+
+The values a case actually **types** live in `e2e/fixtures/mock-data.json`'s `phase5` block:
+
+| Block | Used for |
+|---|---|
+| `phase5.labOrder` | Tests ordered, the Fever Panel and its two prices, the clinical note, and the deliberate misspelling `Seerum Potasium` |
+| `phase5.results` | Every value typed into a result box — the critical `7.2`, both boundary pairs, the delta `0.9`/`4.5`/`1.1`, and the normal siblings |
+| `phase5.sample` | The eight `SAMPLE_REJECTION_REASONS`, the haemolysis note, and the two-identifier check values |
+| `phase5.amendment` | The wrong value, the corrected value and the amendment reason (P5-S11) |
+| `phase5.dualValidation` | The Biochemistry category, the validator role and who signs each half |
+| `phase5.externalReferral` | SRL Diagnostics — the reference lab, its contact details and the referred-out tests |
+| `phase5.radiology` | Technique, findings, impression, the critical pneumothorax text, pregnancy status and the CT dose |
+| `phase5.pcpndt` | Every Form F field — husband's name, LMP, gestational age, gravida/para, indication category, consent number, and the machine + doctor PCPNDT registrations |
+| `phase5.aiImpression` | The edited impression that must be what reaches the report, and the attestation note |
+| `phase5.ipdAncillary` | The admitted patient, both payment modes, the clinical override reason and the two toast strings that distinguish them |
+| `phase5.money` / `phase5.crossTenant` | Payment references and the Hospital-B probe |
+
+> **Critical ranges, categories and auto-verify flags are NOT in this block** — they belong to
+> the `labTests` master above, because they are configuration the hospital sets once, not values
+> a tester types.
+
+> **The delta baseline is seeded, not typed.** A test cannot wait a month between two
+> creatinines, so `seedPriorResult()` back-dates the 0.9 as a fixture. Everything the case
+> actually asserts still goes through the browser — same precedent as Phase 4's `seedPriorVisit()`.
+
+Delete anything these cases create (orders, samples, results, reports, Form F rows and
+referrals) at the end of the phase, or re-run `npm run qa:seed`, so Phase 6 starts from the
+seeded baseline.
 
 ---
 

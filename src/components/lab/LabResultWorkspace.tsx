@@ -9,6 +9,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useWhatsAppNotification } from "@/hooks/useWhatsAppNotification";
 import { sendLabResultReady } from "@/lib/whatsapp-notifications";
+import { notifyOrderingDoctorLabResult, notifyOrderingDoctorMicrobiology } from "@/lib/resultNotifications";
 import { printDocument, printHeader } from "@/lib/printUtils";
 import { logRecordAccess } from "@/lib/ims";
 import { getLatestQcWarnings } from "@/lib/labQc";
@@ -25,6 +26,7 @@ import LabInterpretationPanel from "./LabInterpretationPanel";
 import ReflexTestPanel from "./ReflexTestPanel";
 import { checkIntrinsicResistanceConflicts, detectResistancePhenotype, type ResistancePhenotype } from "@/lib/labAST";
 import { draftLabInterpretiveComment } from "@/lib/labReportNarrative";
+import { flagResult, formatReferenceRange } from "@/lib/labReferenceRange";
 import { Dna, Sparkles } from "lucide-react";
 
 interface LabOrder {
@@ -68,6 +70,14 @@ interface TestItem {
   normal_max: number | null;
   critical_low: number | null;
   critical_high: number | null;
+  // Sex-specific intervals. These columns have existed since 20260910000001 and the
+  // settings page has always offered them, but nothing read them until
+  // src/lib/labReferenceRange.ts — so a hospital that carefully entered male and
+  // female haemoglobin ranges got exactly the same flags as one that left them blank.
+  male_normal_min: number | null;
+  male_normal_max: number | null;
+  female_normal_min: number | null;
+  female_normal_max: number | null;
   tat_minutes: number | null;
   sample_type: string;
   autoverify_eligible: boolean;
@@ -100,13 +110,20 @@ function getAge(dob: string | null): string {
   return `${Math.floor((Date.now() - new Date(dob).getTime()) / (365.25 * 24 * 60 * 60 * 1000))}y`;
 }
 
-function calcFlag(value: number, item: TestItem): string | null {
-  if (item.critical_low != null && value < item.critical_low) return "CL";
-  if (item.critical_high != null && value > item.critical_high) return "CH";
-  if (item.normal_min != null && value < item.normal_min) return "L";
-  if (item.normal_max != null && value > item.normal_max) return "H";
-  if (item.normal_min != null || item.normal_max != null) return "N";
-  return null;
+/**
+ * Flag a result against the patient's own reference interval.
+ *
+ * Delegates to the shared resolver so result entry, the printed report and
+ * investigationSync all judge a result the same way. Passing the patient's sex is
+ * the whole point: against a merged 12.0-17.5 g/dL haemoglobin band a male at
+ * 12.5 g/dL is anaemic and used to read Normal.
+ */
+function calcFlag(value: number, item: TestItem, gender: string | null): string | null {
+  // A qualitative test has no interval to judge against, so it gets no flag at all
+  // rather than a misleading "N".
+  if (item.normal_min == null && item.normal_max == null
+      && item.male_normal_min == null && item.female_normal_min == null) return null;
+  return flagResult(item, value, gender);
 }
 
 const FLAG_STYLES: Record<string, { bg: string; text: string; label: string; border?: string }> = {
@@ -209,7 +226,9 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
         verification_method, autoverify_reason, autoverified_at,
         lab_test_master!lab_order_items_test_id_fkey (
           test_name, test_code, category, unit, normal_min, normal_max,
-          critical_low, critical_high, tat_minutes, sample_type, autoverify_eligible
+          critical_low, critical_high, male_normal_min, male_normal_max,
+          female_normal_min, female_normal_max, tat_minutes, sample_type,
+          autoverify_eligible
         )
       `)
       .eq("lab_order_id", order.id)
@@ -227,6 +246,10 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
       normal_max: d.lab_test_master?.normal_max,
       critical_low: d.lab_test_master?.critical_low,
       critical_high: d.lab_test_master?.critical_high,
+      male_normal_min: d.lab_test_master?.male_normal_min ?? null,
+      male_normal_max: d.lab_test_master?.male_normal_max ?? null,
+      female_normal_min: d.lab_test_master?.female_normal_min ?? null,
+      female_normal_max: d.lab_test_master?.female_normal_max ?? null,
       tat_minutes: d.lab_test_master?.tat_minutes,
       sample_type: d.lab_test_master?.sample_type || "blood",
       autoverify_eligible: d.lab_test_master?.autoverify_eligible ?? false,
@@ -432,9 +455,14 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
   // Save a single result
   const saveResult = async (item: TestItem, rawValue: string) => {
     if (!currentUserId) return;
-    const isNumeric = item.normal_min != null || item.normal_max != null;
+    // A test configured with ONLY sex-specific bounds is still numeric — reading just
+    // normal_min/max here would have shown it the qualitative dropdown instead.
+    const isNumeric = item.normal_min != null || item.normal_max != null
+      || item.male_normal_min != null || item.male_normal_max != null
+      || item.female_normal_min != null || item.female_normal_max != null;
+    const patientGender = order.patients?.gender ?? null;
     const numVal = isNumeric ? parseFloat(rawValue) : null;
-    const flag = isNumeric && numVal != null && !isNaN(numVal) ? calcFlag(numVal, item) : (rawValue && !isNumeric ? "A" : null);
+    const flag = isNumeric && numVal != null && !isNaN(numVal) ? calcFlag(numVal, item, patientGender) : (rawValue && !isNumeric ? "A" : null);
     // For text results: Negative/Not detected = normal
     if (!isNumeric && rawValue) {
       const lower = rawValue.toLowerCase();
@@ -442,7 +470,7 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
         // Keep flag null (normal text)
       }
     }
-    const finalFlag = isNumeric && numVal != null && !isNaN(numVal) ? calcFlag(numVal, item)
+    const finalFlag = isNumeric && numVal != null && !isNaN(numVal) ? calcFlag(numVal, item, patientGender)
       : (!isNumeric && rawValue && ["positive", "detected"].includes(rawValue.toLowerCase())) ? "A"
       : null;
 
@@ -491,9 +519,14 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
         result_numeric: numVal != null && !isNaN(numVal) ? numVal : null,
         result_flag: finalFlag,
         result_unit: item.unit,
-        reference_range: item.normal_min != null && item.normal_max != null
-          ? `${item.normal_min}–${item.normal_max} ${item.unit || ""}`
-          : item.normal_max != null ? `< ${item.normal_max} ${item.unit || ""}` : null,
+        // Stored, not derived at print time — this is the interval that was in force
+        // when the result was released, and NABL expects the report to carry it. It
+        // must be the patient's own interval: printing the female range beside a male
+        // patient's haemoglobin is a report-content finding.
+        reference_range: (() => {
+          const r = formatReferenceRange(item, patientGender);
+          return r ? `${r} ${item.unit || ""}`.trim() : null;
+        })(),
         result_entered_at: now,
         result_entered_by: currentUserId,
         status: autoDecision.eligible ? "reported" : "result_entered",
@@ -528,7 +561,7 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
           severity: "medium",
           alert_message: `Lab delta on ${item.test_name}: ${previousValue} → ${rawValue} ${item.unit || ""} for ${patient?.full_name} (${patient?.uhid})`,
           lab_order_item_id: item.id,
-        }).catch(() => {});
+        }).then(() => {}, () => {});
       }
     }
 
@@ -545,7 +578,7 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
             description: `${worst.message}. Verify the run before releasing this result.`,
           });
         }
-      }).catch(() => {});
+      }).then(() => {}, () => {});
     }
 
     // Critical alert
@@ -634,10 +667,16 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
     toast({ title: "⏳ Submitted for pathologist sign-off" });
   };
 
-  // Shared post-release tail: OPD auto-billing + WhatsApp "result ready".
+  // Shared post-release tail: notify the ordering doctor + OPD auto-billing + WhatsApp
+  // "result ready" to the patient.
   // Used by both release paths (single-step handleValidateAll and the dual-validation
   // handlePathologistValidate) so pathologist sign-off no longer skips billing/notification.
   const finalizeReleasedOrder = async () => {
+    // Tell the doctor who ordered this. Until now the release notified the PATIENT over
+    // WhatsApp and nobody else — the clinician had to come to the Lab module and look. This
+    // is fire-and-forget: a failed notification must never undo a completed release.
+    notifyOrderingDoctorLabResult(order.id, currentUserId).then(() => {}, () => {});
+
     // Auto-bill OPD lab charges (skip IPD — handled by discharge auto-pull)
     const { data: fullOrder } = await supabase.from("lab_orders")
       .select("hospital_id, admission_id, encounter_id, patient_id, ordered_by")
@@ -781,7 +820,7 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
           event_type: "lab_reported",
           source_id: order.id,
         },
-      }).catch(() => {});
+      }).then(() => {}, () => {});
     }
 
     await finalizeReleasedOrder();
@@ -987,10 +1026,21 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
     // Upsert-by-hand: one lab_results row per item
     const { data: existing } = await (supabase as any)
       .from("lab_results").select("id").eq("order_item_id", microItem.id).limit(1).maybeSingle();
+    let microResultId: string | null = existing?.id ?? null;
     if (existing) {
       await (supabase as any).from("lab_results").update(payload).eq("id", existing.id);
     } else {
-      await (supabase as any).from("lab_results").insert(payload);
+      const { data: inserted } = await (supabase as any)
+        .from("lab_results").insert(payload).select("id").maybeSingle();
+      microResultId = inserted?.id ?? null;
+    }
+
+    // A culture finalises days after the rest of its order was released, so it needs its own
+    // notification — the doctor has usually long since read the scalar results. The helper
+    // also re-opens the parent order for review, otherwise the organism would never surface
+    // to a clinician who had already acknowledged that order.
+    if (antibiogramReportStatus === "final" && microResultId) {
+      notifyOrderingDoctorMicrobiology(microResultId, currentUserId).then(() => {}, () => {});
     }
 
     await (supabase as any).from("lab_order_items").update({
@@ -1467,7 +1517,7 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
                                 {item.test_name}: <span className="text-destructive">{item.result_value} {item.unit || ""}</span>
                               </p>
                               <p className="text-[11px] text-muted-foreground">
-                                Normal range: {item.normal_min != null && item.normal_max != null ? `${item.normal_min} – ${item.normal_max}` : "—"}
+                                Normal range: {formatReferenceRange(item, patient?.gender ?? null) ?? "—"}
                                 {item.critical_low != null ? ` | Critical low: ${item.critical_low}` : ""}
                                 {item.critical_high != null ? ` | Critical high: ${item.critical_high}` : ""}
                               </p>
@@ -1956,10 +2006,10 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
                   ? "color:#1d4ed8;font-weight:700"
                   : "";
               const flagLabel = FLAG_STYLES[i.result_flag || ""]?.label || "";
-              const ref = i.normal_min != null && i.normal_max != null
-                ? `${i.normal_min} – ${i.normal_max}`
-                : i.normal_max != null ? `< ${i.normal_max}`
-                : i.normal_min != null ? `> ${i.normal_min}` : "—";
+              // Prefer the interval stored on the result: it is what was in force at
+              // release. Fall back to the master only for rows released before
+              // reference_range was captured.
+              const ref = i.reference_range || formatReferenceRange(i, p?.gender ?? null) || "—";
               const rowBg = i.result_flag === "CH" || i.result_flag === "CL"
                 ? "background:#fff5f5"
                 : i.result_flag === "H" || i.result_flag === "L"

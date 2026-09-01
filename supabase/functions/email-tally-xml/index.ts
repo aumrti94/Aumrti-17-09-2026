@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { ACCOUNTS_EMAIL } from "../_shared/brand.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -62,7 +63,7 @@ serve(async (req) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: "HMS Accounts <accounts@aumrti.in>",
+        from: `HMS Accounts <${ACCOUNTS_EMAIL}>`,
         to: [toEmail],
         subject: `Tally XML Export — ${hospital?.name} (${date_start} to ${date_end})`,
         html: `<p>Dear Team,</p>

@@ -23,6 +23,7 @@ import {
 import { resolveAiBudgetStatus } from "@/lib/aiBudget";
 import { formatINRExact, formatINRPrecise } from "@/lib/currency";
 import { resolveEncounterAllowance, type EncounterAllowanceStatus } from "@/lib/encounterAllowance";
+import { SUPPORT_EMAIL } from "@/lib/brand";
 
 // Module key → display name map
 const ROUTE_KEY: Record<string, string> = {
@@ -444,7 +445,11 @@ const SettingsPlanPage: React.FC = () => {
           <div className="flex items-start justify-between">
             <div>
               <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Current Plan</p>
-              <p className="text-2xl font-bold text-primary mt-1">
+              {/* The "Available Plans" section below lists every OTHER plan as an upgrade offer,
+                  so a whole-page text search cannot tell "this tenant is on Professional" from
+                  "this tenant is being offered Professional". Anything asserting on the tenant's
+                  own plan must read this node. */}
+              <p data-testid="current-plan" className="text-2xl font-bold text-primary mt-1">
                 {plan?.name ?? "Trial"}
                 {plan?.badge_text && (
                   <span className="ml-2 text-sm font-medium bg-primary/10 text-primary px-2 py-0.5 rounded-full">
@@ -1014,7 +1019,7 @@ const SettingsPlanPage: React.FC = () => {
           <Button
             variant="outline"
             className="gap-2"
-            onClick={() => window.open("mailto:support@aumrti.in?subject=Billing query")}
+            onClick={() => window.open(`mailto:${SUPPORT_EMAIL}?subject=Billing query`)}
           >
             <Mail size={14} /> Contact Support
           </Button>

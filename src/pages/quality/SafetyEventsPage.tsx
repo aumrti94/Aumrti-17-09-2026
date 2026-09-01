@@ -433,7 +433,7 @@ Environment: [physical environment, workload, time pressure — or "Not applicab
       module: "safety_events",
       success: true,
       output_summary: `5-Whys RCA draft generated for event ${selectedEvent.event_number}`,
-    }).catch(() => null);
+    }).then(() => {}, () => {});
   };
 
   // ── Save CAPA ───────────────────────────────────────────────────────────────

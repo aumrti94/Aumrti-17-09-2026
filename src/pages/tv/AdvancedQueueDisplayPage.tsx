@@ -318,7 +318,7 @@ const AdvancedQueueDisplayPage: React.FC = () => {
       const dId    = t.doctor_id ?? "__no_doctor__";
       const dName  = t.users?.full_name ?? "General OPD";
       const dept   = t.departments?.name ?? "";
-      const tokStr = `${t.token_prefix || "A"}${t.token_number}`;
+      const tokStr = t.token_number;
       const patName = t.patients?.full_name ?? "";
       const masked  = patName.split(" ").map((w: string, i: number) => i === 0 ? w[0] + "." : w).join(" ");
 
@@ -387,7 +387,7 @@ const AdvancedQueueDisplayPage: React.FC = () => {
           .in("status", ["in_consultation", "called"])
           .limit(1)
           .maybeSingle();
-        stats.push({ name: d.name, token: tok ? `${tok.token_prefix || "A"}${tok.token_number}` : "—" });
+        stats.push({ name: d.name, token: tok ? tok.token_number : "—" });
       }
       setDeptStats(stats);
     }

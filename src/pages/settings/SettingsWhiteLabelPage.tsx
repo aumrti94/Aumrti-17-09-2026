@@ -7,6 +7,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Palette, Globe, CheckCircle2, Loader2, Link, Copy, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { APP_DOMAIN, CNAME_TARGET } from "@/lib/brand";
 
 const FONT_OPTIONS = [
   { value: "Inter",      label: "Inter (Default)" },
@@ -70,11 +71,30 @@ export default function SettingsWhiteLabelPage() {
 
   const saveDomain = async () => {
     if (!hospitalId) return;
+
+    // A malformed hostname can never have a CNAME record or an SSL certificate issued against
+    // it, so storing one stalls the setup at a step the hospital has no way to diagnose — the
+    // screen keeps showing the domain it accepted while nothing resolves.
+    const host = domain.custom_domain.trim().toLowerCase();
+    if (host && !/^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/.test(host)) {
+      toast({
+        title: "That is not a valid domain",
+        description: "Enter a hostname such as hms.yourhospital.com — no spaces, scheme or path.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setSaving(true);
-    await supabase.from("hospitals" as any).update({
-      custom_domain: domain.custom_domain || null,
+    const { error } = await supabase.from("hospitals" as any).update({
+      custom_domain: host || null,
     }).eq("id", hospitalId);
     setSaving(false);
+    if (error) {
+      toast({ title: "Could not save domain", description: error.message, variant: "destructive" });
+      return;
+    }
+    setDomain(p => ({ ...p, custom_domain: host }));
     toast({ title: "Domain settings saved" });
   };
 
@@ -204,7 +224,7 @@ export default function SettingsWhiteLabelPage() {
               </div>
               <p className="text-[12px] text-muted-foreground">
                 Your hospital can be accessed at a custom subdomain (e.g. <code className="bg-muted px-1 rounded">hms.yourhospital.com</code>).
-                Point your CNAME record to <code className="bg-muted px-1 rounded">cname.aumrti.in</code>.
+                Point your CNAME record to <code className="bg-muted px-1 rounded">{CNAME_TARGET}</code>.
               </p>
               <div>
                 <label className="text-[11px] text-muted-foreground">Custom Domain</label>
@@ -216,9 +236,9 @@ export default function SettingsWhiteLabelPage() {
                   <p className="text-[11px] font-semibold text-foreground">DNS Configuration Required</p>
                   <div className="bg-card border border-border rounded-lg p-2 flex items-center justify-between">
                     <div className="text-[11px] font-mono">
-                      <span className="text-muted-foreground">CNAME</span> {domain.custom_domain} → <span className="text-primary">cname.aumrti.in</span>
+                      <span className="text-muted-foreground">CNAME</span> {domain.custom_domain} → <span className="text-primary">{CNAME_TARGET}</span>
                     </div>
-                    <button onClick={() => copyToClipboard("cname.aumrti.in")} className="text-muted-foreground hover:text-foreground ml-2">
+                    <button onClick={() => copyToClipboard(CNAME_TARGET)} className="text-muted-foreground hover:text-foreground ml-2">
                       <Copy size={12} />
                     </button>
                   </div>
@@ -251,7 +271,7 @@ export default function SettingsWhiteLabelPage() {
               <div className="space-y-2 text-[12px]">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Default URL:</span>
-                  <code className="font-mono text-primary">{domain.subdomain ? `${domain.subdomain}.aumrti.in` : "—"}</code>
+                  <code className="font-mono text-primary">{domain.subdomain ? `${domain.subdomain}.${APP_DOMAIN}` : "—"}</code>
                 </div>
                 {domain.custom_domain && (
                   <div className="flex justify-between">

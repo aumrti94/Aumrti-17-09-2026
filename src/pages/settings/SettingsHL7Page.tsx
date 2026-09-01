@@ -20,6 +20,9 @@ const HL7_MESSAGE_TYPES = [
   { code: "SIU^S12", desc: "Schedule Appointment" },
 ];
 
+/** The hospital_settings key this screen owns. */
+const HL7_SETTINGS_KEY = "hl7_integration";
+
 const MOCK_LOG = [
   { id: "1", direction: "inbound", msg_type: "ORU^R01", status: "processed", source: "LIS", created_at: new Date().toISOString() },
   { id: "2", direction: "outbound", msg_type: "ADT^A01", status: "sent", source: "HMS", created_at: new Date(Date.now() - 3600000).toISOString() },
@@ -39,16 +42,43 @@ export default function SettingsHL7Page() {
     vitals_feed_enabled: false, vitals_source: "mindray",
   });
 
+  // Hydrate from the stored row. Without this the form always rendered its hardcoded
+  // defaults, so every value appeared to reset on reload even once the write worked.
+  useEffect(() => {
+    if (!hospitalId) return;
+    (async () => {
+      const { data } = await (supabase as any)
+        .from("hospital_settings")
+        .select("value")
+        .eq("hospital_id", hospitalId)
+        .eq("key", HL7_SETTINGS_KEY)
+        .maybeSingle();
+      if (data?.value) setConfig(prev => ({ ...prev, ...data.value }));
+    })();
+  }, [hospitalId]);
+
   const saveConfig = async () => {
+    if (!hospitalId) return;
     setSaving(true);
-    // Config saved to config_values table
-    await (supabase as any).from("config_values").upsert({
+    // This used to upsert into a `config_values` table that does not exist — the resulting
+    // 404 was discarded and the success toast fired anyway, so the screen claimed to save
+    // for an entire release while storing nothing. `hospital_settings` is the key/value
+    // table the other settings screens use; the error is checked now for the same reason.
+    const { error } = await (supabase as any).from("hospital_settings").upsert({
       hospital_id: hospitalId,
-      config_key: "hl7_integration",
-      config_value: JSON.stringify(config),
+      key: HL7_SETTINGS_KEY,
+      value: config,
       updated_at: new Date().toISOString(),
-    }, { onConflict: "hospital_id,config_key" });
+    }, { onConflict: "hospital_id,key" });
     setSaving(false);
+    if (error) {
+      toast({
+        title: "Could not save HL7 configuration",
+        description: error.message,
+        variant: "destructive",
+      });
+      return;
+    }
     toast({ title: "HL7 configuration saved" });
   };
 
@@ -187,7 +217,15 @@ export default function SettingsHL7Page() {
                 <p className="text-[13px] font-semibold text-foreground">Auto-populate ICU Flowsheet from Bedside Monitors</p>
                 <p className="text-[12px] text-muted-foreground mt-0.5">Vital signs from bedside devices auto-populate the ICU hourly flowsheet (Gap 6).</p>
               </div>
-              <button onClick={() => setConfig(p => ({ ...p, vitals_feed_enabled: !p.vitals_feed_enabled }))}
+              {/* Hand-rolled switch. It still has to announce itself as one: without the role
+                  and state a screen-reader user hears an unlabelled button and cannot tell
+                  whether the bedside feed is on. */}
+              <button
+                type="button"
+                role="switch"
+                aria-checked={config.vitals_feed_enabled}
+                aria-label="Auto-populate ICU Flowsheet from Bedside Monitors"
+                onClick={() => setConfig(p => ({ ...p, vitals_feed_enabled: !p.vitals_feed_enabled }))}
                 className={cn("relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0", config.vitals_feed_enabled ? "bg-primary" : "bg-muted-foreground/30")}>
                 <span className={cn("inline-block h-4 w-4 rounded-full bg-white shadow transition-transform", config.vitals_feed_enabled ? "translate-x-6" : "translate-x-1")} />
               </button>

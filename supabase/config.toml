@@ -371,6 +371,18 @@ authorization_url_path = "/oauth/consent"
 # Allow dynamic client registration
 allow_dynamic_registration = false
 
+# ── Edge function overrides ───────────────────────────────────────────────────────────────────
+# The public API gateway authenticates with an Aumrti API key (Authorization: Bearer sk_live_…),
+# not a Supabase JWT. With the platform default of verify_jwt = true, the gateway would be
+# rejected at the edge before its own auth code ever ran, and every integrator would see an
+# opaque 401 that no amount of key rotation could fix.
+#
+# This does NOT make the function public: api-gateway/auth.ts hashes the presented key, looks it
+# up in api_keys, and enforces scope, expiry, revocation and plan entitlement on every request.
+# Verification moves from the platform into the function; it is not removed.
+[functions.api-gateway]
+verify_jwt = false
+
 [edge_runtime]
 enabled = true
 # Supported request policies: `oneshot`, `per_worker`.

@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import { VoiceScribeContext } from "@/hooks/useVoiceScribe";
 import type { LanguageOption } from "@/lib/voiceScribeLanguages";
+import type { DictationAudioChain } from "@/lib/dictationAudioChain";
 
 // Type-only re-export: existing importers keep working, and a type export does
 // not trip react-refresh/only-export-components the way a value export does.
@@ -41,6 +42,20 @@ export interface ScribeSignals {
   englishTranscript: string;
   preTranslated: boolean;
   safetyCheck: { safe: boolean; flags: unknown[] } | null;
+  /**
+   * The language the engine reported hearing, as a catalogue code. Shown to the doctor so a
+   * misdetection under "Auto (Multilingual)" is visible rather than silent — a note
+   * transcribed against the wrong language reads as fluent nonsense, not as an error.
+   */
+  detectedLanguage: string | null;
+  /** Which engines served this dictation. More than one means failover happened. */
+  enginesUsed: string[];
+  /**
+   * Audio segments no engine could transcribe. These are GAPS in the note: the words were
+   * spoken but never reached the structuring model. Previously such a segment was counted as
+   * a success and dropped, so a dictation could lose 25 s of speech with nothing to show it.
+   */
+  droppedSegments: number;
 }
 
 
@@ -102,6 +117,45 @@ export interface VoiceScribeContextType {
    * on every segment.
    */
   segmentBlobsRef: React.MutableRefObject<Blob[]>;
+  /**
+   * Which microphone to dictate from, or null for the OS default (the previous, only,
+   * behaviour). Persisted per browser: a doctor who plugs in a headset should not have to
+   * reselect it every consult.
+   *
+   * This is the highest-leverage control in the noise work. A headset or lapel mic at 5cm
+   * rejects a conversation across the room by 20dB or more — more than any in-browser
+   * processing achieves — and until now getUserMedia silently took whatever the OS
+   * considered default, usually a laptop's built-in array mic.
+   */
+  selectedMicId: string | null;
+  setSelectedMicId: (v: string | null) => void;
+  /** Highpass/lowpass/compressor for stationary noise: fans, AC, mains hum. */
+  noiseCleanupEnabled: boolean;
+  setNoiseCleanupEnabled: (v: boolean) => void;
+  /**
+   * Attenuate audio that is not near the microphone, which is how a conversation happening
+   * across the room is kept out of the note. Deliberately separate from `noiseCleanup`:
+   * this one can, in principle, drop a very softly-spoken reply, so a site must be able to
+   * turn it off without also losing the filters.
+   */
+  nearFieldGateEnabled: boolean;
+  setNearFieldGateEnabled: (v: boolean) => void;
+  /**
+   * Recording is running but audio is being discarded. For the doctor to use when an
+   * unrelated conversation starts in the room — far more reliable than any automatic
+   * rejection, because it is a decision rather than a guess.
+   */
+  isPaused: boolean;
+  setIsPaused: (v: boolean) => void;
+  /**
+   * The live microphone conditioning graph, owned by whichever VoiceDictationButton is
+   * recording and read by the panel for its level meter.
+   *
+   * A ref rather than state on purpose, exactly as segmentBlobsRef is: the meter samples
+   * this many times a second, and routing that through React state would re-render the
+   * whole panel on every frame of a consultation.
+   */
+  audioChainRef: React.MutableRefObject<DictationAudioChain | null>;
 }
 
 function detectSessionTypeFromPath(pathname: string): SessionType {
@@ -128,16 +182,47 @@ export const VoiceScribeProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [selectedLanguage, setSelectedLanguageState] = useState<string>(
     () => localStorage.getItem("vscribe_preferred_language") || "auto"
   );
+  // Audio-input preferences. Stored beside vscribe_preferred_language and read the same
+  // way — lazily from localStorage — so the choice survives a reload without a round trip.
+  const [selectedMicId, setSelectedMicIdState] = useState<string | null>(
+    () => localStorage.getItem("vscribe_mic_id") || null
+  );
+  const [noiseCleanupEnabled, setNoiseCleanupEnabledState] = useState<boolean>(
+    () => localStorage.getItem("vscribe_noise_cleanup") !== "off"
+  );
+  const [nearFieldGateEnabled, setNearFieldGateEnabledState] = useState<boolean>(
+    () => localStorage.getItem("vscribe_near_field_gate") !== "off"
+  );
+  const [isPaused, setIsPaused] = useState(false);
   const [scribeSignals, setScribeSignals] = useState<ScribeSignals | null>(null);
   const [nativeTranscript, setNativeTranscript] = useState<string | null>(null);
   const [rescueState, setRescueState] = useState<"idle" | "running" | "improved">("idle");
   const segmentBlobsRef = useRef<Blob[]>([]);
+  const audioChainRef = useRef<DictationAudioChain | null>(null);
   const screenFillFns = useRef<Map<string, (data: Record<string, unknown>) => void>>(new Map());
   const screenExistingDataFns = useRef<Map<string, () => Record<string, unknown> | null>>(new Map());
 
   const setSelectedLanguage = useCallback((lang: string) => {
     setSelectedLanguageState(lang);
     localStorage.setItem("vscribe_preferred_language", lang);
+  }, []);
+
+  const setSelectedMicId = useCallback((id: string | null) => {
+    setSelectedMicIdState(id);
+    // An empty id means "OS default" — remove the key rather than storing "", so the
+    // constraint builder omits deviceId entirely instead of asking for a device named "".
+    if (id) localStorage.setItem("vscribe_mic_id", id);
+    else localStorage.removeItem("vscribe_mic_id");
+  }, []);
+
+  const setNoiseCleanupEnabled = useCallback((on: boolean) => {
+    setNoiseCleanupEnabledState(on);
+    localStorage.setItem("vscribe_noise_cleanup", on ? "on" : "off");
+  }, []);
+
+  const setNearFieldGateEnabled = useCallback((on: boolean) => {
+    setNearFieldGateEnabledState(on);
+    localStorage.setItem("vscribe_near_field_gate", on ? "on" : "off");
   }, []);
 
   const detectedSessionType = detectSessionTypeFromPath(location.pathname);
@@ -188,6 +273,9 @@ export const VoiceScribeProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
   const resetSession = useCallback(() => {
     setIsRecording(false);
+    // A pause belongs to one dictation, never to the next. Leaving this set would start
+    // the following consult silently discarding audio.
+    setIsPaused(false);
     setPanelState("ready");
     setRawTranscript("");
     setStructuredOutput(null);
@@ -208,6 +296,10 @@ export const VoiceScribeProvider: React.FC<{ children: React.ReactNode }> = ({ c
       detectedSessionType,
       scribeSignals, setScribeSignals, nativeTranscript, setNativeTranscript, segmentBlobsRef,
       rescueState, setRescueState,
+      selectedMicId, setSelectedMicId,
+      noiseCleanupEnabled, setNoiseCleanupEnabled,
+      nearFieldGateEnabled, setNearFieldGateEnabled,
+      isPaused, setIsPaused, audioChainRef,
     }}>
       {children}
     </VoiceScribeContext.Provider>

@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Plus, Pencil, Trash2, Loader2, Check, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useConfigValues, useConfigLabelMap } from "@/hooks/useConfigValues";
 
 interface Vaccine {
   id: string;
@@ -24,13 +25,6 @@ const BLANK: Omit<Vaccine, "id" | "is_active"> = {
   vaccine_name: "", vaccine_code: "", type: "", route: "", dose_ml: null, site: "", storage_temp_c: "", age_given: "",
 };
 
-const ROUTES = [
-  { value: "im", label: "IM" },
-  { value: "sc", label: "SC" },
-  { value: "id", label: "ID" },
-  { value: "oral", label: "Oral" },
-  { value: "intranasal", label: "Intranasal" },
-];
 const TYPES = [
   { value: "live_attenuated", label: "Live Attenuated" },
   { value: "inactivated", label: "Inactivated" },
@@ -44,11 +38,15 @@ const TYPES = [
 ];
 
 const typeLabel  = (v: string | null) => TYPES.find(t => t.value === v)?.label  ?? v ?? "—";
-const routeLabel = (v: string | null) => ROUTES.find(r => r.value === v)?.label ?? v ?? "—";
 
 interface Props { hospitalId: string; }
 
 const VaccineCatalogueTab: React.FC<Props> = ({ hospitalId }) => {
+  // Vaccination has its own route vocabulary — intradermal and intranasal are not
+  // drug_routes values — see configValueDefaults.ts.
+  const routes         = useConfigValues("vaccine_routes");
+  const routeLabelMap  = useConfigLabelMap("vaccine_routes");
+  const routeLabel     = (v: string | null) => (v ? routeLabelMap[v] ?? v : "—");
   const [vaccines, setVaccines]     = useState<Vaccine[]>([]);
   const [loading, setLoading]       = useState(true);
   const [saving, setSaving]         = useState(false);
@@ -170,7 +168,7 @@ const VaccineCatalogueTab: React.FC<Props> = ({ hospitalId }) => {
               <label className="text-[11px] text-muted-foreground">Route</label>
               <select value={form.route ?? ""} onChange={e => setForm(f => ({ ...f, route: e.target.value }))} className="w-full h-8 mt-1 text-sm border border-input rounded px-2 bg-background">
                 <option value="">Select…</option>
-                {ROUTES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                {routes.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
               </select>
             </div>
             <div>

@@ -90,7 +90,7 @@ const NumPad: React.FC<{
 function printToken(r: Receipt) {
   const win = window.open("", "_blank", "width=420,height=660");
   if (!win) return;
-  win.document.write(`<!DOCTYPE html><html><head><title>Token — ${r.tokenPrefix}${r.tokenNumber}</title>
+  win.document.write(`<!DOCTYPE html><html><head><title>Token — ${r.tokenNumber}</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:'Segoe UI',sans-serif;padding:28px;background:#fff;color:#0F172A}
@@ -111,7 +111,7 @@ function printToken(r: Receipt) {
   <hr class="divider"/>
   <div class="token-box">
     <div class="token-label">Your Token</div>
-    <div class="token-num">${r.tokenPrefix}${r.tokenNumber}</div>
+    <div class="token-num">${r.tokenNumber}</div>
   </div>
   <hr class="divider"/>
   <div class="label">Patient</div>
@@ -375,9 +375,15 @@ const KioskCheckinPage: React.FC = () => {
         .maybeSingle();
       if (patErr || !patient) throw new Error(patErr?.message ?? "Failed to create patient");
 
-      const { data: tokenNum } = await (supabase as any)
-        .rpc("generate_token_number", { p_hospital_id: hospitalId, p_department_id: selDept, p_visit_date: today });
-
+      // token_number omitted — allocated by the opd_tokens BEFORE INSERT trigger
+      // (20261015000001_opd_token_sequence.sql), same as every other registration path.
+      //
+      // This used to call generate_token_number with a different argument list than the one
+      // WalkInModal used, for a function that had never been created either way, and fall
+      // back to `K${Date.now().slice(-4)}`. Those K#### values landed in the same
+      // token_prefix='A' bucket as the desk's A-N series, and the desk's allocator parsed
+      // "last token" with split("-")[1] → undefined → 0, which reset the whole day's
+      // numbering back to A-1.
       const { data: token, error: tokErr } = await (supabase as any)
         .from("opd_tokens")
         .insert({
@@ -385,7 +391,6 @@ const KioskCheckinPage: React.FC = () => {
           patient_id:    patient.id,
           department_id: selDept,
           doctor_id:     selDoctor || null,
-          token_number:  tokenNum ?? `K${Date.now().toString().slice(-4)}`,
           token_prefix:  "A",
           visit_date:    today,
           status:        "checked_in",
@@ -511,7 +516,7 @@ const KioskCheckinPage: React.FC = () => {
           >
             <p className="text-sm font-bold uppercase tracking-widest" style={{ color: "#0E7B7B" }}>Token Number</p>
             <p className="font-black mt-1" style={{ fontSize: 100, lineHeight: 1, color: "#0F172A", letterSpacing: -3 }}>
-              {receipt.tokenPrefix}{receipt.tokenNumber}
+              {receipt.tokenNumber}
             </p>
             <div className="mt-5 space-y-2.5 text-left">
               <Row label="Patient"    val={`${receipt.patientName}${receipt.uhid ? ` · ${receipt.uhid}` : ""}`} />
@@ -687,7 +692,7 @@ const KioskCheckinPage: React.FC = () => {
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
                       <p className="font-black" style={{ fontSize: 52, lineHeight: 1, color: "#0E7B7B" }}>
-                        {tok.token_prefix}{tok.token_number}
+                        {tok.token_number}
                       </p>
                       <p className="text-lg font-semibold mt-1" style={{ color: "#374151" }}>
                         {tok.department?.name ?? "OPD"}

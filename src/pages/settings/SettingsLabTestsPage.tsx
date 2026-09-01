@@ -20,6 +20,11 @@ import { useConfigValues } from "@/hooks/useConfigValues";
 const SettingsLabTestsPage: React.FC = () => {
   const { toast } = useToast();
   const labCategoryOptions = useConfigValues("lab_test_categories");
+  // Sample Type used to be a free-text Input. That is how the catalogues drifted to
+  // 'blood' / 'Blood' / 'EDTA Blood' / 'Serum' all at once — and specimens are grouped
+  // into tubes by an EXACT match on this string, so two spellings of one specimen
+  // print two barcodes for a single draw.
+  const sampleTypeOptions = useConfigValues("sample_types");
   const { hospitalId } = useHospitalId();
   const queryClient = useQueryClient();
 
@@ -228,6 +233,21 @@ const SettingsLabTestsPage: React.FC = () => {
     toast({ title: `${changed.length} test price${changed.length === 1 ? "" : "s"} updated` });
     setShowBulkPrice(false);
   };
+
+  /**
+   * Options for a config-backed Select, guaranteed to contain the value currently on
+   * the form.
+   *
+   * Radix renders the placeholder when the bound value matches no item — so a test
+   * stored with a value the config list does not offer looked EMPTY in the dialog,
+   * and saving wrote whatever the user then picked. Opening a test to change its fee
+   * silently rewrote its category. Surfacing the stored value instead keeps the edit
+   * honest and makes the stale value visible so it can be corrected deliberately.
+   */
+  const withCurrent = (options: Array<{ value: string; label: string }>, current: string) =>
+    !current || options.some(o => o.value === current)
+      ? options
+      : [...options, { value: current, label: `${current} (not in list)` }];
 
   const formatRange = (min: number | null, max: number | null) => {
     if (min != null && max != null) return `${min}–${max}`;
@@ -476,12 +496,17 @@ const SettingsLabTestsPage: React.FC = () => {
               <div><Label>Category</Label>
                 <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v })}>
                   <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                  <SelectContent>{labCategoryOptions.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent>
+                  <SelectContent>{withCurrent(labCategoryOptions, form.category).map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div><Label>Sample Type</Label><Input value={form.sample_type} onChange={(e) => setForm({ ...form, sample_type: e.target.value })} className="mt-1" /></div>
+              <div><Label>Sample Type</Label>
+                <Select value={form.sample_type} onValueChange={(v) => setForm({ ...form, sample_type: v })}>
+                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                  <SelectContent>{withCurrent(sampleTypeOptions, form.sample_type).map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
               <div>
                 <div className="flex items-center gap-1.5">
                   <Label>Unit</Label>

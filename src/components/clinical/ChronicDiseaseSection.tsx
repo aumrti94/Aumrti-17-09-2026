@@ -181,6 +181,14 @@ const ChronicDiseaseSection: React.FC<Props> = ({ patientId, hospitalId }) => {
                   ))}
                 </div>
               )}
+              {/* Hands the enrolment to Chronic Disease Management, which
+                  prefills the plan and stores care_plans.program_id. */}
+              <a
+                href={`/chronic-disease?tab=new&program=${p.id}`}
+                className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-2"
+              >
+                <Plus size={12} /> Create care plan
+              </a>
             </div>
           ))}
         </div>

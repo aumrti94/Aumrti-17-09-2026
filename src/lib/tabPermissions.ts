@@ -29,6 +29,7 @@ export const MODULE_TABS: Record<string, TabDef[]> = {
     { key: "panel_revenue", label: "Revenue Chart (panel)" },
     { key: "panel_beds", label: "Bed Occupancy (panel)" },
     { key: "panel_alerts", label: "Active Alerts (panel)" },
+    { key: "panel_results_ready", label: "Results Ready (panel)" },
   ],
   opd: [
     { key: "complaint", label: "Complaint" },
@@ -36,6 +37,7 @@ export const MODULE_TABS: Record<string, TabDef[]> = {
     { key: "examination", label: "Examination" },
     { key: "guidance", label: "AI Guidance" },
     { key: "rx_orders", label: "Rx & Orders" },
+    { key: "investigations", label: "Reports (Lab & Imaging)" },
     { key: "plan_advice", label: "Plan & Advice" },
     { key: "history", label: "History" },
   ],
@@ -200,6 +202,7 @@ export const MODULE_TABS: Record<string, TabDef[]> = {
   chronic_disease: [
     { key: "dashboard", label: "Cohort Dashboard" },
     { key: "plans", label: "Care Plans" },
+    { key: "adherence", label: "Adherence" },
     { key: "new", label: "New Care Plan" },
   ],
   blood_bank: [

@@ -7,6 +7,7 @@ import { generateBillNumber } from "@/hooks/useBillNumber";
 import { autoPostJournalEntry } from "@/lib/accounting";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
 import { sendWhatsApp } from "@/lib/whatsapp-send";
+import { syncLabOrders, syncRadiologyOrders } from "@/lib/investigationSync";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -37,7 +38,7 @@ const STATUS_COLORS: Record<string, string> = {
 const EMPTY_ENCOUNTER: EncounterData = {
   chief_complaint: "", history_of_present_illness: "", vitals: {},
   examination_notes: "", soap_subjective: "", soap_objective: "",
-  soap_assessment: "", soap_plan: "", diagnosis: "", icd10_code: "",
+  soap_assessment: "", soap_plan: "", diagnosis: "", icd10_code: "", icd11_code: "",
   follow_up_date: "", follow_up_notes: "",
   ai_clarifying_questions: null,
 };
@@ -263,39 +264,38 @@ const DoctorTeleconsultPage: React.FC = () => {
                 source: "teleconsult",
               });
 
+              // Investigations go through the same sync helpers as an in-person OPD
+              // consultation. The hand-rolled inserts that used to live here wrote columns
+              // that do not exist — `urgency` (the column is `priority`), `test_name` on
+              // lab_order_items (the name lives on lab_test_master), `clinical_indication`
+              // (`indication`) — and omitted NOT NULL modality_id/modality_type on radiology.
+              // Every one of those inserts failed, and none of them checked `error`, so a
+              // teleconsult doctor's tests silently never reached the lab at all.
               if (prescription.lab_orders.length > 0) {
-                const { data: labOrder } = await supabase.from("lab_orders").insert({
-                  hospital_id: hospitalId,
-                  encounter_id: savedEncId,
-                  patient_id: activeSession.patient_id,
-                  ordered_by: doctorId,
-                  status: "ordered",
-                  urgency: "routine",
-                } as any).select("id").maybeSingle();
-
-                if (labOrder?.id) {
-                  const items = prescription.lab_orders.map(l => ({
-                    lab_order_id: labOrder.id,
-                    test_name: l.test_name,
-                    urgency: l.urgency || "routine",
-                    clinical_indication: l.clinical_indication || null,
-                    status: "pending",
-                  }));
-                  await (supabase as any).from("lab_order_items").insert(items);
+                const res = await syncLabOrders({
+                  hospitalId,
+                  patientId: activeSession.patient_id,
+                  orderedBy: doctorId,
+                  encounterId: savedEncId,
+                  items: prescription.lab_orders,
+                });
+                if (res.unmatched.length > 0) {
+                  toast({
+                    title: "Some tests could not be ordered",
+                    description: `${res.unmatched.join(", ")} — not found in the lab catalogue. Order them manually from the Lab module.`,
+                    variant: "destructive",
+                  });
                 }
               }
 
-              for (const rad of prescription.radiology_orders) {
-                await supabase.from("radiology_orders").insert({
-                  hospital_id: hospitalId,
-                  encounter_id: savedEncId,
-                  patient_id: activeSession.patient_id,
-                  ordered_by: doctorId,
-                  study_name: rad.study_name,
-                  urgency: rad.urgency || "routine",
-                  clinical_indication: rad.clinical_indication || null,
-                  status: "ordered",
-                } as any);
+              if (prescription.radiology_orders.length > 0) {
+                await syncRadiologyOrders({
+                  hospitalId,
+                  patientId: activeSession.patient_id,
+                  orderedBy: doctorId,
+                  encounterId: savedEncId,
+                  items: prescription.radiology_orders,
+                });
               }
             }
           }

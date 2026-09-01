@@ -4,7 +4,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Loader2, Printer } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { printDocument, printHeader } from "@/lib/printUtils";
+import { printDocument, printHeader, fetchHospitalBrand, hw } from "@/lib/printUtils";
 import { printBillById } from "@/lib/billPrint";
 import { useToast } from "@/hooks/use-toast";
 
@@ -42,6 +42,8 @@ const PatientPrintHubModal: React.FC<Props> = ({
   useEffect(() => {
     if (!open) return;
     setLoading(true);
+    // Warms the brand cache printDocument reads for font, footer and handwriting settings.
+    fetchHospitalBrand(supabase, hospitalId);
     Promise.all([
       supabase.from("hospitals").select("name,logo_url,address,phone,gstin").eq("id", hospitalId).maybeSingle(),
       supabase.from("bills").select("id,bill_number,bill_date,bill_type,total_amount,paid_amount,balance_due,bill_status,payment_status").eq("patient_id", patientId).order("bill_date", { ascending: false }).limit(50),
@@ -164,11 +166,13 @@ const PatientPrintHubModal: React.FC<Props> = ({
     const adm = admRes.data as any;
     const noteRows = (notesRes.data || []).map((n: any) =>
       `<tr><td style="white-space:nowrap;font-size:11px">${n.round_date || ""} ${n.round_time || ""}</td>
-       <td>${n.doctor?.full_name || "—"}</td><td>${n.subjective || ""}</td>
-       <td>${n.objective || ""}</td><td>${n.assessment || ""}</td><td>${n.plan || ""}</td></tr>`
+       <td>${n.doctor?.full_name || "—"}</td><td>${hw("wardRounds", n.subjective, "")}</td>
+       <td>${hw("wardRounds", n.objective, "")}</td><td>${hw("wardRounds", n.assessment, "")}</td>
+       <td>${hw("wardRounds", n.plan, "")}</td></tr>`
     ).join("");
     const medRows = (medsRes.data || []).map((m: any) =>
-      `<tr><td>${m.drug_name}</td><td>${m.dose || ""}</td><td>${m.route || ""}</td><td>${m.frequency || ""}</td></tr>`
+      `<tr><td>${hw("medications", m.drug_name, "")}</td><td>${hw("medications", m.dose, "")}</td>
+       <td>${hw("medications", m.route, "")}</td><td>${hw("medications", m.frequency, "")}</td></tr>`
     ).join("");
 
     printDocument(`Case Sheet — ${adm?.admission_number || "IPD"}`,

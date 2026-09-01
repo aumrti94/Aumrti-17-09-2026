@@ -1,0 +1,6520 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Aumrti HMS API",
+    "version": "1.0.0",
+    "description": "The public API for Aumrti hospital management.\n\nEvery request carries `Authorization: Bearer sk_live_…` (or `sk_test_…` for sandbox). **The tenant is taken from the key** — no endpoint accepts a hospital identifier, so a key can only ever reach its own hospital's data.\n\nLists are cursor-paginated, never offset: offset paging silently skips rows when the underlying set changes mid-walk, which in a live OPD is constant.\n\nThis document is generated from the gateway's route registry and cannot drift from actual behaviour. Do not edit it by hand.",
+    "contact": {
+      "name": "Aumrti Support",
+      "url": "https://docs.aumrti.com/api"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.aumrti.com/v1",
+      "description": "Production"
+    }
+  ],
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "An Aumrti API key issued from Settings → API Portal. Shown once at creation and not recoverable — only a SHA-256 digest is stored. If it is lost, revoke and reissue."
+      }
+    },
+    "schemas": {
+      "Patients": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "uhid": {
+            "type": "string",
+            "nullable": true
+          },
+          "full_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "gender": {
+            "type": "string",
+            "nullable": true
+          },
+          "dob": {
+            "type": "string",
+            "format": "date"
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true
+          },
+          "email": {
+            "type": "string",
+            "nullable": true
+          },
+          "blood_group": {
+            "type": "string",
+            "nullable": true
+          },
+          "abha_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "patient_category": {
+            "type": "string",
+            "nullable": true
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "redacted_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when the key lacks the read:patients scope. Names the fields withheld, so a null here is distinguishable from a genuinely empty value."
+          }
+        }
+      },
+      "PatientsDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "uhid": {
+            "type": "string",
+            "nullable": true
+          },
+          "full_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "gender": {
+            "type": "string",
+            "nullable": true
+          },
+          "dob": {
+            "type": "string",
+            "format": "date"
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true
+          },
+          "email": {
+            "type": "string",
+            "nullable": true
+          },
+          "blood_group": {
+            "type": "string",
+            "nullable": true
+          },
+          "address": {
+            "type": "string",
+            "nullable": true
+          },
+          "abha_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "allergies": {
+            "type": "string",
+            "nullable": true
+          },
+          "chronic_conditions": {
+            "type": "array",
+            "items": {}
+          },
+          "patient_category": {
+            "type": "string",
+            "nullable": true
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "redacted_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when the key lacks the read:patients scope. Names the fields withheld, so a null here is distinguishable from a genuinely empty value."
+          }
+        }
+      },
+      "Appointments": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "doctor_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "appointment_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "slot_time": {
+            "type": "string",
+            "nullable": true
+          },
+          "slot_end_time": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "visit_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "appointment_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "consultation_fee": {
+            "type": "number"
+          },
+          "booked_via": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AppointmentsDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "doctor_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "appointment_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "slot_time": {
+            "type": "string",
+            "nullable": true
+          },
+          "slot_end_time": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "visit_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "appointment_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "chief_complaint": {
+            "type": "string",
+            "nullable": true
+          },
+          "consultation_fee": {
+            "type": "number"
+          },
+          "booked_via": {
+            "type": "string",
+            "nullable": true
+          },
+          "notes": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "redacted_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when the key lacks the read:patients scope. Names the fields withheld, so a null here is distinguishable from a genuinely empty value."
+          }
+        }
+      },
+      "OpdEncounters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "doctor_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "visit_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "visit_mode": {
+            "type": "string",
+            "nullable": true
+          },
+          "visit_purpose": {
+            "type": "string",
+            "nullable": true
+          },
+          "diagnosis": {
+            "type": "string",
+            "nullable": true
+          },
+          "icd10_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "icd11_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "is_admitted": {
+            "type": "boolean"
+          },
+          "follow_up_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "redacted_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when the key lacks the read:patients scope. Names the fields withheld, so a null here is distinguishable from a genuinely empty value."
+          }
+        }
+      },
+      "Admissions": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "admission_number": {
+            "type": "string",
+            "nullable": true
+          },
+          "patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "admitting_doctor_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "consultant_doctor_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ward_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "bed_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "department_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "admission_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "admitted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expected_discharge_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "discharged_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "discharge_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AdmissionsDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "admission_number": {
+            "type": "string",
+            "nullable": true
+          },
+          "patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "admitting_doctor_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "consultant_doctor_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ward_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "bed_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "department_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "admission_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "admitting_diagnosis": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "admitted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expected_discharge_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "discharged_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "discharge_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "payer_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "insurance_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "redacted_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when the key lacks the read:patients scope. Names the fields withheld, so a null here is distinguishable from a genuinely empty value."
+          }
+        }
+      },
+      "Bills": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "bill_number": {
+            "type": "string",
+            "nullable": true
+          },
+          "patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "encounter_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "admission_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "bill_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "bill_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "bill_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "payment_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "gst_amount": {
+            "type": "number"
+          },
+          "discount_amount": {
+            "type": "number"
+          },
+          "paid_amount": {
+            "type": "number"
+          },
+          "balance_due": {
+            "type": "number"
+          },
+          "patient_payable": {
+            "type": "number"
+          },
+          "insurance_amount": {
+            "type": "number"
+          },
+          "irn": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "BillPayments": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "bill_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "amount": {
+            "type": "number"
+          },
+          "payment_mode": {
+            "type": "string",
+            "nullable": true
+          },
+          "payment_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "payment_time": {
+            "type": "string",
+            "nullable": true
+          },
+          "transaction_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "gateway_reference": {
+            "type": "string",
+            "nullable": true
+          },
+          "bank_reference": {
+            "type": "string",
+            "nullable": true
+          },
+          "is_advance": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "InsuranceClaims": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "claim_number": {
+            "type": "string",
+            "nullable": true
+          },
+          "patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "admission_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "bill_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "payer_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "payer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tpa_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "tpa_reference_number": {
+            "type": "string",
+            "nullable": true
+          },
+          "policy_number": {
+            "type": "string",
+            "nullable": true
+          },
+          "claimed_amount": {
+            "type": "number"
+          },
+          "approved_amount": {
+            "type": "number"
+          },
+          "settled_amount": {
+            "type": "number"
+          },
+          "underpayment_amount": {
+            "type": "number"
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "submission_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "submitted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "settlement_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "denial_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "denial_reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "rejection_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "rejection_reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "appeal_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "appeal_deadline": {
+            "type": "string",
+            "nullable": true
+          },
+          "submission_deadline": {
+            "type": "string",
+            "nullable": true
+          },
+          "resubmission_deadline": {
+            "type": "string",
+            "nullable": true
+          },
+          "query_count": {
+            "type": "string",
+            "nullable": true
+          },
+          "reconciled": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "redacted_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when the key lacks the read:patients scope. Names the fields withheld, so a null here is distinguishable from a genuinely empty value."
+          }
+        }
+      },
+      "InsurancePreAuth": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "pre_auth_number": {
+            "type": "string",
+            "nullable": true
+          },
+          "patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "admission_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tpa_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "tpa_reference_number": {
+            "type": "string",
+            "nullable": true
+          },
+          "policy_number": {
+            "type": "string",
+            "nullable": true
+          },
+          "care_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "estimated_amount": {
+            "type": "number"
+          },
+          "approved_amount": {
+            "type": "number"
+          },
+          "supplementary_amount": {
+            "type": "number"
+          },
+          "supplementary_required": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "submitted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "approved_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "valid_until": {
+            "type": "string",
+            "nullable": true
+          },
+          "sla_deadline": {
+            "type": "string",
+            "nullable": true
+          },
+          "sla_breached": {
+            "type": "string",
+            "nullable": true
+          },
+          "is_emergency_admission": {
+            "type": "boolean"
+          },
+          "is_extension": {
+            "type": "boolean"
+          },
+          "diagnosis_codes": {
+            "type": "string",
+            "nullable": true
+          },
+          "procedure_codes": {
+            "type": "string",
+            "nullable": true
+          },
+          "denial_reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "rejection_reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "redacted_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when the key lacks the read:patients scope. Names the fields withheld, so a null here is distinguishable from a genuinely empty value."
+          }
+        }
+      },
+      "TpaQueries": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "claim_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "pre_auth_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "admission_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "query_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "raised_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "query_text": {
+            "type": "string",
+            "nullable": true
+          },
+          "documents_requested": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "priority": {
+            "type": "string",
+            "nullable": true
+          },
+          "response_deadline": {
+            "type": "string",
+            "nullable": true
+          },
+          "response_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "replied_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "response_text": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "redacted_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when the key lacks the read:patients scope. Names the fields withheld, so a null here is distinguishable from a genuinely empty value."
+          }
+        }
+      },
+      "LabOrders": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "encounter_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "admission_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "order_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "order_time": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "priority": {
+            "type": "string",
+            "nullable": true
+          },
+          "billing_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "sample_collected_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "validated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "LabOrderItems": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "lab_order_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "test_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "result_value": {
+            "type": "string",
+            "nullable": true
+          },
+          "result_numeric": {
+            "type": "number"
+          },
+          "result_unit": {
+            "type": "string",
+            "nullable": true
+          },
+          "result_flag": {
+            "type": "string",
+            "nullable": true
+          },
+          "reference_range": {
+            "type": "string",
+            "nullable": true
+          },
+          "delta_flag": {
+            "type": "string",
+            "nullable": true
+          },
+          "critical_acknowledged": {
+            "type": "string",
+            "nullable": true
+          },
+          "result_entered_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "validated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "redacted_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when the key lacks the read:patients scope. Names the fields withheld, so a null here is distinguishable from a genuinely empty value."
+          }
+        }
+      },
+      "RadiologyOrders": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "encounter_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "admission_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "accession_number": {
+            "type": "string",
+            "nullable": true
+          },
+          "study_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "modality_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "body_part": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "priority": {
+            "type": "string",
+            "nullable": true
+          },
+          "order_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "order_time": {
+            "type": "string",
+            "nullable": true
+          },
+          "scheduled_time": {
+            "type": "string",
+            "nullable": true
+          },
+          "billing_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "is_pcpndt": {
+            "type": "boolean"
+          },
+          "dicom_study_uid": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RadiologyReports": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "order_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "radiologist_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_signed": {
+            "type": "boolean"
+          },
+          "is_critical": {
+            "type": "boolean"
+          },
+          "reported_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "validated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "technique": {
+            "type": "string",
+            "nullable": true
+          },
+          "findings": {
+            "type": "string",
+            "nullable": true
+          },
+          "impression": {
+            "type": "string",
+            "nullable": true
+          },
+          "recommendations": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "redacted_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when the key lacks the read:patients scope. Names the fields withheld, so a null here is distinguishable from a genuinely empty value."
+          }
+        }
+      },
+      "Prescriptions": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "doctor_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "encounter_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "admission_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "prescription_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "is_signed": {
+            "type": "boolean"
+          },
+          "signed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "review_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "source": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PrescriptionsDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "doctor_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "encounter_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "admission_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "prescription_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "drugs": {
+            "type": "array",
+            "items": {}
+          },
+          "advice_notes": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "is_signed": {
+            "type": "boolean"
+          },
+          "signed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "review_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "redacted_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when the key lacks the read:patients scope. Names the fields withheld, so a null here is distinguishable from a genuinely empty value."
+          }
+        }
+      },
+      "PharmacyDispensing": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "prescription_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "encounter_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "admission_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "dispensing_number": {
+            "type": "string",
+            "nullable": true
+          },
+          "dispensing_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "dispensed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "payment_mode": {
+            "type": "string",
+            "nullable": true
+          },
+          "total_amount": {
+            "type": "number"
+          },
+          "discount_amount": {
+            "type": "number"
+          },
+          "gst_amount": {
+            "type": "number"
+          },
+          "net_amount": {
+            "type": "number"
+          },
+          "billed": {
+            "type": "string",
+            "nullable": true
+          },
+          "bill_linked": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "EdVisits": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "doctor_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "arrival_time": {
+            "type": "string",
+            "nullable": true
+          },
+          "arrival_mode": {
+            "type": "string",
+            "nullable": true
+          },
+          "triage_category": {
+            "type": "string",
+            "nullable": true
+          },
+          "chief_complaint": {
+            "type": "string",
+            "nullable": true
+          },
+          "working_diagnosis": {
+            "type": "string",
+            "nullable": true
+          },
+          "gcs_score": {
+            "type": "string",
+            "nullable": true
+          },
+          "disposition": {
+            "type": "string",
+            "nullable": true
+          },
+          "disposition_time": {
+            "type": "string",
+            "nullable": true
+          },
+          "mlc": {
+            "type": "string",
+            "nullable": true
+          },
+          "payer_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "billing_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "ed_charge": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "redacted_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when the key lacks the read:patients scope. Names the fields withheld, so a null here is distinguishable from a genuinely empty value."
+          }
+        }
+      },
+      "OtSchedules": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "admission_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ot_room_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "surgeon_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "anaesthetist_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "surgery_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "surgery_category": {
+            "type": "string",
+            "nullable": true
+          },
+          "anaesthesia_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "scheduled_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "scheduled_start_time": {
+            "type": "string",
+            "nullable": true
+          },
+          "scheduled_end_time": {
+            "type": "string",
+            "nullable": true
+          },
+          "estimated_duration_minutes": {
+            "type": "string",
+            "nullable": true
+          },
+          "actual_start_time": {
+            "type": "string",
+            "nullable": true
+          },
+          "actual_end_time": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "pac_done": {
+            "type": "string",
+            "nullable": true
+          },
+          "pac_cleared": {
+            "type": "string",
+            "nullable": true
+          },
+          "post_op_diagnosis": {
+            "type": "string",
+            "nullable": true
+          },
+          "ot_charge": {
+            "type": "string",
+            "nullable": true
+          },
+          "surgeon_fee": {
+            "type": "number"
+          },
+          "anaesthetist_fee": {
+            "type": "number"
+          },
+          "billed": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "redacted_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when the key lacks the read:patients scope. Names the fields withheld, so a null here is distinguishable from a genuinely empty value."
+          }
+        }
+      },
+      "NursingVitals": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "admission_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "shift": {
+            "type": "string",
+            "nullable": true
+          },
+          "temperature": {
+            "type": "string",
+            "nullable": true
+          },
+          "pulse": {
+            "type": "string",
+            "nullable": true
+          },
+          "respiratory_rate": {
+            "type": "string",
+            "nullable": true
+          },
+          "bp_systolic": {
+            "type": "string",
+            "nullable": true
+          },
+          "bp_diastolic": {
+            "type": "string",
+            "nullable": true
+          },
+          "pain_score": {
+            "type": "string",
+            "nullable": true
+          },
+          "gcs_total": {
+            "type": "string",
+            "nullable": true
+          },
+          "mews_score": {
+            "type": "string",
+            "nullable": true
+          },
+          "qsofa_score": {
+            "type": "string",
+            "nullable": true
+          },
+          "weight": {
+            "type": "string",
+            "nullable": true
+          },
+          "intake_oral_ml": {
+            "type": "string",
+            "nullable": true
+          },
+          "intake_iv_ml": {
+            "type": "string",
+            "nullable": true
+          },
+          "urine_output_ml": {
+            "type": "string",
+            "nullable": true
+          },
+          "redacted_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when the key lacks the read:patients scope. Names the fields withheld, so a null here is distinguishable from a genuinely empty value."
+          }
+        }
+      },
+      "BloodUnits": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "unit_number": {
+            "type": "string",
+            "nullable": true
+          },
+          "bag_number": {
+            "type": "string",
+            "nullable": true
+          },
+          "blood_group": {
+            "type": "string",
+            "nullable": true
+          },
+          "rh_factor": {
+            "type": "string",
+            "nullable": true
+          },
+          "component": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "tti_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "volume_ml": {
+            "type": "string",
+            "nullable": true
+          },
+          "collected_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "processing_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "expiry_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiry_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "storage_location": {
+            "type": "string",
+            "nullable": true
+          },
+          "reserved_for": {
+            "type": "string",
+            "nullable": true
+          },
+          "issued_to": {
+            "type": "string",
+            "nullable": true
+          },
+          "isbt_donation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "isbt_product_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "isbt_facility_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "BloodRequests": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "admission_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "blood_group": {
+            "type": "string",
+            "nullable": true
+          },
+          "rh_factor": {
+            "type": "string",
+            "nullable": true
+          },
+          "component": {
+            "type": "string",
+            "nullable": true
+          },
+          "units_required": {
+            "type": "string",
+            "nullable": true
+          },
+          "urgency": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "indication": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "redacted_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when the key lacks the read:patients scope. Names the fields withheld, so a null here is distinguishable from a genuinely empty value."
+          }
+        }
+      },
+      "DialysisSessions": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "dialysis_patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "machine_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "session_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "shift": {
+            "type": "string",
+            "nullable": true
+          },
+          "scheduled_start": {
+            "type": "string",
+            "nullable": true
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ended_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "access_used": {
+            "type": "string",
+            "nullable": true
+          },
+          "pre_weight_kg": {
+            "type": "string",
+            "nullable": true
+          },
+          "post_weight_kg": {
+            "type": "string",
+            "nullable": true
+          },
+          "uf_goal_ml": {
+            "type": "string",
+            "nullable": true
+          },
+          "uf_achieved_ml": {
+            "type": "string",
+            "nullable": true
+          },
+          "kt_v": {
+            "type": "string",
+            "nullable": true
+          },
+          "blood_flow_rate_ml": {
+            "type": "string",
+            "nullable": true
+          },
+          "complications": {
+            "type": "string",
+            "nullable": true
+          },
+          "billing_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "redacted_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when the key lacks the read:patients scope. Names the fields withheld, so a null here is distinguishable from a genuinely empty value."
+          }
+        }
+      },
+      "VaccinationRecords": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "vaccine_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "dose_number": {
+            "type": "string",
+            "nullable": true
+          },
+          "administered_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "route": {
+            "type": "string",
+            "nullable": true
+          },
+          "site": {
+            "type": "string",
+            "nullable": true
+          },
+          "batch_number": {
+            "type": "string",
+            "nullable": true
+          },
+          "manufacturer": {
+            "type": "string",
+            "nullable": true
+          },
+          "expiry_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "next_dose_due": {
+            "type": "number"
+          },
+          "camp_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "aefi_reported": {
+            "type": "string",
+            "nullable": true
+          },
+          "aefi_severity": {
+            "type": "string",
+            "nullable": true
+          },
+          "vvm_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "billing_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "redacted_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when the key lacks the read:patients scope. Names the fields withheld, so a null here is distinguishable from a genuinely empty value."
+          }
+        }
+      },
+      "AmbulanceDispatches": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "patient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "vehicle_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "call_received_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dispatch_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "pickup_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "arrival_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "pickup_location": {
+            "type": "string",
+            "nullable": true
+          },
+          "destination": {
+            "type": "string",
+            "nullable": true
+          },
+          "complaint": {
+            "type": "string",
+            "nullable": true
+          },
+          "distance_km": {
+            "type": "string",
+            "nullable": true
+          },
+          "trip_charge": {
+            "type": "string",
+            "nullable": true
+          },
+          "per_km_rate": {
+            "type": "string",
+            "nullable": true
+          },
+          "billing_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "redacted_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present when the key lacks the read:patients scope. Names the fields withheld, so a null here is distinguishable from a genuinely empty value."
+          }
+        }
+      },
+      "InventoryItems": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "item_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "item_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "category": {
+            "type": "string",
+            "nullable": true
+          },
+          "uom": {
+            "type": "string",
+            "nullable": true
+          },
+          "hsn_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "gst_percent": {
+            "type": "number"
+          },
+          "reorder_level": {
+            "type": "string",
+            "nullable": true
+          },
+          "max_stock_level": {
+            "type": "string",
+            "nullable": true
+          },
+          "minimum_order_qty": {
+            "type": "string",
+            "nullable": true
+          },
+          "abc_class": {
+            "type": "string",
+            "nullable": true
+          },
+          "ved_class": {
+            "type": "string",
+            "nullable": true
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "InventoryStock": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "item_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "batch_number": {
+            "type": "string",
+            "nullable": true
+          },
+          "expiry_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "quantity_available": {
+            "type": "string",
+            "nullable": true
+          },
+          "quantity_reserved": {
+            "type": "string",
+            "nullable": true
+          },
+          "location": {
+            "type": "string",
+            "nullable": true
+          },
+          "cost_price": {
+            "type": "string",
+            "nullable": true
+          },
+          "mrp": {
+            "type": "string",
+            "nullable": true
+          },
+          "last_received_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "is_consignment": {
+            "type": "boolean"
+          }
+        }
+      },
+      "StockTransactions": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "item_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "department_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "transaction_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "quantity": {
+            "type": "string",
+            "nullable": true
+          },
+          "unit_rate": {
+            "type": "string",
+            "nullable": true
+          },
+          "reference_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "reference_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "StaffAttendance": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "attendance_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "in_time": {
+            "type": "string",
+            "nullable": true
+          },
+          "out_time": {
+            "type": "string",
+            "nullable": true
+          },
+          "hours_worked": {
+            "type": "string",
+            "nullable": true
+          },
+          "overtime_hours": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "shift_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "source": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Departments": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "type": {
+            "type": "string",
+            "nullable": true
+          },
+          "head_doctor_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ServiceMaster": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "category": {
+            "type": "string",
+            "nullable": true
+          },
+          "item_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "department_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "fee": {
+            "type": "number"
+          },
+          "follow_up_fee": {
+            "type": "number"
+          },
+          "emergency_fee": {
+            "type": "number"
+          },
+          "gst_applicable": {
+            "type": "boolean"
+          },
+          "gst_percent": {
+            "type": "number"
+          },
+          "hsn_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Wards": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "authentication_error",
+                  "permission_error",
+                  "invalid_request_error",
+                  "rate_limit_error",
+                  "api_error"
+                ]
+              },
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "param": {
+                "type": "string"
+              },
+              "request_id": {
+                "type": "string",
+                "description": "Quote this when reporting a problem."
+              }
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "InvalidRequest": {
+        "description": "The request was malformed, or a hospital rule refused it.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Unauthenticated": {
+        "description": "The API key is missing, malformed, revoked or expired.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "The key lacks the required scope, or API access is not in the hospital's plan.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "No such resource. A resource belonging to another hospital is indistinguishable from one that does not exist.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Rate limit exceeded. Check the Retry-After header.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "ambulance"
+    },
+    {
+      "name": "billing"
+    },
+    {
+      "name": "bloodbank"
+    },
+    {
+      "name": "dialysis"
+    },
+    {
+      "name": "emergency"
+    },
+    {
+      "name": "insurance"
+    },
+    {
+      "name": "inventory"
+    },
+    {
+      "name": "ipd"
+    },
+    {
+      "name": "lab"
+    },
+    {
+      "name": "masters"
+    },
+    {
+      "name": "nursing"
+    },
+    {
+      "name": "opd"
+    },
+    {
+      "name": "patients"
+    },
+    {
+      "name": "pharmacy"
+    },
+    {
+      "name": "radiology"
+    },
+    {
+      "name": "scheduling"
+    },
+    {
+      "name": "staff"
+    },
+    {
+      "name": "theatre"
+    },
+    {
+      "name": "vaccination"
+    }
+  ],
+  "paths": {
+    "/v1/patients": {
+      "get": {
+        "summary": "List patients registered at this hospital, oldest first.",
+        "operationId": "get_v1_patients",
+        "tags": [
+          "patients"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:patients"
+            ]
+          }
+        ],
+        "description": "Requires the `read:patients` scope.\n\n**Returns patient-identifiable data.** Purpose: Patient identification for partner systems the hospital has commissioned (portal, BI, referral network). Retention: for the life of the API key.\n\nThese fields are withheld unless the key also holds `read:patients`: `full_name`, `dob`, `phone`, `email`, `abha_id`.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "uhid",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact UHID."
+          },
+          {
+            "name": "phone",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact registered phone number."
+          },
+          {
+            "name": "created_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Registered on or after this ISO 8601 date or timestamp."
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Registered on or before this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Patients"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "post": {
+        "summary": "Register a patient. The UHID is allocated by the hospital's own numbering sequence — do not supply one.",
+        "operationId": "post_v1_patients",
+        "tags": [
+          "patients"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "write:patients"
+            ]
+          }
+        ],
+        "description": "Requires the `write:patients` scope.\n\n**Returns patient-identifiable data.** Purpose: Patient registration by a partner system the hospital has commissioned (kiosk, portal, referral network). Retention: for the life of the patient record.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Send a unique value per distinct request. A retry with the same key returns the original response instead of acting twice. Reusing a key with a different body is a 409."
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Patients"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "Conflict — the record already exists, or an Idempotency-Key was reused with a different body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "full_name": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "phone": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "dob": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "gender": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "email": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "address": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "blood_group": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "full_name"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/patients/{id}": {
+      "get": {
+        "summary": "Retrieve one patient by id.",
+        "operationId": "get_v1_patients_id_",
+        "tags": [
+          "patients"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:patients"
+            ]
+          }
+        ],
+        "description": "Requires the `read:patients` scope.\n\n**Returns patient-identifiable data.** Purpose: Retrieval of a single patient record by a partner system acting on the hospital's behalf. Retention: for the life of the API key.\n\nThese fields are withheld unless the key also holds `read:patients`: `full_name`, `dob`, `phone`, `email`, `address`, `abha_id`, `allergies`, `chronic_conditions`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PatientsDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update a patient's demographics. Partial update — omitted fields are unchanged.",
+        "operationId": "patch_v1_patients_id_",
+        "tags": [
+          "patients"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "write:patients"
+            ]
+          }
+        ],
+        "description": "Requires the `write:patients` scope.\n\n**Returns patient-identifiable data.** Purpose: Correction of patient demographics by a partner system. Retention: for the life of the patient record.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PatientsDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "full_name": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "phone": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "dob": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "gender": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "email": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "address": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "blood_group": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "is_active": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/appointments": {
+      "get": {
+        "summary": "List appointments. Carries patient and doctor ids, not names — resolve via /v1/patients.",
+        "operationId": "get_v1_appointments",
+        "tags": [
+          "scheduling"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:appointments"
+            ]
+          }
+        ],
+        "description": "Requires the `read:appointments` scope.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "patient_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Appointments for one patient."
+          },
+          {
+            "name": "doctor_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Appointments for one doctor."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact status value."
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "On or after this ISO 8601 date or timestamp."
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "On or before this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Appointments"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "post": {
+        "summary": "Book an appointment. Returns 409 if the doctor already has an active appointment at that date and time.",
+        "operationId": "post_v1_appointments",
+        "tags": [
+          "scheduling"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "write:appointments"
+            ]
+          }
+        ],
+        "description": "Requires the `write:appointments` scope.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Send a unique value per distinct request. A retry with the same key returns the original response instead of acting twice. Reusing a key with a different body is a 409."
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Appointments"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "Conflict — the record already exists, or an Idempotency-Key was reused with a different body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "patient_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "doctor_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "appointment_date": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "slot_time": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "slot_end_time": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "visit_type": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "appointment_type": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "chief_complaint": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "notes": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "consultation_fee": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "patient_id",
+                  "doctor_id",
+                  "appointment_date",
+                  "slot_time",
+                  "slot_end_time"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/appointments/{id}": {
+      "get": {
+        "summary": "Retrieve one appointment by id.",
+        "operationId": "get_v1_appointments_id_",
+        "tags": [
+          "scheduling"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:appointments"
+            ]
+          }
+        ],
+        "description": "Requires the `read:appointments` scope.\n\n**Returns patient-identifiable data.** Purpose: Appointment detail including presenting complaint, for partner scheduling and triage systems. Retention: for the life of the API key.\n\nThese fields are withheld unless the key also holds `read:patients`: `chief_complaint`, `notes`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppointmentsDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Reschedule or cancel an appointment. Set status to \"cancelled\" to cancel.",
+        "operationId": "patch_v1_appointments_id_",
+        "tags": [
+          "scheduling"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "write:appointments"
+            ]
+          }
+        ],
+        "description": "Requires the `write:appointments` scope.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppointmentsDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "appointment_date": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "slot_time": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "slot_end_time": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "notes": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "chief_complaint": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/encounters": {
+      "get": {
+        "summary": "List OPD consultation records.",
+        "operationId": "get_v1_encounters",
+        "tags": [
+          "opd"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:encounters"
+            ]
+          }
+        ],
+        "description": "Requires the `read:encounters` scope.\n\n**Returns patient-identifiable data.** Purpose: Consultation summaries for continuity-of-care and analytics partners. Diagnosis text is clinical PHI. Retention: for the life of the API key.\n\nThese fields are withheld unless the key also holds `read:patients`: `diagnosis`.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "patient_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Encounters for one patient."
+          },
+          {
+            "name": "doctor_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Encounters for one doctor."
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "On or after this ISO 8601 date or timestamp."
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "On or before this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/OpdEncounters"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/admissions": {
+      "get": {
+        "summary": "List IPD admissions and their bed occupancy. Diagnosis text is excluded — use /v1/admissions/{id}.",
+        "operationId": "get_v1_admissions",
+        "tags": [
+          "ipd"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:admissions"
+            ]
+          }
+        ],
+        "description": "Requires the `read:admissions` scope.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "patient_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Admissions for one patient."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact status value."
+          },
+          {
+            "name": "ward_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Admissions in one ward."
+          },
+          {
+            "name": "admitted_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Admitted on or after this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Admissions"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/admissions/{id}": {
+      "get": {
+        "summary": "Retrieve one admission by id.",
+        "operationId": "get_v1_admissions_id_",
+        "tags": [
+          "ipd"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:admissions"
+            ]
+          }
+        ],
+        "description": "Requires the `read:admissions` scope.\n\n**Returns patient-identifiable data.** Purpose: Admission detail including admitting diagnosis, for insurance and continuity-of-care partners. Retention: for the life of the API key.\n\nThese fields are withheld unless the key also holds `read:patients`: `admitting_diagnosis`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdmissionsDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/bills": {
+      "get": {
+        "summary": "List bills. Amounts are rupees as numeric(12,2) — parse as decimal, never float.",
+        "operationId": "get_v1_bills",
+        "tags": [
+          "billing"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:bills"
+            ]
+          }
+        ],
+        "description": "Requires the `read:bills` scope.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "patient_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Bills for one patient."
+          },
+          {
+            "name": "bill_number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact bill number."
+          },
+          {
+            "name": "payment_status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact payment status."
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "On or after this ISO 8601 date or timestamp."
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "On or before this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Bills"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/payments": {
+      "get": {
+        "summary": "List payments received, including part payments and advances.",
+        "operationId": "get_v1_payments",
+        "tags": [
+          "billing"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:bills"
+            ]
+          }
+        ],
+        "description": "Requires the `read:bills` scope.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "bill_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Payments against one bill."
+          },
+          {
+            "name": "payment_mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact payment mode."
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "On or after this ISO 8601 date or timestamp."
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "On or before this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/BillPayments"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/insurance/claims": {
+      "get": {
+        "summary": "List insurance claims. Amounts are rupees as numeric(12,2) — parse as decimal, never float.",
+        "operationId": "get_v1_insurance_claims",
+        "tags": [
+          "insurance"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:insurance"
+            ]
+          }
+        ],
+        "description": "Requires the `read:insurance` scope.\n\n**Returns patient-identifiable data.** Purpose: Claim status and settlement tracking for the hospital's TPA, insurer and revenue-cycle partners. Policy numbers and denial reasons identify the patient and their treatment. Retention: for the life of the API key.\n\nThese fields are withheld unless the key also holds `read:patients`: `policy_number`, `denial_reason`, `rejection_reason`.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "patient_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Claims for one patient."
+          },
+          {
+            "name": "claim_number",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact claim number."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact claim status."
+          },
+          {
+            "name": "tpa_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Claims for one TPA."
+          },
+          {
+            "name": "submitted_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Submitted on or after this ISO 8601 date or timestamp."
+          },
+          {
+            "name": "settled_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Settled on or after this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/InsuranceClaims"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/insurance/pre-authorisations": {
+      "get": {
+        "summary": "List pre-authorisation requests, including SLA deadlines and whether they were breached.",
+        "operationId": "get_v1_insurance_pre-authorisations",
+        "tags": [
+          "insurance"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:insurance"
+            ]
+          }
+        ],
+        "description": "Requires the `read:insurance` scope.\n\n**Returns patient-identifiable data.** Purpose: Pre-authorisation status for the hospital's TPA and insurer integrations. Diagnosis and procedure codes are clinical PHI. Retention: for the life of the API key.\n\nThese fields are withheld unless the key also holds `read:patients`: `diagnosis_codes`, `procedure_codes`, `policy_number`, `denial_reason`, `rejection_reason`.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "patient_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Pre-authorisations for one patient."
+          },
+          {
+            "name": "admission_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Pre-authorisations for one admission."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact status."
+          },
+          {
+            "name": "tpa_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Pre-authorisations for one TPA."
+          },
+          {
+            "name": "submitted_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Submitted on or after this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/InsurancePreAuth"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/insurance/queries": {
+      "get": {
+        "summary": "List TPA queries raised against claims and pre-authorisations. Watch response_deadline — an unanswered query is a common cause of claim rejection.",
+        "operationId": "get_v1_insurance_queries",
+        "tags": [
+          "insurance"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:insurance"
+            ]
+          }
+        ],
+        "description": "Requires the `read:insurance` scope.\n\n**Returns patient-identifiable data.** Purpose: TPA query correspondence, so a partner can track and answer payer questions before the response deadline. Query and response text carry clinical justification. Retention: for the life of the API key.\n\nThese fields are withheld unless the key also holds `read:patients`: `query_text`, `response_text`.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "claim_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Queries against one claim."
+          },
+          {
+            "name": "pre_auth_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Queries against one pre-authorisation."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "One of: open, responded, replied, overdue, escalated, closed."
+          },
+          {
+            "name": "raised_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Raised on or after this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TpaQueries"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/lab/orders": {
+      "get": {
+        "summary": "List lab orders. Results are on /v1/lab/results.",
+        "operationId": "get_v1_lab_orders",
+        "tags": [
+          "lab"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:lab"
+            ]
+          }
+        ],
+        "description": "Requires the `read:lab` scope.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "patient_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Orders for one patient."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact order status."
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "On or after this ISO 8601 date or timestamp."
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "On or before this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/LabOrders"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/lab/results": {
+      "get": {
+        "summary": "List lab result lines. A result is only clinically final once validated_at is set.",
+        "operationId": "get_v1_lab_results",
+        "tags": [
+          "lab"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:lab"
+            ]
+          }
+        ],
+        "description": "Requires the `read:lab` scope.\n\n**Returns patient-identifiable data.** Purpose: Laboratory results for the hospital's own analyser, LIS and continuity-of-care integrations. Values are clinical PHI. Retention: for the life of the API key.\n\nThese fields are withheld unless the key also holds `read:patients`: `result_value`, `result_numeric`, `result_flag`, `delta_flag`.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "lab_order_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Results for one order."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact result status."
+          },
+          {
+            "name": "resulted_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Resulted on or after this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/LabOrderItems"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/radiology/orders": {
+      "get": {
+        "summary": "List radiology orders. Scheduling and workflow fields only — clinical history and indication are not exposed, and PCPNDT-regulated fields never are.",
+        "operationId": "get_v1_radiology_orders",
+        "tags": [
+          "radiology"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:radiology"
+            ]
+          }
+        ],
+        "description": "Requires the `read:radiology` scope.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "patient_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Orders for one patient."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact order status."
+          },
+          {
+            "name": "modality_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact modality, e.g. CT, MRI."
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "On or after this ISO 8601 date or timestamp."
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "On or before this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/RadiologyOrders"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/radiology/reports": {
+      "get": {
+        "summary": "List radiology reports. A report is clinically final only once is_signed is true.",
+        "operationId": "get_v1_radiology_reports",
+        "tags": [
+          "radiology"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:radiology"
+            ]
+          }
+        ],
+        "description": "Requires the `read:radiology` scope.\n\n**Returns patient-identifiable data.** Purpose: Radiology report content for the hospital's PACS, teleradiology and continuity-of-care partners. Findings and impression are clinical PHI. Retention: for the life of the API key.\n\nThese fields are withheld unless the key also holds `read:patients`: `findings`, `impression`, `recommendations`, `technique`.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "order_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Report for one order."
+          },
+          {
+            "name": "patient_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Reports for one patient."
+          },
+          {
+            "name": "is_signed",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Only signed reports (true)."
+          },
+          {
+            "name": "reported_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Reported on or after this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/RadiologyReports"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/pharmacy/prescriptions": {
+      "get": {
+        "summary": "List prescriptions. The drugs array is omitted from the list — use the detail route.",
+        "operationId": "get_v1_pharmacy_prescriptions",
+        "tags": [
+          "pharmacy"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:pharmacy"
+            ]
+          }
+        ],
+        "description": "Requires the `read:pharmacy` scope.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "patient_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Prescriptions for one patient."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact status."
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "On or after this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Prescriptions"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/pharmacy/prescriptions/{id}": {
+      "get": {
+        "summary": "Retrieve one prescription including its drug list.",
+        "operationId": "get_v1_pharmacy_prescriptions_id_",
+        "tags": [
+          "pharmacy"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:pharmacy"
+            ]
+          }
+        ],
+        "description": "Requires the `read:pharmacy` scope.\n\n**Returns patient-identifiable data.** Purpose: Prescription detail for the hospital's pharmacy and e-prescription partners. Drug lists are clinical PHI. Retention: for the life of the API key.\n\nThese fields are withheld unless the key also holds `read:patients`: `drugs`, `advice_notes`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrescriptionsDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/pharmacy/dispenses": {
+      "get": {
+        "summary": "List dispensing records with their financial totals. Drug-level line items are not exposed; use /v1/pharmacy/prescriptions/{id} for what was prescribed.",
+        "operationId": "get_v1_pharmacy_dispenses",
+        "tags": [
+          "pharmacy"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:pharmacy"
+            ]
+          }
+        ],
+        "description": "Requires the `read:pharmacy` scope.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "patient_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Dispenses for one patient."
+          },
+          {
+            "name": "prescription_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Dispenses against one prescription."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact status."
+          },
+          {
+            "name": "dispensed_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Dispensed on or after this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PharmacyDispensing"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/emergency/visits": {
+      "get": {
+        "summary": "List emergency department visits. AMPLE history and MLC narrative are not exposed.",
+        "operationId": "get_v1_emergency_visits",
+        "tags": [
+          "emergency"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:emergency"
+            ]
+          }
+        ],
+        "description": "Requires the `read:emergency` scope.\n\n**Returns patient-identifiable data.** Purpose: Emergency attendance and triage for the hospital's ED dashboards, ambulance and referral partners. Complaint and diagnosis are clinical PHI. Retention: for the life of the API key.\n\nThese fields are withheld unless the key also holds `read:patients`: `chief_complaint`, `working_diagnosis`, `gcs_score`.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "patient_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Visits for one patient."
+          },
+          {
+            "name": "triage_category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact triage category."
+          },
+          {
+            "name": "disposition",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact disposition."
+          },
+          {
+            "name": "arrived_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Arrived on or after this ISO 8601 date or timestamp."
+          },
+          {
+            "name": "arrived_before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Arrived on or before this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/EdVisits"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/theatre/schedules": {
+      "get": {
+        "summary": "List theatre bookings with scheduled and actual timings. PAC notes and cancellation reasons are not exposed.",
+        "operationId": "get_v1_theatre_schedules",
+        "tags": [
+          "theatre"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:ot"
+            ]
+          }
+        ],
+        "description": "Requires the `read:ot` scope.\n\n**Returns patient-identifiable data.** Purpose: Theatre scheduling and utilisation for the hospital's OT management and anaesthesia partners. Surgery name and post-op diagnosis are clinical PHI. Retention: for the life of the API key.\n\nThese fields are withheld unless the key also holds `read:patients`: `surgery_name`, `post_op_diagnosis`, `anaesthesia_type`.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "patient_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Bookings for one patient."
+          },
+          {
+            "name": "surgeon_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Bookings for one surgeon."
+          },
+          {
+            "name": "ot_room_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Bookings in one theatre."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact status."
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "On or after this ISO 8601 date or timestamp."
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "On or before this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/OtSchedules"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/nursing/vitals": {
+      "get": {
+        "summary": "List recorded vitals, including MEWS and qSOFA scores. Free-text nursing notes are not exposed.",
+        "operationId": "get_v1_nursing_vitals",
+        "tags": [
+          "nursing"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:nursing"
+            ]
+          }
+        ],
+        "description": "Requires the `read:nursing` scope.\n\n**Returns patient-identifiable data.** Purpose: Nursing observations for the hospital's monitoring, early-warning and tele-ICU integrations. Every value here is clinical PHI. Retention: for the life of the API key.\n\nThese fields are withheld unless the key also holds `read:patients`: `temperature`, `pulse`, `respiratory_rate`, `bp_systolic`, `bp_diastolic`, `pain_score`, `gcs_total`, `mews_score`, `qsofa_score`, `weight`, `intake_oral_ml`, `intake_iv_ml`, `urine_output_ml`.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "patient_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Observations for one patient."
+          },
+          {
+            "name": "admission_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Observations for one admission."
+          },
+          {
+            "name": "recorded_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Recorded on or after this ISO 8601 date or timestamp."
+          },
+          {
+            "name": "recorded_before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Recorded on or before this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/NursingVitals"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/bloodbank/units": {
+      "get": {
+        "summary": "List blood units and their availability. Donor identity and individual infection-screening results are never exposed — only the aggregate tti_status.",
+        "operationId": "get_v1_bloodbank_units",
+        "tags": [
+          "bloodbank"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:bloodbank"
+            ]
+          }
+        ],
+        "description": "Requires the `read:bloodbank` scope.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "blood_group",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact blood group, e.g. O."
+          },
+          {
+            "name": "component",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact component, e.g. PRBC, FFP."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact unit status."
+          },
+          {
+            "name": "expires_before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Expiring on or before this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/BloodUnits"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/bloodbank/requests": {
+      "get": {
+        "summary": "List blood requests raised for patients.",
+        "operationId": "get_v1_bloodbank_requests",
+        "tags": [
+          "bloodbank"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:bloodbank"
+            ]
+          }
+        ],
+        "description": "Requires the `read:bloodbank` scope.\n\n**Returns patient-identifiable data.** Purpose: Blood requirement tracking for the hospital's blood bank and inter-hospital supply partners. The clinical indication is PHI. Retention: for the life of the API key.\n\nThese fields are withheld unless the key also holds `read:patients`: `indication`.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "patient_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Requests for one patient."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact request status."
+          },
+          {
+            "name": "urgency",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact urgency level."
+          },
+          {
+            "name": "requested_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Raised on or after this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/BloodRequests"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/dialysis/sessions": {
+      "get": {
+        "summary": "List dialysis sessions with adequacy (Kt/V) and ultrafiltration figures.",
+        "operationId": "get_v1_dialysis_sessions",
+        "tags": [
+          "dialysis"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:dialysis"
+            ]
+          }
+        ],
+        "description": "Requires the `read:dialysis` scope.\n\n**Returns patient-identifiable data.** Purpose: Dialysis session records for the hospital's nephrology and machine-vendor integrations. Adequacy and complication data are clinical PHI. Retention: for the life of the API key.\n\nThese fields are withheld unless the key also holds `read:patients`: `pre_weight_kg`, `post_weight_kg`, `uf_goal_ml`, `uf_achieved_ml`, `kt_v`, `complications`, `access_used`.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "dialysis_patient_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Sessions for one dialysis patient."
+          },
+          {
+            "name": "machine_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Sessions on one machine."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact session status."
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "On or after this ISO 8601 date or timestamp."
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "On or before this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/DialysisSessions"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/vaccinations": {
+      "get": {
+        "summary": "List administered vaccine doses, including batch and next-dose-due tracking.",
+        "operationId": "get_v1_vaccinations",
+        "tags": [
+          "vaccination"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:vaccination"
+            ]
+          }
+        ],
+        "description": "Requires the `read:vaccination` scope.\n\n**Returns patient-identifiable data.** Purpose: Immunisation history for the hospital's public-health reporting (UWIN/CoWIN-style registries) and paediatric follow-up partners. Retention: for the life of the API key.\n\nThese fields are withheld unless the key also holds `read:patients`: `aefi_severity`.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "patient_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Doses for one patient."
+          },
+          {
+            "name": "vaccine_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Doses of one vaccine."
+          },
+          {
+            "name": "camp_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Doses given at one camp."
+          },
+          {
+            "name": "administered_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Given on or after this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/VaccinationRecords"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/ambulance/dispatches": {
+      "get": {
+        "summary": "List ambulance dispatches with response timestamps and trip charges.",
+        "operationId": "get_v1_ambulance_dispatches",
+        "tags": [
+          "ambulance"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:ambulance"
+            ]
+          }
+        ],
+        "description": "Requires the `read:ambulance` scope.\n\n**Returns patient-identifiable data.** Purpose: Ambulance dispatch and response-time tracking for the hospital's fleet and emergency-network partners. Pickup location and complaint identify the patient and their condition. Retention: for the life of the API key.\n\nThese fields are withheld unless the key also holds `read:patients`: `pickup_location`, `complaint`.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "patient_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Trips for one patient."
+          },
+          {
+            "name": "vehicle_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Trips for one vehicle."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact dispatch status."
+          },
+          {
+            "name": "called_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Call received on or after this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AmbulanceDispatches"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/inventory/items": {
+      "get": {
+        "summary": "List the item master, including ABC/VED classification and reorder levels.",
+        "operationId": "get_v1_inventory_items",
+        "tags": [
+          "inventory"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:inventory"
+            ]
+          }
+        ],
+        "description": "Requires the `read:inventory` scope.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "item_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact item code."
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact category."
+          },
+          {
+            "name": "is_active",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter to active items."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/InventoryItems"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/inventory/stock": {
+      "get": {
+        "summary": "List batch-level stock balances. Ordered by id — this table records no timestamp, so there is no chronological order to page by.",
+        "operationId": "get_v1_inventory_stock",
+        "tags": [
+          "inventory"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:inventory"
+            ]
+          }
+        ],
+        "description": "Requires the `read:inventory` scope.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "item_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Stock for one item."
+          },
+          {
+            "name": "location",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Stock at one location."
+          },
+          {
+            "name": "expires_before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Expiring on or before this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/InventoryStock"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/inventory/transactions": {
+      "get": {
+        "summary": "List stock movements. Free-text notes are not exposed.",
+        "operationId": "get_v1_inventory_transactions",
+        "tags": [
+          "inventory"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:inventory"
+            ]
+          }
+        ],
+        "description": "Requires the `read:inventory` scope.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "item_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Movements for one item."
+          },
+          {
+            "name": "transaction_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact movement type."
+          },
+          {
+            "name": "department_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Movements for one department."
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Recorded on or after this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/StockTransactions"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/staff/attendance": {
+      "get": {
+        "summary": "List staff attendance for payroll and biometric-device reconciliation. Free-text notes and remarks are not exposed.",
+        "operationId": "get_v1_staff_attendance",
+        "tags": [
+          "staff"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:staff"
+            ]
+          }
+        ],
+        "description": "Requires the `read:staff` scope.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Attendance for one staff member."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact attendance status."
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "On or after this ISO 8601 date or timestamp."
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "On or before this ISO 8601 date or timestamp."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/StaffAttendance"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/masters/departments": {
+      "get": {
+        "summary": "List departments.",
+        "operationId": "get_v1_masters_departments",
+        "tags": [
+          "masters"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:masters"
+            ]
+          }
+        ],
+        "description": "Requires the `read:masters` scope.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "is_active",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter to active departments."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Departments"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/masters/services": {
+      "get": {
+        "summary": "List the service and rate catalogue.",
+        "operationId": "get_v1_masters_services",
+        "tags": [
+          "masters"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:masters"
+            ]
+          }
+        ],
+        "description": "Requires the `read:masters` scope.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exact category."
+          },
+          {
+            "name": "is_active",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter to active services."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ServiceMaster"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/masters/wards": {
+      "get": {
+        "summary": "List wards.",
+        "operationId": "get_v1_masters_wards",
+        "tags": [
+          "masters"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "read:masters"
+            ]
+          }
+        ],
+        "description": "Requires the `read:masters` scope.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size. Values above 100 are clamped, not rejected."
+          },
+          {
+            "name": "starting_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor from a previous response's next_cursor. Pass it verbatim."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Wards"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    }
+  }
+}

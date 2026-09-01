@@ -59,17 +59,27 @@ async function buildCareContextMeta(
     }
 
     case "lab_reported": {
+      // "lab_reports" has never existed. A reported lab is a lab_orders row; the test name lives
+      // on lab_test_master via lab_order_items, and the report timestamp is the item's
+      // validated_at. This read previously always failed, so no lab care-context was ever linked
+      // to ABDM.
       const { data } = await sb
-        .from("lab_reports")
-        .select("test_name, reported_at")
+        .from("lab_orders")
+        .select("id, order_date, lab_order_items(validated_at, lab_test_master(test_name))")
         .eq("id", sourceId)
         .eq("hospital_id", hospitalId)
         .maybeSingle();
       if (!data) return null;
-      const reportedDate = new Date(data.reported_at as string).toLocaleDateString("en-IN");
+      const items = (data.lab_order_items ?? []) as Array<{
+        validated_at: string | null;
+        lab_test_master: { test_name: string | null } | null;
+      }>;
+      const testName = items.map((i) => i.lab_test_master?.test_name).filter(Boolean).join(", ") || "Lab Test";
+      const reportedAt = items.map((i) => i.validated_at).filter(Boolean).sort().pop() ?? data.order_date;
+      const reportedDate = reportedAt ? new Date(reportedAt as string).toLocaleDateString("en-IN") : "";
       return {
         reference: `LAB-${sourceId}`,
-        display: `Lab Report — ${data.test_name} — ${reportedDate}`,
+        display: `Lab Report — ${testName} — ${reportedDate}`,
         context_type: "DiagnosticReportRecord",
       };
     }

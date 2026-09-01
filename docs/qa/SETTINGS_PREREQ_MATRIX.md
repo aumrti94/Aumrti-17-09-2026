@@ -48,22 +48,45 @@ Organised by the module you're about to test. Configure the whole row before you
 
 | Must exist | Screen | Symptom if missing |
 |---|---|---|
-| `lab_test_master` with **`fee`**, `sample_type`, `unit`, `normal_min/max`, `tat_minutes` | [SettingsLabTestsPage](../../src/pages/settings/SettingsLabTestsPage.tsx) | Order created at **₹0**; no normal range means no abnormal flag and **no critical alert** |
-| `lab_test_groups` + group items with `fee` | same | Panel orders bill as the sum of individual tests instead of the group rate |
-| Sample types matching the tests | same | Sample rows can't be grouped for collection |
+| `lab_test_master` with **`fee`**, `sample_type`, `unit`, `normal_min/max`, `tat_minutes` | [SettingsLabTestsPage](../../src/pages/settings/SettingsLabTestsPage.tsx) | Order created at **₹0**; no normal range means no abnormal flag |
+| `lab_test_master.critical_low` / **`critical_high`** | same | 🔴 **NO critical-value alerting at all.** `calcFlag()` derives `CH`/`CL` from these two columns alone, and only a `CH`/`CL` flag writes a `clinical_alerts` row or blocks release — so potassium 7.2 flags a harmless `"H"`, no alert fires, the result is released unchallenged, and every screen looks normal |
+| `lab_test_master.is_active = true` | same | 🔴 **Nothing is orderable.** Migration `20261009000171` runs `UPDATE lab_test_master SET is_active = false` and flips the column default, while every lookup filters `is_active = true`. A tenant migrated *after* seeding has an empty catalogue as far as the app is concerned |
+| `lab_test_master.autoverify_eligible` | same | Auto-verification refuses every result at rule 1 ("Test is not enabled") — indistinguishable from correct conservative behaviour |
+| `lab_test_master.category` | same | `lab_dual_validation_config` matches on it **case-sensitively**; a mismatch silently disables dual validation |
+| `lab_test_groups` **and `lab_test_group_items`** | same | Panel orders bill as the sum of individual tests instead of the group rate. A group with **no member rows** is a price with no contents — `fetchRates()` needs the members to detect a covered group at all |
+| `lab_dual_validation_config` | **no screen exists** — seeded directly | The two-validator flow is unreachable, so a hospital that requires dual sign-off cannot express it |
+| Sample types matching the tests | [SettingsLabTestsPage](../../src/pages/settings/SettingsLabTestsPage.tsx) | Sample rows can't be grouped for collection |
 
-> 🔴 **The OPD→Lab handoff is an exact, case-insensitive match on `lab_test_master.test_name`.**
-> A test the doctor typed that isn't in the catalogue is **silently dropped** from the order —
-> you get only an amber banner saying "N prescribed tests not found". If your catalogue
-> spelling differs from what doctors type, tests vanish and revenue leaks.
+> 🟡 **The OPD→Lab handoff resolves a typed name in four tiers** — exact name, alias table
+> ([`orderAliases.ts`](../../src/lib/orderAliases.ts) plus whatever the hospital has learned in
+> `order_name_aliases`), token/phonetic fuzzy matching, then the `ai-resolve-orders` edge
+> function for the leftovers. A name that resolves is rewritten to the catalogue's own spelling
+> and shows `matched from "…"` with an undo, so "Fever panel test", "CBC" and "Compleet Blood
+> Kount" all reach the lab as real orders.
+>
+> It was an exact, case-insensitive match on `lab_test_master.test_name` until then, and
+> anything else was **silently dropped** — the leak `pendingInvestigations.ts` measures.
+>
+> Two things still matter for seeding. **Panels live in `lab_test_groups`, not
+> `lab_test_master`**, and are resolved through it — a hospital with panel rows but no
+> `lab_test_group_items` has a panel that matches by name and expands to nothing. And a name
+> that resolves to nothing at all still earns the amber "not found in the lab catalogue"
+> banner and is still not ordered: fuzzy matching narrows that case, it does not remove it.
+
+> **The first four rows above were added during Phase 5 authoring.** They are the difference
+> between "the critical alert is broken" and "the critical range was never seeded" — precisely
+> the confusion this document exists to prevent. `npm run qa:seed` now writes all of them, and
+> `TC-P5L-001` … `TC-P5L-004` re-prove them before the phase runs.
 
 ### Radiology — Phase 5
 
 | Must exist | Screen | Symptom if missing |
 |---|---|---|
 | `radiology_modalities` — **create these FIRST** | [SettingsRadiologyPage](../../src/pages/settings/SettingsRadiologyPage.tsx) | "No studies configured. Go to Settings → Radiology Modalities" |
-| `radiology_study_master` with `fee`, `modality_id`, `sort_order` | same | Studies missing or ₹0 |
-| `pcpndt_settings` | same | 🔴 Form F may not generate correctly for obstetric scans |
+| `radiology_study_master` with `fee`, `modality_id`, `sort_order` | same | Studies missing or ₹0. A study with **no modality** falls back to the first modality in the list — silently sending a CT request to the X-ray room |
+| `radiology_study_master.requires_form_f` | **not settable in any UI** — backfilled by migration `20261013000019` | 🔴 Form F falls back to a keyword match on a free-text study name. A hospital that names a study in-house (`TIFFA Level 2`, `Early Preg Scan`) after that migration cannot flag it |
+| `pcpndt_settings` | **no screen found** — seeded directly | 🔴 The machine registration number and the sonologist's PCPNDT registration are the first two things an inspector checks on a printed register; a Form F without them is not a valid statutory record |
+| `hospital_settings.ipd_ancillary_payment` | [SettingsIPDAncillaryPaymentPage](../../src/pages/settings/SettingsIPDAncillaryPaymentPage.tsx) | Defaults to `post_paid` **invisibly**. A hospital that believes it configured pre-paid, and never saved the screen, extends credit on every ward investigation without knowing it. 🔴 Both values need a full test run |
 | `hospital_pacs_config` | [IntegrationsHubPage](../../src/pages/settings/IntegrationsHubPage.tsx) | DICOM/PACS features inert |
 
 ### Pharmacy — Phase 6

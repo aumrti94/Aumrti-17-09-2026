@@ -138,10 +138,13 @@ function buildPlan() {
       { table: 'service_master',         n: isFull ? MOCK.services.length + MOCK.doctorFees.length : 1, what: 'services + per-doctor consultation fees' },
       { table: 'drug_master',            n: isFull ? MOCK.drugs.length : 0,              what: 'incl. 2 NDPS and 1 Schedule H1' },
       { table: 'drug_batches',           n: isFull ? MOCK.drugBatches.length + (MOCK.drugs.length - new Set(MOCK.drugBatches.map(b => b.drug)).size) : 0, what: 'incl. 1 expired + 1 quarantined + FEFO pair' },
-      { table: 'lab_test_master',        n: isFull ? MOCK.labTests.length : 0,           what: 'with fee, sample type and normal ranges' },
+      { table: 'lab_test_master',        n: isFull ? MOCK.labTests.length : 0,           what: 'fee, sample type, normal AND critical ranges, autoverify flags' },
       { table: 'lab_test_groups',        n: isFull ? MOCK.labTestGroups.length : 0,      what: 'Fever Panel at a group price' },
+      { table: 'lab_test_group_items',   n: isFull ? MOCK.labTestGroups.reduce((a, g) => a + g.members.length, 0) : 0, what: 'group members — without these the group price never applies' },
+      { table: 'lab_dual_validation_config', n: isFull ? 1 : 0,                          what: `${MOCK.phase5.dualValidation.category} requires two validators` },
       { table: 'radiology_modalities',   n: isFull ? MOCK.radiologyModalities.length : 0,what: 'created BEFORE studies' },
       { table: 'radiology_study_master', n: isFull ? MOCK.radiologyStudies.length : 0,   what: 'incl. 2 obstetric variants for the PCPNDT test' },
+      { table: 'pcpndt_settings',        n: isFull ? 1 : 0,                              what: 'machine + doctor PCPNDT registration' },
       { table: 'payer_masters',          n: isFull ? MOCK.payers.length : 0,             what: 'self / TPA / govt / corporate with ceilings' },
       { table: 'hospital_config_values', n: isFull ? Object.values(MOCK.configValues).reduce((a, v) => a + v.length, 0) : 0, what: 'drug routes + frequencies, one row per value' },
       { table: 'hospital_settings',      n: isFull ? 2 : 0,                              what: 'discount approval rules + IPD ancillary payment' },
@@ -436,27 +439,120 @@ async function seedHospital(db, key) {
     ['batch_number'], hid);
   if (n) ok(`drug_batches       ${n}  ${c.dim('(1 expired, 1 quarantined, FEFO pair)')}`);
 
+  // PHASE 5 PREREQUISITES — critical_low/critical_high, category and autoverify_eligible.
+  //
+  // These are not decoration. LabResultWorkspace.calcFlag() derives CL/CH from critical_low /
+  // critical_high ALONE, and only a CH/CL flag raises the clinical_alerts critical row and blocks
+  // release. Seeding a normal range without a critical range means the QA tenant's potassium 7.2
+  // flags a plain "H" and the critical-value scenario (P5-S07) can never pass — it would be
+  // logged as a product defect when it is a seeding gap. autoverify_eligible defaults to FALSE in
+  // the database, so P5-S09 is likewise unreachable unless it is seeded. `category` is what
+  // lab_dual_validation_config matches on, case-sensitively.
   n = await upsertByKey(db, 'lab_test_master',
     MOCK.labTests.map(t => ({
       hospital_id: hid, test_name: t.name, test_code: t.code,
-      sample_type: t.sampleType, fee: t.fee, unit: t.unit || null,
+      category: t.category, sample_type: t.sampleType, fee: t.fee, unit: t.unit || null,
       normal_min: t.normalMin, normal_max: t.normalMax,
+      critical_low: t.criticalLow, critical_high: t.criticalHigh,
+      // Sex-specific intervals. Without these the QA tenant cannot exercise the case
+      // that matters most on Haemoglobin: a male at 12.5 g/dL is anaemic, and against
+      // a merged both-sex band he reads Normal.
+      male_normal_min: t.maleNormalMin, male_normal_max: t.maleNormalMax,
+      female_normal_min: t.femaleNormalMin, female_normal_max: t.femaleNormalMax,
+      method: t.method,
+      autoverify_eligible: t.autoverifyEligible === true,
       tat_minutes: t.tatMinutes, is_active: true,
     })),
     ['test_name'], hid);
-  if (n) ok(`lab_test_master    ${n}  ${c.dim('(with fees + normal ranges)')}`);
+  if (n) ok(`lab_test_master    ${n}  ${c.dim('(fees, normal + CRITICAL + sex-specific ranges, autoverify flags)')}`);
 
+  // 20261009000171_lab_test_default_inactive.sql runs `UPDATE lab_test_master SET is_active =
+  // false` and flips the column default. Every lookup in the app filters is_active = true, so a
+  // tenant migrated AFTER a seed has no orderable tests at all and the whole of Phase 5 fails at
+  // once. The upsert above writes is_active: true, but only for rows it owns — say so loudly
+  // rather than let a migration order turn into forty phantom defects.
+  {
+    const { count } = await db.from('lab_test_master')
+      .select('*', { count: 'exact', head: true })
+      .eq('hospital_id', hid).eq('is_active', false);
+    if (count) {
+      warn(
+        `${count} lab_test_master row(s) in this tenant are is_active = false. Migration ` +
+        '20261009000171 deactivates every test, and syncLabOrders / the order search both filter ' +
+        'on is_active = true — those tests are invisible to ordering until they are reactivated.',
+      );
+    }
+  }
+
+  // Group code, category and TAT now come from the catalogue rather than being derived
+  // here. `category: 'panel'` used to be invented on the spot — a value that appears in
+  // no config list, so a panel could never be filtered or matched by
+  // lab_dual_validation_config either.
   n = await upsertByKey(db, 'lab_test_groups',
     MOCK.labTestGroups.map(g => ({
-      hospital_id: hid, group_name: g.name,
-      group_code: g.name.replace(/[^A-Za-z0-9]+/g, '-').toUpperCase(),
-      category: 'panel', fee: g.fee,
-      tat_minutes: Math.max(...g.members.map(code =>
-        MOCK.labTests.find(t => t.code === code)?.tatMinutes ?? 0)),
+      hospital_id: hid, group_name: g.name, group_code: g.code,
+      category: g.category, fee: g.fee, tat_minutes: g.tatMinutes,
       is_active: true,
     })),
     ['group_code'], hid);
-  if (n) ok(`lab_test_groups    ${n}  ${c.dim('(Fever Panel at a group price)')}`);
+  if (n) ok(`lab_test_groups    ${n}  ${c.dim(`(${MOCK.labTestGroups.length} panels at group prices)`)}`);
+
+  // A group with no members is not a panel. NewLabOrderModal.fetchRates() detects a covered
+  // group by checking that every lab_test_group_items row for the group is in the selection —
+  // with zero member rows the group is never applied, the group price never wins, and P5-S04
+  // tests nothing. lab_test_group_items has UNIQUE (group_id, test_id) and no hospital_id, so it
+  // is upserted on that pair rather than through upsertByKey's hospital-scoped path.
+  {
+    // Members are resolved by test NAME, which is what the catalogue records and what
+    // lab_test_master is unique on. They used to be looked up by test_code against a
+    // members array that actually held names, so every lookup missed and no panel ever
+    // got members — the group price silently never applied.
+    const [{ data: groupRows }, { data: testRows }] = await Promise.all([
+      db.from('lab_test_groups').select('id, group_code').eq('hospital_id', hid),
+      db.from('lab_test_master').select('id, test_name').eq('hospital_id', hid),
+    ]);
+    const groupIdByCode = Object.fromEntries((groupRows ?? []).map(g => [g.group_code, g.id]));
+    const testIdByName = Object.fromEntries((testRows ?? []).map(t => [t.test_name, t.id]));
+
+    const memberRows = MOCK.labTestGroups.flatMap(g => {
+      const groupId = groupIdByCode[g.code];
+      if (!groupId) return [];
+      const missing = g.members.filter(name => !testIdByName[name]);
+      if (missing.length) {
+        warn(`lab_test_group_items: "${g.name}" references ${missing.length} test(s) absent from ` +
+             `this tenant (${missing.slice(0, 3).join(', ')}). The group price only applies when ` +
+             `every member is in the selection, so a partial panel never wins on price.`);
+      }
+      return g.members
+        .filter(name => testIdByName[name])
+        .map(name => ({ group_id: groupId, test_id: testIdByName[name] }));
+    });
+
+    if (memberRows.length) {
+      const { error } = await db.from('lab_test_group_items')
+        .upsert(memberRows, { onConflict: 'group_id,test_id', ignoreDuplicates: true });
+      if (error) warn(`lab_test_group_items: ${error.message}`);
+      else ok(`lab_test_group_items ${memberRows.length}  ${c.dim('(without these the group price never applies)')}`);
+    }
+  }
+
+  // Dual validation (P5-S10). The table ships with no rows and there is NO settings screen that
+  // writes it anywhere in src/ — the only read site is LabResultWorkspace.tsx. Without a row the
+  // dual-validation branch is unreachable and the scenario cannot be tested at all. One category
+  // is seeded, deliberately not all of them, because LabResultWorkspace uses `.some(...)`: any one
+  // dual-validation category flips the WHOLE order into dual-validation mode, and seeding every
+  // category would mean no order in the tenant could ever take the single-validator path.
+  {
+    const category = MOCK.phase5.dualValidation.category;
+    const { error } = await db.from('lab_dual_validation_config')
+      .upsert([{
+        hospital_id: hid, test_category: category,
+        requires_dual_validation: true,
+        validator_role: MOCK.phase5.dualValidation.validatorRole,
+      }], { onConflict: 'hospital_id,test_category', ignoreDuplicates: false });
+    if (error) warn(`lab_dual_validation_config: ${error.message}`);
+    else ok(`lab_dual_validation_config 1  ${c.dim(`(${category} requires two validators)`)}`);
+  }
 
   n = await upsertByKey(db, 'radiology_modalities',
     MOCK.radiologyModalities.map(m => ({
@@ -475,9 +571,29 @@ async function seedHospital(db, key) {
       hospital_id: hid, study_name: s.name, modality_id: modId[s.modality] ?? null,
       modality_type: modType[s.modality] ?? null,
       fee: s.fee, sort_order: s.sortOrder, is_active: true,
+      // PCPNDT: the flag is authoritative over any name heuristic, so the two obstetric
+      // variants must carry it explicitly — that is what proves TC-P4G-018 ("USG Pregnancy
+      // Profile") is caught by configuration rather than by luck of the wording.
+      requires_form_f: s.requiresFormF === true,
     })),
     ['study_name'], hid);
   if (n) ok(`radiology_studies  ${n}  ${c.dim('(2 obstetric variants for PCPNDT)')}`);
+
+  // PCPNDT registration details. SETTINGS_PREREQ_MATRIX.md lists pcpndt_settings as a Phase 5
+  // prerequisite ("Form F may not generate correctly for obstetric scans") and nothing seeded it.
+  // The table is UNIQUE on hospital_id.
+  {
+    const p = MOCK.phase5.pcpndt;
+    const { error } = await db.from('pcpndt_settings')
+      .upsert([{
+        hospital_id: hid,
+        machine_name: p.machineName,
+        machine_registration_number: p.machineRegistrationNumber,
+        doctor_pcpndt_registration: p.doctorPcpndtRegistration,
+      }], { onConflict: 'hospital_id', ignoreDuplicates: false });
+    if (error) warn(`pcpndt_settings: ${error.message}`);
+    else ok(`pcpndt_settings    1  ${c.dim('(machine + doctor PCPNDT registration)')}`);
+  }
 
   n = await upsertByKey(db, 'payer_masters',
     MOCK.payers.map(p => ({
@@ -527,6 +643,54 @@ async function seedHospital(db, key) {
     MOCK.patients.filter(p => p.hospital === key).map(p => patientRow(p, hid)),
     ['uhid'], hid);
   if (n) ok(`patients           ${n}  ${c.dim('(incl. allergy, CGHS, obstetric, duplicate)')}`);
+
+  await markToursCompleted(db, hid);
+}
+
+/**
+ * Mark every onboarding tour as already completed for this tenant's staff.
+ *
+ * WHY THIS IS SETUP, NOT A WORKAROUND. `OnboardingTour` mounts react-joyride at
+ * `zIndex: 10000` and auto-runs the first time a user opens a screen whose tour targets are all
+ * present — /lab (`lab_intro`), /opd (`doctor_opd_intro`, `receptionist_intro`), /billing and
+ * the ward round all have one. A real member of staff sees it once, clicks Skip, and never sees
+ * it again; every screenshot in the user manual is taken after that point. A test account that
+ * is permanently on its first-ever login is the unrealistic state, not this.
+ *
+ * Left unseeded it is the single biggest blocker in the suite: a full-page overlay above every
+ * z-index in the app, so the first click of every journey lands on the tour scrim instead of the
+ * control, and the failure reads as "the button does nothing".
+ *
+ * `user_tour_progress.user_id` is the **auth** user id (`supabase.auth.getUser()` in
+ * OnboardingTour.tsx), NOT `public.users.id` — writing the wrong one produces rows that look
+ * correct and suppress nothing.
+ */
+async function markToursCompleted(db, hid) {
+  const { data: tours, error: tourErr } = await db
+    .from('platform_onboarding_tours').select('tour_key').eq('is_active', true);
+  if (tourErr) { warn(`platform_onboarding_tours: ${tourErr.message}`); return; }
+  if (!tours?.length) return;
+
+  const { data: users, error: userErr } = await db
+    .from('users').select('auth_user_id').eq('hospital_id', hid).not('auth_user_id', 'is', null);
+  if (userErr) { warn(`users (for tour progress): ${userErr.message}`); return; }
+  if (!users?.length) return;
+
+  const now = new Date().toISOString();
+  const rows = users.flatMap(u =>
+    tours.map(t => ({ user_id: u.auth_user_id, tour_key: t.tour_key, completed_at: now })));
+
+  const { error } = await db.from('user_tour_progress')
+    .upsert(rows, { onConflict: 'user_id,tour_key', ignoreDuplicates: true });
+  if (error) {
+    warn(
+      `user_tour_progress: ${error.message}. The onboarding tour will overlay every screen at ` +
+      'z-index 10000 and the first click of every e2e journey will hit the scrim instead of the ' +
+      'control.',
+    );
+    return;
+  }
+  ok(`user_tour_progress ${rows.length}  ${c.dim(`(${users.length} staff × ${tours.length} tours — stops the joyride overlay)`)}`);
 }
 
 function patientRow(p, hid) {
@@ -550,12 +714,36 @@ async function verify(db) {
     ok(`Hospital ${key} "${h.name}"  ${c.dim(row.id)}`);
     for (const t of ['departments', 'wards', 'beds', 'shift_master', 'service_master',
                      'drug_master', 'drug_batches', 'lab_test_master', 'lab_test_groups',
-                     'radiology_modalities', 'radiology_study_master',
+                     'lab_dual_validation_config',
+                     'radiology_modalities', 'radiology_study_master', 'pcpndt_settings',
                      'payer_masters', 'hospital_config_values', 'hospital_settings', 'patients']) {
       const { count, error } = await db
         .from(t).select('*', { count: 'exact', head: true }).eq('hospital_id', row.id);
-      if (error) warn(`${t.padEnd(24)} ${error.message}`);
-      else info(`${t.padEnd(24)} ${count ?? 0}`);
+      if (error) warn(`${t.padEnd(26)} ${error.message}`);
+      else info(`${t.padEnd(26)} ${count ?? 0}`);
+    }
+
+    // lab_test_group_items has no hospital_id — it is scoped through its group.
+    {
+      const { data: groups } = await db
+        .from('lab_test_groups').select('id').eq('hospital_id', row.id);
+      const groupIds = (groups ?? []).map(g => g.id);
+      if (groupIds.length) {
+        const { count, error } = await db.from('lab_test_group_items')
+          .select('*', { count: 'exact', head: true }).in('group_id', groupIds);
+        if (error) warn(`${'lab_test_group_items'.padEnd(26)} ${error.message}`);
+        else info(`${'lab_test_group_items'.padEnd(26)} ${count ?? 0}`);
+      }
+    }
+
+    // Phase 5's single most common false failure: tests exist but are all inactive.
+    {
+      const { count } = await db.from('lab_test_master')
+        .select('*', { count: 'exact', head: true })
+        .eq('hospital_id', row.id).eq('is_active', false);
+      if (count) {
+        warn(`${count} lab test(s) are is_active = false — invisible to ordering (migration 20261009000171)`);
+      }
     }
     console.log('');
   }

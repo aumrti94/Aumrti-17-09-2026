@@ -43,7 +43,7 @@ function SOFABanner({ admissionId }: { admissionId: string }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // TAB 1: HOURLY FLOWSHEET
 // ─────────────────────────────────────────────────────────────────────────────
-function FlowsheetTab({ admissionId, hospitalId, userId }: { admissionId: string; hospitalId: string; userId: string }) {
+function FlowsheetTab({ admissionId, hospitalId, userId }: { admissionId: string; hospitalId: string; userId: string | null }) {
   const { toast } = useToast();
   const [entries, setEntries] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -179,7 +179,7 @@ function FlowsheetTab({ admissionId, hospitalId, userId }: { admissionId: string
 const INTAKE_TYPES = ["IV Fluid","Blood","TPN","Enteral Feed","Oral","Drug Flush","Other"];
 const OUTPUT_TYPES = ["Urine","NG Drain","Chest Drain","Surgical Drain","Stool","Insensible","Vomitus","Other"];
 
-function IOBalanceTab({ admissionId, hospitalId, userId }: { admissionId: string; hospitalId: string; userId: string }) {
+function IOBalanceTab({ admissionId, hospitalId, userId }: { admissionId: string; hospitalId: string; userId: string | null }) {
   const { toast } = useToast();
   const [records, setRecords] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -304,7 +304,7 @@ function IOBalanceTab({ admissionId, hospitalId, userId }: { admissionId: string
 // ─────────────────────────────────────────────────────────────────────────────
 const VENT_MODES = ["AC/VC","AC/PC","SIMV","PSV","CPAP","APRV","PRVC","BiPAP","HFNC","Room Air / Off Vent"];
 
-function VentilatorTab({ admissionId, hospitalId, userId }: { admissionId: string; hospitalId: string; userId: string }) {
+function VentilatorTab({ admissionId, hospitalId, userId }: { admissionId: string; hospitalId: string; userId: string | null }) {
   const { toast } = useToast();
   const [params, setParams] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -444,7 +444,7 @@ const RASS_LABELS: Record<number, { label: string; color: string }> = {
   "-5": { label: "-5 Unarousable",  color: "text-gray-700 bg-gray-100" },
 };
 
-function SedationTab({ admissionId, hospitalId, userId }: { admissionId: string; hospitalId: string; userId: string }) {
+function SedationTab({ admissionId, hospitalId, userId }: { admissionId: string; hospitalId: string; userId: string | null }) {
   const { toast } = useToast();
   const [scores, setScores] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -599,7 +599,7 @@ const DAILY_GOAL_ITEMS = [
   { id: "discharge_plan", label: "Step-down / ICU discharge plan discussed" },
 ];
 
-function DailyGoalsTab({ admissionId, hospitalId, userId }: { admissionId: string; hospitalId: string; userId: string }) {
+function DailyGoalsTab({ admissionId, hospitalId, userId }: { admissionId: string; hospitalId: string; userId: string | null }) {
   const { toast } = useToast();
   const [goals, setGoals] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
@@ -709,7 +709,7 @@ const BUNDLE_ITEMS: Record<string, { id: string; label: string }[]> = {
 
 const BUNDLE_LABELS: Record<string, string> = { vap: "VAP Bundle", clabsi: "CLABSI Bundle", cauti: "CAUTI Bundle", sepsis_6: "Sepsis 6 Bundle" };
 
-function CareBundlesTab({ admissionId, hospitalId, userId }: { admissionId: string; hospitalId: string; userId: string }) {
+function CareBundlesTab({ admissionId, hospitalId, userId }: { admissionId: string; hospitalId: string; userId: string | null }) {
   const { toast } = useToast();
   const [activeBundle, setActiveBundle] = useState("vap");
   const [items, setItems] = useState<Record<string, boolean>>({});
@@ -830,7 +830,11 @@ export default function ICUWorkspacePage() {
 
   if (!admissionId || !hospitalId) return null;
 
-  const tabProps = { admissionId, hospitalId, userId: userId || "" };
+  // Pass userId through as null while the hospital context is still resolving. The previous
+  // `userId || ""` sent an empty string into a uuid column, which Postgres rejects with
+  // `invalid input syntax for type uuid: ""` — a confusing failure unrelated to the real
+  // cause. Every recorded_by/updated_by column here is nullable, so null is a valid write.
+  const tabProps = { admissionId, hospitalId, userId };
 
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">

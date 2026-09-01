@@ -13,6 +13,7 @@ import { callAI } from "@/lib/aiProvider";
 import { toast } from "sonner";
 import { useAIAudit } from "@/hooks/useAIAudit";
 import AIAuditLogDrawer from "@/components/ai/AIAuditLogDrawer";
+import { searchIcdCodes, fetchIcdSettings, systemsFor } from "@/lib/icdSearch";
 
 const statusColors: Record<string, string> = {
   pending: "bg-amber-100 text-amber-700",
@@ -42,9 +43,17 @@ const ICDCodingTab: React.FC<Props> = ({ hospitalId, onRefresh }) => {
   const [items, setItems] = useState<any[]>([]);
   const [selected, setSelected] = useState<any>(null);
   const [filter, setFilter] = useState("pending");
+  // Visit-type scope. Defaults to "all" so OPD visits are visible — they were previously
+  // excluded outright (see fetchItems). Selecting "ipd" or "emergency" reproduces the old view.
+  const [visitFilter, setVisitFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [primaryCode, setPrimaryCode] = useState("");
   const [primaryDesc, setPrimaryDesc] = useState("");
+  // Recorded ALONGSIDE the ICD-10 pair, never instead of it: the MRD lock gate and
+  // validate_pmjay_icd_before_claim() both key on primary_icd_code.
+  const [primaryIcd11Code, setPrimaryIcd11Code] = useState("");
+  const [primaryIcd11Desc, setPrimaryIcd11Desc] = useState("");
+  const [icd11Enabled, setIcd11Enabled] = useState(false);
   const [pcsCode, setPcsCode] = useState("");
   const [secondaryCodes, setSecondaryCodes] = useState<{ code: string; description: string }[]>([]);
   const [saving, setSaving] = useState(false);
@@ -77,15 +86,27 @@ const ICDCodingTab: React.FC<Props> = ({ hospitalId, onRefresh }) => {
   const fetchItems = useCallback(async () => {
     if (!hospitalId) return;
     setLoading(true);
-    let query = (supabase as any).from("icd_codings").select("*").eq("hospital_id", hospitalId).neq("visit_type", "opd").order("created_at", { ascending: false }).limit(100);
+    // This query used to carry `.neq("visit_type", "opd")`, which hid EVERY OPD visit from the
+    // coding queue — while ConsultationWorkspace queues exactly those rows on completion
+    // (visit_type: "opd", status: "pending") and the "Pending ICD Coding" KPI on MRDPage counts
+    // them without that filter. The result was a KPI reading "N pending" above an empty list,
+    // and OPD morbidity never getting coded. The exclusion is now a user-controlled scope
+    // instead: IPD/Emergency rows are unaffected, OPD rows are additionally reachable.
+    let query = (supabase as any).from("icd_codings").select("*").eq("hospital_id", hospitalId).order("created_at", { ascending: false }).limit(100);
     if (filter !== "all") query = query.eq("status", filter);
+    if (visitFilter !== "all") query = query.eq("visit_type", visitFilter);
     const { data, error } = await query;
     if (error) { toast.error(error.message); setLoading(false); return; }
     setItems(data || []);
     setLoading(false);
-  }, [filter, hospitalId]);
+  }, [filter, visitFilter, hospitalId]);
 
   useEffect(() => { if (hospitalId) fetchItems(); }, [fetchItems, hospitalId]);
+
+  useEffect(() => {
+    if (!hospitalId) return;
+    fetchIcdSettings(hospitalId).then((s) => setIcd11Enabled(s.activeCodeSystem !== "icd10"));
+  }, [hospitalId]);
 
   const incrementUseCount = async (code: string) => {
     try {
@@ -185,62 +206,25 @@ const ICDCodingTab: React.FC<Props> = ({ hospitalId, onRefresh }) => {
         return;
       }
 
-      const { data: settings } = await (supabase as any)
-        .from("hospital_icd_settings")
-        .select("active_set, show_common_first")
-        .eq("hospital_id", hospitalId)
-        .maybeSingle();
+      // Candidate shortlist for the AI prompt. searchIcdCodes carries over this call site's
+      // scope/ordering rules and its ilike fallback, and fixes the `|`-under-websearch bug
+      // that made the shortlist collapse to a single-word match. See src/lib/icdSearch.ts.
+      const { activeSet, commonFirst, activeCodeSystem } = await fetchIcdSettings(hospitalId);
 
-      const activeSet = settings?.active_set || "all";
-      const showCommonFirst = settings?.show_common_first ?? true;
+      const finalCandidates = await searchIcdCodes({
+        term: clinicalText,
+        systems: systemsFor(activeCodeSystem),
+        hospitalId,
+        activeSet,
+        commonFirst,
+        limit: 20,
+        maxTerms: 5,
+      });
 
-      const searchTerms = clinicalText
-        .toLowerCase()
-        .replace(/[^\w\s]/g, " ")
-        .split(/\s+/)
-        .filter((w: string) => w.length > 3)
-        .slice(0, 5)
-        .join(" | ");
-
-      let query = (supabase as any)
-        .from("icd10_codes")
-        .select("code, description, category, chapter_desc")
-        .eq("is_billable", true)
-        .textSearch("description", searchTerms, { type: "websearch", config: "english" });
-
-      if (activeSet === "system_only") {
-        query = query.is("hospital_id", null);
-      } else if (activeSet === "hospital_only") {
-        query = query.eq("hospital_id", hospitalId);
-      }
-
-      if (showCommonFirst) {
-        query = query.order("common_india", { ascending: false }).order("use_count", { ascending: false });
-      }
-
-      query = query.limit(20);
-      const { data: candidates } = await query;
-
-      let finalCandidates = candidates;
-
-      if (!finalCandidates || finalCandidates.length === 0) {
-        const firstTerm = searchTerms.split(" | ")[0];
-        const { data: broadCandidates } = await (supabase as any)
-          .from("icd10_codes")
-          .select("code, description, category")
-          .eq("is_billable", true)
-          .ilike("description", `%${firstTerm}%`)
-          .order("use_count", { ascending: false })
-          .limit(10);
-
-        if (!broadCandidates || broadCandidates.length === 0) {
-          return;
-        }
-        finalCandidates = broadCandidates;
-      }
+      if (finalCandidates.length === 0) return;
 
       const codeList = finalCandidates
-        .map((c: any) => `${c.code}: ${c.description} (${c.category || ""})`)
+        .map((c) => `${c.code} [${c.code_system === "icd11" ? "ICD-11" : "ICD-10"}]: ${c.description} (${c.category || ""})`)
         .join("\n");
 
       const response = await callAI({
@@ -316,6 +300,8 @@ Return ONLY valid JSON (no markdown, no explanation):
     setSelected(item);
     setPrimaryCode(item.primary_icd_code || "");
     setPrimaryDesc(item.primary_icd_desc || "");
+    setPrimaryIcd11Code(item.primary_icd11_code || "");
+    setPrimaryIcd11Desc(item.primary_icd11_desc || "");
     setPcsCode(item.pcs_code || "");
     setSecondaryCodes([]);
     setAiDismissed(false);
@@ -388,6 +374,8 @@ Return ONLY valid JSON (no markdown, no explanation):
     const updates: any = {
       primary_icd_code: primaryCode,
       primary_icd_desc: primaryDesc,
+      primary_icd11_code: primaryIcd11Code || null,
+      primary_icd11_desc: primaryIcd11Desc || null,
       pcs_code: pcsCode || null,
     };
 
@@ -462,6 +450,27 @@ Return ONLY valid JSON (no markdown, no explanation):
             <TabsTrigger value="all" className="flex-1 text-xs">All</TabsTrigger>
           </TabsList>
         </Tabs>
+        {/* Visit scope — OPD was previously excluded from this queue entirely. */}
+        <div className="flex items-center gap-1 px-2 pb-2">
+          {[
+            { value: "all", label: "All" },
+            { value: "opd", label: "OPD" },
+            { value: "ipd", label: "IPD" },
+            { value: "emergency", label: "Emergency" },
+          ].map((v) => (
+            <button
+              key={v.value}
+              onClick={() => { setVisitFilter(v.value); setSelected(null); setLockJustification(""); }}
+              className={`flex-1 text-[10px] py-1 rounded border transition-colors ${
+                visitFilter === v.value
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-background text-muted-foreground border-border hover:bg-muted"
+              }`}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
         <ScrollArea className="flex-1">
           {loading ? (
             <p className="text-center py-8 text-muted-foreground text-sm">Loading...</p>
@@ -640,6 +649,16 @@ Return ONLY valid JSON (no markdown, no explanation):
                   <Input value={primaryCode} onChange={(e) => setPrimaryCode(e.target.value)} placeholder="e.g. J18.9" />
                   <Input value={primaryDesc} onChange={(e) => setPrimaryDesc(e.target.value)} placeholder="Description" />
                 </div>
+
+                {/* ICD-11 is opt-in per hospital (Settings → ICD Code Master). It never replaces
+                    the ICD-10 pair above — PMJAY/HCX claims and the MRD lock read that one. */}
+                {icd11Enabled && (
+                  <div className="space-y-2">
+                    <Label className="text-xs">Primary ICD-11 Code</Label>
+                    <Input value={primaryIcd11Code} onChange={(e) => setPrimaryIcd11Code(e.target.value)} placeholder="e.g. CA40.0" />
+                    <Input value={primaryIcd11Desc} onChange={(e) => setPrimaryIcd11Desc(e.target.value)} placeholder="Description" />
+                  </div>
+                )}
 
                 {/* Secondary Codes */}
                 {secondaryCodes.length > 0 && (

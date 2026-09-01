@@ -22,6 +22,7 @@ import { useAIFeatureFlag } from "@/hooks/useAIFeatureFlag";
 import AIAttestationModal from "@/components/ai/AIAttestationModal";
 import PCPNDTFormModal from "./PCPNDTFormModal";
 import DicomViewerPanel from "./DicomViewerPanel";
+import { notifyOrderingDoctorRadiologyReport } from "@/lib/resultNotifications";
 import PaymentPendingDialog from "@/components/shared/PaymentPendingDialog";
 import { checkRadiologyOrderClearance, recordAncillaryOverride } from "@/lib/ancillaryGateChecks";
 import { printDocument, printHeader } from "@/lib/printUtils";
@@ -255,8 +256,44 @@ const RadiologyReportingWorkspace: React.FC<Props> = ({ order, hospitalId, onSta
     }
   };
 
+  /**
+   * The report row this workspace writes into, creating it if it is missing.
+   *
+   * Both saveDraft and validateAndSign used to open with `if (!report …) return;`. `canSign`
+   * only checks that findings and impression are non-empty, so on an order with no report row
+   * the Validate & Sign button was ENABLED, did nothing when clicked, and raised no toast:
+   * the radiologist believed the study was reported, the referring doctor saw it as
+   * unreported, and neither was told. A failure has to be visible to the person who caused it
+   * — better still, it should not be a failure at all.
+   *
+   * syncRadiologyOrders now creates the row up front and a migration backfilled the existing
+   * orders that lacked one, so this path should never fire. It stays as defence in depth: any
+   * future code that inserts a radiology_orders row without a report can no longer strand a
+   * completed study as permanently unreportable.
+   */
+  const ensureReport = async (): Promise<Report | null> => {
+    if (report) return report;
+    const { data, error } = await (supabase as any)
+      .from("radiology_reports")
+      .insert({ hospital_id: hospitalId, order_id: order.id, patient_id: order.patient_id })
+      .select("*")
+      .maybeSingle();
+    if (error || !data) {
+      toast({
+        title: "Could not open a report for this study",
+        description: error?.message || "No report record could be created.",
+        variant: "destructive",
+      });
+      return null;
+    }
+    setReport(data as Report);
+    return data as Report;
+  };
+
   const saveDraft = async () => {
-    if (!report || !currentUserId) return;
+    if (!currentUserId) return;
+    const rpt = await ensureReport();
+    if (!rpt) return;
     setSaving(true);
     await supabase.from("radiology_reports").update({
       technique,
@@ -265,7 +302,7 @@ const RadiologyReportingWorkspace: React.FC<Props> = ({ order, hospitalId, onSta
       is_critical: isCritical,
       critical_finding: isCritical ? criticalFinding : null,
       reported_at: new Date().toISOString(),
-    }).eq("id", report.id);
+    }).eq("id", rpt.id);
 
     // Update order clinical fields + radiation dose + pregnancy status
     await (supabase as any).from("radiology_orders").update({
@@ -280,14 +317,18 @@ const RadiologyReportingWorkspace: React.FC<Props> = ({ order, hospitalId, onSta
   };
 
   const validateAndSign = async (overridden = false) => {
-    if (!report || !currentUserId) return;
+    if (!currentUserId) return;
     if (!findings.trim() || !impression.trim()) {
       toast({ title: "Findings and Impression are required", variant: "destructive" });
       return;
     }
+    // Creates the report row if the order arrived without one — see ensureReport.
+    const rpt = await ensureReport();
+    if (!rpt) return;
+
     // License-validity gate on the reporting radiologist before signing
     if (!overridden) {
-      guard({ clinicianId: currentUserId, module: "radiology", action: "validate_report", recordId: report.id }, () => validateAndSign(true));
+      guard({ clinicianId: currentUserId, module: "radiology", action: "validate_report", recordId: rpt.id }, () => validateAndSign(true));
       return;
     }
 
@@ -322,13 +363,18 @@ const RadiologyReportingWorkspace: React.FC<Props> = ({ order, hospitalId, onSta
       validated_by: currentUserId,
       radiologist_id: currentUserId,
       reported_at: new Date().toISOString(),
-    }).eq("id", report.id);
+    }).eq("id", rpt.id);
 
     await supabase.from("radiology_orders").update({
       status: "validated",
       clinical_history: clinicalHistory,
       indication,
     }).eq("id", order.id);
+
+    // Tell the doctor who ordered the study. Signing previously updated the order status and
+    // stopped there — nothing reached the referring clinician, so a completed report sat in
+    // the Radiology module until somebody thought to look for it.
+    notifyOrderingDoctorRadiologyReport(order.id, currentUserId).catch(() => {});
 
     // Fire-and-forget ABHA care context linking (non-blocking)
     if (order.patient_id) {

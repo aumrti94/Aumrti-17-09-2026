@@ -104,6 +104,7 @@ const SPECIALIZED_SERVICES = [
   { item_code: "vaccination_admin",      item_name: "Vaccination Admin Fee",       default_rate: 100 },
   { item_code: "dental_consult",         item_name: "Dental Consultation",         default_rate: 300 },
   { item_code: "ivf_cycle",              item_name: "IVF Cycle (base)",            default_rate: 20000 },
+  { item_code: "chronic_care_review",    item_name: "Chronic Care Review",         default_rate: 300 },
 ];
 
 // OT charge types managed from this page. item_type matches what OTBillingTab reads

@@ -68,11 +68,14 @@ const PortalHealthStoryPage: React.FC = () => {
           .limit(12),
 
         // Procedures
+        // "ot_cases" has never existed — the table is ot_schedules. surgery_date/procedure_name
+        // are scheduled_date/surgery_name there, and the surgeon is a FK rather than a name
+        // column, so it is joined through users. Aliases preserve the shape this page consumes.
         (supabase as any)
-          .from("ot_cases")
-          .select("surgery_date, procedure_name, surgeon_name, status")
+          .from("ot_schedules")
+          .select("surgery_date:scheduled_date, procedure_name:surgery_name, status, surgeon:users!ot_schedules_surgeon_id_fkey(full_name)")
           .eq("patient_id", patientId)
-          .order("surgery_date", { ascending: false })
+          .order("scheduled_date", { ascending: false })
           .limit(5),
       ]);
 
@@ -132,7 +135,9 @@ const PortalHealthStoryPage: React.FC = () => {
     if (record.procedures.length > 0) {
       parts.push("\nPROCEDURES / SURGERIES:");
       record.procedures.forEach((p: any) => {
-        parts.push(`• ${p.procedure_name || "Procedure"} on ${p.surgery_date ? format(new Date(p.surgery_date), "dd/MM/yyyy") : "?"}${p.surgeon_name ? ` — ${p.surgeon_name}` : ""}`);
+        // surgeon arrives as a joined users row (ot_schedules stores surgeon_id, not a name).
+        const surgeonName = p.surgeon?.full_name || "";
+        parts.push(`• ${p.procedure_name || "Procedure"} on ${p.surgery_date ? format(new Date(p.surgery_date), "dd/MM/yyyy") : "?"}${surgeonName ? ` — ${surgeonName}` : ""}`);
       });
     }
 

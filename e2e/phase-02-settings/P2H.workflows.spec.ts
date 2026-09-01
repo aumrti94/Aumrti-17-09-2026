@@ -214,10 +214,37 @@ test.describe('P2H — OPD Queue Config', () => {
 });
 
 test.describe('P2H — Discharge Workflow', () => {
+  /**
+   * Put the screen into its editable state.
+   *
+   * The page opens on a BUILT-IN preset, which renders its steps as read-only rows — the
+   * "Step name" inputs exist only for a custom workflow, and a new custom workflow starts with
+   * zero steps, so a row has to be added before there is anything to type into. Every case
+   * below that touches a step needs this; without it they fail against an editor that is
+   * working exactly as designed.
+   */
+  async function useCustomWorkflow(page: import('@playwright/test').Page, name = 'QA Custom Discharge'): Promise<void> {
+    const existing = page.getByRole('button', { name, exact: false }).first();
+    if (await existing.count()) {
+      await existing.click();
+    } else {
+      await page.getByRole('button', { name: /new custom workflow/i }).click();
+      await page.getByPlaceholder(/workflow name/i).fill(name);
+      await page.getByRole('button', { name: /^create$/i }).click();
+    }
+    await page.waitForTimeout(800);
+
+    if (!(await page.getByPlaceholder(/step name/i).count())) {
+      await page.getByRole('button', { name: /add step/i }).click();
+      await page.waitForTimeout(400);
+    }
+  }
+
   test.beforeEach(async ({ page, loginAs }) => {
     await loginAs('hospital_admin', { hospital: 'A' });
     await page.goto(DISCHARGE, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(1800);
+    await useCustomWorkflow(page);
   });
 
   test('TC-P2H-013 Discharge Workflow screen loads', async ({ page, consoleErrors }) => {
@@ -236,6 +263,7 @@ test.describe('P2H — Discharge Workflow', () => {
     await save(page).catch(() => {});
     await awaitSaveAck(page);
     await reloadAndSettle(page);
+    await useCustomWorkflow(page);
 
     const row = await hospitalRow();
     expect(
@@ -249,15 +277,20 @@ test.describe('P2H — Discharge Workflow', () => {
   test('TC-P2H-015 Discharge steps save in order', async ({ page }) => {
     test.skip(!DB_ON(), 'Database access not enabled');
     const steps = ['QA Step One', 'QA Step Two', 'QA Step Three'];
-    for (const s of steps) {
-      const box = page.getByPlaceholder(/step name/i).first();
-      await box.fill(s);
-      await box.press('Enter');
-      await page.waitForTimeout(300);
+    for (const [i, s] of steps.entries()) {
+      // Rows are added with "Add Step", not by pressing Enter, so each step needs its own
+      // row — filling `.first()` three times would just overwrite one box.
+      if (i > 0) {
+        await page.getByRole('button', { name: /add step/i }).click();
+        await page.waitForTimeout(300);
+      }
+      await page.getByPlaceholder(/step name/i).nth(i).fill(s);
+      await page.waitForTimeout(200);
     }
     await save(page).catch(() => {});
     await awaitSaveAck(page);
     await reloadAndSettle(page);
+    await useCustomWorkflow(page);
 
     const body = await page.locator('body').innerText();
     const positions = steps.map(s => body.indexOf(s));
@@ -297,6 +330,7 @@ test.describe('P2H — Discharge Workflow', () => {
     await save(page).catch(() => {});
     await awaitSaveAck(page);
     await reloadAndSettle(page);
+    await useCustomWorkflow(page);
 
     const row = page.locator('li, tr, div').filter({ hasText: DIS_ENTRY.step }).last();
     const del = row.locator('button').last();
@@ -306,6 +340,7 @@ test.describe('P2H — Discharge Workflow', () => {
     await save(page).catch(() => {});
     await awaitSaveAck(page);
     await reloadAndSettle(page);
+    await useCustomWorkflow(page);
 
     const body = await page.locator('body').innerText();
     expect(
@@ -358,6 +393,7 @@ test.describe('P2H — Discharge Workflow', () => {
     await save(page).catch(() => {});
     await awaitSaveAck(page);
     await reloadAndSettle(page);
+    await useCustomWorkflow(page);
 
     const body = await page.locator('body').innerText();
     expect(

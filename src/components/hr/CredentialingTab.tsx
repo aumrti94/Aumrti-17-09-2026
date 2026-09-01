@@ -150,7 +150,7 @@ const CredentialingTab: React.FC<Props> = ({ hospitalId }) => {
           severity: daysLeft < 0 ? "high" : "medium",
           message: `${staffName}'s ${typeLabel} ${daysLeft < 0 ? "has expired" : `expires in ${Math.ceil(daysLeft)} days`}`,
           is_acknowledged: false,
-        }).catch(() => null);
+        }).then(() => {}, () => {});
       }
     }
 

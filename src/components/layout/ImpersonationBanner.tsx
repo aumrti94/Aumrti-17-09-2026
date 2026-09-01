@@ -32,23 +32,32 @@ export default function ImpersonationBanner() {
     }
   };
 
+  // `pointer-events-none` wrapper + `pointer-events-auto` content — the same reason as
+  // TrialBanner.tsx and CredentialExpiryBanner.tsx, which sit at this exact position. `fixed
+  // top-14` floats over the first ~32px of every module's content (AppShell offsets <main> by
+  // `mt-14`, which clears only the header), so an opaque wrapper here swallows clicks on the
+  // module tab bar underneath. This banner is z-50, ABOVE TrialBanner's z-40, so when both are
+  // showing it is the one that wins — and an admin impersonating a hospital to reproduce a
+  // support issue would hit exactly the dead tabs they were asked to investigate.
   return (
-    <div className="fixed top-14 left-0 right-0 z-50 flex items-center justify-between gap-3 bg-violet-600 text-white px-4 py-2 text-xs font-medium shadow-md">
-      <div className="flex items-center gap-2">
-        <Eye size={14} className="shrink-0" />
-        <span>
-          Viewing as <strong>{state.hospitalName}</strong>
-          {state.impersonatedName ? ` (as ${state.impersonatedName}${state.impersonatedRole ? `, ${state.impersonatedRole}` : ""})` : ""} — admin impersonation session
-        </span>
+    <div className="fixed top-14 left-0 right-0 z-50 pointer-events-none">
+      <div className="pointer-events-auto flex items-center justify-between gap-3 bg-violet-600 text-white px-4 py-2 text-xs font-medium shadow-md">
+        <div className="flex items-center gap-2">
+          <Eye size={14} className="shrink-0" />
+          <span>
+            Viewing as <strong>{state.hospitalName}</strong>
+            {state.impersonatedName ? ` (as ${state.impersonatedName}${state.impersonatedRole ? `, ${state.impersonatedRole}` : ""})` : ""} — admin impersonation session
+          </span>
+        </div>
+        <button
+          onClick={stop}
+          disabled={ending}
+          className="shrink-0 flex items-center gap-1.5 bg-white/15 hover:bg-white/25 px-3 py-1 rounded-md transition-colors disabled:opacity-60"
+        >
+          {ending ? <Loader2 size={12} className="animate-spin" /> : null}
+          End Impersonation
+        </button>
       </div>
-      <button
-        onClick={stop}
-        disabled={ending}
-        className="shrink-0 flex items-center gap-1.5 bg-white/15 hover:bg-white/25 px-3 py-1 rounded-md transition-colors disabled:opacity-60"
-      >
-        {ending ? <Loader2 size={12} className="animate-spin" /> : null}
-        End Impersonation
-      </button>
     </div>
   );
 }

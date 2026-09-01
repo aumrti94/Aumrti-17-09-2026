@@ -5,12 +5,29 @@ import { Plus, X, Star, Search, Loader2, Pencil } from "lucide-react";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useDoctorQuickPicks } from "@/hooks/useDoctorQuickPicks";
 import QuickPickManagerPanel from "@/components/opd/QuickPickManagerPanel";
+import {
+  searchIcdCodes,
+  fetchIcdSettings,
+  systemsFor,
+  pickAutoFill,
+  MIN_SEARCH_LENGTH,
+  type IcdResult,
+  type ActiveSet,
+  type ActiveCodeSystem,
+} from "@/lib/icdSearch";
 
 interface Diagnosis {
   id?: string;
   diagnosis_text: string;
   icd10_code: string;
   icd10_description: string;
+  /**
+   * ICD-11 runs ALONGSIDE ICD-10, never instead of it. PMJAY, HCX, insurance pre-auth and the
+   * FHIR export all key on the ICD-10 columns, so dual-coding is the only safe shape while
+   * India is mid-transition.
+   */
+  icd11_code?: string;
+  icd11_description?: string;
   is_primary: boolean;
   diagnosis_type: "working" | "confirmed" | "differential" | "chronic" | "comorbid";
   /**
@@ -24,18 +41,16 @@ interface Diagnosis {
   ai_basis?: string;
 }
 
-interface IcdResult {
-  code: string;
-  description: string;
-  category?: string;
-}
-
 interface Props {
   encounterId: string | null;
   hospitalId: string | null;
   patientId: string | null;
   userId: string | null;
-  onPrimaryChange: (diagnosis: string, icd10_code: string) => void;
+  /**
+   * `icd11_code` is appended, not substituted — existing callers that read only the first two
+   * arguments keep working unchanged.
+   */
+  onPrimaryChange: (diagnosis: string, icd10_code: string, icd11_code?: string) => void;
   /** Voice/AI-extracted diagnosis to inject as a working diagnosis chip. nonce changes per apply. */
   seedDiagnosis?: { text: string; icd10_code: string; nonce: number; isAiSuggested?: boolean; basis?: string } | null;
 }
@@ -51,7 +66,10 @@ const DIAG_TYPES: { value: Diagnosis["diagnosis_type"]; label: string; color: st
 const DiagnosisPanel: React.FC<Props> = ({ encounterId, hospitalId, patientId, userId, onPrimaryChange, seedDiagnosis }) => {
   const [diagnoses, setDiagnoses] = useState<Diagnosis[]>([]);
   const [diagnosesLoaded, setDiagnosesLoaded] = useState(false);
-  const [showAddRow, setShowAddRow] = useState(false);
+  // Open by default: the ICD field used to be hidden behind an 11px "+ Add Diagnosis" link at
+  // the very bottom of the Examination tab, which is why clinicians reported ICD coding as
+  // "missing". The toggle itself still works exactly as before — only the initial state changed.
+  const [showAddRow, setShowAddRow] = useState(true);
   const [pendingDiagnoses, setPendingDiagnoses] = useState<Diagnosis[]>([]);
   const [showDiagManager, setShowDiagManager] = useState(false);
 
@@ -62,11 +80,20 @@ const DiagnosisPanel: React.FC<Props> = ({ encounterId, hospitalId, patientId, u
   const [addText, setAddText] = useState("");
   const [addIcd, setAddIcd] = useState("");
   const [addIcdDesc, setAddIcdDesc] = useState("");
+  const [addIcd11, setAddIcd11] = useState("");
+  const [addIcd11Desc, setAddIcd11Desc] = useState("");
   const [addType, setAddType] = useState<Diagnosis["diagnosis_type"]>("working");
   const [icdResults, setIcdResults] = useState<IcdResult[]>([]);
   const [icdLoading, setIcdLoading] = useState(false);
   const [showIcdDropdown, setShowIcdDropdown] = useState(false);
   const icdDropdownRef = useRef<HTMLDivElement>(null);
+  /**
+   * The doctor has typed in or cleared the ICD box themselves. Auto-fill stops the moment this
+   * is true — once a human has touched the code, nothing may overwrite it behind their back.
+   */
+  const icdTouched = useRef(false);
+  /** The current code was filled by the search, not chosen — shown as such, and replaceable. */
+  const [icdAutoFilled, setIcdAutoFilled] = useState(false);
 
   const debouncedText = useDebounce(addText, 400);
 
@@ -76,10 +103,13 @@ const DiagnosisPanel: React.FC<Props> = ({ encounterId, hospitalId, patientId, u
     (async () => {
       const { data } = await (supabase as any)
         .from("opd_diagnoses")
-        .select("id, diagnosis_text, icd10_code, icd10_description, is_primary, diagnosis_type, is_ai_suggested")
+        .select("id, diagnosis_text, icd10_code, icd10_description, icd11_code, icd11_description, is_primary, diagnosis_type, is_ai_suggested")
         .eq("encounter_id", encounterId)
         .order("created_at");
       if (data) setDiagnoses(data);
+      // The add row starts open so the ICD field is visible on an empty encounter; once this
+      // encounter already has diagnoses, collapse back to the original list-first view.
+      if (data && data.length > 0) setShowAddRow(false);
       // Gates the voice/AI seed below. The seed effect used to race this load and decide
       // dedupe and is_primary against an empty list, so a seeded diagnosis could duplicate
       // an existing one or wrongly claim primary.
@@ -111,42 +141,56 @@ const DiagnosisPanel: React.FC<Props> = ({ encounterId, hospitalId, patientId, u
     })();
   }, [encounterId, hospitalId]);
 
-  // ICD search
+  // Which classification(s) this hospital codes in. Defaults to ICD-10 only, so a hospital
+  // that has never opened Settings → ICD Code Master sees exactly what it saw before.
+  const [icdSettings, setIcdSettings] = useState<{
+    activeSet: ActiveSet;
+    commonFirst: boolean;
+    activeCodeSystem: ActiveCodeSystem;
+  }>({ activeSet: "all", commonFirst: true, activeCodeSystem: "icd10" });
+
   useEffect(() => {
-    if (!debouncedText || debouncedText.length < 3) { setIcdResults([]); return; }
+    if (!hospitalId) return;
+    fetchIcdSettings(hospitalId).then(setIcdSettings);
+  }, [hospitalId]);
+
+  // ICD search — delegated to the shared helper, which fixes the `|`-under-websearch bug
+  // that made multi-word diagnoses match almost nothing. See src/lib/icdSearch.ts.
+  useEffect(() => {
+    if (!debouncedText || debouncedText.length < MIN_SEARCH_LENGTH) { setIcdResults([]); return; }
     (async () => {
       setIcdLoading(true);
-      try {
-        const terms = debouncedText.toLowerCase().replace(/[^\w\s]/g, " ").split(/\s+/).filter(w => w.length > 2).slice(0, 4).join(" | ");
-        const { data } = await (supabase as any)
-          .from("icd10_codes")
-          .select("code, description, category")
-          .eq("is_billable", true)
-          .textSearch("description", terms, { type: "websearch", config: "english" })
-          .order("common_india", { ascending: false })
-          .order("use_count", { ascending: false })
-          .limit(8);
-        if (data && data.length > 0) {
-          setIcdResults(data);
-          setShowIcdDropdown(true);
+      const results = await searchIcdCodes({
+        term: debouncedText,
+        systems: systemsFor(icdSettings.activeCodeSystem),
+        hospitalId,
+        activeSet: icdSettings.activeSet,
+        commonFirst: icdSettings.commonFirst,
+        limit: 8,
+      });
+      setIcdResults(results);
+
+      // "auto-fills from diagnosis" is what the field has always promised; until now it only
+      // ever opened a dropdown and waited for a click. Fill it — but only from an unambiguous
+      // match (see pickAutoFill), only into a box the doctor has not touched, and always
+      // visibly, so a wrong guess is corrected rather than silently coded.
+      const auto = icdTouched.current ? null : pickAutoFill(debouncedText, results);
+      if (auto) {
+        if (auto.code_system === "icd11") {
+          setAddIcd11(auto.code);
+          setAddIcd11Desc(auto.description);
         } else {
-          // Fallback: ilike search
-          const { data: fallback } = await (supabase as any)
-            .from("icd10_codes")
-            .select("code, description")
-            .eq("is_billable", true)
-            .ilike("description", `%${debouncedText.split(" ")[0]}%`)
-            .order("use_count", { ascending: false })
-            .limit(6);
-          setIcdResults(fallback || []);
-          setShowIcdDropdown((fallback || []).length > 0);
+          setAddIcd(auto.code);
+          setAddIcdDesc(auto.description);
         }
-      } catch {
-        setIcdResults([]);
+        setIcdAutoFilled(true);
       }
+
+      // A filled box does not need the list thrown over it; the doctor can still open it.
+      setShowIcdDropdown(results.length > 0 && !auto);
       setIcdLoading(false);
     })();
-  }, [debouncedText]);
+  }, [debouncedText, hospitalId, icdSettings]);
 
   // Close ICD dropdown on outside click
   useEffect(() => {
@@ -168,6 +212,8 @@ const DiagnosisPanel: React.FC<Props> = ({ encounterId, hospitalId, patientId, u
       diagnosis_text: d.diagnosis_text,
       icd10_code: d.icd10_code || null,
       icd10_description: d.icd10_description || null,
+      icd11_code: d.icd11_code || null,
+      icd11_description: d.icd11_description || null,
       is_primary: d.is_primary,
       diagnosis_type: d.diagnosis_type,
       is_ai_suggested: d.is_ai_suggested === true,
@@ -187,8 +233,8 @@ const DiagnosisPanel: React.FC<Props> = ({ encounterId, hospitalId, patientId, u
     // encounter record, ICD coding and billing, so an unreviewed inference must never reach it.
     const human = list.filter(d => !d.is_ai_suggested);
     const primary = human.find(d => d.is_primary) || human.find(d => d.diagnosis_type === "confirmed") || human[0];
-    if (primary) onPrimaryChange(primary.diagnosis_text, primary.icd10_code);
-    else onPrimaryChange("", "");
+    if (primary) onPrimaryChange(primary.diagnosis_text, primary.icd10_code, primary.icd11_code || "");
+    else onPrimaryChange("", "", "");
   };
 
   // Add a fully-formed diagnosis (used by manual add row and by voice/AI seeding)
@@ -211,17 +257,28 @@ const DiagnosisPanel: React.FC<Props> = ({ encounterId, hospitalId, patientId, u
     }
   };
 
+  /** Clear every add-row field back to the state a fresh row starts in. */
+  const resetAddRow = () => {
+    setAddText(""); setAddIcd(""); setAddIcdDesc(""); setAddType("working");
+    setAddIcd11(""); setAddIcd11Desc("");
+    setIcdResults([]);
+    icdTouched.current = false;
+    setIcdAutoFilled(false);
+  };
+
   const handleAdd = async () => {
     if (!addText.trim()) return;
     await addDiagnosis({
       diagnosis_text: addText.trim(),
       icd10_code: addIcd,
       icd10_description: addIcdDesc,
+      icd11_code: addIcd11,
+      icd11_description: addIcd11Desc,
       is_primary: diagnoses.length === 0,
       diagnosis_type: addType,
     });
-    setAddText(""); setAddIcd(""); setAddIcdDesc(""); setAddType("working");
-    setIcdResults([]); setShowAddRow(false);
+    resetAddRow();
+    setShowAddRow(false);
   };
 
   // Seed a voice/AI-extracted diagnosis as a "working" chip (deduped, once per nonce)
@@ -299,18 +356,32 @@ const DiagnosisPanel: React.FC<Props> = ({ encounterId, hospitalId, patientId, u
     }
   };
 
+  /** Route the pick to the field for its own classification — the two are recorded side by side. */
   const selectIcd = (r: IcdResult) => {
-    setAddIcd(r.code);
-    setAddIcdDesc(r.description);
+    if (r.code_system === "icd11") {
+      setAddIcd11(r.code);
+      setAddIcd11Desc(r.description);
+    } else {
+      setAddIcd(r.code);
+      setAddIcdDesc(r.description);
+    }
+    // A deliberate pick outranks the search: never auto-replace it on the next keystroke.
+    icdTouched.current = true;
+    setIcdAutoFilled(false);
     setShowIcdDropdown(false);
   };
 
   const typeInfo = (type: string) => DIAG_TYPES.find(t => t.value === type) || DIAG_TYPES[0];
 
+  /** ICD-11 is opt-in per hospital; until it is enabled this panel looks exactly as it did. */
+  const showIcd11 = icdSettings.activeCodeSystem !== "icd10";
+
   return (
-    <div className="pt-2 border-t border-slate-100 space-y-2">
-      <div className="flex items-center justify-between">
-        <label className="text-xs font-bold text-slate-700">Diagnoses</label>
+    <div className="pt-3 mt-1 border-t-2 border-slate-200 space-y-2">
+      <div className="flex items-center justify-between mb-1">
+        {/* Promoted from a hairline footer label to a section header matching "General
+            Examination" above — this section reads as part of the form, not as a footnote. */}
+        <label className="text-xs font-bold text-slate-700">Diagnosis &amp; ICD Coding</label>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowDiagManager(v => !v)}
@@ -358,7 +429,14 @@ const DiagnosisPanel: React.FC<Props> = ({ encounterId, hospitalId, patientId, u
                   </button>
                 )}
                 <span>{d.diagnosis_text}</span>
-                {d.icd10_code && <span className="font-mono opacity-70">({d.icd10_code})</span>}
+                {d.icd10_code && (
+                  <span className="font-mono opacity-70" title={d.icd10_description || "ICD-10"}>({d.icd10_code})</span>
+                )}
+                {d.icd11_code && (
+                  <span className="font-mono opacity-70" title={d.icd11_description || "ICD-11"}>
+                    <span className="text-[8px] font-sans font-bold uppercase mr-0.5">11</span>{d.icd11_code}
+                  </span>
+                )}
                 {d.is_ai_suggested ? (
                   <button
                     onClick={() => acceptSuggestion(i)}
@@ -441,28 +519,77 @@ const DiagnosisPanel: React.FC<Props> = ({ encounterId, hospitalId, patientId, u
                   const v = e.target.value;
                   setAddIcd(v);
                   setAddIcdDesc("");
+                  // Hands off from here: the doctor is coding this one themselves.
+                  icdTouched.current = true;
+                  setIcdAutoFilled(false);
                   if (v.length >= 3) setShowIcdDropdown(true);
                 }}
                 placeholder="ICD-10 code or search (auto-fills from diagnosis)"
                 className="flex-1 text-xs outline-none bg-transparent placeholder-slate-400"
               />
+              {icdAutoFilled && (
+                <span
+                  className="text-[8px] font-bold px-1 py-px rounded bg-emerald-100 text-emerald-700 flex-shrink-0"
+                  title="Filled from the diagnosis text. Check it, or clear it and pick another."
+                >
+                  AUTO
+                </span>
+              )}
+              {icdResults.length > 0 && (
+                <button
+                  onClick={() => setShowIcdDropdown(v => !v)}
+                  className="text-[9px] text-slate-400 hover:text-[#1A2F5A] flex-shrink-0"
+                  title="Show other matching codes"
+                >
+                  {icdResults.length} match{icdResults.length === 1 ? "" : "es"}
+                </button>
+              )}
               {addIcd && (
-                <button onClick={() => { setAddIcd(""); setAddIcdDesc(""); }} className="text-slate-400 hover:text-slate-600">
+                <button
+                  onClick={() => {
+                    setAddIcd(""); setAddIcdDesc("");
+                    // An explicit clear is a decision too — do not refill it on the next keystroke.
+                    icdTouched.current = true;
+                    setIcdAutoFilled(false);
+                  }}
+                  className="text-slate-400 hover:text-slate-600"
+                >
                   <X size={10} />
                 </button>
               )}
             </div>
+            {/* The code alone says nothing at a glance. Whatever put it there — a pick or the
+                auto-fill — the doctor has to be able to read what they are about to record. */}
+            {addIcd && addIcdDesc && (
+              <div className="px-3 pt-1 text-[10px] text-slate-500 truncate" title={addIcdDesc}>
+                {addIcdDesc}
+              </div>
+            )}
             {showIcdDropdown && icdResults.length > 0 && (
               <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden max-h-52 overflow-y-auto">
                 <div className="px-2 py-1 bg-slate-50 border-b border-slate-100">
-                  <span className="text-[9px] text-slate-500 font-medium uppercase tracking-wide">🤖 AI Suggested ICD-10 Codes</span>
+                  <span className="text-[9px] text-slate-500 font-medium uppercase tracking-wide">
+                    🤖 Suggested {showIcd11 ? "ICD Codes" : "ICD-10 Codes"}
+                  </span>
                 </div>
                 {icdResults.map(r => (
                   <button
-                    key={r.code}
+                    key={`${r.code_system}-${r.code}`}
                     className="w-full text-left px-3 py-1.5 hover:bg-blue-50 flex items-center gap-2 text-xs border-b border-slate-50 last:border-0"
                     onMouseDown={() => selectIcd(r)}
                   >
+                    {/* Which classification a hit belongs to decides which field it fills, so
+                        it has to be visible before the click. */}
+                    <span
+                      className={cn(
+                        "text-[8px] font-bold px-1 py-px rounded flex-shrink-0",
+                        r.code_system === "icd11"
+                          ? "bg-violet-100 text-violet-700"
+                          : "bg-slate-100 text-slate-600"
+                      )}
+                    >
+                      {r.code_system === "icd11" ? "ICD-11" : "ICD-10"}
+                    </span>
                     <span className="font-mono font-semibold text-[#1A2F5A] w-14 flex-shrink-0">{r.code}</span>
                     <span className="text-slate-700 flex-1 truncate">{r.description}</span>
                     {r.category && <span className="text-[9px] text-slate-400 flex-shrink-0">{r.category}</span>}
@@ -471,6 +598,26 @@ const DiagnosisPanel: React.FC<Props> = ({ encounterId, hospitalId, patientId, u
               </div>
             )}
           </div>
+
+          {/* ICD-11 — only for hospitals that have switched it on in Settings → ICD Code Master.
+              Sits beside ICD-10 rather than replacing it: dual-coding is what the transition
+              period needs, and the statutory exports still read ICD-10. */}
+          {showIcd11 && (
+            <div className="flex items-center gap-1 h-8 px-3 border border-violet-200 rounded-lg bg-white">
+              <span className="text-[8px] font-bold px-1 py-px rounded bg-violet-100 text-violet-700 flex-shrink-0">ICD-11</span>
+              <input
+                value={addIcd11 || addIcd11Desc}
+                onChange={e => { setAddIcd11(e.target.value); setAddIcd11Desc(""); icdTouched.current = true; setIcdAutoFilled(false); }}
+                placeholder="ICD-11 code (pick from the list above, or type)"
+                className="flex-1 text-xs outline-none bg-transparent placeholder-slate-400"
+              />
+              {addIcd11 && (
+                <button onClick={() => { setAddIcd11(""); setAddIcd11Desc(""); }} className="text-slate-400 hover:text-slate-600">
+                  <X size={10} />
+                </button>
+              )}
+            </div>
+          )}
 
           <div className="flex items-center gap-2 pt-0.5">
             <button
@@ -481,7 +628,7 @@ const DiagnosisPanel: React.FC<Props> = ({ encounterId, hospitalId, patientId, u
               Add
             </button>
             <button
-              onClick={() => { setShowAddRow(false); setAddText(""); setAddIcd(""); setAddIcdDesc(""); setIcdResults([]); }}
+              onClick={() => { resetAddRow(); setShowAddRow(false); }}
               className="h-7 px-3 text-[11px] text-slate-500 hover:text-slate-700"
             >
               Cancel

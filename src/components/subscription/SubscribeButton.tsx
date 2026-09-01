@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { formatINRExact } from "@/lib/currency";
 import { resolveEffectivePrice, type BillingCycle } from "@/lib/platformBilling";
+import { SUPPORT_EMAIL } from "@/lib/brand";
 
 // Razorpay global type
 declare global {
@@ -233,7 +234,7 @@ export default function SubscribeButton({ plan, label, variant = "default", clas
       <Button
         variant="outline"
         className={className}
-        onClick={() => window.open(`mailto:support@aumrti.in?subject=Enterprise Plan Enquiry`)}
+        onClick={() => window.open(`mailto:${SUPPORT_EMAIL}?subject=Enterprise Plan Enquiry`)}
       >
         <CreditCard size={14} className="mr-2" />
         Contact Sales

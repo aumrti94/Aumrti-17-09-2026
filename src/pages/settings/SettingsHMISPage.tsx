@@ -49,6 +49,20 @@ const SettingsHMISPage: React.FC = () => {
 
   const handleSave = async () => {
     if (!hospitalId) return;
+
+    // The portal username and password are posted to this URL. Over plain http they travel
+    // in the clear across the hospital network — these are government-portal credentials for
+    // the whole facility, not one user's login, so the scheme is enforced rather than warned.
+    const portalUrl = config.portal_url.trim();
+    if (portalUrl && !/^https:\/\//i.test(portalUrl)) {
+      toast({
+        title: "Portal URL must use https://",
+        description: "Portal credentials are posted to this address; over http they are readable by anyone on the network.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setSaving(true);
     const { error } = await (supabase as any)
       .from("api_configurations")

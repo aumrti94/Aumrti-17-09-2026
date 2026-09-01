@@ -10,7 +10,7 @@
  *
  * Required Supabase secrets (optional — graceful fallback if absent):
  *   SENDGRID_API_KEY  — SendGrid API key
- *   SENDGRID_FROM     — Sender email, e.g. no-reply@aumrti.in
+ *   SENDGRID_FROM     — Sender email, e.g. no-reply@aumrti.com
  *
  * Request body:
  * {
@@ -28,6 +28,7 @@
  */
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { APP_DOMAIN, APP_URL, SUPPORT_EMAIL, NO_REPLY_EMAIL } from "../_shared/brand.ts";
 
 type NotificationEvent =
   | "welcome"
@@ -70,9 +71,9 @@ function buildEmail(event: NotificationEvent, data: Record<string, any>): EmailP
 
   const wrap = (body: string) =>
     `<div style="${baseStyle}"><div style="${cardStyle}">
-       <img src="https://aumrti.in/logo.png" alt="Aumrti" width="120" style="margin-bottom:20px;" />
+       <img src="https://${APP_DOMAIN}/logo.png" alt="Aumrti" width="120" style="margin-bottom:20px;" />
        ${body}
-       <div style="${footStyle}">Aumrti HMS · support@aumrti.in · aumrti.in<br/>You received this because you have an Aumrti account.</div>
+       <div style="${footStyle}">Aumrti HMS · ${SUPPORT_EMAIL} · ${APP_DOMAIN}<br/>You received this because you have an Aumrti account.</div>
      </div></div>`;
 
   switch (event) {
@@ -90,8 +91,8 @@ function buildEmail(event: NotificationEvent, data: Record<string, any>): EmailP
             <li>Add your departments and doctors</li>
             <li>Register your first patient via OPD</li>
           </ol>
-          <a href="https://app.aumrti.in/dashboard" style="${btnStyle}">Open Your Dashboard</a>
-          <p style="color:#6b7280;font-size:13px;margin-top:20px;">Need help? WhatsApp us at +91-XXXXX-XXXXX or email support@aumrti.in</p>
+          <a href="${APP_URL}/dashboard" style="${btnStyle}">Open Your Dashboard</a>
+          <p style="color:#6b7280;font-size:13px;margin-top:20px;">Need help? WhatsApp us at +91-XXXXX-XXXXX or email ${SUPPORT_EMAIL}</p>
         `),
       };
 
@@ -104,7 +105,7 @@ function buildEmail(event: NotificationEvent, data: Record<string, any>): EmailP
           <p style="color:#374151;">Hello ${name},</p>
           <p style="color:#374151;">Your <strong>${plan}</strong> trial for <strong>${hosp}</strong> ends in <strong>7 days</strong>.</p>
           <p style="color:#374151;">Upgrade now to keep uninterrupted access to all modules — OPD, Billing, Lab, Pharmacy, AI Voice Scribe, and more.</p>
-          <a href="https://app.aumrti.in/settings/plan" style="${btnStyle}">View Plans & Upgrade</a>
+          <a href="${APP_URL}/settings/plan" style="${btnStyle}">View Plans & Upgrade</a>
         `),
       };
 
@@ -116,8 +117,8 @@ function buildEmail(event: NotificationEvent, data: Record<string, any>): EmailP
           <h2 style="color:#dc2626;">Only 3 days left!</h2>
           <p style="color:#374151;">Hello ${name},</p>
           <p style="color:#374151;">Your trial for <strong>${hosp}</strong> expires in <strong>3 days</strong>. After that, your account will be suspended and your team will lose access.</p>
-          <a href="https://app.aumrti.in/settings/plan" style="${btnStyle}">Upgrade Now</a>
-          <p style="color:#6b7280;font-size:13px;margin-top:16px;">Questions? Reply to this email or WhatsApp support@aumrti.in</p>
+          <a href="${APP_URL}/settings/plan" style="${btnStyle}">Upgrade Now</a>
+          <p style="color:#6b7280;font-size:13px;margin-top:16px;">Questions? Reply to this email or WhatsApp ${SUPPORT_EMAIL}</p>
         `),
       };
 
@@ -129,7 +130,7 @@ function buildEmail(event: NotificationEvent, data: Record<string, any>): EmailP
           <h2 style="color:#dc2626;">Trial ends tomorrow</h2>
           <p style="color:#374151;">Hello ${name},</p>
           <p style="color:#374151;">This is your final reminder. Your trial ends <strong>tomorrow</strong>. Subscribe today to avoid interruption.</p>
-          <a href="https://app.aumrti.in/settings/plan" style="${btnStyle}">Subscribe Now</a>
+          <a href="${APP_URL}/settings/plan" style="${btnStyle}">Subscribe Now</a>
         `),
       };
 
@@ -142,8 +143,8 @@ function buildEmail(event: NotificationEvent, data: Record<string, any>): EmailP
           <p style="color:#374151;">Hello ${name},</p>
           <p style="color:#374151;">Your trial for <strong>${hosp}</strong> has expired. Your account is now suspended. Your data is safe and will remain for 30 days.</p>
           <p style="color:#374151;">Reactivate your subscription to restore access immediately.</p>
-          <a href="https://app.aumrti.in/settings/plan" style="${btnStyle}">Reactivate Subscription</a>
-          <p style="color:#6b7280;font-size:13px;margin-top:16px;">Need help? Call us or WhatsApp support@aumrti.in</p>
+          <a href="${APP_URL}/settings/plan" style="${btnStyle}">Reactivate Subscription</a>
+          <p style="color:#6b7280;font-size:13px;margin-top:16px;">Need help? Call us or WhatsApp ${SUPPORT_EMAIL}</p>
         `),
       };
 
@@ -174,7 +175,7 @@ function buildEmail(event: NotificationEvent, data: Record<string, any>): EmailP
           <p style="color:#374151;">Hello ${name},</p>
           <p style="color:#374151;">We were unable to collect the payment for your <strong>${plan}</strong> subscription. This can happen due to insufficient funds or bank restrictions.</p>
           <p style="color:#374151;">Please update your payment method within <strong>7 days</strong> to avoid suspension.</p>
-          <a href="https://app.aumrti.in/settings/plan" style="${btnStyle}">Update Payment Method</a>
+          <a href="${APP_URL}/settings/plan" style="${btnStyle}">Update Payment Method</a>
         `),
       };
 
@@ -187,8 +188,8 @@ function buildEmail(event: NotificationEvent, data: Record<string, any>): EmailP
           <p style="color:#374151;">Hello ${name},</p>
           <p style="color:#374151;">Your Aumrti account has been suspended due to an unpaid subscription. Your data is safe.</p>
           <p style="color:#374151;">Please reactivate your subscription to restore access for your team.</p>
-          <a href="https://app.aumrti.in/settings/plan" style="${btnStyle}">Reactivate Now</a>
-          <p style="color:#6b7280;font-size:13px;margin-top:16px;">Need help? Contact support@aumrti.in immediately.</p>
+          <a href="${APP_URL}/settings/plan" style="${btnStyle}">Reactivate Now</a>
+          <p style="color:#6b7280;font-size:13px;margin-top:16px;">Need help? Contact ${SUPPORT_EMAIL} immediately.</p>
         `),
       };
 
@@ -200,7 +201,7 @@ function buildEmail(event: NotificationEvent, data: Record<string, any>): EmailP
           <h2 style="color:#059669;">Plan upgraded ✓</h2>
           <p style="color:#374151;">Hello ${name},</p>
           <p style="color:#374151;">Your plan has been upgraded to <strong>${plan}</strong>. Your new modules are now active.</p>
-          <a href="https://app.aumrti.in/dashboard" style="${btnStyle}">Go to Dashboard</a>
+          <a href="${APP_URL}/dashboard" style="${btnStyle}">Go to Dashboard</a>
         `),
       };
 
@@ -212,7 +213,7 @@ function buildEmail(event: NotificationEvent, data: Record<string, any>): EmailP
           <h2 style="color:#1A2F5A;">Plan updated</h2>
           <p style="color:#374151;">Hello ${name},</p>
           <p style="color:#374151;">Your plan has been changed to <strong>${plan}</strong>. Some modules may no longer be accessible. Your data is preserved.</p>
-          <a href="https://app.aumrti.in/settings/plan" style="${btnStyle}">View Active Modules</a>
+          <a href="${APP_URL}/settings/plan" style="${btnStyle}">View Active Modules</a>
         `),
       };
 
@@ -237,7 +238,7 @@ function buildEmail(event: NotificationEvent, data: Record<string, any>): EmailP
           <p style="color:#374151;">Your free trial has converted to a paid <strong>${plan}</strong> subscription. Nothing changes in your workspace — all your data and settings carry over.</p>
           ${disc}
           ${periodEnd ? `<p style="color:#374151;">Your next billing date is <strong>${periodEnd}</strong>.</p>` : ""}
-          <a href="https://app.aumrti.in/settings/plan" style="${btnStyle}">View Plan & Billing</a>
+          <a href="${APP_URL}/settings/plan" style="${btnStyle}">View Plan & Billing</a>
         `),
       };
     }
@@ -252,7 +253,7 @@ function buildEmail(event: NotificationEvent, data: Record<string, any>): EmailP
           <p style="color:#374151;">Hello ${name},</p>
           <p style="color:#374151;">${data.referred_hospital_name ? `<strong>${data.referred_hospital_name}</strong>` : "A hospital you referred"} has upgraded to a paid plan.</p>
           ${data.reward_label ? `<p style="color:#374151;">Your reward: <strong>${data.reward_label}</strong>.</p>` : ""}
-          <a href="https://app.aumrti.in/settings/plan" style="${btnStyle}">View Details</a>
+          <a href="${APP_URL}/settings/plan" style="${btnStyle}">View Details</a>
         `),
       };
 
@@ -302,7 +303,7 @@ serve(async (req) => {
     const emailPayload = buildEmail(event, data);
 
     const sgKey  = Deno.env.get("SENDGRID_API_KEY");
-    const sgFrom = Deno.env.get("SENDGRID_FROM") || "no-reply@aumrti.in";
+    const sgFrom = Deno.env.get("SENDGRID_FROM") || NO_REPLY_EMAIL;
 
     if (sgKey) {
       await sendViaSendGrid(emailPayload, sgKey, sgFrom);

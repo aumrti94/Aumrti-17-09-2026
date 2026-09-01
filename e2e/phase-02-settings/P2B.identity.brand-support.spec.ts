@@ -14,7 +14,7 @@
  */
 import { test, expect, MOCK } from '../fixtures/auth.fixture';
 import { db, hospitalIdFor, expectRow, expectNoRow, countRows } from '../utils/db-verify';
-import { fillField, readField, selectByValue, save, awaitSaveAck, reloadAndSettle, heading } from './settings-locators';
+import { fillField, readField, selectByValue, save, awaitSaveAck, reloadAndSettle, heading, openTab } from './settings-locators';
 
 const DB_ON = () => process.env.QA_DB_AVAILABLE === 'true';
 const A = MOCK.hospitals.A;
@@ -285,6 +285,8 @@ test.describe('P2B — Identity: White-Label', () => {
 
   test('TC-P2B-099 White-Label Branding screen loads', async ({ page, consoleErrors }) => {
     await expect(heading(page, 'White-Label Branding')).toBeVisible();
+    // Radix unmounts the inactive panel, so the Custom Domain field only exists once this tab is open.
+    await openTab(page, /custom domain/i);
     await expect(page.getByPlaceholder(/hms\.yourhospital\.com/i)).toBeVisible();
 
     const real = consoleErrors.filter(e => !/favicon|ResizeObserver/i.test(e));
@@ -299,6 +301,7 @@ test.describe('P2B — Identity: White-Label', () => {
     await page.getByRole('button', { name: /save theme/i }).click();
     await awaitSaveAck(page);
     await reloadAndSettle(page);
+    await openTab(page, /custom domain/i);
 
     const body = await page.locator('body').innerText();
     expect(
@@ -310,13 +313,19 @@ test.describe('P2B — Identity: White-Label', () => {
 
   test('TC-P2B-101 Save Theme and Save Domain are independent actions', async ({ page }) => {
     test.skip(!DB_ON(), 'Database access not enabled');
+    // Radix unmounts the inactive panel, so the Custom Domain field only exists once this tab is open.
+    await openTab(page, /custom domain/i);
     await fillField(page, 'Custom Domain', WL.customDomain, WHITE_LABEL);
     await page.getByRole('button', { name: /save domain/i }).click();
     await awaitSaveAck(page);
 
+    // Save Theme lives on the other tab, and the point of this case is that using it does not
+    // clobber what Save Domain just wrote — so the switch is part of the scenario, not setup.
+    await openTab(page, /theme/i);
     await page.getByRole('button', { name: /save theme/i }).click();
     await awaitSaveAck(page);
     await reloadAndSettle(page);
+    await openTab(page, /custom domain/i);
 
     expect(
       await readField(page, 'Custom Domain', WHITE_LABEL),
@@ -328,10 +337,13 @@ test.describe('P2B — Identity: White-Label', () => {
 
   test('TC-P2B-102 A custom domain saves', async ({ page }) => {
     test.skip(!DB_ON(), 'Database access not enabled');
+    // Radix unmounts the inactive panel, so the Custom Domain field only exists once this tab is open.
+    await openTab(page, /custom domain/i);
     await fillField(page, 'Custom Domain', WL.customDomain, WHITE_LABEL);
     await page.getByRole('button', { name: /save domain/i }).click();
     await awaitSaveAck(page);
     await reloadAndSettle(page);
+    await openTab(page, /custom domain/i);
 
     expect(
       await readField(page, 'Custom Domain', WHITE_LABEL),
@@ -342,10 +354,13 @@ test.describe('P2B — Identity: White-Label', () => {
 
   test('TC-P2B-103 A malformed custom domain is rejected', async ({ page }) => {
     test.skip(!DB_ON(), 'Database access not enabled');
+    // Radix unmounts the inactive panel, so the Custom Domain field only exists once this tab is open.
+    await openTab(page, /custom domain/i);
     await fillField(page, 'Custom Domain', 'not a domain!', WHITE_LABEL);
     await page.getByRole('button', { name: /save domain/i }).click();
     await awaitSaveAck(page);
     await reloadAndSettle(page);
+    await openTab(page, /custom domain/i);
 
     expect(
       await readField(page, 'Custom Domain', WHITE_LABEL),
@@ -355,6 +370,8 @@ test.describe('P2B — Identity: White-Label', () => {
   });
 
   test('TC-P2B-104 The DNS record to create is displayed for the entered domain', async ({ page }) => {
+    // Radix unmounts the inactive panel, so the Custom Domain field only exists once this tab is open.
+    await openTab(page, /custom domain/i);
     await fillField(page, 'Custom Domain', WL.customDomain, WHITE_LABEL);
     await page.waitForTimeout(600);
 
@@ -368,6 +385,8 @@ test.describe('P2B — Identity: White-Label', () => {
 
   test('TC-P2B-105 The DNS value can be copied to the clipboard', async ({ page, context }) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']).catch(() => {});
+    // Radix unmounts the inactive panel, so the Custom Domain field only exists once this tab is open.
+    await openTab(page, /custom domain/i);
     await fillField(page, 'Custom Domain', WL.customDomain, WHITE_LABEL);
     await page.waitForTimeout(500);
 
@@ -385,6 +404,8 @@ test.describe('P2B — Identity: White-Label', () => {
   });
 
   test('TC-P2B-106 DNS verification reports its outcome', async ({ page }) => {
+    // Radix unmounts the inactive panel, so the Custom Domain field only exists once this tab is open.
+    await openTab(page, /custom domain/i);
     await fillField(page, 'Custom Domain', WL.customDomain, WHITE_LABEL);
     const verify = page.getByRole('button', { name: /verify/i }).first();
     test.skip(!(await verify.count()), 'No verify control rendered');
@@ -401,10 +422,13 @@ test.describe('P2B — Identity: White-Label', () => {
 
   test('TC-P2B-107 White-label settings survive a hard reload', async ({ page }) => {
     test.skip(!DB_ON(), 'Database access not enabled');
+    // Radix unmounts the inactive panel, so the Custom Domain field only exists once this tab is open.
+    await openTab(page, /custom domain/i);
     await fillField(page, 'Custom Domain', WL.customDomain, WHITE_LABEL);
     await page.getByRole('button', { name: /save domain/i }).click();
     await awaitSaveAck(page);
     await reloadAndSettle(page);
+    await openTab(page, /custom domain/i);
 
     expect(
       await readField(page, 'Custom Domain', WHITE_LABEL),
@@ -433,6 +457,8 @@ test.describe('P2B — Identity: White-Label', () => {
 
   test('TC-P2B-110 The White-Label screen loads with no red console errors', async ({ page, consoleErrors }) => {
     test.skip(!DB_ON(), 'Database access not enabled');
+    // Radix unmounts the inactive panel, so the Custom Domain field only exists once this tab is open.
+    await openTab(page, /custom domain/i);
     await fillField(page, 'Custom Domain', WL.customDomain, WHITE_LABEL);
     await page.getByRole('button', { name: /save domain/i }).click();
     await awaitSaveAck(page);
@@ -646,6 +672,16 @@ test.describe('P2B — Identity: Training Videos', () => {
 
   test('TC-P2B-127 Searching filters the video list', async ({ page }) => {
     const box = page.getByPlaceholder(/search videos/i);
+    // With no videos published there is nothing for a filter to change, so an empty library
+    // would fail this case for a reason that has nothing to do with the filter. Skip instead —
+    // an unseeded library is an environment gap, not a defect.
+    const cards = page.locator('button').filter({ has: page.locator('img, .h-32') });
+    test.skip(
+      /no training videos published yet/i.test(await page.locator('body').innerText()),
+      'No training videos published — seed platform_training_videos before running this case',
+    );
+    expect(await cards.count()).toBeGreaterThan(0);
+
     const before = (await page.locator('body').innerText()).length;
     await box.fill(TRAIN.search);
     await page.waitForTimeout(700);

@@ -23,6 +23,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { splitGstInclusive } from "../_shared/platform-billing.ts";
 import { buildInvoicePdf } from "../_shared/invoice-pdf.ts";
+import { APP_DOMAIN, SUPPORT_EMAIL } from "../_shared/brand.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -88,7 +89,7 @@ function buildInvoiceHTML(inv: {
     <div>
       <div class="logo">Aumrti<span>.</span></div>
       <div style="color:#6b7280;font-size:12px;margin-top:4px;">Hospital Operating System</div>
-      <div style="color:#6b7280;font-size:12px;">support@aumrti.in | aumrti.in</div>
+      <div style="color:#6b7280;font-size:12px;">${SUPPORT_EMAIL} | ${APP_DOMAIN}</div>
     </div>
     <div class="meta">
       <strong>${inv.invoice_number}</strong><br/>
@@ -236,8 +237,8 @@ serve(async (req) => {
             pincode: seller?.pincode,
             cin: seller?.cin,
             pan: seller?.pan,
-            support_email: seller?.support_email ?? "support@aumrti.in",
-            website: seller?.website ?? "aumrti.in",
+            support_email: seller?.support_email ?? SUPPORT_EMAIL,
+            website: seller?.website ?? APP_DOMAIN,
           },
           buyer: {
             name: hosp?.name ?? "",

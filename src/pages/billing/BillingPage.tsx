@@ -498,24 +498,36 @@ const BillingPage: React.FC = () => {
         const [roomLinesRes, nursingRates] = await Promise.all([
           (supabase as any)
             .from("bill_line_items")
-            .select("bill_id, quantity, unit_rate")
+            .select("bill_id, quantity, unit_rate, created_at")
             .in("bill_id", accruing.map((b) => b.id))
-            .eq("item_type", "room_charge"),
+            .eq("item_type", "room_charge")
+            .order("created_at", { ascending: true }),
           getWardNursingRates(),
         ]);
-        const roomLineByBill = new Map<string, any>(
-          (roomLinesRes?.data || []).map((r: any) => [r.bill_id, r])
-        );
+        // A bill can now carry MULTIPLE room_charge rows — one per ward/bed segment after a
+        // mid-stay transfer (lib/ipdBilling.ts) — so a single-row Map would silently keep an
+        // arbitrary one, undercounting billed days and possibly picking a stale rate. Sum
+        // quantities for the true total billed days; since rows are fetched oldest-first,
+        // the LAST write into this Map per bill_id is the most-recently-created segment,
+        // i.e. the ward the patient occupies right now — the correct rate to project
+        // still-unbilled days at.
+        const roomAggByBill = new Map<string, { billedDays: number; currentRate: number }>();
+        (roomLinesRes?.data || []).forEach((r: any) => {
+          const agg = roomAggByBill.get(r.bill_id) || { billedDays: 0, currentRate: 0 };
+          agg.billedDays += Number(r.quantity) || 0;
+          agg.currentRate = Number(r.unit_rate) || agg.currentRate;
+          roomAggByBill.set(r.bill_id, agg);
+        });
 
         const annotate = (b: BillRecord): BillRecord => {
           const adm = activeAdmById.get(b.admission_id as string);
           if (!adm) return b;
-          const roomLine = roomLineByBill.get(b.id);
+          const roomAgg = roomAggByBill.get(b.id);
           // Prefer the rate the room line was actually billed at, so the projection agrees
           // with what the sweep will post; fall back to the same resolver the IPD ledger
           // estimate uses when nothing has been billed yet.
-          const roomRate = Number(roomLine?.unit_rate) > 0
-            ? Number(roomLine.unit_rate)
+          const roomRate = Number(roomAgg?.currentRate) > 0
+            ? Number(roomAgg!.currentRate)
             : resolveRoomRateFallback(adm.wards?.rate_per_day, adm.beds?.bed_category);
           // Nursing is bundled into room rent for scheme/TPA payers — the same rule the
           // sweep applies, so the projection never promises a line that won't be billed.
@@ -525,7 +537,7 @@ const BillingPage: React.FC = () => {
 
           const accrual = computeAccrual({
             admittedAt: adm.admitted_at,
-            billedDays: Number(roomLine?.quantity) || 0,
+            billedDays: roomAgg?.billedDays || 0,
             roomRate,
             nursingRate,
           });

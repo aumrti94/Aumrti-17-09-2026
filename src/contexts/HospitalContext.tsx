@@ -141,6 +141,20 @@ export const HospitalProvider = ({ children }: { children: React.ReactNode }) =>
   const authUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    // A users-table fetch can fail (network) or, per BUG-P4-006, error outright when more
+    // than one row matches auth_user_id (PostgREST "multiple rows returned" on .maybeSingle()).
+    // Every such failure must fail CLOSED — clear any identity already in state — rather than
+    // silently leaving a prior resolution's role/permissions in place, which would let a new
+    // session run with a stale identity's access.
+    const resetIdentity = () => {
+      clearCache();
+      setHospitalId(null);
+      setUserId(null);
+      setRole(null);
+      setPermissions(null);
+      setFullName(null);
+    };
+
     const resolve = async () => {
       try {
         setLoading(true);
@@ -207,11 +221,13 @@ export const HospitalProvider = ({ children }: { children: React.ReactNode }) =>
 
       if (userError) {
         console.error("Fetch user data error:", userError.message);
+        resetIdentity();
         setLoading(false);
         return;
       }
 
       if (!userData) {
+        resetIdentity();
         setLoading(false);
         return;
       }
@@ -289,7 +305,10 @@ export const HospitalProvider = ({ children }: { children: React.ReactNode }) =>
           .eq("auth_user_id", authUserId)
           .maybeSingle();
 
-        if (!userData) return;
+        if (!userData) {
+          resetIdentity();
+          return;
+        }
 
         if ((userData as any).is_active === false) {
           await supabase.auth.signOut();
@@ -328,6 +347,7 @@ export const HospitalProvider = ({ children }: { children: React.ReactNode }) =>
         });
       } catch (err) {
         console.error("Background refresh error:", err);
+        resetIdentity();
       }
     };
 

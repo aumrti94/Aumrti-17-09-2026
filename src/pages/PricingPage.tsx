@@ -26,6 +26,7 @@ import { Check, Loader2, Minus, Plus } from "lucide-react";
 import { formatINRExact } from "@/lib/currency";
 import { resolveEffectivePrice, type BillingCycle } from "@/lib/platformBilling";
 import { describeGrant, type AddonSku } from "@/lib/addons";
+import { SALES_EMAIL } from "@/lib/brand";
 
 interface PublicPlan {
   id: string;
@@ -327,7 +328,7 @@ const PricingPage: React.FC = () => {
                 <button
                   onClick={() =>
                     plan.is_custom_price
-                      ? window.open("mailto:sales@aumrti.in?subject=Enterprise plan enquiry")
+                      ? window.open(`mailto:${SALES_EMAIL}?subject=Enterprise plan enquiry`)
                       : navigate("/register")
                   }
                   disabled={overCap}

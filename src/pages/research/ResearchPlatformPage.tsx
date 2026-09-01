@@ -10,6 +10,7 @@ import { FlaskConical, Plus, Download, Loader2, Shield, Users, CheckCircle2, Tra
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
+import { APP_DOMAIN, RESEARCH_DEIDENT_SYSTEM } from "@/lib/brand";
 
 const CRITERION_TYPES = [
   { value: "age_range",        label: "Age Range", fields: ["min_age", "max_age"] },
@@ -129,7 +130,7 @@ export default function ResearchPlatformPage() {
       resourceType: "Bundle",
       type: "collection",
       id: cohort.id,
-      meta: { tag: [{ system: "https://aumrti.in/research/deidentified", code: "k-anonymised" }] },
+      meta: { tag: [{ system: RESEARCH_DEIDENT_SYSTEM, code: "k-anonymised" }] },
       timestamp: new Date().toISOString(),
       total: cohort.patient_count,
       entry: [],
@@ -338,7 +339,7 @@ export default function ResearchPlatformPage() {
               <p className="text-[12px] text-muted-foreground">
                 Exports entire hospital dataset as a FHIR R4 Transaction Bundle.
                 All records are de-identified (k=5 minimum) before export.
-                Use this for pharma partnership portals or research.aumrti.in submissions.
+                Use this for pharma partnership portals or research.{APP_DOMAIN} submissions.
               </p>
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
                 <p className="text-[12px] text-amber-800 font-semibold">Institutional Review Board (IRB) approval required</p>

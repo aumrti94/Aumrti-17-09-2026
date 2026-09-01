@@ -6,6 +6,7 @@ import { Activity, Pill, ClipboardList, CheckCircle2, Stethoscope, CreditCard, P
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
 import DischargeInstructions from "@/components/ipd/DischargeInstructions";
+import HomeCareHandoffPanel from "@/components/ipd/HomeCareHandoffPanel";
 import DischargeSummaryGenerator from "@/components/ipd/DischargeSummaryGenerator";
 import DischargeSummaryAIPanel from "@/components/ipd/DischargeSummaryAIPanel";
 import ReadmissionRiskPanel from "@/components/ipd/ReadmissionRiskPanel";
@@ -755,6 +756,17 @@ const IPDOverviewTab: React.FC<Props> = ({ admissionId, hospitalId, onTabChange,
           medications={medications.map((m) => ({ drug_name: m.drug_name, dose: m.dose, frequency: m.frequency }))}
           followupDate={null}
           restrictions={null}
+        />
+      )}
+
+      {/* Discharge → Home Care handoff (optional; does not gate discharge) */}
+      {hospitalId && reconPatientId && patientName && (
+        <HomeCareHandoffPanel
+          hospitalId={hospitalId}
+          admissionId={admissionId}
+          patientId={reconPatientId}
+          patientName={patientName}
+          diagnosis={admDiagnosis}
         />
       )}
 

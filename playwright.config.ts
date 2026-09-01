@@ -18,8 +18,17 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: './e2e',
 
-  timeout: 60_000,
-  expect: { timeout: 15_000 },
+  // 60s was found too tight for Phase 4's multi-step OPD flows (register -> pay -> consult ->
+  // order -> complete -> reopen -> verify, each a real Supabase round trip) under a long,
+  // sustained, fully-sequential (workers=1) headed run: several tests hit the overall budget
+  // mid-way through a trailing fixed sleep, not because any single step was broken, but because
+  // the cumulative real-network time for a long flow left too little margin. Widened rather
+  // than chasing which specific test happens to be the one that tips over on a given run.
+  timeout: 90_000,
+  // A soft `expect(locator).toBeVisible()` assertion (e.g. waiting for a UI confirmation chip
+  // to render after a real Supabase round trip) is bound by THIS timeout, separately from the
+  // per-test budget above — widened for the same reason.
+  expect: { timeout: 20_000 },
 
   globalSetup: './e2e/global-setup.ts',
   globalTeardown: './e2e/global-teardown.ts',
@@ -65,7 +74,32 @@ export default defineConfig({
       testDir: './e2e/phase-02-settings',
       use: { ...devices['Desktop Chrome'] },
     },
-    // Phases 03-15 are added here as each phase's specs are written.
+    {
+      name: 'phase-03-patient-records',
+      testDir: './e2e/phase-03-patient-records',
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'phase-04-opd-journey',
+      testDir: './e2e/phase-04-opd-journey',
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'phase-05-lab-radiology',
+      testDir: './e2e/phase-05-lab-radiology',
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      // Phase 12 · Specialty Clinical. Currently covers Home Care (12A) and
+      // Chronic Disease Management (12B) only — the rest of the phase's modules
+      // are added as their specs are written. Registered ahead of phases 06-11
+      // because these two modules were repaired first; the project name still
+      // matches docs/qa/PHASE_MAP.md numbering.
+      name: 'phase-12-specialty-clinical',
+      testDir: './e2e/phase-12-specialty-clinical',
+      use: { ...devices['Desktop Chrome'] },
+    },
+    // Phases 06-11 and 13-15 are added here as each phase's specs are written.
     // See docs/qa/PHASE_MAP.md.
     {
       name: 'tablet',

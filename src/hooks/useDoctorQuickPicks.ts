@@ -9,7 +9,8 @@ export type QuickPickCategory =
   | "diagnoses"
   | "rx_templates"
   | "lab_templates"
-  | "radiology_templates";
+  | "radiology_templates"
+  | "test_group_order";
 
 interface UseDoctorQuickPicksResult<T> {
   items: T[];

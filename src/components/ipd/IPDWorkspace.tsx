@@ -4,7 +4,7 @@ import { hasTabAccess, hasActionAccess } from "@/lib/tabPermissions";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { BedDouble, ExternalLink, ArrowUpRight, Printer, FileText, MonitorDot, CheckCircle2, Save } from "lucide-react";
-import { printDocument, printHeader, printAmount } from "@/lib/printUtils";
+import { printDocument, printHeader, printAmount, fetchHospitalBrand, hw } from "@/lib/printUtils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -15,6 +15,7 @@ import IPDVitalsTab from "./tabs/IPDVitalsTab";
 import IPDMedicationsTab from "./tabs/IPDMedicationsTab";
 import IPDWardRoundTab from "./tabs/IPDWardRoundTab";
 import InvestigationsTab from "./tabs/InvestigationsTab";
+import { useUnreviewedResultCount } from "@/hooks/useUnreviewedResultCount";
 import { INSURANCE_PAYER_TYPES } from "@/lib/payerTypes";
 import IPDNotesTab from "./tabs/IPDNotesTab";
 import IPDDocumentsTab from "./tabs/IPDDocumentsTab";
@@ -127,6 +128,14 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
   // Blood request state
   const [showBloodRequest, setShowBloodRequest] = useState(false);
   const [pendingBloodCount, setPendingBloodCount] = useState(0);
+
+  // Badge on the Investigations tab. Read here rather than further down because the
+  // component returns early for an unoccupied bed, and a hook cannot live after that.
+  const unreviewedResults = useUnreviewedResultCount({
+    hospitalId,
+    patientId: patient?.id ?? null,
+    admissionId: bed?.admission?.id ?? null,
+  });
 
   useEffect(() => {
     if (!bed?.admission) { setDeptName(null); return; }
@@ -363,8 +372,15 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
       const labOrders: LabOrder[] = [];
       const radOrders: RadiologyOrder[] = [];
       ((data.investigations as string[]) || []).forEach((name) => {
-        if (isRadiology(name)) radOrders.push({ test_name: name, urgency: "routine", clinical_indication: "" });
-        else labOrders.push({ test_name: name, urgency: "routine", clinical_indication: "" });
+        // `study_name`, not `test_name`. A RadiologyOrder keyed on test_name is read as blank
+        // by RxOrdersTab, skipped outright by syncRadiologyOrders (`if (!item.study_name)`)
+        // and invisible to prescribedPending — a ward-dictated X-ray was persisted into the
+        // prescription as an object nothing downstream could read, and simply vanished.
+        //
+        // `availability: "unresolved"` is what marks it as awaiting catalogue resolution, the
+        // same as OPD. RxOrdersTab resolves it from there.
+        if (isRadiology(name)) radOrders.push({ study_name: name, urgency: "routine", clinical_indication: "", availability: "unresolved" });
+        else labOrders.push({ test_name: name, urgency: "routine", clinical_indication: "", availability: "unresolved" });
       });
 
       if (drugs.length > 0 || labOrders.length > 0 || radOrders.length > 0) {
@@ -526,7 +542,9 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
 
     toast({ title: "Generating case sheet..." });
 
-    const { data: hospital } = await supabase.from("hospitals").select("name, address, logo_url, primary_color").eq("id", hospitalId).maybeSingle();
+    // fetchHospitalBrand (not a bare hospitals select) — it warms the brand cache that
+    // printDocument reads for the font, footer and handwriting settings.
+    const hospital = await fetchHospitalBrand(supabase, hospitalId);
 
     const [vitalsRes, medsRes, notesRes] = await Promise.all([
       supabase.from("ipd_vitals").select("*").eq("admission_id", admissionId).order("recorded_at", { ascending: false }),
@@ -554,7 +572,8 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
          <table>
            <tr><th>Medication</th><th>Dose</th><th>Freq</th><th>Route</th><th>Status</th></tr>
            ${medsRes.data.map(m => `<tr>
-             <td><b>${m.drug_name}</b></td><td>${m.dose}</td><td>${m.frequency}</td><td>${m.route}</td>
+             <td><b>${hw("medications", m.drug_name)}</b></td><td>${hw("medications", m.dose)}</td>
+             <td>${hw("medications", m.frequency)}</td><td>${hw("medications", m.route)}</td>
              <td>${m.is_active ? 'Active' : 'Stopped'}</td>
            </tr>`).join("")}
          </table>` : "";
@@ -568,10 +587,10 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
                <span style="font-size:11px; color:#64748b;">Dr. ${(n.doctor as any)?.full_name || 'Consultant'}</span>
              </div>
              <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; font-size:12px;">
-               <div><span class="label">Subjective:</span> ${n.subjective || '—'}</div>
-               <div><span class="label">Objective:</span> ${n.objective || '—'}</div>
-               <div><span class="label">Assessment:</span> ${n.assessment || '—'}</div>
-               <div><span class="label">Plan:</span> ${n.plan || '—'}</div>
+               <div><span class="label">Subjective:</span> ${hw("wardRounds", n.subjective)}</div>
+               <div><span class="label">Objective:</span> ${hw("wardRounds", n.objective)}</div>
+               <div><span class="label">Assessment:</span> ${hw("wardRounds", n.assessment)}</div>
+               <div><span class="label">Plan:</span> ${hw("wardRounds", n.plan)}</div>
              </div>
            </div>
          `).join("")}` : "";
@@ -790,6 +809,18 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
           hospitalId, patientId: patient.id, orderedBy: userId, admissionId,
           items: prescription.radiology_orders,
         });
+
+        // Unlike the lab side these ARE ordered — a study missing from the master is nearly
+        // always a gap in the master, not a scan the hospital cannot do — but nothing matches
+        // them on the rate card, so they bill at the default rate. That was previously silent
+        // in both directions: syncRadiologyOrders reported no unmatched list at all.
+        if (radSync.unmatched.length > 0) {
+          toast({
+            title: `${radSync.unmatched.length} study(ies) not in the radiology master — billed at the default rate`,
+            description: `${radSync.unmatched.join(", ")}. Add them in Settings → Radiology so they carry their own fee.`,
+            variant: "destructive",
+          });
+        }
 
         const charged = await chargeRadiologyOrders({
           hospitalId, patientId: patient.id, admissionId,
@@ -1020,7 +1051,15 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
             .map((t) => (
               <TabsTrigger key={t.v} value={t.v}
                 className="text-[13px] rounded-none border-b-2 border-transparent data-[state=active]:border-[#1A2F5A] data-[state=active]:text-[#1A2F5A] data-[state=active]:shadow-none data-[state=active]:bg-transparent px-4 h-full"
-              >{t.l}</TabsTrigger>
+              >
+                {t.l}
+                {/* Released reports the ward doctor has not read yet. */}
+                {t.v === "investigations" && unreviewedResults > 0 && (
+                  <span className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-emerald-600 text-white text-[11px] font-bold">
+                    {unreviewedResults > 9 ? "9+" : unreviewedResults}
+                  </span>
+                )}
+              </TabsTrigger>
             ))}
         </TabsList>
 
@@ -1042,10 +1081,15 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
               patientAllergies={patient?.allergies ? patient.allergies.split(",").map(a => a.trim()) : []}
               patientAge={patientAge || undefined}
               patientGender={patient?.gender || undefined}
+              // Without patientId/userId a drug-safety override is recorded against nobody,
+              // which is not an audit trail (BUG-P4-004 / P4-S11). OPD has always passed them.
+              patientId={patient?.id}
+              userId={userId}
+              admissionId={admissionId}
             />
           </TabsContent>
           <TabsContent value="investigations" className="h-full m-0">
-            <InvestigationsTab admissionId={admissionId} hospitalId={hospitalId} patientId={patient?.id} />
+            <InvestigationsTab admissionId={admissionId} hospitalId={hospitalId} patientId={patient?.id} userId={userId} />
           </TabsContent>
           <TabsContent value="wardround" className="h-full m-0">
             <IPDWardRoundTab admissionId={admissionId} hospitalId={hospitalId} userId={userId} patientId={patient?.id || null} />
@@ -1254,9 +1298,11 @@ const IPDWorkspace: React.FC<Props> = ({ bed, hospitalId, userId, onRefresh }) =
         onClose={() => setShowTransfer(false)}
         admissionId={admissionId}
         hospitalId={hospitalId}
+        patientId={patient.id}
         currentWardId={(adm as any).ward_id || ""}
         currentBedId={bed.id}
         patientName={patient.full_name}
+        userId={userId}
         onSuccess={onRefresh}
       />
     )}

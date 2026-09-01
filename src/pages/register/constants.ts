@@ -1,3 +1,4 @@
+import { ENTERPRISE_EMAIL } from "@/lib/brand";
 export const INDIAN_STATES = [
   "Andaman & Nicobar Islands",
   "Andhra Pradesh",
@@ -42,7 +43,7 @@ export const INDIAN_STATES = [
 export const SALES_WHATSAPP =
   (import.meta.env.VITE_SALES_WHATSAPP as string) || "918800000000";
 export const SALES_EMAIL =
-  (import.meta.env.VITE_SALES_EMAIL as string) || "enterprise@aumrti.in";
+  (import.meta.env.VITE_SALES_EMAIL as string) || ENTERPRISE_EMAIL;
 
 export const HOSPITAL_TYPES = [
   "Private Hospital",

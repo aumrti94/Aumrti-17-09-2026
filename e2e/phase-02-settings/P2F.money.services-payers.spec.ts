@@ -409,10 +409,10 @@ test.describe('P2F — Service Rates', () => {
   test('TC-P2F-021 A rate change applies to new charges only, not to charges already raised', async () => {
     test.skip(!DB_ON(), 'Database access not enabled');
     const hid = await hospitalIdFor('A');
-    const { data, error } = await db().from('bill_items')
-      .select('id, unit_price').eq('hospital_id', hid).limit(5);
+    const { data, error } = await db().from('bill_line_items')
+      .select('id, unit_rate').eq('hospital_id', hid).limit(5);
 
-    test.skip(!!error, `bill_items is not readable: ${error?.message}. Phase 8 re-runs this against real bills.`);
+    test.skip(!!error, `bill_line_items is not readable: ${error?.message}. Phase 8 re-runs this against real bills.`);
     expect(
       data,
       'Charge rows must capture unit_price at the time of accrual. If a charge references the ' +

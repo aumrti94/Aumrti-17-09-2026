@@ -1,6 +1,6 @@
 import React, { useRef, useCallback, useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
-import { Mic, MicOff, Loader2, ChevronDown, Zap } from "lucide-react";
+import { Mic, MicOff, Loader2, ChevronDown, Zap, Pause, Play } from "lucide-react";
 import { SessionType } from "@/contexts/VoiceScribeContext";
 import { SUPPORTED_LANGUAGES } from "@/lib/voiceScribeLanguages";
 import { useVoiceScribe } from "@/hooks/useVoiceScribe";
@@ -15,6 +15,13 @@ import { useToast } from "@/hooks/use-toast";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useVoiceScribeLanguages } from "@/hooks/useVoiceScribeLanguages";
 import { useAIFeature } from "@/hooks/useAIFeature";
+import {
+  buildChain, resolveNoteLanguage, transcriptIsPreTranslated,
+  sarvamModeFor, transcribeRetryLeg,
+  type AsrLeg, type AsrEngine, type SarvamMode,
+} from "@/lib/asrEngineChain";
+import { webmToWav16k } from "@/lib/audioToWav";
+import { createDictationAudioChain, dictationAudioConstraints } from "@/lib/dictationAudioChain";
 
 interface SpeechRecognitionLike {
   lang: string;
@@ -36,10 +43,40 @@ interface Props {
 
 const SARVAM_CHUNK_SECONDS = 25;
 
+/**
+ * How long the outgoing segment keeps recording after the next one has started.
+ *
+ * This was 200ms, which is shorter than a single word: an English word runs 300-600ms, and
+ * a freshly-started Opus encoder needs priming on top of that. So a word spoken across a
+ * 25s boundary was a fragment in BOTH segments and transcribed correctly in neither — a
+ * silent source of "it missed some words" on any dictation over 25 seconds.
+ *
+ * The cost of a longer overlap is a slightly larger duplicated seam, which
+ * joinTranscriptChunks already removes.
+ */
+const SEGMENT_OVERLAP_MS = 800;
+
 /** One transcribed segment plus whatever confidence signal the engine gave us. */
 interface ChunkResult {
   text: string;
   languageProbability: number | null;
+  /** What the engine reported hearing. Sarvam detects; Bhashini echoes what it was told. */
+  detectedLanguage: string | null;
+}
+
+/** A segment that was transcribed, plus which leg of the chain actually served it. */
+interface ServedChunk extends ChunkResult {
+  leg: AsrLeg;
+}
+
+/** Why a whole dictation produced nothing, per engine, so the panel can say something true. */
+interface LegFailure {
+  engine: AsrEngine;
+  message: string;
+  /** The code actually sent to this provider — the thing an administrator needs to see. */
+  langCode?: string;
+  /** Which Saaras decode was tried. Distinguishes "translate found nothing" from "neither did". */
+  mode?: SarvamMode;
 }
 
 const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, className, size = "md" }) => {
@@ -50,6 +87,8 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
     setCurrentSessionType, setCurrentPatientId, selectedLanguage, setSelectedLanguage,
     setFallbackReason, getExistingDataForCurrentScreen,
     setScribeSignals, setNativeTranscript, segmentBlobsRef, setRescueState,
+    selectedMicId, noiseCleanupEnabled, nearFieldGateEnabled, isPaused, setIsPaused,
+    audioChainRef,
   } = useVoiceScribe();
 
   // Keep the panel's notion of "current patient" in sync with whichever
@@ -85,14 +124,50 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
   const chunkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const isStoppingRef = useRef(false);
-  const activeEngineRef = useRef<"web_speech" | "sarvam" | "bhashini">("sarvam");
+  /**
+   * Paused, readable from inside the 25s rotation interval.
+   *
+   * The interval closure is created once at record time and would capture the initial
+   * `isPaused` state forever, so it cannot read the React value — and rotating recorders
+   * while paused would hand over to a fresh recorder in the `recording` state, silently
+   * un-pausing the dictation.
+   */
+  const isPausedRef = useRef(false);
+  /**
+   * Which leg served each transcribed segment.
+   *
+   * Deliberately NOT a single "active engine": with failover a dictation can be served by
+   * more than one provider, and the difference matters downstream. Sarvam runs
+   * mode=translate and returns ENGLISH; Bhashini returns NATIVE SCRIPT. `pre_translated_by`
+   * is derived from all of these together, because claiming a mixed transcript is already
+   * English makes ai-clinical-voice skip translation and the note comes out half in
+   * Devanagari.
+   */
+  const legsUsedRef = useRef<AsrLeg[]>([]);
+  /** Per-leg failure reasons for a dictation that produced nothing, so the panel can say why. */
+  const legFailuresRef = useRef<LegFailure[]>([]);
+  /**
+   * Segments no engine could transcribe. These are real gaps in the note — words were spoken
+   * and never reached the structuring model — so the count is surfaced to the doctor rather
+   * than absorbed. An empty transcript used to be recorded as a successful segment, which is
+   * how a dictation could quietly lose 25 s of speech.
+   */
+  const droppedSegmentsRef = useRef(0);
+  /**
+   * The language Sarvam reported hearing. Needed for two things "auto" could not do before:
+   * giving Bhashini a `sourceLanguage` for its fallback leg, and telling ai-clinical-voice
+   * a real language instead of the literal "auto".
+   */
+  const detectedLangRef = useRef<string | null>(null);
   const [langOpen, setLangOpen] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const secondsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [adminEngine, setAdminEngine] = useState<string | null>(null);
 
-  // Restore per-user language preference; fall back to hospital default
-  const { hospitalDefaultLang, doctorId } = useVoiceScribeLanguages();
+  // Restore per-user language preference; fall back to hospital default.
+  // `languages` is the catalogue the hook resolved — read it rather than SUPPORTED_LANGUAGES
+  // directly, so there is one notion of "what this hospital can pick" instead of three.
+  const { hospitalDefaultLang, doctorId, languages: availableLanguages } = useVoiceScribeLanguages();
   useEffect(() => {
     if (!doctorId) return;
     const stored = localStorage.getItem(`vscribe_lang_${doctorId}`);
@@ -124,32 +199,43 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
 
   const currentLang = SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage) || SUPPORTED_LANGUAGES[0];
 
-  // Engine priority:
-  // "auto" or "en-IN" → browser Web Speech API (free, no API key required)
-  // Specific Indian language + bhashini admin pref → Bhashini
-  // Specific Indian language + web_speech admin pref → Web Speech
-  // Specific Indian language (default) → Sarvam
-  const resolveEngine = (): "web_speech" | "sarvam" | "bhashini" => {
-    // Platform admin can force a global engine for every language.
-    if (adminEngine === "bhashini") return "bhashini";
-    if (adminEngine === "web_speech" && isWebSpeechSupported) return "web_speech";
-    // Explicit English → free, instant browser Web Speech (auto-falls back to Sarvam if it hears nothing).
-    if (selectedLanguage === "en-IN") return isWebSpeechSupported ? "web_speech" : "sarvam";
-    // "auto" (multilingual, auto-detect) + every Indian language → Sarvam medical ASR.
-    return "sarvam";
-  };
+  /**
+   * The ordered engines to try for this dictation — see src/lib/asrEngineChain.ts.
+   *
+   * This used to be a single engine per language, so a Sarvam failure ended the dictation
+   * and read to the doctor as "this language does not work". Now every language has a
+   * second provider behind it, and a language is unavailable only when both decline it.
+   *
+   * `detectedLangRef` is threaded in because Bhashini cannot auto-detect: for "auto", the
+   * language Sarvam already reported hearing is what makes its fallback leg possible.
+   */
+  const buildChainNow = useCallback((): AsrLeg[] => buildChain({
+    selected: selectedLanguage,
+    detected: detectedLangRef.current,
+    hospitalDefault: hospitalDefaultLang,
+    webSpeechSupported: isWebSpeechSupported,
+    adminEngine,
+  }), [selectedLanguage, hospitalDefaultLang, isWebSpeechSupported, adminEngine]);
 
-  const activeEngine = resolveEngine();
+  // Only the FIRST leg decides how recording is captured: Web Speech streams from the
+  // browser recogniser, everything else records audio for upload. The remaining legs are
+  // server-side and operate on that same recorded audio either way.
+  const firstLeg = buildChainNow()[0];
+  const activeEngine: AsrEngine = firstLeg?.engine ?? "sarvam";
   const useSarvamOrBhashini = activeEngine === "sarvam" || activeEngine === "bhashini";
 
-  const visibleLanguages = SUPPORTED_LANGUAGES;
+  const visibleLanguages = availableLanguages;
 
   useEffect(() => {
     return () => {
       if (chunkTimerRef.current) clearInterval(chunkTimerRef.current);
       if (secondsTimerRef.current) clearInterval(secondsTimerRef.current);
+      // Unmounting mid-dictation (a route change, a closed workspace) must not strand the
+      // AudioContext — those are capped per page and a leak kills dictation later.
+      audioChainRef.current?.dispose();
+      audioChainRef.current = null;
     };
-  }, []);
+  }, [audioChainRef]);
 
   // Declared above rescueWorstSegment and the chunk senders, which both use it.
   const blobToBase64 = useCallback(async (audioBlob: Blob): Promise<string> => {
@@ -199,12 +285,27 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
     if (!blob || blob.size === 0) return null;
 
     try {
-      const base64 = await blobToBase64(blob);
+      // Send WAV rather than the raw WebM. The rescue asks a multimodal model to re-listen,
+      // and the OpenAI audio input accepts only wav/mp3 — so on an OpenAI-configured
+      // hospital this whole tier answered "unsupported" and the low-confidence safety net
+      // never actually ran. Gemini accepts either, so this costs the Gemini path nothing.
+      // (Claude has no audio input at all; that remains a genuine no-op.)
+      let payload = blob;
+      let mediaType = blob.type || "audio/webm";
+      try {
+        payload = await webmToWav16k(blob);
+        mediaType = "audio/wav";
+      } catch {
+        // Platform cannot decode/resample here — fall back to the original blob rather
+        // than skipping the rescue, since Gemini can still use it.
+      }
+
+      const base64 = await blobToBase64(payload);
       const { data, error } = await supabase.functions.invoke("ai-clinical-voice", {
         body: {
           rescue_only: true,
           rescue_audio_base64: base64,
-          rescue_media_type: blob.type || "audio/webm",
+          rescue_media_type: mediaType,
           rescue_prior_text: signals[worst].text,
         },
       });
@@ -243,15 +344,31 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
         fullTranscriptRef.current = cleanedTranscript;
       }
 
+      // NEVER send the literal "auto": it is not a language, and it used to be forwarded all
+      // the way to Sarvam's translate endpoint as a source language, where it was rejected.
+      // Prefer what the engine actually reported hearing.
+      const noteLanguage = resolveNoteLanguage({
+        selected: selectedLanguage,
+        detected: detectedLangRef.current,
+        hospitalDefault: hospitalDefaultLang,
+      });
+
       const requestBody = {
         transcript: cleanedTranscript,
         context_type: sessionType,
-        language_code: selectedLanguage,
+        language_code: noteLanguage,
         existing_data: existingData ?? undefined,
         patient_id: patientId ?? undefined,
         // Saaras already returned English, so the edge function must NOT pay for a
         // second per-character translation of text that is already translated.
-        pre_translated_by: activeEngineRef.current === "sarvam" ? "sarvam_saaras" : undefined,
+        //
+        // Only claimable when EVERY segment came from a translating engine. With failover a
+        // dictation can be part Sarvam (English) and part Bhashini (native script); asserting
+        // pre-translation over that mix makes ai-clinical-voice skip translation entirely and
+        // the note comes out half in Devanagari.
+        pre_translated_by: transcriptIsPreTranslated(legsUsedRef.current)
+          ? "sarvam_saaras"
+          : undefined,
       };
 
       // Try streaming first so the note fills field by field instead of appearing all at
@@ -290,6 +407,9 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
           : cleanedTranscript,
         preTranslated: Boolean(data.pre_translated),
         safetyCheck: data.safety_check ?? null,
+        detectedLanguage: detectedLangRef.current,
+        enginesUsed: [...new Set(legsUsedRef.current.map(l => l.engine))],
+        droppedSegments: droppedSegmentsRef.current,
       };
 
       // Escalate ONLY when the cheap path measurably struggled. Everything above the
@@ -303,10 +423,13 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
         populatedSections: populatedSections(data.structured),
       });
 
+      // Rescue re-listens with a multimodal model, so it is only worth spending on a
+      // dictation that went through a server-side engine at all (Web Speech transcripts have
+      // no retained audio path worth re-hearing).
       const shouldRescue =
         allowRescue &&
         !rescueAttemptedRef.current &&
-        activeEngineRef.current === "sarvam" &&
+        legsUsedRef.current.some(l => l.engine === "sarvam" || l.engine === "bhashini") &&
         measured.overall !== null &&
         measured.overall < LOW_CONFIDENCE_THRESHOLD;
 
@@ -343,59 +466,223 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
       setFallbackReason(reason);
       setPanelState("fallback");
     }
-  }, [sessionType, patientId, selectedLanguage, getExistingDataForCurrentScreen, setPanelState, setIsPanelOpen, setStructuredOutput, setFallbackReason, setRawTranscript, setScribeSignals, rescueWorstSegment, setRescueState]);
+  }, [sessionType, patientId, selectedLanguage, hospitalDefaultLang, getExistingDataForCurrentScreen, setPanelState, setIsPanelOpen, setStructuredOutput, setFallbackReason, setRawTranscript, setScribeSignals, rescueWorstSegment, setRescueState]);
 
   // Keep the self-reference current so the rescue path always calls the latest closure.
   useEffect(() => { processTranscriptRef.current = processTranscript; }, [processTranscript]);
 
 
-  const sendChunkToSarvam = useCallback(async (audioBlob: Blob): Promise<ChunkResult> => {
+  const sendChunkToSarvam = useCallback(async (
+    audioBlob: Blob,
+    langCode: string,
+    mode: SarvamMode,
+  ): Promise<ChunkResult> => {
     const base64 = await blobToBase64(audioBlob);
 
     const { data, error } = await supabase.functions.invoke("sarvam-transcribe", {
       body: {
         audio_base64: base64,
-        language_code: selectedLanguage,
+        language_code: langCode,
         model: "saaras:v3",
-        // THE core fix. Saaras v3 defaults to mode="transcribe", which returns NATIVE
-        // SCRIPT — which is why the transcript box showed raw Telugu and the structuring
-        // LLM was being asked to translate AND structure inside one 1200-token budget.
-        // "translate" returns English from the same call at the same cost, and Indic
-        // script costs several times more LLM tokens per word than English does.
-        mode: "translate",
+        // The mode now comes from the LEG rather than being hardcoded to "translate".
+        //
+        // "translate" is right for Indic audio: Saaras returns English from the same call
+        // at the same cost, and Indic script costs several times more LLM tokens per word.
+        // It was WRONG as a blanket default. Sarvam's own default is "transcribe", and
+        // "translate" runs a generative speech-TRANSLATION decoder — it renders meaning,
+        // not words. Pointed at English it paraphrases: that is how a dictated "neck pain"
+        // came back as "headache" with clauses missing. See asrEngineChain.sarvamLeg.
+        mode,
       },
     });
 
-    if (error || data?.error) throw new Error(data?.error || error?.message);
+    // unwrapFunctionError reads the response BODY of a FunctionsHttpError. Without it the
+    // edge function's message — the bad key, the exhausted quota, the rejected language —
+    // was replaced by a generic "non-2xx status code" and the real reason was lost here.
+    if (error || data?.error) throw new Error(await unwrapFunctionError(error, data));
     return {
       text: data.transcript || "",
       languageProbability: typeof data.language_probability === "number"
         ? data.language_probability
         : null,
+      detectedLanguage: typeof data.detected_language_code === "string"
+        ? data.detected_language_code
+        : null,
     };
-  }, [selectedLanguage, blobToBase64]);
+  }, [blobToBase64]);
 
-  const sendChunkToBhashini = useCallback(async (audioBlob: Blob): Promise<ChunkResult> => {
-    const base64 = await blobToBase64(audioBlob);
+  const sendChunkToBhashini = useCallback(async (audioBlob: Blob, langCode: string): Promise<ChunkResult> => {
+    // Bhashini does not accept WebM, which is all MediaRecorder produces — so this leg
+    // could never have worked while it sent the raw recording. Converting here rather than
+    // at capture keeps the cost on the fallback: the Sarvam happy path never pays for it.
+    const wav = await webmToWav16k(audioBlob);
+    const base64 = await blobToBase64(wav);
 
     const { data, error } = await supabase.functions.invoke("bhashini-transcribe", {
       body: {
         audio_base64: base64,
-        language_code: selectedLanguage,
+        language_code: langCode,
+        audio_format: "wav",
+        sampling_rate: 16000,
       },
     });
 
-    if (error || data?.error) throw new Error(data?.error || error?.message);
+    if (error || data?.error) throw new Error(await unwrapFunctionError(error, data));
     // Bhashini's ULCA pipeline exposes no confidence field at all.
-    return { text: data.transcript || "", languageProbability: null };
-  }, [selectedLanguage, blobToBase64]);
+    return {
+      text: data.transcript || "",
+      languageProbability: null,
+      detectedLanguage: typeof data.detected_language_code === "string"
+        ? data.detected_language_code
+        : null,
+    };
+  }, [blobToBase64]);
 
-  const sendChunk = useCallback(async (audioBlob: Blob): Promise<ChunkResult> => {
-    if (activeEngineRef.current === "bhashini") {
-      return sendChunkToBhashini(audioBlob);
+  /**
+   * Transcribe one segment by walking the failover chain.
+   *
+   * The first leg returning actual words wins. A leg that errors OR returns an empty
+   * transcript advances to the next — an engine that answers 200 with nothing has not
+   * transcribed the audio, and treating that as success is what silently truncated notes.
+   *
+   * Every leg's failure reason is kept, so a total failure can report what each provider
+   * said instead of only the last one.
+   */
+  const sendChunk = useCallback(async (audioBlob: Blob): Promise<ServedChunk | null> => {
+    const chain = buildChainNow().filter(l => l.engine !== "web_speech");
+
+    if (chain.length === 0) {
+      legFailuresRef.current = [{
+        engine: "sarvam",
+        message: `No speech provider supports "${selectedLanguage}".`,
+      }];
+      return null;
     }
-    return sendChunkToSarvam(audioBlob);
-  }, [sendChunkToSarvam, sendChunkToBhashini]);
+
+    const failures: LegFailure[] = [];
+
+    /**
+     * Every leg to try for this segment, in order.
+     *
+     * A Sarvam leg running in `translate` mode gets a SECOND attempt at the same audio in
+     * `transcribe` mode before the chain moves on to Bhashini. That retry is what makes
+     * the low-resource languages work at all: Saaras translates the ten major Indian
+     * languages well, but on Santali, Bodo, Dogri, Kashmiri, Sindhi, Konkani, Sanskrit and
+     * Manipuri its translation head frequently returns NOTHING. The app never retried, so
+     * those languages produced no text and read to the doctor as "voice not detected".
+     *
+     * Order matters: translate is still attempted first, exactly as before, so nothing that
+     * works today changes. The retry only ever runs where the old code had already given up.
+     */
+    const attempts: AsrLeg[] = [];
+    for (const leg of chain) {
+      const resolved: AsrLeg = leg.engine === "sarvam"
+        ? { ...leg, mode: sarvamModeFor(leg, { selected: selectedLanguage, detected: detectedLangRef.current }) }
+        : leg;
+      attempts.push(resolved);
+      const retry = transcribeRetryLeg(resolved);
+      if (retry) attempts.push(retry);
+    }
+
+    for (const leg of attempts) {
+      try {
+        const result = leg.engine === "bhashini"
+          ? await sendChunkToBhashini(audioBlob, leg.langCode)
+          : await sendChunkToSarvam(audioBlob, leg.langCode, leg.mode ?? "translate");
+
+        // Remember what was heard even on an empty result — a later segment's fallback leg
+        // and the structuring call both need a real language rather than "auto".
+        if (result.detectedLanguage && !detectedLangRef.current) {
+          detectedLangRef.current = result.detectedLanguage;
+        }
+
+        if (result.text.trim()) return { ...result, leg };
+
+        // 200 with no words is NOT success — it means this engine did not transcribe the
+        // audio, so the chain must keep going rather than accept a silent gap.
+        failures.push({
+          engine: leg.engine,
+          message: "returned an empty transcript",
+          langCode: leg.langCode,
+          mode: leg.mode,
+        });
+      } catch (err) {
+        failures.push({
+          engine: leg.engine,
+          message: err instanceof Error ? err.message : String(err),
+          langCode: leg.langCode,
+          mode: leg.mode,
+        });
+      }
+    }
+
+    // Every leg declined this segment, so its audio is lost from the note.
+    droppedSegmentsRef.current += 1;
+    // Keep the most informative attempt: a run where every engine explained itself beats
+    // one where a single leg existed.
+    if (failures.length >= legFailuresRef.current.length) legFailuresRef.current = failures;
+    return null;
+  }, [buildChainNow, selectedLanguage, sendChunkToSarvam, sendChunkToBhashini]);
+
+  const engineLabel = (e: AsrEngine) =>
+    e === "sarvam" ? "Sarvam" : e === "bhashini" ? "Bhashini" : "Browser speech";
+
+  /**
+   * Explain a dictation that produced no words at all.
+   *
+   * This is the fix for the reason nobody could tell WHY only two languages worked: every
+   * cause — a bad key, an exhausted quota, a language the provider rejects, a genuinely
+   * silent microphone — used to render as the same fixed sentence, with the provider's own
+   * message discarded into console.error.
+   *
+   * The reasons go to `fallbackReason`, which the panel already renders, so they survive the
+   * toast disappearing and can be read (or screenshotted) after the fact.
+   */
+  const reportTotalFailure = useCallback(() => {
+    const failures = legFailuresRef.current;
+
+    if (failures.length === 0) {
+      // Nothing was even attempted: no audio reached an engine.
+      toast({
+        title: "No speech detected",
+        description: "Try speaking louder or closer to the mic.",
+        variant: "destructive",
+      });
+      setFallbackReason("No audio was captured — the microphone produced nothing to transcribe.");
+      setPanelState("fallback");
+      return;
+    }
+
+    // Name the language and the decode that was tried. Without these, "Sarvam returned an
+    // empty transcript" is the same sentence whether Saaras cannot serve this language at
+    // all or the doctor simply did not speak — and only one of those is worth reporting to
+    // an administrator. This is the client-side half of the per-language visibility work;
+    // the durable half is the language recorded in ai_usage_logs by the edge functions.
+    const detail = failures
+      .map((f) => {
+        const where = [f.langCode, f.mode].filter(Boolean).join(", ");
+        return `${engineLabel(f.engine)}${where ? ` (${where})` : ""}: ${f.message}`;
+      })
+      .join("\n");
+    // An engine that answered but heard nothing is a different problem from one that
+    // refused the request, and the doctor's next action differs — speak up, versus tell
+    // an administrator the key or the language is wrong.
+    const allEmpty = failures.every(f => f.message === "returned an empty transcript");
+
+    toast({
+      title: allEmpty ? "Nothing was transcribed" : "Transcription failed",
+      description: allEmpty
+        ? `${failures.map(f => engineLabel(f.engine)).join(" and ")} heard no speech in the recording.`
+        : failures[0].message.slice(0, 180),
+      variant: "destructive",
+    });
+    setFallbackReason(
+      allEmpty
+        ? `Every engine answered but returned no words:\n${detail}`
+        : `No engine could transcribe this dictation:\n${detail}`,
+    );
+    setPanelState("fallback");
+  }, [toast, setFallbackReason, setPanelState]);
 
   // Transcribe queued audio segments sequentially (recording order preserved), then
   // finalize once the user has stopped and every segment has been transcribed.
@@ -404,29 +691,29 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
     queueProcessingRef.current = true;
     while (segmentQueueRef.current.length > 0) {
       const blob = segmentQueueRef.current.shift()!;
-      try {
-        const { text, languageProbability } = await sendChunk(blob);
-        // Retain the audio IN MEMORY for the session. It powers the native-language
-        // transcript view and the low-confidence audio rescue, both of which would
-        // otherwise need the doctor to dictate again. Never persisted — this is PHI.
-        segmentBlobsRef.current.push(blob);
-        segmentSignalsRef.current.push({
-          languageProbability,
-          words: text.trim() ? text.trim().split(/\s+/).length : 0,
-          text: text.trim(),
-        });
-        if (text.trim()) {
-          chunkTranscriptsRef.current.push(text.trim());
-          // Segments overlap by ~200ms on purpose (gapless), so the seam is transcribed twice —
-          // stitch it instead of naively join(" ")-ing, which duplicated words every 25s and
-          // corrupted the transcript the structuring AI reads.
-          const combined = joinTranscriptChunks(chunkTranscriptsRef.current);
-          setRawTranscript(combined);
-          fullTranscriptRef.current = combined;
-        }
-      } catch (err) {
-        console.error("Segment transcription failed:", err);
-      }
+      // sendChunk walks the whole chain and returns null only when every engine declined,
+      // recording each one's reason. It does not throw for a provider failure.
+      const served = await sendChunk(blob);
+      if (!served) continue;
+
+      // Retain the audio IN MEMORY for the session. It powers the native-language
+      // transcript view and the low-confidence audio rescue, both of which would
+      // otherwise need the doctor to dictate again. Never persisted — this is PHI.
+      segmentBlobsRef.current.push(blob);
+      legsUsedRef.current.push(served.leg);
+      const text = served.text.trim();
+      segmentSignalsRef.current.push({
+        languageProbability: served.languageProbability,
+        words: text ? text.split(/\s+/).length : 0,
+        text,
+      });
+      chunkTranscriptsRef.current.push(text);
+      // Segments overlap by SEGMENT_OVERLAP_MS on purpose (gapless), so the seam is
+      // transcribed twice — stitch it instead of naively join(" ")-ing, which duplicated
+      // words every 25s and corrupted the transcript the structuring AI reads.
+      const combined = joinTranscriptChunks(chunkTranscriptsRef.current);
+      setRawTranscript(combined);
+      fullTranscriptRef.current = combined;
     }
     queueProcessingRef.current = false;
 
@@ -434,22 +721,18 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
       pendingFinalRef.current = false;
       streamRef.current?.getTracks().forEach(t => t.stop());
       streamRef.current = null;
+      audioChainRef.current?.dispose();
+      audioChainRef.current = null;
       const finalTranscript = joinTranscriptChunks(chunkTranscriptsRef.current);
       setRawTranscript(finalTranscript);
       fullTranscriptRef.current = finalTranscript;
       if (finalTranscript) {
         await processTranscript(finalTranscript);
       } else {
-        const engineName = activeEngineRef.current === "sarvam" ? "Sarvam" : activeEngineRef.current === "bhashini" ? "Bhashini" : null;
-        toast({
-          title: engineName ? "No transcript returned" : "No speech detected",
-          description: engineName ? `${engineName} couldn't transcribe the audio. Please try again.` : "Try speaking louder or closer to the mic.",
-          variant: "destructive",
-        });
-        setPanelState("ready");
+        reportTotalFailure();
       }
     }
-  }, [sendChunk, processTranscript, setRawTranscript, setPanelState, toast, segmentBlobsRef]);
+  }, [sendChunk, processTranscript, reportTotalFailure, setRawTranscript, segmentBlobsRef, audioChainRef]);
 
   // --- MediaRecorder flow (Sarvam/Bhashini) with OVERLAPPING segments (gapless) ---
   // Sarvam caps a request at 30s, so long dictation is split. To avoid dropping audio
@@ -457,8 +740,22 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
   // and each self-contained segment is queued for in-order transcription.
   const startMediaRecording = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia(
+        dictationAudioConstraints(selectedMicId),
+      );
       streamRef.current = stream;
+      // Condition the microphone before the recorder sees it: filters for stationary noise
+      // (fan, AC, hum) and a near-field gate for the conversation happening across the
+      // room. `stream` above is still the raw device — it is what gets stopped on teardown;
+      // `recordStream` is the conditioned one the recorder consumes. If Web Audio is
+      // unavailable the chain hands back the raw stream unchanged and recording proceeds.
+      audioChainRef.current?.dispose();
+      const chain = createDictationAudioChain(stream, {
+        cleanup: noiseCleanupEnabled,
+        gate: nearFieldGateEnabled,
+      });
+      audioChainRef.current = chain;
+      const recordStream = chain.stream;
       chunkTranscriptsRef.current = [];
       fullTranscriptRef.current = "";
       segmentQueueRef.current = [];
@@ -471,12 +768,17 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
       queueProcessingRef.current = false;
       pendingFinalRef.current = false;
       isStoppingRef.current = false;
-      activeEngineRef.current = activeEngine;
+      // Per-dictation failover state. Stale values here would mislabel the transcript's
+      // language or claim a translation that did not happen.
+      legsUsedRef.current = [];
+      legFailuresRef.current = [];
+      droppedSegmentsRef.current = 0;
+      detectedLangRef.current = null;
 
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
 
       const makeSegment = (): MediaRecorder => {
-        const rec = new MediaRecorder(stream, { mimeType });
+        const rec = new MediaRecorder(recordStream, { mimeType });
         const localChunks: Blob[] = [];
         rec.ondataavailable = (e) => { if (e.data.size > 0) localChunks.push(e.data); };
         rec.onstop = () => {
@@ -496,13 +798,20 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
 
       chunkTimerRef.current = setInterval(() => {
         if (isStoppingRef.current) return;
+        // Do not rotate while paused: the replacement recorder would start in the
+        // `recording` state and quietly resume capture the doctor deliberately stopped.
+        // The current segment simply runs longer, which the 30s cap tolerates because a
+        // paused recorder is not accumulating audio.
+        if (isPausedRef.current) return;
         const prev = mediaRecorderRef.current;
         if (!prev || prev.state !== "recording") return;
         const next = makeSegment();
         try { next.start(1000); } catch { return; }
         mediaRecorderRef.current = next;
-        // Keep `prev` running ~200ms past the new segment's start → guaranteed overlap, no gap.
-        setTimeout(() => { try { if (prev.state === "recording") prev.stop(); } catch { /* already stopped */ } }, 200);
+        // Keep `prev` running past the new segment's start → guaranteed overlap, no gap.
+        // Must exceed one spoken word (see SEGMENT_OVERLAP_MS), or a word landing on the
+        // boundary is a fragment in both segments and transcribed correctly in neither.
+        setTimeout(() => { try { if (prev.state === "recording") prev.stop(); } catch { /* already stopped */ } }, SEGMENT_OVERLAP_MS);
       }, SARVAM_CHUNK_SECONDS * 1000);
 
       setRecordingSeconds(0);
@@ -510,6 +819,8 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
 
       setCurrentSessionType(sessionType);
       setIsRecording(true);
+      isPausedRef.current = false;
+      setIsPaused(false);
       setIsPanelOpen(true);
       setPanelState("recording");
       setRawTranscript("");
@@ -517,7 +828,44 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
       console.error("Microphone access failed:", err);
       toast({ title: "Microphone access denied", variant: "destructive" });
     }
-  }, [sessionType, activeEngine, drainQueue, setIsRecording, setIsPanelOpen, setPanelState, setRawTranscript, setCurrentSessionType, toast, segmentBlobsRef, setNativeTranscript, setScribeSignals]);
+  }, [sessionType, drainQueue, setIsRecording, setIsPanelOpen, setPanelState, setRawTranscript, setCurrentSessionType, toast, segmentBlobsRef, setNativeTranscript, setScribeSignals, selectedMicId, noiseCleanupEnabled, nearFieldGateEnabled, setIsPaused, audioChainRef]);
+
+  /**
+   * Pause and resume mid-dictation.
+   *
+   * For the case the near-field gate cannot fully solve: an unrelated conversation starting
+   * in the room. A deliberate pause is the only 100%-reliable rejection there is, because it
+   * is a decision rather than an inference from signal level.
+   *
+   * MediaRecorder's own pause()/resume() is used rather than tearing the stream down, so the
+   * microphone permission indicator stays on, the AudioContext keeps its floor estimate, and
+   * the segment queue is untouched — the recorder simply emits no data while paused, and the
+   * resulting segment is shorter. Nothing downstream needs to know a pause happened.
+   */
+  const togglePause = useCallback(() => {
+    const rec = mediaRecorderRef.current;
+    if (!rec) return;
+    try {
+      if (rec.state === "recording") {
+        rec.pause();
+        isPausedRef.current = true;
+        setIsPaused(true);
+        // Stop the clock so the displayed duration reflects audio actually captured rather
+        // than wall time. The 25s rotation interval keeps running but no-ops while paused.
+        if (secondsTimerRef.current) { clearInterval(secondsTimerRef.current); secondsTimerRef.current = null; }
+      } else if (rec.state === "paused") {
+        rec.resume();
+        isPausedRef.current = false;
+        setIsPaused(false);
+        if (!secondsTimerRef.current) {
+          secondsTimerRef.current = setInterval(() => { setRecordingSeconds(s => s + 1); }, 1000);
+        }
+      }
+    } catch (err) {
+      // A browser that cannot pause must not lose the dictation over it.
+      console.warn("Pause/resume unavailable:", err);
+    }
+  }, [setIsPaused]);
 
   // --- Web Speech API flow (English) with automatic Sarvam fallback ---
   const startWebSpeechRecording = useCallback(async () => {
@@ -546,15 +894,28 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
     // transcribe via Sarvam (the browser recognizer can silently return empty).
     audioChunksRef.current = [];
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia(
+        dictationAudioConstraints(selectedMicId),
+      );
       streamRef.current = stream;
-      const rec = new MediaRecorder(stream, {
+      // Same conditioning as the Sarvam path. Web Speech itself consumes the RAW device
+      // stream (the browser recogniser is given the microphone, not a Web Audio graph), so
+      // this cleans up only the parallel recording that becomes the Sarvam fallback.
+      audioChainRef.current?.dispose();
+      const chain = createDictationAudioChain(stream, {
+        cleanup: noiseCleanupEnabled,
+        gate: nearFieldGateEnabled,
+      });
+      audioChainRef.current = chain;
+      const rec = new MediaRecorder(chain.stream, {
         mimeType: MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm",
       });
       rec.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
       rec.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
         streamRef.current = null;
+        audioChainRef.current?.dispose();
+        audioChainRef.current = null;
         // Web Speech already produced text → handled in recognition.onend.
         if (fullTranscriptRef.current.trim()) return;
         // Browser heard nothing → fall back to Sarvam on the recorded audio.
@@ -566,25 +927,27 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
         setPanelState("transcribing");
         const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
         audioChunksRef.current = [];
-        try {
-          const { text, languageProbability } = await sendChunkToSarvam(blob);
-          if (text.trim()) {
-            // The Sarvam fallback owns the whole recording, so its signal and audio
-            // replace anything the (silent) Web Speech attempt left behind.
-            segmentBlobsRef.current = [blob];
-            segmentSignalsRef.current = [{
-              languageProbability, words: text.trim().split(/\s+/).length, text: text.trim(),
-            }];
-            activeEngineRef.current = "sarvam";
-            setRawTranscript(text.trim());
-            await processTranscript(text.trim());
-            return;
-          }
-        } catch (err) {
-          console.error("Sarvam fallback failed:", err);
+        // Walk the remaining chain (Sarvam, then Bhashini) rather than Sarvam alone, so a
+        // browser that hears nothing AND a Sarvam outage still leaves a working path.
+        legsUsedRef.current = [];
+        legFailuresRef.current = [];
+        const served = await sendChunk(blob);
+        if (served?.text.trim()) {
+          // The server-side fallback owns the whole recording, so its signal and audio
+          // replace anything the (silent) Web Speech attempt left behind.
+          segmentBlobsRef.current = [blob];
+          segmentSignalsRef.current = [{
+            languageProbability: served.languageProbability,
+            words: served.text.trim().split(/\s+/).length,
+            text: served.text.trim(),
+          }];
+          legsUsedRef.current = [served.leg];
+          setRawTranscript(served.text.trim());
+          await processTranscript(served.text.trim());
+          return;
         }
-        toast({ title: "No speech detected", description: "Couldn't capture your dictation. Please try again.", variant: "destructive" });
-        setPanelState("ready");
+        // Same honest reporting as the media path — name what each engine said.
+        reportTotalFailure();
       };
       rec.start(1000);
       webSpeechRecorderRef.current = rec;
@@ -631,7 +994,7 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
     setIsRecording(true);
     setIsPanelOpen(true);
     setPanelState("recording");
-  }, [isWebSpeechSupported, selectedLanguage, sessionType, processTranscript, sendChunkToSarvam, setIsRecording, setIsPanelOpen, setPanelState, setRawTranscript, setCurrentSessionType, toast, segmentBlobsRef]);
+  }, [isWebSpeechSupported, selectedLanguage, sessionType, processTranscript, sendChunk, reportTotalFailure, setIsRecording, setIsPanelOpen, setPanelState, setRawTranscript, setCurrentSessionType, toast, segmentBlobsRef, selectedMicId, noiseCleanupEnabled, nearFieldGateEnabled, audioChainRef]);
 
   const startRecording = useCallback(() => {
     if (useSarvamOrBhashini) {
@@ -648,16 +1011,22 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
     if (useSarvamOrBhashini && mediaRecorderRef.current) {
       isStoppingRef.current = true;
       setPanelState("transcribing");
-      if (mediaRecorderRef.current.state === "recording") {
+      // "paused" as well as "recording": stopping a paused recorder still fires onstop with
+      // everything captured before the pause. Checking only for "recording" would leave a
+      // dictation the doctor paused and then ended stuck with no final segment queued, and
+      // the note would silently lose its last stretch of speech.
+      if (mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
       }
       mediaRecorderRef.current = null;
+      isPausedRef.current = false;
+      setIsPaused(false);
       setIsRecording(false);
     } else {
       recognitionRef.current?.stop();
       recognitionRef.current = null;
     }
-  }, [useSarvamOrBhashini, setIsRecording, setPanelState]);
+  }, [useSarvamOrBhashini, setIsRecording, setPanelState, setIsPaused]);
 
   if (!voiceScribeAllowed) return null; // AI master or voice-scribe feature disabled
   if (!isWebSpeechSupported && !useSarvamOrBhashini) return null;
@@ -727,13 +1096,44 @@ const VoiceDictationButton: React.FC<Props> = ({ sessionType, patientId, classNa
         </PopoverContent>
       </Popover>
 
+      {/*
+        Pause. Only for the recorded-audio path — the Web Speech recogniser has no
+        equivalent, and offering a button that silently does nothing on English dictation
+        would be worse than not offering one.
+
+        This is the reliable answer to a conversation starting nearby: the near-field gate
+        infers from signal level and can be wrong either way, whereas a pause is the
+        doctor's own decision and cannot be.
+      */}
+      {isRecording && useSarvamOrBhashini && (
+        <button
+          onClick={togglePause}
+          title={isPaused ? "Resume recording" : "Pause while someone else is talking"}
+          className={cn(
+            "rounded-full flex items-center justify-center transition-all active:scale-[0.90] h-14 w-14",
+            isPaused
+              ? "bg-amber-500 text-white hover:bg-amber-600 shadow-[0_0_24px_-4px_rgba(245,158,11,0.6)]"
+              : "border border-border bg-background text-foreground hover:bg-muted"
+          )}
+        >
+          {isPaused ? <Play className="h-6 w-6" /> : <Pause className="h-6 w-6" />}
+        </button>
+      )}
+
       {/* Mic button */}
       <button
         onClick={isRecording ? stopRecording : startRecording}
         className={cn(
           "rounded-full font-semibold flex items-center justify-center transition-all active:scale-[0.90]",
           isRecording
-            ? "bg-red-500 text-white hover:bg-red-600 animate-pulse h-14 w-auto px-5 gap-2 shadow-[0_0_24px_-2px_rgba(239,68,68,0.6)]"
+            ? cn(
+                "text-white h-14 w-auto px-5 gap-2",
+                // A paused dictation must not keep pulsing red — that reads as "still
+                // recording", which is exactly the thing the doctor just stopped.
+                isPaused
+                  ? "bg-slate-500 hover:bg-slate-600"
+                  : "bg-red-500 hover:bg-red-600 animate-pulse shadow-[0_0_24px_-2px_rgba(239,68,68,0.6)]"
+              )
             : "bg-gradient-to-br from-blue-500 via-indigo-500 to-cyan-400 text-white hover:from-blue-600 hover:via-indigo-600 hover:to-cyan-500 h-14 w-14 shadow-[0_0_28px_-4px_rgba(59,130,246,0.65)] hover:shadow-[0_0_36px_-2px_rgba(59,130,246,0.8)]"
         )}
       >

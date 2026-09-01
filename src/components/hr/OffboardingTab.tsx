@@ -172,24 +172,20 @@ const OffboardingTab: React.FC = () => {
       postedBy: postedBy || undefined,
     });
 
-    const { data: nextNum } = await supabase.rpc("get_next_journal_number", { p_hospital_id: hospitalId });
-    const { data: journal } = await (supabase as any).from("journal_entries").insert({
-      hospital_id: hospitalId,
-      journal_number: nextNum || `JV-${Date.now()}`,
-      entry_date: new Date().toISOString().split("T")[0],
-      description: `Full & Final Settlement — ${exit.staff_name}`,
-      total_debit: earnings, total_credit: earnings,
-      status: "posted", reference_type: "full_final_settlement", reference_id: exit.id, created_by: postedBy,
-    }).select("id").maybeSingle();
-
-    if (journal) {
-      const lines: any[] = [
-        { journal_id: journal.id, hospital_id: hospitalId, account_code: "5002", account_name: "Employee Full & Final", debit_amount: earnings, credit_amount: 0, description: `F&F earnings — ${exit.staff_name}` },
-        { journal_id: journal.id, hospital_id: hospitalId, account_code: "2103", account_name: "F&F Payable", debit_amount: 0, credit_amount: net, description: "Net F&F payable" },
-      ];
-      if (deductions > 0) lines.push({ journal_id: journal.id, hospital_id: hospitalId, account_code: "2104", account_name: "Employee Recoveries", debit_amount: 0, credit_amount: deductions, description: "Recoveries / deductions" });
-      await (supabase as any).from("journal_entry_lines").insert(lines);
-    }
+    // The autoPostJournalEntry() call above is the real posting path: it resolves accounts from
+    // the hospital's 'payroll_processed' auto_posting_rule, allocates entry_number via next_seq,
+    // and records a miss in accounting_posting_failures when no rule is configured.
+    //
+    // A second, manual posting used to follow here. It never worked — it wrote journal_number /
+    // status / reference_type / created_by (the columns are entry_number / entry_type /
+    // source_module / posted_by) and then inserted into "journal_entry_lines", which does not
+    // exist; the real table is journal_line_items. Every error was discarded, so the failure was
+    // invisible. Its account codes were invented too: 5002 is "Salaries - Nurses" and 2103/2104
+    // do not exist in the seeded chart of accounts, so had it ever run it would have booked the
+    // settlement against the wrong accounts.
+    //
+    // Removed rather than repaired: repairing it would double-post every full & final
+    // settlement, because autoPostJournalEntry() has already posted it.
   };
 
   const printStatement = async (exit: Exit, net: number) => {

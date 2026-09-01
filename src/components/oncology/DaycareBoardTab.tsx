@@ -219,7 +219,7 @@ const DaycareBoardTab: React.FC<DaycareBoardTabProps> = ({ showNewOrder, onClose
                 quantity: 1, unit_rate: 0, gst_percent: 0, gst_amount: 0, total_amount: 0,
                 billing_status: "unbilled",
                 notes: "Drug cost = 0. Configure chemo drug rates in service master.",
-              }).catch(() => {});
+              }).then(() => {}, () => {});
             } else {
               const billDate = new Date().toISOString().split("T")[0];
               const billNum = await generateBillNumber(hospitalId, "CHEMO");

@@ -7,22 +7,15 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertTriangle, Plus, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { hasAlert, alertReasons } from "@/lib/homeCareAlerts";
 
 interface Reading {
   id: string; patient_id: string; bp_systolic: number | null; bp_diastolic: number | null;
   pulse: number | null; blood_sugar: number | null; spo2: number | null; weight_kg: number | null;
-  reported_at: string; source: string; patient_name?: string;
+  reported_at: string; source: string; alert_sent?: boolean; patient_name?: string;
 }
 
 interface Plan { id: string; patient_id: string; patient_name?: string; }
-
-function hasAlert(r: Reading): boolean {
-  if (r.bp_systolic && r.bp_systolic > 160) return true;
-  if (r.bp_diastolic && r.bp_diastolic > 100) return true;
-  if (r.spo2 && r.spo2 < 92) return true;
-  if (r.blood_sugar && (r.blood_sugar > 250 || r.blood_sugar < 60)) return true;
-  return false;
-}
 
 const HomeTeleMonitoringTab: React.FC = () => {
   const { hospitalId } = useHospitalId();
@@ -49,10 +42,14 @@ const HomeTeleMonitoringTab: React.FC = () => {
         .select("id, patient_id, patients!home_care_plans_patient_id_fkey(full_name)")
         .eq("hospital_id", hospitalId).eq("status", "active").eq("is_deleted", false),
     ]);
+    const loadError = readRes.error || planRes.error;
+    if (loadError) {
+      toast({ title: "Could not load tele-monitoring data", description: loadError.message, variant: "destructive" });
+    }
     setReadings((readRes.data || []).map((r: any) => ({ ...r, patient_name: r.patients?.full_name })));
     setPlans((planRes.data || []).map((p: any) => ({ ...p, patient_name: p.patients?.full_name })));
     setLoading(false);
-  }, [hospitalId]);
+  }, [hospitalId, toast]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -66,20 +63,54 @@ const HomeTeleMonitoringTab: React.FC = () => {
       toast({ title: "Select an active care plan", variant: "destructive" }); return;
     }
     setSaving(true);
-    const { error } = await (supabase as any).from("home_tele_monitoring").insert({
-      hospital_id: hospitalId,
-      patient_id: form.patient_id,
-      plan_id: form.plan_id,
+
+    const vitals = {
       bp_systolic: form.bp_systolic ? Number(form.bp_systolic) : null,
       bp_diastolic: form.bp_diastolic ? Number(form.bp_diastolic) : null,
       pulse: form.pulse ? Number(form.pulse) : null,
       blood_sugar: form.blood_sugar ? Number(form.blood_sugar) : null,
       spo2: form.spo2 ? Number(form.spo2) : null,
+    };
+    // Escalate at the point of entry — a red row in a table nobody is watching
+    // is not an alert. alert_sent records that the escalation actually fired.
+    const breached = hasAlert(vitals);
+
+    const { error } = await (supabase as any).from("home_tele_monitoring").insert({
+      hospital_id: hospitalId,
+      patient_id: form.patient_id,
+      plan_id: form.plan_id,
+      ...vitals,
       weight_kg: form.weight_kg ? Number(form.weight_kg) : null,
       source: "nurse_entry",
+      alert_sent: breached,
     });
-    if (error) { toast({ title: "Save failed", description: error.message, variant: "destructive" }); }
-    else { toast({ title: "Reading logged ✓" }); setShowForm(false); setForm({ plan_id: "", patient_id: "", bp_systolic: "", bp_diastolic: "", pulse: "", blood_sugar: "", spo2: "", weight_kg: "" }); load(); }
+
+    if (error) {
+      toast({ title: "Save failed", description: error.message, variant: "destructive" });
+      setSaving(false);
+      return;
+    }
+
+    if (breached) {
+      const plan = plans.find(p => p.id === form.plan_id);
+      const reasons = alertReasons(vitals).join(", ");
+      // Reuses the existing clinical_alerts escalation path surfaced by the
+      // dashboard AlertsPanel — no second notification mechanism.
+      await supabase.from("clinical_alerts").insert({
+        hospital_id: hospitalId,
+        patient_id: form.patient_id,
+        alert_type: "home_care_tele_monitoring",
+        severity: "high",
+        alert_message: `Home care tele-monitoring breach — ${plan?.patient_name || "patient"}: ${reasons}`,
+      });
+      toast({ title: "Reading logged — alert raised", description: reasons, variant: "destructive" });
+    } else {
+      toast({ title: "Reading logged ✓" });
+    }
+
+    setShowForm(false);
+    setForm({ plan_id: "", patient_id: "", bp_systolic: "", bp_diastolic: "", pulse: "", blood_sugar: "", spo2: "", weight_kg: "" });
+    load();
     setSaving(false);
   };
 

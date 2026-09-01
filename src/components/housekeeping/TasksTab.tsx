@@ -205,6 +205,9 @@ const TaskCard: React.FC<{ task: any; onStart: (id: string) => void; onComplete:
         {task.triggered_by === "discharge" && (
           <Badge className="text-[9px] px-1.5 py-0 bg-teal-100 text-teal-800">DISCHARGE</Badge>
         )}
+        {task.triggered_by === "transfer" && (
+          <Badge className="text-[9px] px-1.5 py-0 bg-sky-100 text-sky-800">TRANSFER</Badge>
+        )}
       </div>
       <p className="text-xs font-semibold text-foreground">
         {task.wards?.name || "—"} {task.beds?.bed_number && `· Bed ${task.beds.bed_number}`}

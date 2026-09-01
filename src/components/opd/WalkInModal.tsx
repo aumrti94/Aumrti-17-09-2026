@@ -18,6 +18,20 @@ import { FormError } from "@/components/ui/FormError";
 import { sendWhatsApp } from "@/lib/whatsapp-send";
 import { recordServiceCharge } from "@/lib/serviceBilling";
 import { roundCurrency } from "@/lib/currency";
+import {
+  DEFAULT_CONSULTATION_FEE,
+  FALLBACK_RATE,
+  NO_EPISODE,
+  computeConsultationFee,
+  fetchRevisitRules,
+  findFeeEpisode,
+  resolveConsultationRate,
+  toDateKey,
+  type ChargedTier,
+  type ConsultationRate,
+  type FeeEpisode,
+  type RevisitRule,
+} from "@/lib/consultationFee";
 
 export interface AppointmentSlotContext {
   id: string;
@@ -81,8 +95,6 @@ const PAYMENT_MODES = [
   { value: "card", label: "💳 Card" },
 ];
 
-const DEFAULT_CONSULTATION_FEE = 500;
-
 const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultDeptId, mode = "walk_in", appointmentSlot, appointmentDoctorName, checkinAppointment }) => {
   const { toast } = useToast();
   const isAppointment = mode === "appointment";
@@ -112,7 +124,6 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
   const [deptId, setDeptId] = useState("");
   const [doctorId, setDoctorId] = useState("");
   const [priority, setPriority] = useState("normal");
-  const [nextToken, setNextToken] = useState("A-1");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [dpdpConsent, setDpdpConsent] = useState(false);
@@ -149,18 +160,16 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
   const [payerId, setPayerId] = useState<string | null>(null);
   const [payerMasters, setPayerMasters] = useState<{ id: string; payer_name: string; payer_type: string }[]>([]);
 
-  // Payment fields
+  // Payment fields.
+  // Everything about WHAT to charge now comes from @/lib/consultationFee — the same engine
+  // ConsultationWorkspace uses to post the final bill, so the desk and the ledger can no
+  // longer disagree. This component only holds the resolved result for display.
+  const [rate, setRate] = useState<ConsultationRate>(FALLBACK_RATE);
+  const [episode, setEpisode] = useState<FeeEpisode | null>(null);
+  const [revisitRules, setRevisitRules] = useState<{ enabled?: boolean; rules?: RevisitRule[] } | null>(null);
   const [consultationFee, setConsultationFee] = useState(DEFAULT_CONSULTATION_FEE);
-  const [baseFee, setBaseFee] = useState(DEFAULT_CONSULTATION_FEE);
-  // number = a configured follow-up fee (0 means a FREE follow-up within validity);
-  // null = no follow-up rate configured for this doctor/dept → charge the base fee.
-  // Keeping 0 and null distinct is what stops a free follow-up from silently billing
-  // the full consultation fee (the DB stores null for an empty field, 0 for a typed 0).
-  const [followUpFee, setFollowUpFee] = useState<number | null>(null);
-  const [followUpValidityDays, setFollowUpValidityDays] = useState(7);
-  const [isFollowUpRate, setIsFollowUpRate] = useState(false);
-  const [emergencyFee, setEmergencyFee] = useState(0);
-  const [isEmergencyRate, setIsEmergencyRate] = useState(false);
+  const [chargedTier, setChargedTier] = useState<ChargedTier>("new");
+  const [feeReason, setFeeReason] = useState("");
   const [paymentMode, setPaymentMode] = useState("cash");
   const [paymentRef, setPaymentRef] = useState("");
   const [receiptData, setReceiptData] = useState<{
@@ -219,9 +228,11 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
     setFoundPatient({ id: checkinAppointment.patient_id, full_name: checkinAppointment.patient_name, uhid: checkinAppointment.uhid, phone: checkinAppointment.phone });
     setDoctorId(checkinAppointment.doctor_id);
     if (checkinAppointment.department_id) setDeptId(checkinAppointment.department_id);
+    // The appointment's stored fee is only a seed for the first paint. The fee effect below
+    // re-prices against the doctor's CURRENT rate and the patient's episode, because an
+    // appointment booked weeks ago may now be inside or outside its validity window.
     if (checkinAppointment.consultation_fee != null) {
       setConsultationFee(checkinAppointment.consultation_fee);
-      setBaseFee(checkinAppointment.consultation_fee);
     }
     const purpose = (checkinAppointment.visit_purpose || "new") as typeof visitPurpose;
     setVisitPurpose(["new", "revisit", "follow_up", "review", "procedure"].includes(purpose) ? purpose : "new");
@@ -233,236 +244,101 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
   // Emergency visits get a separate "URG" token series; everything else uses "A".
   const tokenPrefix = visitType === "emergency" ? "URG" : "A";
 
-  // Token preview only — actual token generated at insert time. Numbered per prefix + doctor + day.
-  useEffect(() => {
-    const today = new Date().toISOString().split("T")[0];
-    const prefix = visitType === "emergency" ? "URG" : "A";
-    let query = supabase
-      .from("opd_tokens")
-      .select("token_number")
-      .eq("hospital_id", hospitalId)
-      .eq("visit_date", today)
-      .eq("token_prefix", prefix);
+  // ── Consultation fee ────────────────────────────────────────────────────────
+  // Two steps, both delegated to @/lib/consultationFee so the desk, the consultation
+  // workspace and the unit tests all price a visit identically.
+  //
+  //   1. resolveConsultationRate — doctor → department → global → default ladder.
+  //   2. findFeeEpisode + computeConsultationFee — apply the doctor's follow-up rate when
+  //      the patient is inside the validity window of their anchor consultation AND has
+  //      not used up the allowed number of follow-ups.
+  //
+  // For an appointment the price is evaluated as of the SLOT DATE, not today, so a booking
+  // made for next month is quoted at the price it will actually cost then.
+  const pricingDate = isAppointment && appointmentSlot ? appointmentSlot.slot_date : toDateKey();
 
-    if (doctorId) {
-      query = query.eq("doctor_id", doctorId);
-    } else {
-      query = query.is("doctor_id", null);
-    }
-
-    query
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .then(({ data }) => {
-        if (data && data.length > 0) {
-          const last = parseInt(data[0].token_number.split("-")[1] || "0");
-          setNextToken(`${prefix}-${last + 1}`);
-        } else {
-          setNextToken(`${prefix}-1`);
-        }
-      });
-  }, [hospitalId, doctorId, visitType]);
-
-  const [feeSource, setFeeSource] = useState<"doctor" | "dept" | "default" | "global">("default");
-
-  // Smart consultation fee lookup: doctor_id FK → department_id FK → global → fallback
-  useEffect(() => {
-    if (!hospitalId) return;
-    setIsFollowUpRate(false);
-    (async () => {
-      // 1. Doctor-specific rate (by doctor_id FK)
-      if (doctorId) {
-        const { data } = await (supabase as any)
-          .from("service_master")
-          .select("fee, follow_up_fee, validity_days, emergency_fee")
-          .eq("hospital_id", hospitalId)
-          .eq("doctor_id", doctorId)
-          .eq("item_type", "consultation")
-          .eq("is_active", true)
-          .limit(1);
-        if (data?.[0]?.fee) {
-          setConsultationFee(data[0].fee);
-          setBaseFee(data[0].fee);
-          setFollowUpFee(data[0].follow_up_fee ?? null);
-          setFollowUpValidityDays(data[0].validity_days || 7);
-          setEmergencyFee(data[0].emergency_fee || 0);
-          setFeeSource("doctor");
-          return;
-        }
-      }
-      // 2. Department-specific rate (by department_id FK, no doctor)
-      if (deptId) {
-        const { data } = await (supabase as any)
-          .from("service_master")
-          .select("fee, follow_up_fee, validity_days, emergency_fee")
-          .eq("hospital_id", hospitalId)
-          .eq("department_id", deptId)
-          .is("doctor_id", null)
-          .eq("item_type", "consultation")
-          .eq("is_active", true)
-          .limit(1);
-        if (data?.[0]?.fee) {
-          setConsultationFee(data[0].fee);
-          setBaseFee(data[0].fee);
-          setFollowUpFee(data[0].follow_up_fee ?? null);
-          setFollowUpValidityDays(data[0].validity_days || 7);
-          setEmergencyFee(data[0].emergency_fee || 0);
-          setFeeSource("dept");
-          return;
-        }
-      }
-      // 3. Global consultation rate (no doctor, no dept)
-      const { data } = await (supabase as any)
-        .from("service_master")
-        .select("fee, follow_up_fee, validity_days, emergency_fee")
-        .eq("hospital_id", hospitalId)
-        .eq("item_type", "consultation")
-        .is("doctor_id", null)
-        .is("department_id", null)
-        .eq("is_active", true)
-        .limit(1);
-      if (data?.[0]?.fee) {
-        setConsultationFee(data[0].fee);
-        setBaseFee(data[0].fee);
-        setFollowUpFee(data[0].follow_up_fee ?? null);
-        setFollowUpValidityDays(data[0].validity_days || 7);
-        setEmergencyFee(data[0].emergency_fee || 0);
-        setFeeSource("global");
-        return;
-      }
-      // 4. Hardcoded fallback
-      setConsultationFee(DEFAULT_CONSULTATION_FEE);
-      setBaseFee(DEFAULT_CONSULTATION_FEE);
-      setFollowUpFee(null);
-      setFollowUpValidityDays(7);
-      setEmergencyFee(0);
-      setFeeSource("default");
-    })();
-  }, [hospitalId, doctorId, deptId]);
-
-  // Detect a prior visit to this doctor (drives the revisit banner + auto follow-up rate).
-  // Includes "called" so a patient who was called in on a recent visit is still recognised.
-  useEffect(() => {
-    if (!foundPatient || !useExisting || !doctorId || !hospitalId) {
-      setRevisitSuggestion(null);
-      return;
-    }
-    (async () => {
-      const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().split("T")[0];
-      const today = new Date().toISOString().split("T")[0];
-      const { data } = await (supabase as any)
-        .from("opd_tokens")
-        .select("id, visit_date, doctor_id, users!doctor_id(full_name)")
-        .eq("patient_id", foundPatient.id)
-        .eq("doctor_id", doctorId)
-        .gte("visit_date", thirtyDaysAgo)
-        .lt("visit_date", today) // a prior visit, not the one being created today
-        .in("status", ["completed", "in_consultation", "called", "waiting"])
-        .order("visit_date", { ascending: false })
-        .limit(1);
-      if (data && data[0]) {
-        const t = data[0];
-        setRevisitSuggestion({ tokenId: t.id, date: t.visit_date, doctor: t.users?.full_name || "" });
-        // If the prior visit is inside the validity window, mark this as a follow-up so the
-        // visit type/purpose dropdowns and the fee reflect it.
-        const daysSince = Math.floor((Date.now() - new Date(t.visit_date).getTime()) / 86400000);
-        if (followUpFee !== null && daysSince <= followUpValidityDays) {
-          setVisitType("followup");
-          setVisitPurpose("follow_up");
-        }
-      } else {
-        setRevisitSuggestion(null);
-      }
-    })();
-  }, [foundPatient, useExisting, doctorId, hospitalId, followUpFee, followUpValidityDays]);
-
-  // Single source of truth for the consultation fee. Applies the doctor's follow-up rate
-  // for a follow-up visit (auto-detected within validity, OR manually marked) and otherwise
-  // applies any configured revisit-discount rules on top of the base fee.
   useEffect(() => {
     if (!hospitalId) return;
     let cancelled = false;
     (async () => {
-      // Emergency takes precedence over follow-up and revisit-discount pricing.
-      if (visitType === "emergency") {
-        if (!cancelled) {
-          setConsultationFee(emergencyFee > 0 ? emergencyFee : baseFee);
-          setIsEmergencyRate(true);
-          setIsFollowUpRate(false);
-          setRevisitDiscount(0);
-          setRevisitDiscountNote("");
-        }
-        return;
-      }
-      if (!cancelled) setIsEmergencyRate(false);
+      const resolved = await resolveConsultationRate({ hospitalId, doctorId, departmentId: deptId });
+      if (!cancelled) setRate(resolved);
+    })();
+    return () => { cancelled = true; };
+  }, [hospitalId, doctorId, deptId]);
 
-      const daysSince = revisitSuggestion
-        ? Math.floor((Date.now() - new Date(revisitSuggestion.date).getTime()) / 86400000)
-        : null;
-      const autoWithinValidity = daysSince !== null && daysSince <= followUpValidityDays;
-      const manualFollowUp =
-        visitType === "followup" || visitPurpose === "follow_up" || visitPurpose === "review";
-      // Follow-up rate applies when: a prior visit is within validity, OR the desk marked it a
-      // follow-up and there's no prior visit on record (validity can't be evaluated). A prior
-      // visit OUTSIDE the validity window is a fresh consultation (full fee), even if marked.
-      // followUpFee !== null (not "> 0") so a configured FREE follow-up (0) still
-      // qualifies and bills ₹0, instead of falling through to the full base fee.
-      const qualifiesFollowUp =
-        followUpFee !== null && (autoWithinValidity || (manualFollowUp && daysSince === null));
+  useEffect(() => {
+    if (!hospitalId) return;
+    let cancelled = false;
+    (async () => {
+      const rules = await fetchRevisitRules(hospitalId);
+      if (!cancelled) setRevisitRules(rules);
+    })();
+    return () => { cancelled = true; };
+  }, [hospitalId]);
 
-      if (qualifiesFollowUp) {
-        if (!cancelled) {
-          setConsultationFee(followUpFee ?? baseFee);
-          setIsFollowUpRate(true);
-          setRevisitDiscount(0);
-          setRevisitDiscountNote("");
-        }
-        return;
-      }
-
-      // Not a follow-up-fee case → start from base, then maybe apply revisit-discount rules.
-      if (!cancelled) {
-        setIsFollowUpRate(false);
-        setConsultationFee(baseFee);
-        setRevisitDiscount(0);
-        setRevisitDiscountNote("");
-      }
-
-      if (revisitSuggestion && ["revisit", "follow_up", "review"].includes(visitPurpose)) {
-        const { data } = await (supabase as any)
-          .from("hospital_settings")
-          .select("value")
-          .eq("hospital_id", hospitalId)
-          .eq("key", "opd_revisit_rules")
-          .maybeSingle();
-        if (cancelled || !data?.value?.enabled || !Array.isArray(data.value.rules)) return;
-        const ds = Math.floor((Date.now() - new Date(revisitSuggestion.date).getTime()) / 86400000);
-        for (const rule of data.value.rules as { within_days: number; same_doctor: boolean; discount_type: string; amount: number }[]) {
-          if (ds <= rule.within_days) {
-            let discounted = baseFee;
-            let note = "";
-            if (rule.discount_type === "free") {
-              discounted = 0;
-              note = `Revisit discount — free within ${rule.within_days} days`;
-            } else if (rule.discount_type === "percent") {
-              discounted = Math.round(baseFee * (1 - rule.amount / 100));
-              note = `Revisit discount — ${rule.amount}% off (within ${rule.within_days} days)`;
-            } else if (rule.discount_type === "fixed") {
-              discounted = Math.max(0, baseFee - rule.amount);
-              note = `Revisit discount — ₹${rule.amount} off (within ${rule.within_days} days)`;
-            }
-            if (!cancelled) {
-              setConsultationFee(discounted);
-              setRevisitDiscount(baseFee - discounted);
-              setRevisitDiscountNote(note);
-            }
-            return;
-          }
-        }
+  // Find the patient's current episode with this doctor. The lookback is driven by the
+  // doctor's own validity_days — the previous implementation hardcoded 30 days, which
+  // silently disabled any validity window longer than a month.
+  useEffect(() => {
+    const patientId = useExisting ? foundPatient?.id : null;
+    if (!hospitalId || !patientId || !doctorId) {
+      setEpisode(null);
+      setRevisitSuggestion(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const found = await findFeeEpisode({
+        hospitalId,
+        patientId,
+        doctorId,
+        validityDays: rate.followUpValidityDays,
+        followUpMaxVisits: rate.followUpMaxVisits,
+        asOfDate: pricingDate,
+      });
+      if (cancelled) return;
+      setEpisode(found);
+      setRevisitSuggestion(
+        found.anchorDate
+          ? { tokenId: found.anchorTokenId || "", date: found.anchorDate, doctor: found.anchorDoctorName || "" }
+          : null
+      );
+      // Reflect the detected episode in the visit-type controls so the form reads
+      // consistently with the price. Only auto-flip when the desk has not already chosen
+      // something more specific — an emergency stays an emergency.
+      //
+      // Functional updates, not `if (visitType === "new")`: this effect must not depend on
+      // visitType (it would re-run and re-flip every time the desk changed the dropdown),
+      // and a captured value would be stale by the time the query resolves. The updater
+      // always sees the current state.
+      if (found.anchorDate && found.withinValidity && !found.capReached) {
+        setVisitType((prev) => (prev === "new" ? "followup" : prev));
+        setVisitPurpose((prev) => (prev === "new" ? "follow_up" : prev));
       }
     })();
     return () => { cancelled = true; };
-  }, [revisitSuggestion, visitType, visitPurpose, followUpFee, followUpValidityDays, baseFee, emergencyFee, hospitalId]);
+  }, [
+    hospitalId, useExisting, foundPatient?.id, doctorId, pricingDate,
+    rate.followUpValidityDays, rate.followUpMaxVisits,
+  ]);
+
+  // Single source of truth for the displayed price. Pure computation — no I/O — so it can
+  // re-run on every form change without hammering the database.
+  useEffect(() => {
+    const result = computeConsultationFee({
+      rate,
+      episode: episode ?? NO_EPISODE,
+      visitType,
+      visitPurpose,
+      revisitRules,
+    });
+    setConsultationFee(result.fee);
+    setChargedTier(result.tier);
+    setFeeReason(result.reason);
+    setRevisitDiscount(result.revisitDiscount);
+    setRevisitDiscountNote(result.revisitDiscountNote);
+  }, [rate, episode, visitType, visitPurpose, revisitRules]);
 
   // Phone/name/UHID search
   const searchPatient = useCallback(async (val: string) => {
@@ -483,9 +359,16 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
 
   const debouncedPhone = useDebounce(phone, 300);
   useEffect(() => {
-    if (useExisting) return; // a patient is already selected — don't re-search / clobber foundPatient
+    // `isCheckin` is checked as well as `useExisting`, and that is not redundant.
+    // On mount both effects run in the SAME commit, so this one still sees the initial
+    // `useExisting === false` even though the check-in seeding effect above has already
+    // queued setUseExisting(true). It would then call searchPatient("") → which does
+    // setFoundPatient(null) → wiping the patient the seeding effect just set, leaving the
+    // payment screen and the printed receipt with a blank name. `isCheckin` is a prop, so
+    // it is correct on the very first render and closes that window.
+    if (useExisting || isCheckin) return;
     searchPatient(debouncedPhone);
-  }, [debouncedPhone, searchPatient, useExisting]);
+  }, [debouncedPhone, searchPatient, useExisting, isCheckin]);
 
   const filteredDoctors = deptId ? doctors.filter((d) => d.department_id === deptId) : doctors;
   const selectedDeptName = departments.find(d => d.id === deptId)?.name || "—";
@@ -799,12 +682,31 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
       // is unchanged, this only correctly decomposes it into taxable + GST
       // for the ledger/GST invoice when the consultation fee is configured
       // as GST-applicable.
-      const { data: consultSvc } = await supabase
-        .from("service_master")
-        .select("gst_percent, gst_applicable")
-        .eq("hospital_id", hospitalId)
-        .eq("item_type", "consultation")
-        .maybeSingle();
+      //
+      // Resolved with the SAME doctor → dept → global precedence as the fee itself, and with
+      // limit(1) rather than maybeSingle(): every doctor now owns a consultation row, so a
+      // bare item_type='consultation' maybeSingle() throws "multiple rows returned" and takes
+      // the whole payment down.
+      const gstBase = () =>
+        (supabase as any)
+          .from("service_master")
+          .select("gst_percent, gst_applicable")
+          .eq("hospital_id", hospitalId)
+          .eq("item_type", "consultation")
+          .eq("is_active", true);
+      let consultSvc: { gst_percent?: number | null; gst_applicable?: boolean | null } | null = null;
+      if (doctorId) {
+        const { data } = await gstBase().eq("doctor_id", doctorId).limit(1);
+        consultSvc = data?.[0] ?? null;
+      }
+      if (!consultSvc && deptId) {
+        const { data } = await gstBase().eq("department_id", deptId).is("doctor_id", null).limit(1);
+        consultSvc = data?.[0] ?? null;
+      }
+      if (!consultSvc) {
+        const { data } = await gstBase().is("doctor_id", null).is("department_id", null).limit(1);
+        consultSvc = data?.[0] ?? null;
+      }
       const gstPct = consultSvc?.gst_applicable ? (Number(consultSvc.gst_percent) || 0) : 0;
       const taxableFee = gstPct > 0 ? roundCurrency(fee / (1 + gstPct / 100)) : fee;
       const gstAmt = roundCurrency(fee - taxableFee);
@@ -843,7 +745,7 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
         bill_id: bill.id,
         description: discountNote ? `Consultation Fee (${discountNote})` : "Consultation Fee",
         item_type: "consultation",
-        unit_rate: revisitDiscount > 0 ? baseFee : fee,
+        unit_rate: revisitDiscount > 0 ? rate.fee : fee,
         quantity: 1,
         discount_amount: revisitDiscount > 0 ? revisitDiscount : undefined,
         taxable_amount: taxableFee,
@@ -858,7 +760,7 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
         hospitalId, patientId,
         serviceModule: "opd_walkin",
         serviceName: discountNote ? `Consultation Fee (${discountNote})` : "Consultation Fee",
-        unitRate: revisitDiscount > 0 ? baseFee : fee,
+        unitRate: revisitDiscount > 0 ? rate.fee : fee,
         gstPercent: gstPct, gstAmount: gstAmt,
         totalAmount: fee,
         billId: bill.id,
@@ -899,37 +801,37 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
         postedBy: userId || "",
       });
 
-      // Generate atomic token number via RPC (fallback to preview value)
-      let atomicToken = nextToken;
-      try {
-        const { data: rpcToken } = await (supabase as any).rpc("generate_token_number", {
-          p_hospital_id: hospitalId,
-          p_prefix: tokenPrefix,
-          p_doctor_id: doctorId || null,
-        });
-        if (rpcToken) atomicToken = rpcToken;
-      } catch { /* fallback to preview token */ }
-
-      // Insert token (link to the appointment when checking an appointment patient in)
-      const { error: tokenErr } = await (supabase as any).from("opd_tokens").insert({
+      // token_number is deliberately NOT sent. The BEFORE INSERT trigger added in
+      // 20261015000001_opd_token_sequence.sql allocates it inside this insert's transaction,
+      // serialised on the per-hospital/doctor/day sequence row.
+      //
+      // The old code called rpc('generate_token_number') here and treated the result as
+      // atomic — but that function had never been created, and supabase-js RESOLVES an
+      // unknown RPC instead of throwing, so the catch never fired and it silently fell back
+      // to a client-side "read last token, add one" preview whose initial state was the
+      // literal string "A-1". That is what produced two patients holding A-1.
+      const { data: tokenRow, error: tokenErr } = await (supabase as any).from("opd_tokens").insert({
         hospital_id: hospitalId,
         patient_id: patientId,
         doctor_id: doctorId || null,
         department_id: deptId || null,
-        token_number: atomicToken,
         token_prefix: tokenPrefix,
         visit_date: today,
         status: "waiting",
         priority,
         visit_type: visitType,
         visit_purpose: visitPurpose,
+        // Which rate actually billed — this is what findFeeEpisode counts to enforce the
+        // doctor's follow-up allowance on the patient's next visit.
+        charged_tier: chargedTier,
         revisit_of_token_id: revisitOfTokenId || null,
         is_mlc: isMlc,
         payer_type: payerType,
         payer_id: payerId || null,
         ...(isCheckin && checkinAppointment ? { appointment_id: checkinAppointment.id } : {}),
-      });
+      }).select("token_number").single();
       if (tokenErr) throw tokenErr;
+      const atomicToken = tokenRow?.token_number || "";
 
       // Check-in: mark the appointment as in-consultation so it leaves the actionable queue
       if (isCheckin && checkinAppointment) {
@@ -1278,7 +1180,7 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
                     {revisitDiscountNote && (
                       <p className="text-[11px] text-emerald-700 font-semibold mt-0.5">
                         🏷 {revisitDiscountNote} · Fee: ₹{consultationFee.toLocaleString("en-IN")}
-                        {revisitDiscount > 0 && <span className="line-through text-slate-400 ml-1 font-normal">₹{baseFee.toLocaleString("en-IN")}</span>}
+                        {revisitDiscount > 0 && <span className="line-through text-slate-400 ml-1 font-normal">₹{rate.fee.toLocaleString("en-IN")}</span>}
                       </p>
                     )}
                   </div>
@@ -1370,12 +1272,16 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
               </div>
             )}
 
-            {/* Token preview (walk-in only — appointments get a token at check-in) */}
+            {/* Walk-in only — appointments get a token at check-in.
+                No number is shown here on purpose. It is allocated by the database when the
+                payment is saved, so anything displayed beforehand would be a guess that goes
+                stale the moment another desk registers a patient for the same doctor. Showing
+                that guess is exactly what used to hand two patients the same "A-1". */}
             {!isAppointment && (
               <div className="mt-4 p-3 bg-slate-50 rounded-lg border border-slate-100 text-center">
-                <span className="text-xs text-slate-500">Token </span>
-                <span className="text-lg font-bold text-[#1A2F5A]">{nextToken}</span>
-                <span className="text-xs text-slate-500"> will be assigned</span>
+                <span className="text-xs text-slate-500">
+                  Token number is assigned on payment
+                </span>
               </div>
             )}
 
@@ -1425,7 +1331,7 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-slate-500">Token</span>
-                <span className="font-bold text-[#1A2F5A]">{nextToken}</span>
+                <span className="text-slate-400 text-xs italic self-center">assigned on payment</span>
               </div>
             </div>
 
@@ -1434,38 +1340,55 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
               <div className="flex items-center justify-between">
                 <label className="text-xs font-medium text-slate-600">Consultation Fee (₹)</label>
                 <span className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded",
-                  isEmergencyRate ? "bg-red-100 text-red-700" :
-                  isFollowUpRate ? "bg-violet-100 text-violet-700" :
-                  feeSource === "doctor" ? "bg-emerald-100 text-emerald-700" :
-                  feeSource === "dept" ? "bg-blue-100 text-blue-700" :
-                  feeSource === "global" ? "bg-slate-100 text-slate-600" :
+                  chargedTier === "emergency" ? "bg-red-100 text-red-700" :
+                  chargedTier === "follow_up" ? "bg-violet-100 text-violet-700" :
+                  rate.source === "doctor" ? "bg-emerald-100 text-emerald-700" :
+                  rate.source === "dept" ? "bg-blue-100 text-blue-700" :
+                  rate.source === "global" ? "bg-slate-100 text-slate-600" :
                   "bg-amber-100 text-amber-700"
                 )}>
-                  {isEmergencyRate
+                  {chargedTier === "emergency"
                     ? "Emergency rate"
-                    : isFollowUpRate
-                    ? `Follow-up rate (within ${followUpValidityDays}d)`
-                    : feeSource === "doctor" ? "Doctor rate"
-                    : feeSource === "dept" ? "Dept rate"
-                    : feeSource === "global" ? "Global rate"
+                    : chargedTier === "follow_up"
+                    ? `Follow-up rate (within ${rate.followUpValidityDays}d)`
+                    : rate.source === "doctor" ? "Doctor rate"
+                    : rate.source === "dept" ? "Dept rate"
+                    : rate.source === "global" ? "Global rate"
                     : "Default rate"}
                 </span>
               </div>
               <div className={cn(
                 "w-full h-12 px-4 border rounded-lg text-lg font-bold mt-1 flex items-center select-none",
-                isEmergencyRate
+                chargedTier === "emergency"
                   ? "bg-red-50 border-red-200 text-red-800"
-                  : isFollowUpRate
+                  : chargedTier === "follow_up"
                   ? "bg-violet-50 border-violet-200 text-violet-800"
                   : "bg-slate-50 border-slate-200 text-slate-800"
               )}>
                 ₹{consultationFee.toLocaleString("en-IN")}
-                {(isFollowUpRate || isEmergencyRate) && baseFee !== consultationFee && (
+                {rate.fee !== consultationFee && (
                   <span className="ml-2 text-sm font-normal line-through text-slate-400">
-                    ₹{baseFee.toLocaleString("en-IN")}
+                    ₹{rate.fee.toLocaleString("en-IN")}
                   </span>
                 )}
               </div>
+              {/* Why this amount. A desk expecting the cheaper follow-up rate needs to see
+                  whether the allowance ran out or the validity window expired. */}
+              {feeReason && (
+                <p className="text-[11px] text-slate-500 mt-1.5 leading-snug">{feeReason}</p>
+              )}
+              {/* The ₹500 fallback used to be applied silently behind a small badge, which is
+                  how a doctor with no configured rate looked like a working "global price". */}
+              {rate.source === "default" && (
+                <div className="mt-2 flex items-start gap-1.5 rounded-md bg-amber-50 border border-amber-200 px-2.5 py-2">
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-600 mt-px flex-shrink-0" />
+                  <p className="text-[11px] text-amber-800 leading-snug">
+                    No consultation fee is configured for this doctor, department, or hospital —
+                    charging the ₹{DEFAULT_CONSULTATION_FEE} default. Set it in
+                    Settings → Doctors &amp; Staff.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Payment Mode */}

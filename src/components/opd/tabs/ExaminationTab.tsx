@@ -98,7 +98,7 @@ const ExaminationTab: React.FC<Props> = ({ encounter, onChange, encounterId, hos
         hospitalId={hospitalId ?? null}
         patientId={patientId ?? null}
         userId={userId ?? null}
-        onPrimaryChange={(diagnosis, icd10_code) => onChange({ diagnosis, icd10_code })}
+        onPrimaryChange={(diagnosis, icd10_code, icd11_code) => onChange({ diagnosis, icd10_code, icd11_code })}
         seedDiagnosis={seedDiagnosis ?? null}
       />
     </div>

@@ -1,12 +1,17 @@
 import React, { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
-import { X, Check, Copy, RefreshCw, Loader2, AlertTriangle, Globe, Wand2, ShieldAlert } from "lucide-react";
+import { X, Check, Copy, RefreshCw, Loader2, AlertTriangle, Globe, Wand2, ShieldAlert, Mic } from "lucide-react";
 import { SUPPORTED_LANGUAGES } from "@/lib/voiceScribeLanguages";
 import { useVoiceScribe } from "@/hooks/useVoiceScribe";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { unwrapFunctionError } from "@/lib/invokeError";
 import { useAIAudit } from "@/hooks/useAIAudit";
+import { useVoiceScribeLanguages } from "@/hooks/useVoiceScribeLanguages";
+import { resolveNoteLanguage } from "@/lib/asrEngineChain";
+import {
+  listMicrophones, type MicrophoneOption, type DictationAudioLevels,
+} from "@/lib/dictationAudioChain";
 import {
   computeScribeConfidence, populatedSections, toPercent,
   LOW_CONFIDENCE_THRESHOLD, type ScribeSection,
@@ -28,9 +33,14 @@ const VoiceScribePanel: React.FC = () => {
     currentSessionType, currentPatientId, applyToCurrentScreen, resetSession,
     selectedLanguage, fallbackReason, setFallbackReason, getExistingDataForCurrentScreen,
     scribeSignals, nativeTranscript, setNativeTranscript, segmentBlobsRef, rescueState,
+    selectedMicId, setSelectedMicId,
+    noiseCleanupEnabled, setNoiseCleanupEnabled,
+    nearFieldGateEnabled, setNearFieldGateEnabled,
+    isPaused, audioChainRef,
   } = useVoiceScribe();
   const { toast } = useToast();
   const { logAudit } = useAIAudit();
+  const { hospitalDefaultLang } = useVoiceScribeLanguages();
 
   // Editable local state from structured output
   const [editableData, setEditableData] = useState<Record<string, unknown>>({});
@@ -39,6 +49,33 @@ const VoiceScribePanel: React.FC = () => {
   // Which version of the dictation the transcript box is showing.
   const [transcriptView, setTranscriptView] = useState<"english" | "native">("english");
   const [loadingNative, setLoadingNative] = useState(false);
+  const [microphones, setMicrophones] = useState<MicrophoneOption[]>([]);
+  const [levels, setLevels] = useState<DictationAudioLevels | null>(null);
+
+  // Device labels stay blank until the browser has granted mic permission once, so this
+  // re-runs when the panel opens rather than only at mount — after any dictation the list
+  // comes back properly named instead of "Microphone 1, Microphone 2".
+  useEffect(() => {
+    if (!isPanelOpen) return;
+    let alive = true;
+    listMicrophones().then((mics) => { if (alive) setMicrophones(mics); });
+    return () => { alive = false; };
+  }, [isPanelOpen, panelState]);
+
+  /**
+   * Poll the live input level while recording.
+   *
+   * 10Hz, and only while the recording view is on screen. The chain samples internally at
+   * 20Hz for the gate; the meter does not need that, and re-rendering the panel 20 times a
+   * second during a consultation would cost more than the meter is worth.
+   */
+  useEffect(() => {
+    if (panelState !== "recording") { setLevels(null); return; }
+    const id = setInterval(() => {
+      setLevels(audioChainRef.current?.getLevels() ?? null);
+    }, 100);
+    return () => clearInterval(id);
+  }, [panelState, audioChainRef]);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -83,6 +120,13 @@ const VoiceScribePanel: React.FC = () => {
   const repairs = scribeSignals?.repairs ?? [];
   const safetyFlags = (scribeSignals?.safetyCheck?.flags ?? []) as Record<string, unknown>[];
 
+  // Only worth showing when it adds information: under an explicit language the doctor
+  // already knows, so this is for "Auto" and for a detection that contradicts the selection.
+  const detected = scribeSignals?.detectedLanguage ?? null;
+  const heardLabel = detected && detected !== selectedLanguage
+    ? (SUPPORTED_LANGUAGES.find(l => l.code === detected)?.label ?? detected)
+    : null;
+
   // The engine returned English directly, so the original-language audio can still be
   // re-transcribed on demand. Only worth offering when we actually kept the audio.
   const canShowNative = Boolean(
@@ -114,12 +158,14 @@ const VoiceScribePanel: React.FC = () => {
         const { data, error } = await supabase.functions.invoke("sarvam-transcribe", {
           body: {
             audio_base64: base64,
-            language_code: selectedLanguage,
+            // Prefer what was actually detected: under "Auto" the selection is not a language,
+            // and re-transcribing with a known language beats asking for auto-detect twice.
+            language_code: detected ?? selectedLanguage,
             model: "saaras:v3",
-            mode: "transcribe",   // native script, as opposed to the default translate
+            mode: "transcribe",   // native script — the point of this view
           },
         });
-        if (error || data?.error) throw new Error(data?.error || error?.message);
+        if (error || data?.error) throw new Error(await unwrapFunctionError(error, data));
         if (data.transcript?.trim()) parts.push(data.transcript.trim());
       }
       setNativeTranscript(parts.join(" "));
@@ -263,8 +309,17 @@ Handover: ${editableData.handover_note || ""}`;
     setFallbackReason("");
     setPanelState("processing");
     try {
+      // Never forward the literal "auto" — it is not a language. The main structuring path
+      // resolves it (VoiceDictationButton), but this retry sent `selectedLanguage` raw, so
+      // retrying an "Auto (Multilingual)" dictation asked the edge function to translate
+      // FROM a language called "auto". Same helper, same result, one code path.
+      const noteLanguage = resolveNoteLanguage({
+        selected: selectedLanguage,
+        detected,
+        hospitalDefault: hospitalDefaultLang,
+      });
       const { data, error } = await supabase.functions.invoke("ai-clinical-voice", {
-        body: { transcript: rawTranscript, context_type: currentSessionType, language_code: selectedLanguage, existing_data: getExistingDataForCurrentScreen() ?? undefined, patient_id: currentPatientId ?? undefined },
+        body: { transcript: rawTranscript, context_type: currentSessionType, language_code: noteLanguage, existing_data: getExistingDataForCurrentScreen() ?? undefined, patient_id: currentPatientId ?? undefined },
       });
       if (error || data?.error) throw new Error(await unwrapFunctionError(error, data));
       setStructuredOutput(data.structured);
@@ -323,6 +378,22 @@ Handover: ${editableData.handover_note || ""}`;
               {currentLangOption.flag} {currentLangOption.label}
             </span>
           )}
+          {/* What the engine actually HEARD, not what was selected. Under "Auto" these differ,
+              and a misdetection produces fluent nonsense rather than a visible error — so the
+              doctor gets told which language the note was transcribed from. Also shown when
+              failover changed the engine mid-dictation. */}
+          {panelState === "output" && heardLabel && (
+            <span
+              className="text-[10px] text-white bg-white/20 rounded-full px-2 py-0.5"
+              title={
+                scribeSignals?.enginesUsed && scribeSignals.enginesUsed.length > 0
+                  ? `Transcribed by ${scribeSignals.enginesUsed.join(" + ")}`
+                  : undefined
+              }
+            >
+              heard {heardLabel}
+            </span>
+          )}
           {panelState === "output" && confidencePercent !== null && (
             <span className="text-[11px] text-white bg-white/20 rounded-full px-2 py-0.5">
               {confidencePercent}%
@@ -334,16 +405,38 @@ Handover: ${editableData.handover_note || ""}`;
         </div>
       </div>
 
+      {/* READY STATE — audio input setup, before a word is spoken */}
+      {panelState === "ready" && (
+        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+          <AudioInputSettings
+            microphones={microphones}
+            selectedMicId={selectedMicId}
+            setSelectedMicId={setSelectedMicId}
+            noiseCleanupEnabled={noiseCleanupEnabled}
+            setNoiseCleanupEnabled={setNoiseCleanupEnabled}
+            nearFieldGateEnabled={nearFieldGateEnabled}
+            setNearFieldGateEnabled={setNearFieldGateEnabled}
+          />
+        </div>
+      )}
+
       {/* RECORDING STATE — Sarvam batch info */}
       {panelState === "recording" && isSarvam && (
-        <div className="flex-1 flex flex-col items-center justify-center py-12">
+        <div className="flex-1 flex flex-col items-center justify-center py-12 px-4">
           <div className="flex gap-1 mb-4">
-            <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-            <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse [animation-delay:150ms]" />
-            <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse [animation-delay:300ms]" />
+            <span className={cn("w-2 h-2 rounded-full", isPaused ? "bg-slate-300" : "bg-red-500 animate-pulse")} />
+            <span className={cn("w-2 h-2 rounded-full", isPaused ? "bg-slate-300" : "bg-red-500 animate-pulse [animation-delay:150ms]")} />
+            <span className={cn("w-2 h-2 rounded-full", isPaused ? "bg-slate-300" : "bg-red-500 animate-pulse [animation-delay:300ms]")} />
           </div>
-          <p className="text-sm text-muted-foreground font-medium">Recording in {currentLangOption?.label}…</p>
-          <p className="text-xs text-muted-foreground/60 mt-1.5">Transcript will appear after you stop recording</p>
+          <p className="text-sm text-muted-foreground font-medium">
+            {isPaused ? "Paused — audio is not being captured" : `Recording in ${currentLangOption?.label}…`}
+          </p>
+          <p className="text-xs text-muted-foreground/60 mt-1.5">
+            {isPaused
+              ? "Resume from the mic button when you are ready to continue."
+              : "Transcript will appear after you stop recording"}
+          </p>
+          <LevelMeter levels={levels} paused={isPaused} gateOn={nearFieldGateEnabled} />
         </div>
       )}
 
@@ -375,6 +468,27 @@ Handover: ${editableData.handover_note || ""}`;
               <div>
                 <p className="text-xs font-medium text-amber-800">No clinical details could be extracted from this conversation</p>
                 <p className="text-[10px] text-amber-600 mt-0.5">Review the full transcript below, edit the fields manually, or re-record.</p>
+              </div>
+            </div>
+          )}
+
+          {/* Dropped-segment notice. These are GAPS: speech that no engine could transcribe and
+              that therefore never reached the structuring model. It used to be counted as a
+              successful segment and discarded, so a note could be missing 25 s of dictation
+              with nothing on screen to say so — the doctor would have signed off on a note that
+              silently omitted what they said. */}
+          {(scribeSignals?.droppedSegments ?? 0) > 0 && (
+            <div className="mx-3 mt-3 bg-red-50 border border-red-200 rounded-lg p-2 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-red-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-medium text-red-800">
+                  {scribeSignals!.droppedSegments} audio segment
+                  {scribeSignals!.droppedSegments === 1 ? "" : "s"} could not be transcribed
+                </p>
+                <p className="text-[10px] text-red-600 mt-0.5">
+                  Part of this dictation is MISSING from the note. Check the transcript against
+                  what you said before applying, or re-record.
+                </p>
               </div>
             </div>
           )}
@@ -846,6 +960,136 @@ Handover: ${editableData.handover_note || ""}`;
           </div>
         </>
       )}
+    </div>
+  );
+};
+
+/**
+ * Microphone choice and the two conditioning toggles.
+ *
+ * The microphone selector is deliberately first and explained in plain language, because it
+ * is the control that actually solves the problem doctors report. Automatic processing can
+ * only attenuate a nearby conversation; moving the microphone closer to the speaker you
+ * WANT is what removes it, and no amount of in-browser signal processing substitutes for
+ * a headset at 5cm.
+ */
+const AudioInputSettings: React.FC<{
+  microphones: MicrophoneOption[];
+  selectedMicId: string | null;
+  setSelectedMicId: (v: string | null) => void;
+  noiseCleanupEnabled: boolean;
+  setNoiseCleanupEnabled: (v: boolean) => void;
+  nearFieldGateEnabled: boolean;
+  setNearFieldGateEnabled: (v: boolean) => void;
+}> = ({
+  microphones, selectedMicId, setSelectedMicId,
+  noiseCleanupEnabled, setNoiseCleanupEnabled,
+  nearFieldGateEnabled, setNearFieldGateEnabled,
+}) => (
+  <div className="border border-slate-200 rounded-lg p-3 space-y-3">
+    <div className="flex items-center gap-1.5">
+      <Mic className="h-3.5 w-3.5 text-slate-500" />
+      <p className="text-xs font-medium text-slate-700">Microphone &amp; noise</p>
+    </div>
+
+    <div>
+      <select
+        value={selectedMicId ?? ""}
+        onChange={(e) => setSelectedMicId(e.target.value || null)}
+        className="w-full h-8 border border-slate-200 rounded-md px-2 text-[12px] bg-white outline-none"
+      >
+        <option value="">System default microphone</option>
+        {microphones.map((m) => (
+          <option key={m.deviceId} value={m.deviceId}>{m.label}</option>
+        ))}
+      </select>
+      <p className="text-[10px] text-slate-500 mt-1 leading-snug">
+        A headset or collar mic worn close to your mouth is the single most effective way to
+        keep other people&apos;s conversations out of the note.
+      </p>
+    </div>
+
+    <label className="flex items-start gap-2 cursor-pointer">
+      <input
+        type="checkbox"
+        checked={noiseCleanupEnabled}
+        onChange={(e) => setNoiseCleanupEnabled(e.target.checked)}
+        className="mt-0.5"
+      />
+      <span className="text-[11px] text-slate-600 leading-snug">
+        <span className="font-medium text-slate-700">Reduce background noise</span>
+        <br />Filters steady sounds — fans, AC, hum. Does not affect speech.
+      </span>
+    </label>
+
+    <label className="flex items-start gap-2 cursor-pointer">
+      <input
+        type="checkbox"
+        checked={nearFieldGateEnabled}
+        onChange={(e) => setNearFieldGateEnabled(e.target.checked)}
+        className="mt-0.5"
+      />
+      <span className="text-[11px] text-slate-600 leading-snug">
+        <span className="font-medium text-slate-700">Ignore distant voices</span>
+        <br />Quietens speech coming from across the room. Your patient in front of the mic is
+        still recorded — turn this off if soft replies are being missed.
+      </span>
+    </label>
+  </div>
+);
+
+/**
+ * Live input level against the measured background floor.
+ *
+ * Exists so a bad setup is visible in the first five seconds rather than after a whole
+ * consultation has failed to transcribe. The floor marker is the useful half: a level bar
+ * that never rises far above it means the microphone is too far away or the room is too
+ * loud, which is a fixable problem — but only if someone can see it.
+ */
+const LevelMeter: React.FC<{
+  levels: DictationAudioLevels | null;
+  paused: boolean;
+  gateOn: boolean;
+}> = ({ levels, paused, gateOn }) => {
+  if (!levels) return null;
+
+  // RMS is tiny in linear terms; a dB scale is what makes speech visible on a bar.
+  const toPct = (v: number) => {
+    if (v <= 0) return 0;
+    const db = 20 * Math.log10(v);
+    return Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
+  };
+  const levelPct = toPct(levels.level);
+  const floorPct = toPct(levels.floor);
+  const tooQuiet = levels.ready && !paused && levelPct < floorPct + 8;
+
+  return (
+    <div className="w-full max-w-[240px] mt-6">
+      <div className="relative h-2 bg-slate-100 rounded-full overflow-hidden">
+        <div
+          className={cn(
+            "h-full rounded-full transition-[width] duration-100",
+            paused ? "bg-slate-300" : levels.gateOpen ? "bg-emerald-500" : "bg-slate-300",
+          )}
+          style={{ width: `${levelPct}%` }}
+        />
+        {levels.ready && (
+          <div
+            className="absolute top-0 h-full w-px bg-slate-400"
+            style={{ left: `${floorPct}%` }}
+            title="Background noise level"
+          />
+        )}
+      </div>
+      <p className="text-[10px] text-slate-400 mt-1.5 text-center leading-snug">
+        {paused
+          ? "Paused"
+          : tooQuiet
+            ? "Barely above the room noise — move closer to the mic or speak up."
+            : gateOn && !levels.gateOpen
+              ? "Listening — distant sound is being quietened"
+              : "Input level (marker shows background noise)"}
+      </p>
     </div>
   );
 };

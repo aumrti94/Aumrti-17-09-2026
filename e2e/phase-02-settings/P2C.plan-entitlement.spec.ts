@@ -302,13 +302,25 @@ test.describe('P2C — Plan & Billing', () => {
     await page.goto(PLAN, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(2000);
 
-    const body = (await page.locator('body').innerText()).toLowerCase();
+    // Scoped to the current-plan card on purpose. The screen also renders an "Available Plans"
+    // section listing every plan the tenant is NOT on, so a whole-body search matches
+    // "Professional" on a correctly-configured Starter tenant and reports a cross-tenant leak
+    // that isn't there. The subscription query is hospital-scoped; TC-P2C-019 covers the DB side.
+    const current = page.getByTestId('current-plan');
+    await expect(current, 'No current-plan element rendered — the case cannot tell which plan is in force').toBeVisible();
+    const shown = (await current.innerText()).toLowerCase();
+
     expect(
-      body.includes(MOCK.hospitals.A.plan),
+      shown.includes(MOCK.hospitals.A.plan),
       `Hospital B's plan screen shows "${MOCK.hospitals.A.plan}" — Hospital A's plan. The plan ` +
       `decides which modules exist, so reading the wrong subscription row grants or denies ` +
       `modules according to another hospital's contract.`,
     ).toBeFalsy();
+
+    expect(
+      shown.includes(MOCK.hospitals.B.plan),
+      `Hospital B's current plan reads "${shown}", not its own "${MOCK.hospitals.B.plan}".`,
+    ).toBeTruthy();
   });
 
   test("TC-P2C-019 Hospital A's subscription and invoices are invisible to Hospital B", async () => {

@@ -19,6 +19,7 @@ export interface BrandConfig {
     footerLeft: string;
     footerCenter: string;
     footerRight: string;
+    handwriting?: Partial<HandwritingConfig>;
   } | null;
 }
 
@@ -33,6 +34,96 @@ function esc(str: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+// ─── Handwriting print mode ───────────────────────────────────────────────────
+// Arogyasri / TPA claim files are routinely returned when the clinical narrative
+// looks machine-set, so the doctor-authored free text (ward rounds, nursing notes,
+// drug orders) can be rendered in a script face on the printout. Only the typeface
+// changes — the author name, timestamp and text are the same record shown on screen.
+
+export type HandwritingSection = "wardRounds" | "nursingNotes" | "medications" | "dischargeSummary";
+
+export interface HandwritingConfig {
+  enabled: boolean;
+  /** Must be one of HANDWRITING_FONTS — anything else falls back to the default. */
+  font: string;
+  /** Multiplier on the base print font size. Script faces run small, so > 1 is normal. */
+  scale: number;
+  /** Ink colour, #rgb or #rrggbb. */
+  color: string;
+  /** Forward slant in degrees, 0–12. */
+  slant: number;
+  sections: Record<HandwritingSection, boolean>;
+}
+
+export const HANDWRITING_FONTS = [
+  "Caveat",
+  "Kalam",
+  "Patrick Hand",
+  "Indie Flower",
+  "Shadows Into Light",
+  "Architects Daughter",
+  "Gloria Hallelujah",
+  "Reenie Beanie",
+] as const;
+
+export const HANDWRITING_SECTION_LABELS: Record<HandwritingSection, string> = {
+  wardRounds: "Ward round notes (S/O/A/P)",
+  nursingNotes: "Nursing & misc notes",
+  medications: "Medication orders",
+  dischargeSummary: "Discharge summary narrative",
+};
+
+export const DEFAULT_HANDWRITING: HandwritingConfig = {
+  enabled: false,
+  font: "Caveat",
+  scale: 1.3,
+  color: "#1e3a8a",
+  slant: 0,
+  sections: { wardRounds: true, nursingNotes: true, medications: true, dischargeSummary: false },
+};
+
+/** Merge the saved config over the defaults and clamp every field to a safe value. */
+export function resolveHandwriting(brand?: BrandConfig | null): HandwritingConfig {
+  const raw = (brand === undefined ? _brandCache : brand)?.branding_config?.handwriting;
+  if (!raw) return DEFAULT_HANDWRITING;
+  const font = HANDWRITING_FONTS.includes(raw.font as any) ? raw.font! : DEFAULT_HANDWRITING.font;
+  const color = /^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(raw.color || "") ? raw.color! : DEFAULT_HANDWRITING.color;
+  const scale = Math.min(2, Math.max(0.8, Number(raw.scale) || DEFAULT_HANDWRITING.scale));
+  const slant = Math.min(12, Math.max(0, Number(raw.slant) || 0));
+  return {
+    enabled: !!raw.enabled,
+    font,
+    color,
+    scale,
+    slant,
+    sections: { ...DEFAULT_HANDWRITING.sections, ...(raw.sections || {}) },
+  };
+}
+
+/**
+ * Render one piece of clinician-authored text for a printout, in the handwriting
+ * face when that section is switched on. Escapes the text and keeps line breaks —
+ * safe to use anywhere the raw DB value was previously interpolated.
+ */
+export function hw(
+  section: HandwritingSection,
+  text: string | number | null | undefined,
+  fallback = "—",
+): string {
+  const raw = text === null || text === undefined ? "" : String(text).trim();
+  if (!raw) return fallback;
+  const safe = esc(raw).replace(/\r?\n/g, "<br/>");
+  const cfg = resolveHandwriting();
+  if (!cfg.enabled || !cfg.sections[section]) return safe;
+  return `<span class="hw">${safe}</span>`;
+}
+
+/** Google Fonts URL for the given families — shared by the print window and the settings preview. */
+export function fontsHref(families: string[]): string {
+  const q = families.map((f) => `family=${f.trim().replace(/\s+/g, "+")}`).join("&");
+  return `https://fonts.googleapis.com/css2?${q}&display=swap`;
 }
 
 // ─── Header layout renderers ──────────────────────────────────────────────────
@@ -201,10 +292,20 @@ export function printDocument(
   const color = brand?.primary_color ?? "#1A2F5A";
   const footerHtml = buildPrintFooter(brand);
 
+  // UI fonts, plus the script face only when handwriting mode is actually on.
+  const handwriting = resolveHandwriting(brand);
+  const families = ["Inter", "Poppins", "Roboto", "Noto Sans", "Open Sans", "Lato", "Nunito", "Raleway"];
+  if (handwriting.enabled) families.push(handwriting.font);
+  const hwSize = Math.round(fontSize * handwriting.scale);
+  const hwCss = `.hw { font-family: '${handwriting.font}', 'Segoe Script', cursive; font-size: ${hwSize}px;
+         line-height: 1.45; letter-spacing: .2px; color: ${handwriting.color};${
+    handwriting.slant ? ` display: inline-block; transform: skewX(-${handwriting.slant}deg);` : ""
+  } }`;
+
   const html = `<!DOCTYPE html>
 <html><head><title>${esc(title)}</title>
+<link id="print-fonts" rel="stylesheet" href="${fontsHref(families)}" />
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter&family=Poppins&family=Roboto&family=Noto+Sans&family=Open+Sans&family=Lato&family=Nunito&family=Raleway&display=swap');
   body { font-family: ${fontFamily}; padding: 24px; margin: 0; font-size: ${fontSize}px; color: #1e293b; }
   table { width: 100%; border-collapse: collapse; margin: 8px 0; }
   th { background: #f1f5f9; padding: 5px 8px; text-align: left; font-size: 11px;
@@ -220,6 +321,8 @@ export function printDocument(
   .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px;
            font-weight: 600; background: #f1f5f9; color: #475569; }
   pre { white-space: pre-wrap; font-family: inherit; }
+  ${hwCss}
+  td .hw, .hw { max-width: 100%; }
   @media print { body { padding: 12px; } }
 </style>
 </head><body>${bodyHtml}
@@ -229,7 +332,30 @@ ${footerHtml}
   printWin.document.write(html);
   printWin.document.close();
   printWin.focus();
-  setTimeout(() => printWin.print(), 300);
+
+  // Wait for the webfonts before opening the print dialog — a script face that hasn't
+  // downloaded yet silently falls back to generic `cursive`, which defeats the point.
+  // Order matters: the stylesheet must land before document.fonts.ready means anything.
+  // 2.5s ceiling so a slow or offline font host never blocks the dialog.
+  let printed = false;
+  const go = () => {
+    if (printed) return;
+    printed = true;
+    printWin.print();
+  };
+  const afterStylesheet = () => {
+    const fonts = (printWin.document as any).fonts;
+    if (fonts?.ready) fonts.ready.then(go).catch(go);
+    else setTimeout(go, 200);
+  };
+  const link = printWin.document.getElementById("print-fonts") as HTMLLinkElement | null;
+  if (link && !(link.sheet)) {
+    link.addEventListener("load", afterStylesheet);
+    link.addEventListener("error", afterStylesheet);
+  } else {
+    afterStylesheet();
+  }
+  setTimeout(go, 2500);
 }
 
 /**

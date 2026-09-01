@@ -46,6 +46,7 @@ interface StaffForm {
   consultation_fee: string;
   follow_up_fee: string;
   validity_days: string;
+  follow_up_max_visits: string;
   emergency_fee: string;
   ipd_consultation_fee: string;
   ot_surgeon_fee: string;
@@ -59,7 +60,7 @@ const EMPTY_FORM: StaffForm = {
   hra_percent: "20", da_percent: "10", conveyance: "1600", medical_allowance: "1250",
   pf_applicable: true, esic_applicable: false, uan_number: "", pan_number: "", esi_ip_number: "", license_expiry_date: "",
   hpr_id: "",
-  consultation_fee: "", follow_up_fee: "", validity_days: "7", emergency_fee: "", ipd_consultation_fee: "",
+  consultation_fee: "", follow_up_fee: "", validity_days: "7", follow_up_max_visits: "1", emergency_fee: "", ipd_consultation_fee: "",
   ot_surgeon_fee: "", ot_anaesthetist_fee: "",
 };
 
@@ -334,6 +335,7 @@ const SettingsStaffPage: React.FC = () => {
       const hid = await getHospitalId();
       const deptId = getSafeDepartmentId();
       let emailSyncWarning: string | null = null;
+      let feeWarning: string | null = null;
       if (editingId) {
         // The users table and Supabase Auth store email independently — updating one
         // doesn't touch the other. Without this, changing email here left the staff
@@ -417,11 +419,17 @@ const SettingsStaffPage: React.FC = () => {
             fee: parseFloat(form.consultation_fee),
             follow_up_fee: form.follow_up_fee ? parseFloat(form.follow_up_fee) : null,
             validity_days: parseInt(form.validity_days) || 7,
+            // Blank = unlimited follow-ups inside the validity window (legacy behaviour).
+            follow_up_max_visits: form.follow_up_max_visits ? parseInt(form.follow_up_max_visits) : null,
             emergency_fee: form.emergency_fee ? parseFloat(form.emergency_fee) : null,
             ipd_consultation_fee: form.ipd_consultation_fee ? parseFloat(form.ipd_consultation_fee) : null,
             is_active: true,
           });
-          if (feeErr) console.error("Fee save error:", feeErr);
+          if (feeErr) { console.error("Fee save error:", feeErr); feeWarning = `Consultation pricing was not saved: ${feeErr.message}`; }
+        } else if (form.role === "doctor") {
+          // A doctor with no rate row is precisely what makes OPD fall through to the ₹500
+          // default. Adding the doctor still succeeds — but say so rather than failing quietly.
+          feeWarning = `${form.full_name} was added without a consultation fee. OPD visits will fall back to the ₹500 default until one is set.`;
         }
         if (form.role === "doctor") {
           await saveOtFeeRow(hid, newId, "surgeon_fee", "OT Surgeon Fee", form.ot_surgeon_fee);
@@ -429,52 +437,70 @@ const SettingsStaffPage: React.FC = () => {
         }
       }
 
-      // Save/update service_master for doctor on edit
-      if (editingId && form.role === "doctor" && form.consultation_fee) {
+      // Save/update service_master for doctor on edit.
+      //
+      // Deliberately NOT gated on `form.consultation_fee` being filled. That gate is why a
+      // doctor could exist with no rate row at all, which made the OPD fee ladder fall
+      // through doctor → dept → global to the hardcoded ₹500 default and look like the app
+      // was "taking global prices". It also meant clearing the fee field left a stale rate
+      // row behind while the rest of the form (validity, follow-up, cap) silently did not save.
+      if (editingId && form.role === "doctor") {
         const deptId2 = getSafeDepartmentId();
         // Check if fee row already exists
         const { data: existingFee } = await (supabase as any).from("service_master")
-          .select("id")
+          .select("id, fee")
           .eq("hospital_id", hid)
           .eq("doctor_id", editingId)
           .eq("item_type", "consultation")
           .maybeSingle();
-        
-        const feePayload = {
-          hospital_id: hid,
-          name: `Consultation - Dr. ${form.full_name}`,
-          category: "consultation",
-          item_type: "consultation",
-          doctor_id: editingId,
-          department_id: deptId2,
-          fee: parseFloat(form.consultation_fee),
-          follow_up_fee: form.follow_up_fee ? parseFloat(form.follow_up_fee) : null,
-          validity_days: parseInt(form.validity_days) || 7,
-          emergency_fee: form.emergency_fee ? parseFloat(form.emergency_fee) : null,
-          ipd_consultation_fee: form.ipd_consultation_fee ? parseFloat(form.ipd_consultation_fee) : null,
-          is_active: true,
-        };
 
-        if (existingFee?.id) {
-          const { error: feeErr } = await (supabase as any).from("service_master")
-            .update(feePayload).eq("id", existingFee.id);
-          if (feeErr) console.error("Fee update error:", feeErr);
+        // A blank fee on an existing row keeps whatever is already stored, so editing an
+        // unrelated field cannot wipe a doctor's price. With no row and no fee there is
+        // nothing to write — the warning below tells the user.
+        if (!form.consultation_fee && !existingFee?.id) {
+          feeWarning = `${form.full_name} has no consultation fee set. OPD visits will fall back to the ₹500 default until one is configured.`;
         } else {
-          const { error: feeErr } = await (supabase as any).from("service_master")
-            .insert(feePayload);
-          if (feeErr) console.error("Fee insert error:", feeErr);
+          const feePayload = {
+            hospital_id: hid,
+            name: `Consultation - Dr. ${form.full_name}`,
+            category: "consultation",
+            item_type: "consultation",
+            doctor_id: editingId,
+            department_id: deptId2,
+            fee: form.consultation_fee ? parseFloat(form.consultation_fee) : Number(existingFee?.fee ?? 0),
+            follow_up_fee: form.follow_up_fee ? parseFloat(form.follow_up_fee) : null,
+            validity_days: parseInt(form.validity_days) || 7,
+            // Blank = unlimited follow-ups inside the validity window (legacy behaviour).
+            follow_up_max_visits: form.follow_up_max_visits ? parseInt(form.follow_up_max_visits) : null,
+            emergency_fee: form.emergency_fee ? parseFloat(form.emergency_fee) : null,
+            ipd_consultation_fee: form.ipd_consultation_fee ? parseFloat(form.ipd_consultation_fee) : null,
+            is_active: true,
+          };
+
+          if (existingFee?.id) {
+            const { error: feeErr } = await (supabase as any).from("service_master")
+              .update(feePayload).eq("id", existingFee.id);
+            if (feeErr) { console.error("Fee update error:", feeErr); feeWarning = `Consultation pricing was not saved: ${feeErr.message}`; }
+          } else {
+            const { error: feeErr } = await (supabase as any).from("service_master")
+              .insert(feePayload);
+            if (feeErr) { console.error("Fee insert error:", feeErr); feeWarning = `Consultation pricing was not saved: ${feeErr.message}`; }
+          }
         }
       }
       if (editingId && form.role === "doctor") {
         await saveOtFeeRow(hid, editingId, "surgeon_fee", "OT Surgeon Fee", form.ot_surgeon_fee);
         await saveOtFeeRow(hid, editingId, "anaesthesia_fee", "OT Anaesthetist Fee", form.ot_anaesthetist_fee);
       }
-      return { emailSyncWarning };
+      return { emailSyncWarning, feeWarning };
     },
     onSuccess: (data) => {
       toast({ title: `${form.full_name} ${editingId ? "updated" : "added"} as ${ROLE_META[form.role]?.label ?? form.role} ✓` });
       if (data?.emailSyncWarning) {
         toast({ title: "Login email not changed", description: data.emailSyncWarning, variant: "destructive" });
+      }
+      if (data?.feeWarning) {
+        toast({ title: "Consultation pricing", description: data.feeWarning, variant: "destructive" });
       }
       qc.invalidateQueries({ queryKey: ["settings-staff"] });
       closeDrawer();
@@ -742,7 +768,7 @@ const SettingsStaffPage: React.FC = () => {
       if (user.role === "doctor") {
         const hid = await getHospitalId();
         const { data } = await (supabase as any).from("service_master")
-          .select("fee, follow_up_fee, validity_days, emergency_fee, ipd_consultation_fee")
+          .select("fee, follow_up_fee, validity_days, follow_up_max_visits, emergency_fee, ipd_consultation_fee")
           .eq("hospital_id", hid).eq("doctor_id", user.id)
           .eq("item_type", "consultation").maybeSingle();
         svcRow = data;
@@ -774,6 +800,10 @@ const SettingsStaffPage: React.FC = () => {
         consultation_fee: svcRow?.fee?.toString() ?? "",
         follow_up_fee: svcRow?.follow_up_fee?.toString() ?? "",
         validity_days: svcRow?.validity_days?.toString() ?? "7",
+        // NULL is the legacy "unlimited follow-ups" setting, so it must show as blank rather
+        // than defaulting to 1 — silently capping an existing doctor on their next save
+        // would change what their returning patients are charged.
+        follow_up_max_visits: svcRow?.follow_up_max_visits?.toString() ?? "",
         emergency_fee: svcRow?.emergency_fee?.toString() ?? "",
         ipd_consultation_fee: svcRow?.ipd_consultation_fee?.toString() ?? "",
         ot_surgeon_fee: otSurgeonRow?.fee?.toString() ?? "",
@@ -1174,7 +1204,12 @@ const SettingsStaffPage: React.FC = () => {
                     <div>
                       <label className="text-[14px] font-medium text-muted-foreground mb-1 block">Validity (days)</label>
                       <Input type="number" value={form.validity_days} onChange={(e) => setForm({ ...form, validity_days: e.target.value })} placeholder="7" className="h-10" />
-                      <p className="text-[10px] text-muted-foreground mt-0.5">Follow-up valid within these many days</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">Counted from the last full-fee consultation</p>
+                    </div>
+                    <div>
+                      <label className="text-[14px] font-medium text-muted-foreground mb-1 block">Follow-up Visits Allowed</label>
+                      <Input type="number" min="1" value={form.follow_up_max_visits} onChange={(e) => setForm({ ...form, follow_up_max_visits: e.target.value })} placeholder="Unlimited" className="h-10" />
+                      <p className="text-[10px] text-muted-foreground mt-0.5">How many visits get the follow-up fee before the full fee applies again. Blank = unlimited</p>
                     </div>
                     <div>
                       <label className="text-[14px] font-medium text-muted-foreground mb-1 block">Emergency Fee (₹)</label>

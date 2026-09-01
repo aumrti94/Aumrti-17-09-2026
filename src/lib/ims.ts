@@ -36,8 +36,8 @@ export function logRecordAccess(params: {
       accessed_by: userId,
       access_action: params.action,
       patient_id: params.patientId || null,
-    }).catch(() => null);
-  }).catch(() => null);
+    }).then(() => {}, () => {});
+  }).then(() => {}, () => {});
 }
 
 /**
@@ -65,7 +65,7 @@ export function logConfigChange(params: {
       old_value: params.oldValue ?? null,
       new_value: params.newValue ?? null,
       reason: params.reason || null,
-    }).catch(() => null);
+    }).then(() => {}, () => {});
   };
-  doLog().catch(() => null);
+  doLog().then(() => {}, () => {});
 }

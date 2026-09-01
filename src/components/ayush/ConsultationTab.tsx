@@ -307,7 +307,7 @@ export default function ConsultationTab({ system, showNew, onShowNewDone }: Prop
               >
                 <div className="flex items-center justify-between">
                   <p className="font-medium truncate">{t.patient?.full_name || "—"}</p>
-                  <Badge variant="outline" className="text-[10px] h-5">{t.token_prefix}-{t.token_number}</Badge>
+                  <Badge variant="outline" className="text-[10px] h-5">{t.token_number}</Badge>
                 </div>
                 <p className="text-xs text-muted-foreground">{t.patient?.uhid} · {calcAge(t.patient?.dob || null)} · {statusLabel[t.status] || t.status}</p>
               </button>

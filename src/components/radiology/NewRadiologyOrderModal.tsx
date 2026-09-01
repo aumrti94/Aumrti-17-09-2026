@@ -10,9 +10,11 @@ import { fetchIpdAncillaryPolicy, resolveChargePaymentStatus } from "@/lib/ipdAn
 import AdmissionLinker from "@/components/shared/AdmissionLinker";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
 import { getPrescribedPending } from "@/lib/prescribedPending";
+import { resolveTreatingDoctor } from "@/lib/encounterLink";
 import { printBillById } from "@/lib/billPrint";
 import { cn } from "@/lib/utils";
 import { calcGST, roundCurrency } from "@/lib/currency";
+import { requiresPcpndtFormF, buildFormFRow, ageFromDob } from "@/lib/pcpndt";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -46,6 +48,8 @@ interface StudyMaster {
   modality_id: string;
   modality_type: string;
   modality_name: string;
+  /** PCPNDT: set once per study in the master, so a renamed study cannot escape Form F. */
+  requires_form_f?: boolean | null;
 }
 
 interface ModalityGroup {
@@ -60,6 +64,7 @@ interface SelectedStudy {
   modalityType: string;
   fee: number;
   studyMasterId?: string;
+  requiresFormF?: boolean | null;
 }
 
 interface StudyRate {
@@ -117,6 +122,10 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
   const [linkInfo, setLinkInfo] = useState<string | null>(null);
   const [linkedEncounter, setLinkedEncounter] = useState<string | null>(linkedEncounterId || null);
   const [linkedAdmission, setLinkedAdmission] = useState<string | null>(linkedAdmissionId || null);
+  // Who the report goes back to. See the picker in the render for why this exists.
+  const [referringDoctorId, setReferringDoctorId] = useState<string | null>(null);
+  const [resolvedDoctorName, setResolvedDoctorName] = useState<string | null>(null);
+  const [doctors, setDoctors] = useState<{ id: string; full_name: string }[]>([]);
 
   // Payment step
   const [studyRates, setStudyRates] = useState<StudyRate[]>([]);
@@ -176,7 +185,7 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
 
       const { data: studies } = await (supabase as any)
         .from("radiology_study_master")
-        .select("id, study_name, fee, is_active, modality_id, modality_type")
+        .select("id, study_name, fee, is_active, modality_id, modality_type, requires_form_f")
         .eq("hospital_id", hospitalId)
         .eq("is_active", true)
         .order("sort_order");
@@ -212,7 +221,7 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
     const studies: SelectedStudy[] = names.map(name => {
       const match = studyList.find(s => s.study_name.toLowerCase() === name.toLowerCase().trim());
       if (match) {
-        return { name: match.study_name, modalityType: match.modality_type, fee: match.fee, studyMasterId: match.id };
+        return { name: match.study_name, modalityType: match.modality_type, fee: match.fee, studyMasterId: match.id, requiresFormF: match.requires_form_f ?? null };
       }
       return { name, modalityType: "", fee: 0 };
     });
@@ -269,11 +278,41 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
     // arbitrary one here (which silently billed charges to the wrong stay).
   }, [selectedPatient, hospitalId, linkedEncounterId, linkedAdmissionId]);
 
+  // Doctor list for the referring-doctor picker.
+  useEffect(() => {
+    (supabase as any)
+      .from("users")
+      .select("id, full_name")
+      .eq("hospital_id", hospitalId)
+      .eq("role", "doctor")
+      .eq("is_active", true)
+      .order("full_name")
+      .then(({ data }: any) => setDoctors(data || []));
+  }, [hospitalId]);
+
+  // Default the referring doctor to the treating doctor of whichever visit this order was
+  // linked to. Without this the report has nobody to go back to.
+  useEffect(() => {
+    if (!linkedEncounter && !linkedAdmission) {
+      setResolvedDoctorName(null);
+      return;
+    }
+    let cancelled = false;
+    resolveTreatingDoctor({ encounterId: linkedEncounter, admissionId: linkedAdmission })
+      .then(({ doctorId, doctorName }) => {
+        if (cancelled) return;
+        setResolvedDoctorName(doctorName);
+        // Only fill a blank — never overwrite a doctor the user picked by hand.
+        setReferringDoctorId((prev) => prev ?? doctorId);
+      });
+    return () => { cancelled = true; };
+  }, [linkedEncounter, linkedAdmission]);
+
   const toggleStudy = useCallback((study: StudyMaster) => {
     setSelectedStudies(prev => {
       const exists = prev.some(s => s.name === study.study_name);
       if (exists) return prev.filter(s => s.name !== study.study_name);
-      return [...prev, { name: study.study_name, modalityType: study.modality_type, fee: study.fee, studyMasterId: study.id }];
+      return [...prev, { name: study.study_name, modalityType: study.modality_type, fee: study.fee, studyMasterId: study.id, requiresFormF: study.requires_form_f ?? null }];
     });
   }, []);
 
@@ -410,7 +449,15 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
 
       const { data: seqVal } = await (supabase.rpc as any)("next_seq", { p_hospital_id: hospitalId, p_type: "accession" });
       const seq = String(seqVal ?? 1).padStart(4, "0");
-      const isObstetricUsg = study.modalityType === "usg" && study.name.toLowerCase().includes("obstetric");
+      // PCPNDT determination lives in src/lib/pcpndt.ts, shared with syncLabOrders' radiology
+      // twin. It was previously an inline `name.includes("obstetric")` here and NOWHERE on the
+      // OPD ordering path — so a scan named "USG Pregnancy Profile", or any scan ordered from a
+      // consultation, produced no Form F at all (BUG-P4-002 / BUG-P4-003).
+      const isObstetricUsg = requiresPcpndtFormF({
+        studyName: study.name,
+        modalityType: study.modalityType,
+        requiresFormF: study.requiresFormF ?? null,
+      });
 
       const { data: orderData, error: orderError } = await supabase
         .from("radiology_orders")
@@ -421,7 +468,14 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
           modality_type: study.modalityType,
           study_name: study.name,
           clinical_history: clinicalHistory || null,
+          // `ordered_by` is RLS-checked: radiology_orders_insert asserts it equals the calling
+          // user's users.id, so it must stay the desk user who keyed this in. The clinician who
+          // actually requested the study goes in referring_doctor_id, which is what the
+          // result-ready notification and the doctor's Reports tab read (falling back to
+          // ordered_by). Writing the referrer into ordered_by is what produced
+          // "new row violates row-level security policy for table radiology_orders".
           ordered_by: userId,
+          referring_doctor_id: referringDoctorId || null,
           priority,
           status: "ordered",
           accession_number: `RAD-${todayCompact}-${seq}`,
@@ -441,12 +495,26 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
       await supabase.from("radiology_reports").insert({ hospital_id: hospitalId, order_id: orderData.id, patient_id: selectedPatient.id });
 
       if (isObstetricUsg) {
-        await supabase.from("pcpndt_form_f").insert({
-          hospital_id: hospitalId, order_id: orderData.id,
-          patient_name: selectedPatient.full_name,
-          patient_age: selectedPatient.dob ? Math.floor((Date.now() - new Date(selectedPatient.dob).getTime()) / (365.25 * 24 * 60 * 60 * 1000)) : null,
-          signed_by: userId,
-        });
+        const { error: formFErr } = await supabase.from("pcpndt_form_f").insert(
+          buildFormFRow({
+            hospitalId,
+            orderId: orderData.id,
+            patientName: selectedPatient.full_name,
+            patientAge: ageFromDob(selectedPatient.dob),
+            indication: clinicalHistory || null,
+            signedBy: userId,
+            referredBy: referringDoctorId || userId,
+          }) as never
+        );
+        if (formFErr) {
+          // Loud on purpose: the scan will be performed either way, and a missing register
+          // entry is what the PCPNDT Act penalises.
+          toast({
+            title: "PCPNDT Form F not created",
+            description: `${study.name} is a regulated obstetric scan. Complete Form F in Radiology before the scan is performed. (${formFErr.message})`,
+            variant: "destructive",
+          });
+        }
       }
 
       await logNABHEvidence(
@@ -610,6 +678,31 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
                   preferredAdmissionId={linkedAdmissionId}
                   onChange={setLinkedAdmission}
                 />
+
+                {/* Referring doctor — this is who the report goes back to.
+                    Previously `ordered_by` was whoever was logged in at the radiology desk,
+                    so a completed report had no clinician to notify. Defaults to the treating
+                    doctor of the linked visit; editable for a walk-in or an outside referral. */}
+                {selectedPatient && (
+                  <div className="mt-3">
+                    <label className="text-sm font-medium text-foreground">Referring Doctor</label>
+                    <select
+                      value={referringDoctorId || ""}
+                      onChange={(e) => setReferringDoctorId(e.target.value || null)}
+                      className="w-full h-10 mt-1 rounded-lg border border-border bg-background px-3 text-sm"
+                    >
+                      <option value="">— No referring doctor (report goes to no one) —</option>
+                      {doctors.map((d) => (
+                        <option key={d.id} value={d.id}>Dr {d.full_name}</option>
+                      ))}
+                    </select>
+                    {resolvedDoctorName && referringDoctorId && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Auto-filled from the linked visit — the report will be sent to Dr {resolvedDoctorName}.
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Priority */}

@@ -2,13 +2,31 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { type LanguageOption } from "@/contexts/VoiceScribeContext";
 import { SUPPORTED_LANGUAGES } from "@/lib/voiceScribeLanguages";
+import { toBhashiniLang } from "@/lib/asrLanguages";
 
-// Maps 2-char codes stored in ai_language_settings → IETF codes used by SUPPORTED_LANGUAGES
-const SETTINGS_TO_IETF: Record<string, string> = {
-  en: "en-IN", hi: "hi-IN", te: "te-IN", ta: "ta-IN",
-  ml: "ml-IN", kn: "kn-IN", mr: "mr-IN", bn: "bn-IN",
-  gu: "gu-IN", pa: "pa-IN",
-};
+/**
+ * Short codes stored in `ai_language_settings.language_code` → the IETF codes
+ * SUPPORTED_LANGUAGES uses.
+ *
+ * DERIVED, not hand-written. The literal it replaced listed only 10 languages, so a hospital
+ * whose default was any of the other 12 fell through to `en-IN` — the scribe quietly ran in
+ * English and nobody was told. Deriving it means adding a language to the catalogue is enough.
+ *
+ * Note the derivation is on the code PREFIX, which is exactly right here: Bhashini/settings
+ * store ISO-639 (`or`) while Sarvam wants BCP-47 (`od-IN`), so both spellings are accepted.
+ */
+const SETTINGS_TO_IETF: Record<string, string> = Object.fromEntries(
+  SUPPORTED_LANGUAGES
+    .filter(l => l.code !== "auto")
+    .flatMap(l => {
+      const short = l.code.split("-")[0];
+      const bhashini = toBhashiniLang(l.code);
+      // e.g. od-IN is reachable as both "od" (prefix) and "or" (Bhashini/ISO-639).
+      return bhashini && bhashini !== short
+        ? [[short, l.code], [bhashini, l.code]]
+        : [[short, l.code]];
+    }),
+);
 
 const FEATURE_KEY = "voice_scribe";
 const DEFAULT_LANG = "en-IN";
@@ -34,10 +52,11 @@ export function useVoiceScribeLanguages(): UseVoiceScribeLanguagesResult {
   const [hospitalDefaultLang, setHospitalDefaultLang] = useState(DEFAULT_LANG);
   const [voiceLang, setVoiceLangState] = useState(DEFAULT_LANG);
   const [loading, setLoading] = useState(true);
-  // Start with all non-bhashini languages; may be refined after fetch
-  const [languages, setLanguages] = useState<LanguageOption[]>(
-    SUPPORTED_LANGUAGES.filter(l => l.engine !== "bhashini")
-  );
+  // Every catalogued language. The old filter dropped anything tagged `bhashini`, which is
+  // what made the deployed Bhashini function unreachable — and with it, the only fallback
+  // for a language Sarvam declines. Engine choice is now the failover chain's job
+  // (src/lib/asrEngineChain.ts), not a visibility filter's.
+  const [languages] = useState<LanguageOption[]>(SUPPORTED_LANGUAGES);
 
   useEffect(() => {
     let alive = true;
@@ -70,11 +89,13 @@ export function useVoiceScribeLanguages(): UseVoiceScribeLanguagesResult {
           const found = ietf ? SUPPORTED_LANGUAGES.find(l => l.code === ietf) : null;
           if (found) {
             hospitalLang = found.code;
-            // Ensure hospital's language is always visible in the dropdown
-            setLanguages(prev => {
-              if (prev.some(l => l.code === found.code)) return prev;
-              return [...prev, found];
-            });
+          } else {
+            // Silence here is how a hospital ended up dictating in English without knowing:
+            // an unrecognised code resolved to en-IN with nothing logged anywhere.
+            console.warn(
+              `voice_scribe: hospital language "${setting.language_code}" is not in the scribe ` +
+              `catalogue — falling back to ${DEFAULT_LANG}. Check Settings → AI & Language.`,
+            );
           }
         }
 

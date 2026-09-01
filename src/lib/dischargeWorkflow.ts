@@ -62,7 +62,7 @@ export async function initiateDischargeWorkflow(
           alert_message,
         } as any),
       ),
-    ).catch(() => {});
+    ).then(() => {}, () => {});
   }
 
   return { startedAt: now, alreadyStarted: false };

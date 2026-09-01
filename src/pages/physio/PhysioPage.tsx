@@ -26,8 +26,8 @@ import { format } from "date-fns";
 import { Plus, ClipboardList, Calendar, BarChart3, Dumbbell, FileText, Activity, CheckCircle, Clock, User, Printer, MessageSquare, Loader2 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer } from "recharts";
 import { printDocument } from "@/lib/printUtils";
+import { useConfigValues } from "@/hooks/useConfigValues";
 
-const MODALITIES = ["UST", "IFT", "TENS", "SWD", "Traction", "Exercise", "Manual Therapy", "Hot Pack", "Cold Pack", "Wax Bath", "Hydrotherapy", "Balance Training"];
 
 const EXERCISE_LIBRARY: Record<string, string[]> = {
   Knee: ["Quad sets", "SLR", "Terminal knee extension", "Hamstring stretch"],
@@ -52,6 +52,7 @@ const OUTCOME_TOOLS = [
 const EQUIPMENT_TYPES = ["ust", "ift", "tens", "swt", "traction", "hydrotherapy", "parallel_bars", "treadmill", "other"];
 
 const PhysioPage: React.FC = () => {
+  const modalities = useConfigValues("physio_modalities");
   const { hospitalId, loading: hospitalLoading } = useHospitalId();
   const { toast } = useToast();
   const [tab, setTab] = useState("referrals");
@@ -874,8 +875,8 @@ const PhysioPage: React.FC = () => {
             <div>
               <p className="text-xs font-medium mb-1">Modalities</p>
               <div className="flex flex-wrap gap-1">
-                {MODALITIES.map(m => (
-                  <Button key={m} size="sm" variant={sForm.modalities.includes(m) ? "default" : "outline"} className="text-[10px] h-6 px-2" onClick={() => toggleModality(m)}>{m}</Button>
+                {modalities.map(m => (
+                  <Button key={m.value} size="sm" variant={sForm.modalities.includes(m.value) ? "default" : "outline"} className="text-[10px] h-6 px-2" onClick={() => toggleModality(m.value)}>{m.label}</Button>
                 ))}
               </div>
             </div>

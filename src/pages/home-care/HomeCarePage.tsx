@@ -28,7 +28,9 @@ const HomeCarePage: React.FC = () => {
         (supabase as any).from("home_care_plans").select("id", { count: "exact", head: true }).eq("hospital_id", hospitalId).eq("status", "active").eq("is_deleted", false),
         (supabase as any).from("home_care_visits").select("id", { count: "exact", head: true }).eq("hospital_id", hospitalId).eq("scheduled_date", today).eq("is_deleted", false),
         (supabase as any).from("home_care_visits").select("id", { count: "exact", head: true }).eq("hospital_id", hospitalId).lt("scheduled_date", today).eq("status", "scheduled").eq("is_deleted", false),
-        (supabase as any).from("home_tele_monitoring").select("id", { count: "exact", head: true }).eq("hospital_id", hospitalId).eq("alert_sent", false).eq("is_deleted", false).gte("reported_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
+        // Readings that actually breached a threshold in the last 24h.
+        // Previously this counted alert_sent = false, i.e. every reading.
+        (supabase as any).from("home_tele_monitoring").select("id", { count: "exact", head: true }).eq("hospital_id", hospitalId).eq("alert_sent", true).eq("is_deleted", false).gte("reported_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
       ]);
       setKpis({ activePlans: planRes.count || 0, visitsToday: visitTodayRes.count || 0, overdue: overdueRes.count || 0, alerts: alertRes.count || 0 });
     };

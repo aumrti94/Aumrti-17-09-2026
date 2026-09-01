@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Bot, Loader2, FileText, AlertTriangle, Printer, PenLine, Trash2, LogOut } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { printDocument, printHeader } from "@/lib/printUtils";
+import { printDocument, printHeader, fetchHospitalBrand, hw } from "@/lib/printUtils";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { settleAdmissionAdvance } from "@/lib/settleAdmissionAdvance";
@@ -12,6 +12,7 @@ import { logRecordAccess } from "@/lib/ims";
 import { logAudit } from "@/lib/auditLog";
 import { formatDateIST } from "@/lib/dateUtils";
 import { computePendingDoses } from "@/lib/marPending";
+import { createBedTurnoverTask } from "@/lib/bedTurnover";
 
 // ── Lab investigations block for the discharge summary (Phase 10) ─────────────
 // Validated lab results for the admission, grouped by date, abnormal values flagged.
@@ -426,30 +427,20 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
     }
 
     if (adm?.bed_id) {
-      await supabase.from("beds").update({ status: "cleaning" as any }).eq("id", adm.bed_id);
-      const { data: bedData } = await supabase.from("beds").select("bed_number").eq("id", adm.bed_id).maybeSingle();
-
-      await (supabase as any).from("housekeeping_tasks").insert({
-        hospital_id: hospitalId,
-        task_type: "bed_turnover",
-        ward_id: adm.ward_id,
-        bed_id: adm.bed_id,
-        room_number: bedData?.bed_number || null,
-        triggered_by: "discharge",
-        trigger_ref_id: admissionId,
-        priority: "high",
-        status: "pending",
-        checklist: [
-          { item: "Remove soiled linen", done: false },
-          { item: "Clean mattress with disinfectant", done: false },
-          { item: "Fit fresh linen", done: false },
-          { item: "Clean bedside table", done: false },
-          { item: "Mop floor", done: false },
-          { item: "Supervisor inspection", done: false },
-        ],
+      const turnover = await createBedTurnoverTask({
+        hospitalId,
+        wardId: adm.ward_id,
+        bedId: adm.bed_id,
+        triggeredBy: "discharge",
+        triggerRefId: admissionId,
       });
-
-      toast.success(`Patient discharged — housekeeping task created for bed ${bedData?.bed_number || ""}`);
+      if (turnover.ok) {
+        toast.success(`Patient discharged — housekeeping task created for bed ${turnover.bedNumber || ""}`);
+      } else {
+        toast.warning(
+          `Patient discharged, but no housekeeping task was created for bed ${turnover.bedNumber || ""} — arrange cleaning manually.`
+        );
+      }
     } else {
       toast.success("Patient discharged");
     }
@@ -581,7 +572,8 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
     if (!summary) return;
     logRecordAccess({ hospitalId, recordType: "IPD_Record", recordId: admissionId, action: "print" });
 
-    const { data: hospital } = await supabase.from("hospitals").select("name, address").eq("id", hospitalId).maybeSingle();
+    // Warms the brand cache printDocument reads for font, footer and handwriting settings.
+    const hospital = await fetchHospitalBrand(supabase, hospitalId);
     const { data: patient } = await supabase.from("admissions")
       .select("patients(full_name, uhid, dob, gender)")
       .eq("id", admissionId).maybeSingle();
@@ -600,8 +592,8 @@ const DischargeSummaryGenerator: React.FC<Props> = ({ admissionId, hospitalId, b
           <div><span class="label">Type:</span> <span style="text-transform:capitalize"><b>${dischargeType}</b></span></div>
         </div>
       </div>
-      <div style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:#1e293b;">
-        ${summary}
+      <div style="font-size:13px;line-height:1.6;color:#1e293b;">
+        ${hw("dischargeSummary", summary, "")}
       </div>
       <div style="margin-top:60px;display:flex;justify-content:flex-end;">
         <div style="text-align:center;width:200px;border-top:1px solid #1e293b;padding-top:8px;">

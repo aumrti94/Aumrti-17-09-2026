@@ -5,13 +5,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { useConfigValues } from "@/hooks/useConfigValues";
 
 interface Props { hospitalId: string; onClose: () => void; }
 
-const TASK_TYPES = ["bed_turnover", "terminal_cleaning", "routine_cleaning", "spill_management", "isolation_protocol", "ot_cleaning", "toilet_cleaning", "other"];
 const PRIORITIES = ["low", "normal", "high", "urgent"];
 
 const NewTaskModal: React.FC<Props> = ({ hospitalId, onClose }) => {
+  const taskTypes = useConfigValues("housekeeping_task_types");
   const [taskType, setTaskType] = useState("routine_cleaning");
   const [priority, setPriority] = useState("normal");
   const [wardId, setWardId] = useState("");
@@ -56,7 +57,7 @@ const NewTaskModal: React.FC<Props> = ({ hospitalId, onClose }) => {
         <div className="space-y-3">
           <Select value={taskType} onValueChange={setTaskType}>
             <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-            <SelectContent>{TASK_TYPES.map(t => <SelectItem key={t} value={t} className="text-xs">{t.replace(/_/g, " ")}</SelectItem>)}</SelectContent>
+            <SelectContent>{taskTypes.map(t => <SelectItem key={t.value} value={t.value} className="text-xs">{t.label}</SelectItem>)}</SelectContent>
           </Select>
           <Select value={priority} onValueChange={setPriority}>
             <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>

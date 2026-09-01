@@ -31,6 +31,24 @@ jobs:
       - name: RLS coverage check
         run: npm run check:rls-coverage
 
+      # Staff-attribution columns (*_by) must FK public.users(id), not auth.users(id) — those
+      # are different values since 20260322111223, so an auth.users FK rejects every write from
+      # an account created after it. This broke the entire ICU Workspace and the MAR silently.
+      - name: User FK convention check
+        run: npm run check:user-fk
+
+      # Guards the application<->database contract: every .from()/.rpc() identifier must resolve
+      # against the generated types. Supabase returns errors as values rather than throwing, so
+      # a wrong table name fails silently at runtime — this is the only place it surfaces.
+      - name: DB contract check
+        run: npm run check:db-contract
+
+      # The published API documentation is generated from the gateway's route registry. This
+      # fails if the two have diverged — a spec describing endpoints that no longer behave that
+      # way is worse than no spec, because integrators build against it.
+      - name: OpenAPI spec freshness
+        run: npm run check:openapi
+
       - name: Unit tests
         run: npm run test:coverage
 

@@ -54,6 +54,7 @@ export const MODULE_IVF           = "ivf";
 export const MODULE_OTHER         = "other";
 export const MODULE_OT            = "ot";
 export const MODULE_DAY_CARE      = "day_care";
+export const MODULE_CHRONIC_CARE  = "chronic_care";
 
 export interface ServiceBillingResult {
   billId:   string;
@@ -269,7 +270,7 @@ export async function autoChargeService(
       notes:          notes ?? "Rate not configured in service master — manual billing required",
       billing_status: "unbilled",
       created_by:     performedBy ?? null,
-    }).catch(() => {});
+    }).then(() => {}, () => {});
     return null;
   }
 
@@ -395,7 +396,7 @@ export async function autoChargeService(
       sourceId:     billId,
       amount:       total,
       description:  `${serviceName} — ${serviceModule}`,
-    }).catch(() => {});
+    }).then(() => {}, () => {});
   }
 
   return {
@@ -455,7 +456,7 @@ export async function recordServiceCharge(opts: RecordServiceChargeOpts): Promis
     billed_at:      new Date().toISOString(),
     created_by:     opts.performedBy ?? null,
     notes:          opts.notes ?? null,
-  }).catch(() => {});
+  }).then(() => {}, () => {});
 }
 
 /**
@@ -537,7 +538,7 @@ export async function recordUnbilledService(opts: {
     total_amount:   0,
     billing_status: "unbilled",
     notes:          opts.notes ?? null,
-  }).catch(() => {});
+  }).then(() => {}, () => {});
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -600,7 +601,7 @@ export async function recordOTServiceCharges(opts: {
     billed_at: now,
     created_by: user?.id || null,
   }));
-  await (supabase as any).from("service_charges").insert(rows).catch(() => {});
+  await (supabase as any).from("service_charges").insert(rows).then(() => {}, () => {});
 }
 
 /** service_master rate lookup, optionally scoped to a specific doctor_id. */

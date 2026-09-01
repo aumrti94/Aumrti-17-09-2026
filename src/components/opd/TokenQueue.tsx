@@ -294,15 +294,14 @@ const TokenQueue: React.FC<Props> = ({ tokens, selectedTokenId, onSelectToken, h
         .update({ status: "called", called_at: now } as any)
         .eq("id", next.id);
 
-      // Upsert queue_state so TV display picks it up instantly
-      const masked = (() => {
-        const name  = next.patient?.full_name ?? "";
-        const parts = name.trim().split(/\s+/);
-        return parts.length > 1
-          ? `${parts[0][0]}. ${parts.slice(1).join(" ")}`
-          : parts[0] ? `${parts[0][0]}.` : "";
-      })();
-
+      // Upsert queue_state so TV display picks it up instantly.
+      //
+      // current_patient_name is deliberately NOT written. queue_state feeds the public /tv and
+      // /tv-display routes, and the column was write-only anyway: nothing ever read it back.
+      // AdvancedQueueDisplayPage announces from current_token_number, and TVDisplayPage derives
+      // its own masked name from opd_tokens, which is tenant-scoped behind RLS. Writing a
+      // patient identifier here put it on the one table reachable outside that boundary — see
+      // migration 20261016000004_sec_queue_state_tenant_scope.sql.
       const { data: { user } } = await supabase.auth.getUser();
 
       (supabase as any)
@@ -313,14 +312,15 @@ const TokenQueue: React.FC<Props> = ({ tokens, selectedTokenId, onSelectToken, h
           department_id:        next.department_id ?? null,
           current_token_id:     next.id,
           current_token_number: next.token_number,
-          current_patient_name: masked,
           called_by:            user?.id ?? null,
           called_at:            now,
           updated_at:           now,
         }, { onConflict: "hospital_id,doctor_id" })
         .then(() => {}).catch(() => {});
 
-      setLastCalledToken(`${next.token_prefix || "A"}${next.token_number}`);
+      // token_number already embeds the prefix ("A-3"); prepending token_prefix again
+      // announced and displayed "AA-3".
+      setLastCalledToken(next.token_number);
       onTokenCreated(); // refresh parent
     } finally {
       setCallNextLoading(false);

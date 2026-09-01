@@ -204,6 +204,35 @@ export function heading(page: Page, title: string): Locator {
 }
 
 /**
+ * Switch to a tab and wait for its panel.
+ *
+ * Radix `TabsContent` UNMOUNTS inactive panels — a control on a tab you have not clicked is
+ * absent from the DOM, not merely hidden, so `field()` throws its "label not found" error and
+ * the case reads as a missing feature. Three screens in this phase default to a tab that holds
+ * none of the controls under test:
+ *
+ *   ICD-10 Codes   defaults to "Code Sets"        → search / Add Code / Billable only live on "Browse Codes"
+ *   White-Label    defaults to "Theme & Colours"  → the Custom Domain field lives on "Custom Domain"
+ *   HL7            defaults to "Mirth Connect Config" → the vendor select lives on "Vitals Devices"
+ *
+ * That single mechanic accounted for roughly forty Phase 2 failures against controls that were
+ * present and working the whole time. Call this in the `beforeEach` for those screens.
+ */
+export async function openTab(page: Page, name: string | RegExp): Promise<void> {
+  const tab = page.getByRole('tab', { name, exact: false }).first();
+  await expect(
+    tab,
+    `No tab matching ${name} on ${page.url()}. This is a FRAMEWORK failure — the tab label ` +
+    `changed. Fix the name here; do not log it as a bug against the app.`,
+  ).toBeVisible();
+
+  await tab.click();
+  // Radix flips aria-selected before it mounts the panel; wait for the panel itself.
+  await expect(tab).toHaveAttribute('aria-selected', 'true');
+  await page.waitForTimeout(400);
+}
+
+/**
  * A toast — success or failure.
  *
  * Deliberately never used on its own as proof of a save. It confirms the UI *claimed*

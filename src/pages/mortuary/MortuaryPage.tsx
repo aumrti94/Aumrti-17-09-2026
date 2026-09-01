@@ -23,6 +23,7 @@ import { Loader2 } from "lucide-react";
 import PatientSearchPicker from "@/components/shared/PatientSearchPicker";
 import PatientRegistrationModal from "@/components/patients/PatientRegistrationModal";
 import { printDocument } from "@/lib/printUtils";
+import { useConfigValues } from "@/hooks/useConfigValues";
 
 interface MortuaryAdmission {
   id: string;
@@ -110,6 +111,7 @@ interface OrganDonation {
 }
 
 export default function MortuaryPage() {
+  const mannerOptions = useConfigValues("death_manner_types");
   const { hospitalId, loading: hospitalLoading } = useHospitalId();
   const [tab, setTab] = useState("register");
   const [admissions, setAdmissions] = useState<MortuaryAdmission[]>([]);
@@ -570,7 +572,7 @@ export default function MortuaryPage() {
                       <div><Label className="text-xs">Manner of death</Label>
                         <Select value={mccdDraft.manner_of_death} onValueChange={v => setMccdDraft(d => ({ ...d, manner_of_death: v }))}>
                           <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>{["natural","accident","suicide","homicide","undetermined"].map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+                          <SelectContent>{mannerOptions.map(m => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}</SelectContent>
                         </Select>
                       </div>
                       <div className="flex items-end gap-2"><Switch checked={mccdDraft.was_post_mortem} onCheckedChange={v => setMccdDraft(d => ({ ...d, was_post_mortem: v }))} /><Label className="text-xs">Post-mortem conducted</Label></div>
@@ -748,7 +750,7 @@ export default function MortuaryPage() {
             <div><Label>Manner of Death</Label>
               <Select value={admitForm.manner_of_death} onValueChange={v => setAdmitForm(f => ({ ...f, manner_of_death: v }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{["natural","accident","suicide","homicide","undetermined"].map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+                <SelectContent>{mannerOptions.map(m => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="flex items-center gap-2"><Switch checked={admitForm.is_mlc} onCheckedChange={v => setAdmitForm(f => ({ ...f, is_mlc: v }))} /><Label>Medico-Legal Case (MLC)</Label></div>

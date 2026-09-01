@@ -20,7 +20,12 @@ const ALLOWLIST = new Set([
   // (none yet)
 ]);
 
-const CREATE_TABLE_RE = /CREATE TABLE\s+(?:IF NOT EXISTS\s+)?public\.["']?(\w+)["']?/gi;
+// The `public.` prefix is OPTIONAL here, exactly as it already is in ENABLE_RLS_RE below.
+// Requiring it was a blind spot: of 589 CREATE TABLE statements in the migration history only
+// 413 are schema-qualified, so this check saw 396 of the 548 live tables and still reported
+// "passed". ~152 tables — 28% — could ship with no RLS and never be noticed. See
+// docs/db-audit/18_SECURITY_DATABASE_AUDIT.md S-10.
+const CREATE_TABLE_RE = /CREATE TABLE\s+(?:IF NOT EXISTS\s+)?(?:public\.)?["']?(\w+)["']?/gi;
 // public. prefix is optional — some migrations rely on search_path and just write
 // `ALTER TABLE foo ENABLE ROW LEVEL SECURITY` with no schema qualifier.
 const ENABLE_RLS_RE = /ALTER TABLE\s+(?:ONLY\s+)?(?:public\.)?["']?(\w+)["']?\s+ENABLE ROW LEVEL SECURITY/gi;
@@ -57,8 +62,15 @@ const created = new Set();
 const rlsEnabled = new Set();
 const dropped = new Set();
 
+// Strip SQL comments before matching. This did not matter while CREATE_TABLE_RE demanded a
+// `public.` prefix, but an unqualified pattern otherwise matches prose — a line such as
+// "-- CREATE TABLE silently fails when ..." would register a table named "silently".
+const stripComments = (sql) =>
+  sql.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
+
 for (const file of files) {
-  const text = readFileSync(join(MIGRATIONS_DIR, file), "utf8");
+  const raw = readFileSync(join(MIGRATIONS_DIR, file), "utf8");
+  const text = stripComments(raw);
   for (const n of extractNames(text, CREATE_TABLE_RE)) created.add(n);
   for (const n of extractNames(text, ENABLE_RLS_RE)) rlsEnabled.add(n);
   for (const n of extractDynamicRlsNames(text)) rlsEnabled.add(n);

@@ -6,19 +6,22 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/hooks/use-toast";
+import { createBedTurnoverTask } from "@/lib/bedTurnover";
 
 interface Props {
   open: boolean;
   onClose: () => void;
   admissionId: string;
   hospitalId: string;
+  patientId: string;
   currentWardId: string;
   currentBedId: string;
   patientName: string;
+  userId: string | null;
   onSuccess: () => void;
 }
 
-const BedTransferModal: React.FC<Props> = ({ open, onClose, admissionId, hospitalId, currentWardId, currentBedId, patientName, onSuccess }) => {
+const BedTransferModal: React.FC<Props> = ({ open, onClose, admissionId, hospitalId, patientId, currentWardId, currentBedId, patientName, userId, onSuccess }) => {
   const [wards, setWards] = useState<{ id: string; name: string }[]>([]);
   const [beds, setBeds] = useState<{ id: string; bed_number: string }[]>([]);
   const [selectedWard, setSelectedWard] = useState("");
@@ -47,12 +50,51 @@ const BedTransferModal: React.FC<Props> = ({ open, onClose, admissionId, hospita
     }
     setSaving(true);
     try {
-      // Free old bed
-      await supabase.from("beds").update({ status: "available" as any }).eq("id", currentBedId);
+      // The vacated bed goes to "cleaning", not straight to "available" — same bed_turnover
+      // housekeeping task a discharge opens (lib/bedTurnover.ts). It only flips back to
+      // "available" once Housekeeping completes that task (TasksTab.tsx), so a transferred-
+      // out bed can't be reassigned to the next patient before it's actually been cleaned.
+      const turnover = await createBedTurnoverTask({
+        hospitalId,
+        wardId: currentWardId,
+        bedId: currentBedId,
+        triggeredBy: "transfer",
+        triggerRefId: admissionId,
+      });
+      if (!turnover.ok) {
+        // The bed was released rather than stranded, but nobody has been asked to clean it.
+        toast({
+          title: "Cleaning task not created",
+          description: `Bed ${turnover.bedNumber || ""} was freed without a housekeeping task — arrange cleaning manually. (${turnover.error})`,
+          variant: "destructive",
+        });
+      }
       // Occupy new bed
       await supabase.from("beds").update({ status: "occupied" as any }).eq("id", selectedBed);
       // Update admission
       await supabase.from("admissions").update({ ward_id: selectedWard, bed_id: selectedBed }).eq("id", admissionId);
+
+      // Audit trail — this is what lets billing split room/nursing charges by segment
+      // instead of pricing the whole stay at whatever ward the patient ends up in.
+      const { error: transferLogError } = await (supabase as any).from("bed_transfers").insert({
+        hospital_id: hospitalId,
+        admission_id: admissionId,
+        patient_id: patientId,
+        from_ward_id: currentWardId || null,
+        from_bed_id: currentBedId || null,
+        to_ward_id: selectedWard,
+        to_bed_id: selectedBed,
+        reason: reason || null,
+        transferred_by: userId || null,
+      });
+      if (transferLogError) {
+        // The bed/admission moves already happened — do not roll those back, the patient
+        // really did move. A missing audit row means this transfer will bill entirely to
+        // the new ward retroactively to admission day on the next pull: a silent revenue
+        // defect, not a cosmetic one, so surface it loudly rather than swallowing it.
+        console.error("bed_transfers insert failed — billing split will be inaccurate for this transfer:", transferLogError.message);
+        toast({ title: "Transfer recorded, but audit log failed", description: transferLogError.message, variant: "destructive" });
+      }
 
       toast({ title: "Transfer complete", description: `${patientName} moved to new bed` });
       onSuccess();

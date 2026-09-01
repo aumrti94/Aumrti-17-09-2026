@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Printer } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useConfigValues } from "@/hooks/useConfigValues";
 
 interface Props {
   hospitalId: string;
@@ -19,9 +20,8 @@ interface Props {
   onRefresh?: () => void;
 }
 
-const mannerOptions = ["natural", "accident", "suicide", "homicide", "undetermined"];
-
 const DeathCertificatesTab: React.FC<Props> = ({ hospitalId, showCreate, onCloseCreate, onRefresh }) => {
+  const mannerOptions = useConfigValues("death_manner_types");
   const [certs, setCerts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [doctors, setDoctors] = useState<any[]>([]);
@@ -235,7 +235,7 @@ const DeathCertificatesTab: React.FC<Props> = ({ hospitalId, showCreate, onClose
               <Label className="text-xs">Manner of Death</Label>
               <Select value={manner} onValueChange={setManner}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{mannerOptions.map((m) => <SelectItem key={m} value={m} className="capitalize">{m}</SelectItem>)}</SelectContent>
+                <SelectContent>{mannerOptions.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="flex items-center gap-2">

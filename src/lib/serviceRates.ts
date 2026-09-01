@@ -70,6 +70,7 @@ export const SERVICE_RATE_CODES = {
   VACCINATION_ADMIN: "vaccination_admin",
   DENTAL_CONSULT: "dental_consult",
   IVF_CYCLE: "ivf_cycle",
+  CHRONIC_CARE_REVIEW: "chronic_care_review",
 } as const;
 
 /**
@@ -92,6 +93,7 @@ export const MODULE_RATE_CODE: Record<string, string> = {
   vaccination:    SERVICE_RATE_CODES.VACCINATION_ADMIN,
   dental:         SERVICE_RATE_CODES.DENTAL_CONSULT,
   ivf:            SERVICE_RATE_CODES.IVF_CYCLE,
+  chronic_care:   SERVICE_RATE_CODES.CHRONIC_CARE_REVIEW,
 };
 
 /**

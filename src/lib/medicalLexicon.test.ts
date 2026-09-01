@@ -144,6 +144,19 @@ describe("shouldAutoApply — clinical safety gate", () => {
   it("still REFUSES a multi-word join whose joined form IS an ordinary word", () => {
     expect(shouldAutoApply({ ...base, sourceWords: ["fe", "ver"] })).toBe(false);
   });
+
+  it("REFUSES a symptom candidate however perfect the match", () => {
+    // Symptom/diagnosis/anatomy terms exist to be SUGGESTED to the structuring model, never
+    // substituted. Rewriting what a doctor said about a body part is a worse failure than
+    // the mishearing it would be trying to fix, and there is no "misspelling" of a symptom
+    // the way there is of a drug name.
+    expect(shouldAutoApply({ ...base, candidateSource: "symptom", candidateScore: 1 }))
+      .toBe(false);
+  });
+
+  it("still allows a drug candidate — the gate is per-source, not global", () => {
+    expect(shouldAutoApply({ ...base, candidateSource: "drug_master" })).toBe(true);
+  });
 });
 
 describe("buildLexiconIndex", () => {
@@ -257,6 +270,46 @@ describe("repairTranscript", () => {
   it("respects a stricter autoApplyThreshold by suggesting instead", () => {
     const strict = repairTranscript("give para seta mall", idx, { autoApplyThreshold: 0.99 });
     expect(strict.repairs).toHaveLength(0);
+  });
+});
+
+describe("symptom terms — suggested, never substituted", () => {
+  // "neck pain" mis-heard as "headache" is the reported failure this source exists for.
+  const idx = buildLexiconIndex([
+    ...HOSPITAL,
+    { term: "neck pain", source: "symptom" },
+    { term: "Headache", source: "symptom" },
+  ]);
+
+  it("never rewrites a word into a symptom term", () => {
+    const r = repairTranscript("patient has headake since morning", idx);
+    expect(r.repairs.every(x => x.source !== "symptom")).toBe(true);
+    expect(r.repairedText).toContain("headake");
+  });
+
+  it("offers the symptom as a suggestion instead", () => {
+    const r = repairTranscript("patient has headake since morning", idx);
+    expect(r.suggestions.some(s => s.candidates.includes("Headache"))).toBe(true);
+  });
+
+  it("keeps symptom terms out of the lexicon hit rate", () => {
+    // The hit rate scales the confidence badge and is meant to measure whether CLINICAL
+    // vocabulary landed. Everyday symptom words appear in nearly every dictation, so
+    // counting them would inflate the score regardless of how the drug names fared.
+    const withSymptoms = repairTranscript("severe headache today", idx);
+    const withoutSymptoms = repairTranscript("severe headache today", buildLexiconIndex(HOSPITAL));
+    expect(withSymptoms.lexiconHitRate).toBe(withoutSymptoms.lexiconHitRate);
+  });
+
+  it("lets a real catalogue term win a name collision", () => {
+    // buildLexiconIndex keeps the FIRST entry for a normalised term, and loadHospitalLexicon
+    // appends symptoms last for exactly this reason: a symptom must not shadow a drug and
+    // silently downgrade it to suggestion-only.
+    const collided = buildLexiconIndex([
+      { term: "Migraine", source: "drug_master" },
+      { term: "Migraine", source: "symptom" },
+    ]);
+    expect(collided.byExact.get("migraine")?.source).toBe("drug_master");
   });
 });
 

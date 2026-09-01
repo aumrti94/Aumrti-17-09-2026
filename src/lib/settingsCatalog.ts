@@ -285,10 +285,10 @@ export const SETTINGS_CATALOG: SettingsEntry[] = [
     keywords: ["critical value", "vitals", "early warning", "news", "escalation", "panic value"],
   },
   {
-    icon: FileText, title: "ICD-10 Code Master", desc: "Manage diagnosis code sets for ICD coding",
+    icon: FileText, title: "ICD-10 / ICD-11 Code Master", desc: "Manage diagnosis code sets for ICD coding",
     route: "/settings/icd-codes", group: "Clinical",
     modules: ["mrd", "insurance", "pmjay", "billing", "hmis", "analytics", ...CLINICAL_MODULES],
-    keywords: ["diagnosis", "icd", "coding", "morbidity", "casemix"],
+    keywords: ["diagnosis", "icd", "icd10", "icd11", "coding", "morbidity", "casemix"],
   },
   {
     icon: Settings2, title: "Radiology Modalities", desc: "Manage modality types and pricing",
@@ -412,14 +412,13 @@ export const SETTINGS_CATALOG: SettingsEntry[] = [
     keywords: ["backup", "export", "download data", "dump", "restore", "archive"],
   },
   {
-    icon: KeyRound, title: "API Keys", desc: "Developer API access tokens",
-    route: "/settings/api-keys", group: "Integrations", modules: [],
-    keywords: ["api", "token", "developer", "key", "secret", "webhook"],
-  },
-  {
-    icon: KeyRound, title: "API Portal", desc: "Developer portal — endpoints, docs and sandbox access",
+    // "API Keys" was a second entry pointing at a separate screen that issued keys in a different
+    // format. Both are now this one page; its keywords are folded in so a search for "api key" or
+    // "token" still lands here.
+    icon: KeyRound, title: "API Portal", desc: "Developer portal — API keys, webhooks and sandbox access",
     route: "/settings/api-portal", group: "Integrations", modules: [],
-    keywords: ["api", "developer portal", "documentation", "sandbox", "endpoint", "swagger"],
+    keywords: ["api", "developer portal", "documentation", "sandbox", "endpoint", "swagger",
+               "token", "developer", "key", "secret", "webhook"],
   },
   {
     icon: Cpu, title: "Integration Keys",

@@ -74,9 +74,13 @@ const PreDischargeLeakageBanner: React.FC<Props> = ({ admissionId, hospitalId })
     }
 
     // Check OT procedures
+    // "ot_cases" has never existed — the table is ot_schedules, and the procedure column is
+    // surgery_name. This query always errored, so completed OT procedures were never checked
+    // for billing leakage: the banner silently under-reported. Aliased back to procedure_name
+    // so the loop below is unchanged.
     const { data: otCases } = await (supabase as any)
-      .from("ot_cases")
-      .select("procedure_name, status")
+      .from("ot_schedules")
+      .select("procedure_name:surgery_name, status")
       .eq("admission_id", admissionId)
       .eq("hospital_id", hospitalId)
       .eq("status", "completed");

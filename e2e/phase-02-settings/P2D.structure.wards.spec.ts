@@ -321,14 +321,14 @@ test.describe('P2D — Structure: Wards & Beds', () => {
     // assertion against a real stay; here we can only prove the rate history is not
     // destructively overwritten in a way that would make retro-pricing inevitable.
     const hid = await hospitalIdFor('A');
-    const { error } = await db().from('ipd_admissions').select('id', { count: 'exact', head: true }).eq('hospital_id', hid);
+    const { error } = await db().from("admissions").select('id', { count: 'exact', head: true }).eq('hospital_id', hid);
     test.skip(
       !!error,
       'ipd_admissions is not readable, so retro-pricing cannot be proven here. Phase 7 re-runs ' +
       'this case against a real admission.',
     );
 
-    const { data: charges } = await db().from('ipd_charges')
+    const { data: charges } = await db().from('service_charges')
       .select('id, unit_rate, created_at').eq('hospital_id', hid).limit(5);
     expect(
       charges,

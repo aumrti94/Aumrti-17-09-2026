@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "@/hooks/use-toast";
 import { Printer, RefreshCw, LayoutTemplate, Plus, Trash2 } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { printDocument, printHeader } from "@/lib/printUtils";
+import { printDocument, printHeader, fetchHospitalBrand, hw } from "@/lib/printUtils";
 import { useNoteTemplates } from "@/hooks/useNoteTemplates";
 
 interface Props {
@@ -143,13 +143,15 @@ const IPDNotesTab: React.FC<Props> = ({ admissionId, hospitalId, userId, patient
     fetchNotes();
   };
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
     if (notes.length === 0) return;
+    // Warms the brand cache printDocument reads for font, footer and handwriting settings.
+    if (hospitalId) await fetchHospitalBrand(supabase, hospitalId);
     const body = `
       ${printHeader("Nursing & Misc Notes", `Admission ID: ${admissionId.slice(0, 8)}`)}
       <table>
         <tr><th>Time</th><th>Role</th><th>Note</th></tr>
-        ${notes.map(n => `<tr><td>${n.time}</td><td><span class="badge">${n.role}</span></td><td>${n.text}</td></tr>`).join("")}
+        ${notes.map(n => `<tr><td>${n.time}</td><td><span class="badge">${n.role}</span></td><td>${hw("nursingNotes", n.text)}</td></tr>`).join("")}
       </table>
     `;
     printDocument("NursingNotes", body);

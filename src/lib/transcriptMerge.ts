@@ -1,8 +1,8 @@
 // Long dictation is split into ~25s audio segments because Sarvam caps a request at 30s.
-// To avoid dropping speech at a boundary, the next segment deliberately starts ~200ms BEFORE
-// the previous one stops (see VoiceDictationButton "OVERLAPPING segments (gapless)").
+// To avoid dropping speech at a boundary, the next segment deliberately starts SEGMENT_OVERLAP_MS
+// BEFORE the previous one stops (see VoiceDictationButton "OVERLAPPING segments (gapless)").
 //
-// That overlap means the same ~200ms of speech is transcribed TWICE — once at the tail of
+// That overlap means the same slice of speech is transcribed TWICE — once at the tail of
 // segment N and once at the head of segment N+1. Naively `join(" ")`-ing the chunk transcripts
 // therefore injects DUPLICATED words at every 25-second boundary, which corrupts the transcript
 // the structuring LLM then reads (observed live as "...as one or two one or three").
@@ -18,10 +18,17 @@ const norm = (w: string): string =>
 
 /**
  * Append `next` to `prev`, removing the duplicated overlap region if there is one.
- * @param maxOverlapWords upper bound on how many words the seam may repeat. The overlap is
- *   only ~200ms of audio, so a small window is plenty and keeps this O(n·window).
+ *
+ * @param maxOverlapWords upper bound on how many words the seam may repeat.
+ *
+ *   This window used to be 15, which was far larger than the seam it exists to clean. The
+ *   deliberate overlap is ~800ms of audio ≈ 1-3 words, but the search takes the LONGEST
+ *   match it can find — so a 15-word window could match on speech that merely REPEATS near
+ *   a boundary ("pain, pain on the left side") and delete a dozen words the doctor actually
+ *   said. Sized to the real overlap, the search can only remove what the overlap could
+ *   plausibly have duplicated. It also keeps this O(n·window).
  */
-export function mergeTranscriptChunk(prev: string, next: string, maxOverlapWords = 15): string {
+export function mergeTranscriptChunk(prev: string, next: string, maxOverlapWords = 4): string {
   const a = (prev ?? "").trim();
   const b = (next ?? "").trim();
   if (!a) return b;
@@ -43,7 +50,7 @@ export function mergeTranscriptChunk(prev: string, next: string, maxOverlapWords
 }
 
 /** Fold a list of per-segment transcripts into one transcript, de-duplicating each seam. */
-export function joinTranscriptChunks(chunks: string[], maxOverlapWords = 15): string {
+export function joinTranscriptChunks(chunks: string[], maxOverlapWords = 4): string {
   return (chunks ?? []).reduce((acc, c) => mergeTranscriptChunk(acc, c, maxOverlapWords), "").trim();
 }
 

@@ -17,6 +17,29 @@ const STATUS_CONFIG: Record<string, { bg: string; text: string; label?: string }
   processing:      { bg: "bg-amber-100",   text: "text-amber-700" },
   resulted:        { bg: "bg-emerald-100", text: "text-emerald-700" },
   reported:        { bg: "bg-emerald-100", text: "text-emerald-700" },
+  // Lab/Radiology — remaining live statuses, added when results were surfaced in OPD/IPD.
+  // Without these the badge fell back to grey, so "sample collected" and "validated" looked
+  // identical to a doctor scanning the list.
+  sample_collected:   { bg: "bg-purple-100",  text: "text-purple-700" },
+  in_process:         { bg: "bg-amber-100",   text: "text-amber-700" },
+  partial_results:    { bg: "bg-amber-100",   text: "text-amber-800" },
+  result_entered:     { bg: "bg-sky-100",     text: "text-sky-700",     label: "Result Entered" },
+  pending_validation: { bg: "bg-sky-100",     text: "text-sky-800",     label: "Awaiting Validation" },
+  validated:          { bg: "bg-emerald-100", text: "text-emerald-700" },
+  scheduled:          { bg: "bg-blue-100",    text: "text-blue-700" },
+  patient_arrived:    { bg: "bg-purple-100",  text: "text-purple-700" },
+  in_progress:        { bg: "bg-amber-100",   text: "text-amber-700" },
+  images_acquired:    { bg: "bg-sky-100",     text: "text-sky-700" },
+  // Pathology
+  registered:         { bg: "bg-blue-100",    text: "text-blue-700" },
+  grossing:           { bg: "bg-amber-100",   text: "text-amber-700" },
+  reporting:          { bg: "bg-amber-100",   text: "text-amber-700" },
+  pending_signoff:    { bg: "bg-sky-100",     text: "text-sky-800",     label: "Pending Sign-off" },
+  signed_off:         { bg: "bg-emerald-100", text: "text-emerald-700", label: "Signed Off" },
+  amended:            { bg: "bg-red-100",     text: "text-red-700" },
+  // External lab referral
+  sample_sent:        { bg: "bg-purple-100",  text: "text-purple-700" },
+  report_awaited:     { bg: "bg-amber-100",   text: "text-amber-700" },
   // IPD/Admission
   admitted:        { bg: "bg-blue-100",    text: "text-blue-700" },
   discharged:      { bg: "bg-slate-100",   text: "text-slate-500" },

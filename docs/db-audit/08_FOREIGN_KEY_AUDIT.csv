@@ -1,0 +1,1475 @@
+table,domain,constraint,columns,references_table,ref_columns,on_delete,on_update,indexed,flags,severity
+abdm_audit_log,ABDM,abdm_audit_log_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED; CASCADE on financial/audit data,HIGH
+abdm_audit_log,ABDM,abdm_audit_log_patient_id_fkey,patient_id,patients,id,SET NULL,NO ACTION,NO,UNINDEXED,HIGH
+abdm_audit_log,ABDM,abdm_audit_log_performed_by_fkey,performed_by,users,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+abdm_care_contexts,ABDM,abdm_care_contexts_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+abdm_care_contexts,ABDM,abdm_care_contexts_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+abdm_consent_logs,ABDM,abdm_consent_logs_consent_given_by_fkey,consent_given_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+abdm_consent_logs,ABDM,abdm_consent_logs_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+abdm_consent_logs,ABDM,abdm_consent_logs_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+abdm_consents,ABDM,abdm_consents_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+abdm_consents,ABDM,abdm_consents_patient_id_fkey,patient_id,patients,id,SET NULL,NO ACTION,NO,UNINDEXED,HIGH
+abdm_gateway_logs,ABDM,abdm_gateway_logs_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+accounting_posting_failures,Other,accounting_posting_failures_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+admin_audit_log,Other,admin_audit_log_admin_id_fkey,admin_id,aumrti_admins,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+admin_audit_log,Other,admin_audit_log_target_hospital_id_fkey,target_hospital_id,hospitals,id,SET NULL,NO ACTION,YES,none,OK
+admission_day_care_procedures,IPD,admission_day_care_procedures_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,YES,none,OK
+admission_day_care_procedures,IPD,admission_day_care_procedures_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,NO,UNINDEXED; tenant FK without CASCADE/RESTRICT policy,HIGH
+admission_day_care_procedures,IPD,admission_day_care_procedures_procedure_id_fkey,procedure_id,day_care_procedures,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+admission_estimates,IPD,admission_estimates_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,YES,none,OK
+admission_estimates,IPD,admission_estimates_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+admission_estimates,IPD,admission_estimates_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+admission_estimates,IPD,admission_estimates_package_id_fkey,package_id,health_packages,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+admission_estimates,IPD,admission_estimates_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+admission_sequences,IPD,admission_sequences_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+admissions,IPD,admissions_admitting_doctor_id_fkey,admitting_doctor_id,users,id,NO ACTION,NO ACTION,YES,none,OK
+admissions,IPD,admissions_bed_id_fkey,bed_id,beds,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+admissions,IPD,admissions_cancelled_by_fkey,cancelled_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+admissions,IPD,admissions_consultant_doctor_id_fkey,consultant_doctor_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+admissions,IPD,admissions_day_care_procedure_id_fkey,day_care_procedure_id,day_care_procedures,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+admissions,IPD,admissions_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+admissions,IPD,admissions_discharge_signed_by_fkey,discharge_signed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+admissions,IPD,admissions_discharge_unsigned_by_fkey,discharge_unsigned_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+admissions,IPD,admissions_financial_clearance_by_fkey,financial_clearance_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+admissions,IPD,admissions_financial_override_by_fkey,financial_override_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+admissions,IPD,admissions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+admissions,IPD,admissions_late_discharge_by_fkey,late_discharge_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+admissions,IPD,admissions_package_id_fkey,package_id,hospital_packages,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+admissions,IPD,admissions_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+admissions,IPD,admissions_payer_id_fkey,payer_id,payer_masters,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+admissions,IPD,admissions_ward_id_fkey,ward_id,wards,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+adult_immunization_schedule,Other,adult_immunization_schedule_given_by_fkey,given_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+adult_immunization_schedule,Other,adult_immunization_schedule_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+adult_immunization_schedule,Other,adult_immunization_schedule_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+advance_receipts,Other,advance_receipts_adjusted_in_bill_id_fkey,adjusted_in_bill_id,bills,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+advance_receipts,Other,advance_receipts_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,YES,none,OK
+advance_receipts,Other,advance_receipts_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+advance_receipts,Other,advance_receipts_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+advance_receipts,Other,advance_receipts_received_by_fkey,received_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ai_attestations,AI,ai_attestations_attested_by_fkey,attested_by,users,id,NO ACTION,NO ACTION,YES,none,OK
+ai_attestations,AI,ai_attestations_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+ai_cost_daily,AI,ai_cost_daily_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ai_digests,AI,ai_digests_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ai_feature_classes,AI,ai_feature_classes_updated_by_fkey,updated_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+ai_feature_logs,AI,ai_feature_logs_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+ai_feature_logs,AI,ai_feature_logs_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+ai_language_settings,AI,ai_language_settings_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ai_provider_config,AI,ai_provider_config_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ai_suggestions_audit,AI,ai_suggestions_audit_user_id_fkey,user_id,users,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+ai_usage_logs,AI,ai_usage_logs_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ai_wallet_transactions,AI,ai_wallet_transactions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+alert_escalation_log,Other,alert_escalation_log_alert_id_fkey,alert_id,clinical_alerts,id,CASCADE,NO ACTION,YES,none,OK
+alert_escalation_log,Other,alert_escalation_log_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+alert_escalation_log,Other,alert_escalation_log_rule_id_fkey,rule_id,alert_escalation_rules,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+alert_escalation_rules,Other,alert_escalation_rules_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ambulance_dispatches,Emergency,ambulance_dispatches_bill_id_fkey,bill_id,bills,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+ambulance_dispatches,Emergency,ambulance_dispatches_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ambulance_dispatches,Emergency,ambulance_dispatches_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+ambulance_dispatches,Emergency,ambulance_dispatches_vehicle_id_fkey,vehicle_id,ambulance_vehicles,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ambulance_equipment_checks,Emergency,ambulance_equipment_checks_checked_by_fkey,checked_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ambulance_equipment_checks,Emergency,ambulance_equipment_checks_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ambulance_equipment_checks,Emergency,ambulance_equipment_checks_vehicle_id_fkey,vehicle_id,ambulance_vehicles,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ambulance_transit_treatment,Emergency,ambulance_transit_treatment_dispatch_id_fkey,dispatch_id,ambulance_dispatches,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ambulance_transit_treatment,Emergency,ambulance_transit_treatment_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ambulance_transit_treatment,Emergency,ambulance_transit_treatment_recorded_by_fkey,recorded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+ambulance_vehicles,Emergency,ambulance_vehicles_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+amc_contracts,Other,amc_contracts_equipment_id_fkey,equipment_id,equipment_master,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+amc_contracts,Other,amc_contracts_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+anaesthesia_records,Other,anaesthesia_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+anaesthesia_records,Other,anaesthesia_records_ot_id_fkey,ot_id,ot_schedules,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+anaesthesia_records,Other,anaesthesia_records_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+andrology_reports,IVF/ART,andrology_reports_couple_id_fkey,couple_id,art_couples,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+andrology_reports,IVF/ART,andrology_reports_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+andrology_reports,IVF/ART,andrology_reports_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+andrology_reports,IVF/ART,andrology_reports_reported_by_fkey,reported_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+antibiotic_justifications,Other,antibiotic_justifications_approved_by_fkey,approved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+antibiotic_justifications,Other,antibiotic_justifications_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+antibiotic_justifications,Other,antibiotic_justifications_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+antibiotic_justifications,Other,antibiotic_justifications_prescribed_by_fkey,prescribed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+antibiotic_restricted_list,Other,antibiotic_restricted_list_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+api_configurations,Integration,api_configurations_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+api_keys,Integration,api_keys_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+api_keys,Integration,api_keys_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+appointments,OPD,appointments_booked_by_fkey,booked_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+appointments,OPD,appointments_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+appointments,OPD,appointments_doctor_id_fkey,doctor_id,users,id,CASCADE,NO ACTION,YES,none,OK
+appointments,OPD,appointments_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+appointments,OPD,appointments_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,YES,none,OK
+appointments,OPD,appointments_referral_doctor_id_fkey,referral_doctor_id,referral_doctors,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+appointments,OPD,appointments_slot_id_fkey,slot_id,doctor_slots,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+art_couples,IVF/ART,art_couples_female_patient_id_fkey,female_patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+art_couples,IVF/ART,art_couples_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+art_couples,IVF/ART,art_couples_male_patient_id_fkey,male_patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+art_couples,IVF/ART,art_couples_treating_doctor_fkey,treating_doctor,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+attendance_regularization_requests,HR,attendance_regularization_requests_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+attendance_regularization_requests,HR,attendance_regularization_requests_reviewed_by_fkey,reviewed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+attendance_regularization_requests,HR,attendance_regularization_requests_user_id_fkey,user_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+audit_records,Audit/Compliance,audit_records_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+audit_records,Audit/Compliance,audit_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED; CASCADE on financial/audit data,HIGH
+aumrti_admins,Identity,aumrti_admins_auth_user_id_fkey,auth_user_id,users,id,CASCADE,NO ACTION,YES,none,OK
+auto_posting_rules,Other,auto_posting_rules_credit_account_id_fkey,credit_account_id,chart_of_accounts,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+auto_posting_rules,Other,auto_posting_rules_debit_account_id_fkey,debit_account_id,chart_of_accounts,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+auto_posting_rules,Other,auto_posting_rules_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ayush_drug_master,Other,ayush_drug_master_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ayush_encounters,Other,ayush_encounters_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ayush_encounters,Other,ayush_encounters_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+ayush_encounters,Other,ayush_encounters_practitioner_id_fkey,practitioner_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+bank_accounts,Other,bank_accounts_coa_account_id_fkey,coa_account_id,chart_of_accounts,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+bank_accounts,Other,bank_accounts_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+bank_transactions,Other,bank_transactions_bank_account_id_fkey,bank_account_id,bank_accounts,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+bank_transactions,Other,bank_transactions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+bank_transactions,Other,bank_transactions_reconciled_with_fkey,reconciled_with,journal_line_items,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+bed_demand_forecasts,IPD,bed_demand_forecasts_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+bed_demand_forecasts,IPD,bed_demand_forecasts_ward_id_fkey,ward_id,wards,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+bed_reservations,IPD,bed_reservations_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+bed_reservations,IPD,bed_reservations_bed_id_fkey,bed_id,beds,id,NO ACTION,NO ACTION,YES,none,OK
+bed_reservations,IPD,bed_reservations_doctor_id_fkey,doctor_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+bed_reservations,IPD,bed_reservations_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+bed_reservations,IPD,bed_reservations_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+bed_reservations,IPD,bed_reservations_reserved_by_fkey,reserved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+beds,IPD,beds_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+beds,IPD,beds_ward_id_fkey,ward_id,wards,id,CASCADE,NO ACTION,YES,none,OK
+bill_amendments,Billing,bill_amendments_bill_id_fkey,bill_id,bills,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+bill_amendments,Billing,bill_amendments_changed_by_fkey,changed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+bill_amendments,Billing,bill_amendments_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+bill_discount_approvals,Billing,bill_discount_approvals_approved_by_fkey,approved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+bill_discount_approvals,Billing,bill_discount_approvals_bill_id_fkey,bill_id,bills,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+bill_discount_approvals,Billing,bill_discount_approvals_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+bill_discount_approvals,Billing,bill_discount_approvals_requested_by_fkey,requested_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+bill_line_items,Billing,bill_line_items_bill_id_fkey,bill_id,bills,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+bill_line_items,Billing,bill_line_items_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+bill_line_items,Billing,bill_line_items_ordered_by_fkey,ordered_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+bill_line_items,Billing,bill_line_items_payment_collected_by_fkey,payment_collected_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+bill_line_items,Billing,bill_line_items_service_id_fkey,service_id,service_master,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+bill_payments,Billing,bill_payments_bill_id_fkey,bill_id,bills,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+bill_payments,Billing,bill_payments_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+bill_payments,Billing,bill_payments_received_by_fkey,received_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+bill_sequences,Billing,bill_sequences_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+bills,Billing,bills_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+bills,Billing,bills_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+bills,Billing,bills_discount_approved_by_fkey,discount_approved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+bills,Billing,bills_ed_visit_id_fkey,ed_visit_id,ed_visits,id,NO ACTION,NO ACTION,YES,none,OK
+bills,Billing,bills_encounter_id_fkey,encounter_id,opd_encounters,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+bills,Billing,bills_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+bills,Billing,bills_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+blood_antibody_screening,Blood Bank,blood_antibody_screening_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+blood_antibody_screening,Blood Bank,blood_antibody_screening_patient_id_fkey,patient_id,patients,id,SET NULL,NO ACTION,NO,UNINDEXED,HIGH
+blood_antibody_screening,Blood Bank,blood_antibody_screening_tested_by_fkey,tested_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+blood_antibody_screening,Blood Bank,blood_antibody_screening_unit_id_fkey,unit_id,blood_units,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+blood_issues,Blood Bank,blood_issues_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+blood_issues,Blood Bank,blood_issues_bill_id_fkey,bill_id,bills,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+blood_issues,Blood Bank,blood_issues_cross_match_id_fkey,cross_match_id,cross_match_records,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+blood_issues,Blood Bank,blood_issues_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+blood_issues,Blood Bank,blood_issues_issued_by_fkey,issued_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+blood_issues,Blood Bank,blood_issues_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+blood_issues,Blood Bank,blood_issues_unit_id_fkey,unit_id,blood_units,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+blood_requests,Blood Bank,blood_requests_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+blood_requests,Blood Bank,blood_requests_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+blood_requests,Blood Bank,blood_requests_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+blood_requests,Blood Bank,blood_requests_requested_by_fkey,requested_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+blood_unit_tti_tests,Blood Bank,blood_unit_tti_tests_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+blood_unit_tti_tests,Blood Bank,blood_unit_tti_tests_released_by_fkey,released_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+blood_unit_tti_tests,Blood Bank,blood_unit_tti_tests_tested_by_fkey,tested_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+blood_unit_tti_tests,Blood Bank,blood_unit_tti_tests_unit_id_fkey,unit_id,blood_units,id,CASCADE,NO ACTION,YES,none,OK
+blood_units,Blood Bank,blood_units_donor_id_fkey,donor_id,donors,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+blood_units,Blood Bank,blood_units_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+blood_units,Blood Bank,blood_units_issued_to_fkey,issued_to,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+blood_units,Blood Bank,blood_units_reserved_for_fkey,reserved_for,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+bmw_manifests,Biomedical Waste,bmw_manifests_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+bmw_records,Biomedical Waste,bmw_records_collected_by_fkey,collected_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+bmw_records,Biomedical Waste,bmw_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+bmw_records,Biomedical Waste,bmw_records_verified_by_fkey,verified_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+bmw_records,Biomedical Waste,bmw_records_ward_id_fkey,ward_id,wards,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+body_releases,Other,body_releases_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+body_releases,Other,body_releases_mortuary_id_fkey,mortuary_id,mortuary_admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+body_releases,Other,body_releases_released_by_fkey,released_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+bpmh_records,Other,bpmh_records_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+bpmh_records,Other,bpmh_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+bpmh_records,Other,bpmh_records_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+bpmh_records,Other,bpmh_records_recorded_by_fkey,recorded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+braden_scale_assessments,Other,braden_scale_assessments_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+braden_scale_assessments,Other,braden_scale_assessments_assessed_by_fkey,assessed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+braden_scale_assessments,Other,braden_scale_assessments_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+branches,Tenant,branches_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+breakdown_logs,Other,breakdown_logs_equipment_id_fkey,equipment_id,equipment_master,id,NO ACTION,NO ACTION,YES,none,OK
+breakdown_logs,Other,breakdown_logs_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+breakdown_logs,Other,breakdown_logs_reported_by_fkey,reported_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+budget_lines,Other,budget_lines_approved_by_fkey,approved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+budget_lines,Other,budget_lines_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+budget_lines,Other,budget_lines_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+budget_lines,Other,budget_lines_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+calibration_records,Other,calibration_records_equipment_id_fkey,equipment_id,equipment_master,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+calibration_records,Other,calibration_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+capa_records,Other,capa_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+capa_records,Other,capa_records_responsible_person_fkey,responsible_person,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+capa_records,Other,capa_records_verification_by_fkey,verification_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+care_bundle_checks,Other,care_bundle_checks_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+care_bundle_checks,Other,care_bundle_checks_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+care_bundle_checks,Other,care_bundle_checks_recorded_by_fkey,recorded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+care_plan_tasks,Nursing,care_plan_tasks_care_plan_id_fkey,care_plan_id,care_plans,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+case_sheet_templates,Other,case_sheet_templates_created_by_fkey,created_by,users,id,SET NULL,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+case_sheet_templates,Other,case_sheet_templates_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+cghs_echs_beneficiaries,PM-JAY,cghs_echs_beneficiaries_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+cghs_echs_beneficiaries,PM-JAY,cghs_echs_beneficiaries_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+chain_memberships,Tenant,chain_memberships_chain_id_fkey,chain_id,hospital_chains,id,CASCADE,NO ACTION,YES,none,OK
+chain_memberships,Tenant,chain_memberships_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+chart_of_accounts,Other,chart_of_accounts_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+chart_of_accounts,Other,chart_of_accounts_parent_id_fkey,parent_id,chart_of_accounts,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+chemo_order_drugs,IPD,chemo_order_drugs_administered_by_fkey,administered_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+chemo_order_drugs,IPD,chemo_order_drugs_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+chemo_order_drugs,IPD,chemo_order_drugs_order_id_fkey,order_id,chemo_orders,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+chemo_orders,IPD,chemo_orders_bill_id_fkey,bill_id,bills,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+chemo_orders,IPD,chemo_orders_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+chemo_orders,IPD,chemo_orders_oncology_patient_id_fkey,oncology_patient_id,oncology_patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+chemo_orders,IPD,chemo_orders_ordered_by_fkey,ordered_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+chemo_orders,IPD,chemo_orders_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+chemo_orders,IPD,chemo_orders_protocol_id_fkey,protocol_id,chemo_protocols,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+chemo_orders,IPD,chemo_orders_v1_by_fkey,v1_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+chemo_orders,IPD,chemo_orders_v2_by_fkey,v2_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+chemo_orders,IPD,chemo_orders_v3_by_fkey,v3_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+chemo_orders,IPD,chemo_orders_v4_by_fkey,v4_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+chemo_orders,IPD,chemo_orders_v5_by_fkey,v5_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+chemo_protocols,IPD,chemo_protocols_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+chronic_disease_programs,Other,chronic_disease_programs_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+chronic_disease_programs,Other,chronic_disease_programs_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+chronic_disease_programs,Other,chronic_disease_programs_treating_doctor_fkey,treating_doctor,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+churn_remediation_actions,Platform,churn_remediation_actions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+cleaning_schedules,Other,cleaning_schedules_assigned_supervisor_fkey,assigned_supervisor,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+cleaning_schedules,Other,cleaning_schedules_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+cleaning_schedules,Other,cleaning_schedules_ward_id_fkey,ward_id,wards,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+clinical_alerts,Other,clinical_alerts_acknowledged_by_fkey,acknowledged_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+clinical_alerts,Other,clinical_alerts_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,YES,actor FK -> public.users,OK
+clinical_alerts,Other,clinical_alerts_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+clinical_alerts,Other,clinical_alerts_lab_order_item_id_fkey,lab_order_item_id,lab_order_items,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+clinical_alerts,Other,clinical_alerts_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+clinical_audit_samples,Quality/NABH,clinical_audit_samples_audit_id_fkey,audit_id,clinical_audits,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+clinical_audits,Quality/NABH,clinical_audits_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+clinical_audits,Quality/NABH,clinical_audits_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+clinical_audits,Quality/NABH,clinical_audits_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+clinical_audits,Quality/NABH,clinical_audits_linked_nabh_standard_id_fkey,linked_nabh_standard_id,nabh_standards,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+clinical_note_templates,Other,clinical_note_templates_created_by_fkey,created_by,users,id,CASCADE,NO ACTION,YES,actor FK -> public.users,OK
+clinical_note_templates,Other,clinical_note_templates_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+clinical_protocols,Other,clinical_protocols_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+clinical_reference_sources,Other,clinical_reference_sources_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+code_blue_audits,Other,code_blue_audits_audited_by_fkey,audited_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+code_blue_audits,Other,code_blue_audits_event_id_fkey,event_id,code_blue_events,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+code_blue_audits,Other,code_blue_audits_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+code_blue_events,Other,code_blue_events_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+code_blue_events,Other,code_blue_events_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+code_blue_events,Other,code_blue_events_team_leader_fkey,team_leader,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+coding_audits,Other,coding_audits_audited_by_fkey,audited_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+coding_audits,Other,coding_audits_coding_id_fkey,coding_id,icd_codings,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+coding_audits,Other,coding_audits_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED; CASCADE on financial/audit data,HIGH
+cold_chain_log,Vaccination,cold_chain_log_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+cold_chain_log,Vaccination,cold_chain_log_recorded_by_fkey,recorded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+cold_storage_log,Other,cold_storage_log_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+cold_storage_log,Other,cold_storage_log_recorded_by_fkey,recorded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+collection_campaigns,Other,collection_campaigns_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+collection_campaigns,Other,collection_campaigns_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+committee_action_items,Quality/NABH,committee_action_items_meeting_id_fkey,meeting_id,committee_meetings,id,CASCADE,NO ACTION,YES,none,OK
+committee_action_items,Quality/NABH,committee_action_items_responsible_owner_id_fkey,responsible_owner_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+committee_meetings,Quality/NABH,committee_meetings_committee_id_fkey,committee_id,hospital_committees,id,CASCADE,NO ACTION,YES,none,OK
+committee_meetings,Quality/NABH,committee_meetings_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+committee_members,Quality/NABH,committee_members_committee_id_fkey,committee_id,hospital_committees,id,CASCADE,NO ACTION,YES,none,OK
+committee_members,Quality/NABH,committee_members_user_id_fkey,user_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+config_change_logs,Other,config_change_logs_changed_by_fkey,changed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+config_change_logs,Other,config_change_logs_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+consent_form_templates,Audit/Compliance,consent_form_templates_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+consent_templates,Audit/Compliance,consent_templates_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+corporate_accounts,Insurance,corporate_accounts_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+credential_override_log,Other,credential_override_log_acting_user_id_fkey,acting_user_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+credential_override_log,Other,credential_override_log_clinician_id_fkey,clinician_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+credential_override_log,Other,credential_override_log_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+credit_note_items,Billing,credit_note_items_credit_note_id_fkey,credit_note_id,credit_notes,id,CASCADE,NO ACTION,YES,none,OK
+credit_note_items,Billing,credit_note_items_dispensing_item_id_fkey,dispensing_item_id,pharmacy_dispensing_items,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+credit_note_items,Billing,credit_note_items_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+credit_notes,Billing,credit_notes_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+credit_notes,Billing,credit_notes_approved_by_fkey,approved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+credit_notes,Billing,credit_notes_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+credit_notes,Billing,credit_notes_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+credit_notes,Billing,credit_notes_original_bill_id_fkey,original_bill_id,bills,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+credit_notes,Billing,credit_notes_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+cross_match_records,Other,cross_match_records_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+cross_match_records,Other,cross_match_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+cross_match_records,Other,cross_match_records_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+cross_match_records,Other,cross_match_records_performed_by_fkey,performed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+cross_match_records,Other,cross_match_records_unit_id_fkey,unit_id,blood_units,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+cycle_instruments,Other,cycle_instruments_cycle_id_fkey,cycle_id,sterilization_cycles,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+cycle_instruments,Other,cycle_instruments_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+cycle_instruments,Other,cycle_instruments_instrument_id_fkey,instrument_id,instruments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+cycle_instruments,Other,cycle_instruments_set_id_fkey,set_id,instrument_sets,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+daily_cash_closure,Other,daily_cash_closure_approved_by_fkey,approved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+daily_cash_closure,Other,daily_cash_closure_closed_by_fkey,closed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+daily_cash_closure,Other,daily_cash_closure_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+daily_census_snapshots,Other,daily_census_snapshots_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+data_erasure_requests,Other,data_erasure_requests_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+data_erasure_requests,Other,data_erasure_requests_requested_by_fkey,requested_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+data_erasure_requests,Other,data_erasure_requests_reviewed_by_fkey,reviewed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+day_care_procedures,Other,day_care_procedures_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+daycare_chairs,Other,daycare_chairs_current_patient_fkey,current_patient,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+daycare_chairs,Other,daycare_chairs_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+death_certificates,Other,death_certificates_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+death_certificates,Other,death_certificates_certified_by_fkey,certified_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+death_certificates,Other,death_certificates_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+death_certificates,Other,death_certificates_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+demand_forecasts,Other,demand_forecasts_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+demand_forecasts,Other,demand_forecasts_item_id_fkey,item_id,inventory_items,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+denial_logs,Other,denial_logs_claim_id_fkey,claim_id,pmjay_claims,id,NO ACTION,NO ACTION,YES,none,OK
+denial_logs,Other,denial_logs_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+dental_charts,Dental,dental_charts_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+dental_charts,Dental,dental_charts_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+dental_charts,Dental,dental_charts_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+dental_lab_orders,Dental,dental_lab_orders_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+dental_lab_orders,Dental,dental_lab_orders_ordered_by_fkey,ordered_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+dental_lab_orders,Dental,dental_lab_orders_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+dental_treatment_plans,Dental,dental_treatment_plans_bill_id_fkey,bill_id,bills,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+dental_treatment_plans,Dental,dental_treatment_plans_chart_id_fkey,chart_id,dental_charts,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+dental_treatment_plans,Dental,dental_treatment_plans_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+dental_treatment_plans,Dental,dental_treatment_plans_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+dental_treatment_plans,Dental,dental_treatment_plans_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+department_indents,Tenant,department_indents_approved_by_fkey,approved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+department_indents,Tenant,department_indents_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+department_indents,Tenant,department_indents_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+department_indents,Tenant,department_indents_requested_by_fkey,requested_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+departments,Tenant,departments_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+depreciation_postings,Other,depreciation_postings_asset_id_fkey,asset_id,fixed_assets,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+depreciation_postings,Other,depreciation_postings_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+depreciation_postings,Other,depreciation_postings_journal_id_fkey,journal_id,journal_entries,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+dialysis_machines,IPD,dialysis_machines_current_patient_id_fkey,current_patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+dialysis_machines,IPD,dialysis_machines_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+dialysis_patients,IPD,dialysis_patients_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+dialysis_patients,IPD,dialysis_patients_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+dialysis_patients,IPD,dialysis_patients_treating_doctor_fkey,treating_doctor,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+dialysis_sessions,IPD,dialysis_sessions_bill_id_fkey,bill_id,bills,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+dialysis_sessions,IPD,dialysis_sessions_dialysis_patient_id_fkey,dialysis_patient_id,dialysis_patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+dialysis_sessions,IPD,dialysis_sessions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+dialysis_sessions,IPD,dialysis_sessions_machine_id_fkey,machine_id,dialysis_machines,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+dialysis_sessions,IPD,dialysis_sessions_performed_by_fkey,performed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+dialyzer_reuse,Other,dialyzer_reuse_dialysis_patient_id_fkey,dialysis_patient_id,dialysis_patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+dialyzer_reuse,Other,dialyzer_reuse_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+dicom_files,Radiology,dicom_files_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+dicom_files,Radiology,dicom_files_order_id_fkey,order_id,radiology_orders,id,CASCADE,NO ACTION,YES,none,OK
+dicom_files,Radiology,dicom_files_uploaded_by_fkey,uploaded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+diet_orders,Dietetics,diet_orders_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,YES,none,OK
+diet_orders,Dietetics,diet_orders_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+diet_orders,Dietetics,diet_orders_ordered_by_fkey,ordered_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+diet_orders,Dietetics,diet_orders_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+diet_plans,Dietetics,diet_plans_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,YES,none,OK
+diet_plans,Dietetics,diet_plans_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+diet_plans,Dietetics,diet_plans_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+diet_plans,Dietetics,diet_plans_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+dietitian_notes,Dietetics,dietitian_notes_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+dietitian_notes,Dietetics,dietitian_notes_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+dietitian_notes,Dietetics,dietitian_notes_noted_by_fkey,noted_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+disaster_drills,Emergency,disaster_drills_approved_by_fkey,approved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+disaster_drills,Emergency,disaster_drills_coordinator_fkey,coordinator,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+disaster_drills,Emergency,disaster_drills_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+disciplinary_actions,Other,disciplinary_actions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+disciplinary_actions,Other,disciplinary_actions_raised_by_fkey,raised_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+disciplinary_actions,Other,disciplinary_actions_user_id_fkey,user_id,users,id,NO ACTION,NO ACTION,YES,none,OK
+discount_approvals,Billing,discount_approvals_approved_by_fkey,approved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+discount_approvals,Billing,discount_approvals_bill_id_fkey,bill_id,bills,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+discount_approvals,Billing,discount_approvals_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+discount_approvals,Billing,discount_approvals_requested_by_fkey,requested_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+discount_codes,Billing,discount_codes_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+doctor_quick_picks,OPD,doctor_quick_picks_doctor_id_fkey,doctor_id,users,id,CASCADE,NO ACTION,YES,none,OK
+doctor_quick_picks,OPD,doctor_quick_picks_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+doctor_schedules,OPD,doctor_schedules_doctor_id_fkey,doctor_id,users,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+doctor_schedules,OPD,doctor_schedules_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+doctor_slots,OPD,doctor_slots_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+doctor_slots,OPD,doctor_slots_doctor_id_fkey,doctor_id,users,id,NO ACTION,NO ACTION,YES,none,OK
+doctor_slots,OPD,doctor_slots_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+donor_campaigns,Blood Bank,donor_campaigns_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+donor_campaigns,Blood Bank,donor_campaigns_triggered_by_fkey,triggered_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+donors,Blood Bank,donors_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+drug_batches,Pharmacy,drug_batches_drug_id_fkey,drug_id,drug_master,id,NO ACTION,NO ACTION,YES,none,OK
+drug_batches,Pharmacy,drug_batches_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+drug_batches,Pharmacy,drug_batches_store_location_id_fkey,store_location_id,store_locations,id,NO ACTION,NO ACTION,YES,none,OK
+drug_master,Pharmacy,drug_master_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+dunning_attempts,Other,dunning_attempts_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+dunning_attempts,Other,dunning_attempts_subscription_id_fkey,subscription_id,hospital_subscriptions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+duty_roster,HR,duty_roster_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+duty_roster,HR,duty_roster_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+duty_roster,HR,duty_roster_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+duty_roster,HR,duty_roster_published_by_fkey,published_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+duty_roster,HR,duty_roster_shift_id_fkey,shift_id,shift_master,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+duty_roster,HR,duty_roster_user_id_fkey,user_id,users,id,NO ACTION,NO ACTION,YES,none,OK
+duty_roster,HR,duty_roster_ward_id_fkey,ward_id,wards,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ed_charge_items,Emergency,ed_charge_items_bill_id_fkey,bill_id,bills,id,NO ACTION,NO ACTION,YES,none,OK
+ed_charge_items,Emergency,ed_charge_items_ed_visit_id_fkey,ed_visit_id,ed_visits,id,CASCADE,NO ACTION,YES,none,OK
+ed_charge_items,Emergency,ed_charge_items_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+ed_charge_items,Emergency,ed_charge_items_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+ed_charge_items,Emergency,ed_charge_items_service_master_id_fkey,service_master_id,service_master,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ed_handover_notes,Emergency,ed_handover_notes_ed_visit_id_fkey,ed_visit_id,ed_visits,id,CASCADE,NO ACTION,YES,none,OK
+ed_handover_notes,Emergency,ed_handover_notes_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+ed_handover_notes,Emergency,ed_handover_notes_incoming_nurse_id_fkey,incoming_nurse_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ed_handover_notes,Emergency,ed_handover_notes_outgoing_nurse_id_fkey,outgoing_nurse_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ed_handover_notes,Emergency,ed_handover_notes_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+ed_medications,Emergency,ed_medications_ed_charge_item_id_fkey,ed_charge_item_id,ed_charge_items,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ed_medications,Emergency,ed_medications_ed_visit_id_fkey,ed_visit_id,ed_visits,id,CASCADE,NO ACTION,YES,none,OK
+ed_medications,Emergency,ed_medications_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+ed_medications,Emergency,ed_medications_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+ed_visits,Emergency,ed_visits_bill_id_fkey,bill_id,bills,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+ed_visits,Emergency,ed_visits_doctor_id_fkey,doctor_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ed_visits,Emergency,ed_visits_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ed_visits,Emergency,ed_visits_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+electrical_safety_logs,Other,electrical_safety_logs_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+electrical_safety_logs,Other,electrical_safety_logs_performed_by_fkey,performed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+email_notifications,Notifications,email_notifications_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+embryo_bank,IVF/ART,embryo_bank_couple_id_fkey,couple_id,art_couples,id,NO ACTION,NO ACTION,YES,none,OK
+embryo_bank,IVF/ART,embryo_bank_cycle_id_fkey,cycle_id,ivf_cycles,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+embryo_bank,IVF/ART,embryo_bank_embryo_id_fkey,embryo_id,embryology_records,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+embryo_bank,IVF/ART,embryo_bank_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+embryology_records,IVF/ART,embryology_records_cycle_id_fkey,cycle_id,ivf_cycles,id,NO ACTION,NO ACTION,YES,none,OK
+embryology_records,IVF/ART,embryology_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+emi_installments,Billing,emi_installments_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+emi_installments,Billing,emi_installments_payment_id_fkey,payment_id,bill_payments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+emi_installments,Billing,emi_installments_plan_id_fkey,plan_id,emi_plans,id,NO ACTION,NO ACTION,YES,none,OK
+emi_plans,Billing,emi_plans_bill_id_fkey,bill_id,bills,id,NO ACTION,NO ACTION,YES,none,OK
+emi_plans,Billing,emi_plans_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+emi_plans,Billing,emi_plans_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+emi_plans,Billing,emi_plans_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+emr_template_definitions,Other,emr_template_definitions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+enterprise_leads,Other,enterprise_leads_hospital_id_fkey,hospital_id,hospitals,id,SET NULL,NO ACTION,NO,UNINDEXED,HIGH
+entitlement_fail_open_events,Platform,entitlement_fail_open_events_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+epidemic_protocols,Other,epidemic_protocols_activated_by_fkey,activated_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+epidemic_protocols,Other,epidemic_protocols_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+equipment_master,Inventory,equipment_master_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,YES,none,OK
+equipment_master,Inventory,equipment_master_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+esg_monthly_metrics,Other,esg_monthly_metrics_entered_by_fkey,entered_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+esg_monthly_metrics,Other,esg_monthly_metrics_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+expense_records,Other,expense_records_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+expense_records,Other,expense_records_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+expense_records,Other,expense_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+expense_records,Other,expense_records_journal_id_fkey,journal_id,journal_entries,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+external_lab_referrals,Other,external_lab_referrals_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+external_lab_referrals,Other,external_lab_referrals_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+external_lab_referrals,Other,external_lab_referrals_referred_by_fkey,referred_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+facility_assets,Tenant,facility_assets_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+facility_maintenance_logs,Tenant,facility_maintenance_logs_asset_id_fkey,asset_id,facility_assets,id,SET NULL,NO ACTION,YES,none,OK
+facility_maintenance_logs,Tenant,facility_maintenance_logs_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+fall_risk_assessments,Nursing,fall_risk_assessments_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,YES,none,OK
+fall_risk_assessments,Nursing,fall_risk_assessments_assessed_by_fkey,assessed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+fall_risk_assessments,Nursing,fall_risk_assessments_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+fall_risk_assessments,Nursing,fall_risk_assessments_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+fcm_tokens,Other,fcm_tokens_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+fcm_tokens,Other,fcm_tokens_user_id_fkey,user_id,users,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+feedback_records,Patient,feedback_records_escalated_to_fkey,escalated_to,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+feedback_records,Patient,feedback_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+feedback_records,Patient,feedback_records_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+fire_safety_drills,Other,fire_safety_drills_conducted_by_fkey,conducted_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+fire_safety_drills,Other,fire_safety_drills_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+fixed_assets,Other,fixed_assets_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+fixed_assets,Other,fixed_assets_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+full_final_settlements,Other,full_final_settlements_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+full_final_settlements,Other,full_final_settlements_settled_by_fkey,settled_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+full_final_settlements,Other,full_final_settlements_staff_exit_id_fkey,staff_exit_id,staff_exits,id,CASCADE,NO ACTION,YES,none,OK
+govt_schemes,PM-JAY,govt_schemes_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+grievances,HR,grievances_assigned_to_fkey,assigned_to,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+grievances,HR,grievances_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+grievances,HR,grievances_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+grievances,HR,grievances_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+grn_ai_log,AI,grn_ai_log_grn_id_fkey,grn_id,grn_records,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+grn_ai_log,AI,grn_ai_log_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+grn_items,Procurement,grn_items_grn_id_fkey,grn_id,grn_records,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+grn_items,Procurement,grn_items_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+grn_items,Procurement,grn_items_item_id_fkey,item_id,inventory_items,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+grn_items,Procurement,grn_items_po_item_id_fkey,po_item_id,po_items,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+grn_records,Procurement,grn_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+grn_records,Procurement,grn_records_po_id_fkey,po_id,purchase_orders,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+grn_records,Procurement,grn_records_received_by_fkey,received_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+grn_records,Procurement,grn_records_vendor_id_fkey,vendor_id,vendors,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+guideline_adherence_log,Other,guideline_adherence_log_guideline_id_fkey,guideline_id,clinical_guidelines,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+hand_hygiene_audits,Infection Control,hand_hygiene_audits_auditor_id_fkey,auditor_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+hand_hygiene_audits,Infection Control,hand_hygiene_audits_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+hand_hygiene_audits,Infection Control,hand_hygiene_audits_ward_id_fkey,ward_id,wards,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+hcx_submissions,Other,hcx_submissions_claim_id_fkey,claim_id,insurance_claims,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+hcx_submissions,Other,hcx_submissions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+hcx_submissions,Other,hcx_submissions_pre_auth_id_fkey,pre_auth_id,insurance_pre_auth,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+health_coach_sessions,Other,health_coach_sessions_discharge_id_fkey,discharge_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+health_coach_sessions,Other,health_coach_sessions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+health_coach_sessions,Other,health_coach_sessions_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,YES,none,OK
+health_packages,Other,health_packages_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+hep_plans,Other,hep_plans_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+hep_plans,Other,hep_plans_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+hep_plans,Other,hep_plans_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+hep_plans,Other,hep_plans_referral_id_fkey,referral_id,physio_referrals,id,NO ACTION,NO ACTION,YES,none,OK
+high_alert_double_checks,Other,high_alert_double_checks_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+high_alert_double_checks,Other,high_alert_double_checks_first_check_by_fkey,first_check_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+high_alert_double_checks,Other,high_alert_double_checks_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+high_alert_double_checks,Other,high_alert_double_checks_second_check_by_fkey,second_check_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+hmis_reports,Integration,hmis_reports_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+hmis_reports,Integration,hmis_reports_submitted_by_fkey,submitted_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+home_care_plans,Other,home_care_plans_care_coordinator_fkey,care_coordinator,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+home_care_plans,Other,home_care_plans_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+home_care_plans,Other,home_care_plans_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+home_care_plans,Other,home_care_plans_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+home_care_visits,Other,home_care_visits_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+home_care_visits,Other,home_care_visits_nurse_id_fkey,nurse_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+home_care_visits,Other,home_care_visits_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+home_care_visits,Other,home_care_visits_plan_id_fkey,plan_id,home_care_plans,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+home_tele_monitoring,Other,home_tele_monitoring_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+home_tele_monitoring,Other,home_tele_monitoring_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+home_tele_monitoring,Other,home_tele_monitoring_plan_id_fkey,plan_id,home_care_plans,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+hospital_abdm_config,Tenant,hospital_abdm_config_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+hospital_addons,Tenant,hospital_addons_addon_sku_id_fkey,addon_sku_id,addon_skus,id,RESTRICT,NO ACTION,NO,UNINDEXED,MEDIUM
+hospital_addons,Tenant,hospital_addons_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+hospital_addons,Tenant,hospital_addons_purchased_by_fkey,purchased_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+hospital_ai_wallet,AI,hospital_ai_wallet_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+hospital_committees,Tenant,hospital_committees_chairperson_id_fkey,chairperson_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+hospital_committees,Tenant,hospital_committees_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+hospital_committees,Tenant,hospital_committees_secretary_id_fkey,secretary_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+hospital_config_values,Tenant,hospital_config_values_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+hospital_feature_overrides,Tenant,hospital_feature_overrides_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+hospital_feature_overrides,Tenant,hospital_feature_overrides_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+hospital_icd_settings,Tenant,hospital_icd_settings_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+hospital_insurance_settings,Tenant,hospital_insurance_settings_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+hospital_module_entitlements,Tenant,hospital_module_entitlements_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+hospital_module_entitlements,Tenant,hospital_module_entitlements_updated_by_fkey,updated_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+hospital_packages,Tenant,hospital_packages_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+hospital_pacs_config,Tenant,hospital_pacs_config_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+hospital_pricing_overrides,Tenant,hospital_pricing_overrides_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+hospital_pricing_overrides,Tenant,hospital_pricing_overrides_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+hospital_sequences,Tenant,hospital_sequences_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+hospital_settings,Tenant,hospital_settings_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+hospital_signup_consents,Tenant,hospital_signup_consents_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+hospital_subscriptions,Tenant,hospital_subscriptions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+hospital_subscriptions,Tenant,hospital_subscriptions_plan_id_fkey,plan_id,subscription_plans,id,NO ACTION,NO ACTION,YES,none,OK
+hospitals,Tenant,hospitals_chain_id_fkey,chain_id,hospital_chains,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+hospitals,Tenant,hospitals_referred_by_code_id_fkey,referred_by_code_id,referral_codes,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+housekeeping_tasks,Housekeeping,housekeeping_tasks_assigned_to_fkey,assigned_to,users,id,NO ACTION,NO ACTION,YES,none,OK
+housekeeping_tasks,Housekeeping,housekeeping_tasks_bed_id_fkey,bed_id,beds,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+housekeeping_tasks,Housekeeping,housekeeping_tasks_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+housekeeping_tasks,Housekeeping,housekeeping_tasks_ward_id_fkey,ward_id,wards,id,NO ACTION,NO ACTION,YES,none,OK
+icd10_code_sets,Other,icd10_code_sets_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+icd10_code_sets,Other,icd10_code_sets_uploaded_by_fkey,uploaded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+icd10_codes,Other,icd10_codes_code_set_id_fkey,code_set_id,icd10_code_sets,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+icd10_codes,Other,icd10_codes_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+icd_codings,Other,icd_codings_coded_by_fkey,coded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+icd_codings,Other,icd_codings_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+icd_codings,Other,icd_codings_mrd_locked_by_fkey,mrd_locked_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+icd_codings,Other,icd_codings_validated_by_fkey,validated_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+icu_daily_goals,ICU,icu_daily_goals_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+icu_daily_goals,ICU,icu_daily_goals_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+icu_daily_goals,ICU,icu_daily_goals_updated_by_fkey,updated_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+icu_flowsheet_entries,ICU,icu_flowsheet_entries_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+icu_flowsheet_entries,ICU,icu_flowsheet_entries_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+icu_flowsheet_entries,ICU,icu_flowsheet_entries_recorded_by_fkey,recorded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+idsp_alerts,Public Health,idsp_alerts_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+idsp_submissions,Public Health,idsp_submissions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+idsp_submissions,Public Health,idsp_submissions_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+inbox_messages,Other,inbox_messages_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+inbox_messages,Other,inbox_messages_parent_id_fkey,parent_id,inbox_messages,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+inbox_messages,Other,inbox_messages_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+incident_reports,Quality/NABH,incident_reports_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+incident_reports,Quality/NABH,incident_reports_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+incident_reports,Quality/NABH,incident_reports_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+incident_reports,Quality/NABH,incident_reports_reported_by_fkey,reported_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+indent_items,Procurement,indent_items_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+indent_items,Procurement,indent_items_indent_id_fkey,indent_id,department_indents,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+indent_items,Procurement,indent_items_item_id_fkey,item_id,inventory_items,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+instrument_sets,OT,instrument_sets_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+instruments,OT,instruments_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+instruments,OT,instruments_set_id_fkey,set_id,instrument_sets,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+insurance_automation_config,Insurance,insurance_automation_config_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+insurance_automation_log,Insurance,insurance_automation_log_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+insurance_automation_log,Insurance,insurance_automation_log_claim_id_fkey,claim_id,insurance_claims,id,SET NULL,NO ACTION,YES,none,OK
+insurance_automation_log,Insurance,insurance_automation_log_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+insurance_automation_log,Insurance,insurance_automation_log_pre_auth_id_fkey,pre_auth_id,insurance_pre_auth,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+insurance_claims,Insurance,insurance_claims_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,YES,none,OK
+insurance_claims,Insurance,insurance_claims_bill_id_fkey,bill_id,bills,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+insurance_claims,Insurance,insurance_claims_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+insurance_claims,Insurance,insurance_claims_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+insurance_claims,Insurance,insurance_claims_parent_claim_id_fkey,parent_claim_id,insurance_claims,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+insurance_claims,Insurance,insurance_claims_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+insurance_claims,Insurance,insurance_claims_payer_id_fkey,payer_id,payer_masters,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+insurance_claims,Insurance,insurance_claims_pre_auth_id_fkey,pre_auth_id,insurance_pre_auth,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+insurance_enhancement_requests,Insurance,insurance_enhancement_requests_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+insurance_enhancement_requests,Insurance,insurance_enhancement_requests_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+insurance_enhancement_requests,Insurance,insurance_enhancement_requests_pre_auth_id_fkey,pre_auth_id,insurance_pre_auth,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+insurance_enhancement_requests,Insurance,insurance_enhancement_requests_reviewed_by_fkey,reviewed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+insurance_enhancement_requests,Insurance,insurance_enhancement_requests_submitted_by_fkey,submitted_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+insurance_intimations,Insurance,insurance_intimations_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+insurance_intimations,Insurance,insurance_intimations_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+insurance_intimations,Insurance,insurance_intimations_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+insurance_payment_reconciliation,Insurance,insurance_payment_reconciliation_claim_id_fkey,claim_id,insurance_claims,id,RESTRICT,NO ACTION,YES,none,OK
+insurance_payment_reconciliation,Insurance,insurance_payment_reconciliation_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+insurance_pre_auth,Insurance,insurance_pre_auth_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+insurance_pre_auth,Insurance,insurance_pre_auth_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+insurance_pre_auth,Insurance,insurance_pre_auth_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+insurance_pre_auth,Insurance,insurance_pre_auth_parent_pre_auth_id_fkey,parent_pre_auth_id,insurance_pre_auth,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+insurance_pre_auth,Insurance,insurance_pre_auth_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+insurance_pre_auth,Insurance,insurance_pre_auth_submitted_by_fkey,submitted_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+insurance_sla_log,Insurance,insurance_sla_log_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+inventory_anomalies,Inventory,inventory_anomalies_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+inventory_anomalies,Inventory,inventory_anomalies_item_id_fkey,item_id,inventory_items,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+inventory_anomalies,Inventory,inventory_anomalies_reviewed_by_fkey,reviewed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+inventory_items,Inventory,inventory_items_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+inventory_stock,Inventory,inventory_stock_consignment_vendor_id_fkey,consignment_vendor_id,vendors,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+inventory_stock,Inventory,inventory_stock_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+inventory_stock,Inventory,inventory_stock_item_id_fkey,item_id,inventory_items,id,NO ACTION,NO ACTION,YES,none,OK
+io_balance_records,Other,io_balance_records_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+io_balance_records,Other,io_balance_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+io_balance_records,Other,io_balance_records_recorded_by_fkey,recorded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+ipc_bundle_checklists,Other,ipc_bundle_checklists_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,YES,none,OK
+ipc_bundle_checklists,Other,ipc_bundle_checklists_completed_by_fkey,completed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ipc_bundle_checklists,Other,ipc_bundle_checklists_device_usage_id_fkey,device_usage_id,ipc_device_usage,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ipc_bundle_checklists,Other,ipc_bundle_checklists_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ipc_bundle_checklists,Other,ipc_bundle_checklists_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+ipc_device_usage,Other,ipc_device_usage_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,YES,none,OK
+ipc_device_usage,Other,ipc_device_usage_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ipc_device_usage,Other,ipc_device_usage_inserted_by_fkey,inserted_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ipc_device_usage,Other,ipc_device_usage_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+ipc_device_usage,Other,ipc_device_usage_removed_by_fkey,removed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ipc_device_usage,Other,ipc_device_usage_ward_id_fkey,ward_id,wards,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ipc_infection_events,Other,ipc_infection_events_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ipc_infection_events,Other,ipc_infection_events_device_usage_id_fkey,device_usage_id,ipc_device_usage,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ipc_infection_events,Other,ipc_infection_events_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ipc_infection_events,Other,ipc_infection_events_lab_order_id_fkey,lab_order_id,lab_orders,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ipc_infection_events,Other,ipc_infection_events_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+ipc_infection_events,Other,ipc_infection_events_reported_by_fkey,reported_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ipc_infection_events,Other,ipc_infection_events_ward_id_fkey,ward_id,wards,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ipd_advances,IPD,ipd_advances_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,YES,none,OK
+ipd_advances,IPD,ipd_advances_collected_by_fkey,collected_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ipd_advances,IPD,ipd_advances_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+ipd_advances,IPD,ipd_advances_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+ipd_medications,IPD,ipd_medications_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,YES,none,OK
+ipd_medications,IPD,ipd_medications_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ipd_medications,IPD,ipd_medications_ordered_by_fkey,ordered_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ipd_nursing_notes,IPD,ipd_nursing_notes_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,YES,none,OK
+ipd_nursing_notes,IPD,ipd_nursing_notes_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ipd_nursing_notes,IPD,ipd_nursing_notes_patient_id_fkey,patient_id,patients,id,SET NULL,NO ACTION,NO,UNINDEXED,HIGH
+ipd_nursing_notes,IPD,ipd_nursing_notes_recorded_by_fkey,recorded_by,users,id,SET NULL,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+ipd_vitals,IPD,ipd_vitals_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,YES,none,OK
+ipd_vitals,IPD,ipd_vitals_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+ipd_vitals,IPD,ipd_vitals_recorded_by_fkey,recorded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+item_consumption_daily,Inventory,item_consumption_daily_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+item_consumption_daily,Inventory,item_consumption_daily_item_id_fkey,item_id,inventory_items,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+iv_fluids,Other,iv_fluids_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,YES,none,OK
+iv_fluids,Other,iv_fluids_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+iv_fluids,Other,iv_fluids_recorded_by_fkey,recorded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+ivf_cycles,IVF/ART,ivf_cycles_bill_id_fkey,bill_id,bills,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+ivf_cycles,IVF/ART,ivf_cycles_couple_id_fkey,couple_id,art_couples,id,NO ACTION,NO ACTION,YES,none,OK
+ivf_cycles,IVF/ART,ivf_cycles_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+jci_evidence_items,Other,jci_evidence_items_assessed_by_fkey,assessed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+jci_evidence_items,Other,jci_evidence_items_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+job_applicants,Other,job_applicants_hired_user_id_fkey,hired_user_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+job_applicants,Other,job_applicants_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+job_applicants,Other,job_applicants_job_opening_id_fkey,job_opening_id,job_openings,id,SET NULL,NO ACTION,YES,none,OK
+job_openings,Other,job_openings_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+job_openings,Other,job_openings_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+job_openings,Other,job_openings_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+journal_entries,Billing,journal_entries_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+journal_entries,Billing,journal_entries_posted_by_fkey,posted_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+journal_entries,Billing,journal_entries_reversal_of_fkey,reversal_of,journal_entries,id,NO ACTION,NO ACTION,YES,none,OK
+journal_entries,Billing,journal_entries_reversed_by_fkey,reversed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+journal_line_items,Billing,journal_line_items_account_id_fkey,account_id,chart_of_accounts,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+journal_line_items,Billing,journal_line_items_cost_centre_id_fkey,cost_centre_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+journal_line_items,Billing,journal_line_items_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED; CASCADE on financial/audit data,HIGH
+journal_line_items,Billing,journal_line_items_journal_id_fkey,journal_id,journal_entries,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_analyzer_messages,Laboratory,lab_analyzer_messages_device_id_fkey,device_id,lab_device_connectors,id,SET NULL,NO ACTION,YES,none,OK
+lab_analyzer_messages,Laboratory,lab_analyzer_messages_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+lab_analyzer_messages,Laboratory,lab_analyzer_messages_order_item_id_fkey,order_item_id,lab_order_items,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_analyzer_messages,Laboratory,lab_analyzer_messages_posted_by_fkey,posted_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_analyzer_test_mappings,Laboratory,lab_analyzer_test_mappings_device_id_fkey,device_id,lab_device_connectors,id,CASCADE,NO ACTION,YES,none,OK
+lab_analyzer_test_mappings,Laboratory,lab_analyzer_test_mappings_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+lab_analyzer_test_mappings,Laboratory,lab_analyzer_test_mappings_test_id_fkey,test_id,lab_test_master,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_calibration_records,Laboratory,lab_calibration_records_created_by_fkey,created_by,users,id,SET NULL,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+lab_calibration_records,Laboratory,lab_calibration_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+lab_device_connectors,Laboratory,lab_device_connectors_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+lab_dual_validation_config,Laboratory,lab_dual_validation_config_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+lab_order_items,Laboratory,lab_order_items_critical_acknowledged_by_fkey,critical_acknowledged_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_order_items,Laboratory,lab_order_items_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+lab_order_items,Laboratory,lab_order_items_lab_order_id_fkey,lab_order_id,lab_orders,id,NO ACTION,NO ACTION,YES,none,OK
+lab_order_items,Laboratory,lab_order_items_result_entered_by_fkey,result_entered_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_order_items,Laboratory,lab_order_items_sample_collected_by_fkey,sample_collected_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_order_items,Laboratory,lab_order_items_test_id_fkey,test_id,lab_test_master,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_order_items,Laboratory,lab_order_items_validated_by_fkey,validated_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_orders,Laboratory,lab_orders_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,YES,none,OK
+lab_orders,Laboratory,lab_orders_barcode_printed_by_fkey,barcode_printed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_orders,Laboratory,lab_orders_encounter_id_fkey,encounter_id,opd_encounters,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_orders,Laboratory,lab_orders_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+lab_orders,Laboratory,lab_orders_mixup_acknowledged_by_fkey,mixup_acknowledged_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_orders,Laboratory,lab_orders_ordered_by_fkey,ordered_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_orders,Laboratory,lab_orders_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+lab_orders,Laboratory,lab_orders_qc_override_by_fkey,qc_override_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_orders,Laboratory,lab_orders_validated_by_fkey,validated_by,users,id,NO ACTION,NO ACTION,YES,none,OK
+lab_qc_entries,Laboratory,lab_qc_entries_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+lab_qc_entries,Laboratory,lab_qc_entries_recorded_by_fkey,recorded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+lab_results,Laboratory,lab_results_finalized_by_fkey,finalized_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_results,Laboratory,lab_results_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+lab_results,Laboratory,lab_results_order_item_id_fkey,order_item_id,lab_order_items,id,CASCADE,NO ACTION,YES,none,OK
+lab_results,Laboratory,lab_results_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+lab_results,Laboratory,lab_results_verified_by_fkey,verified_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_samples,Laboratory,lab_samples_collected_by_fkey,collected_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_samples,Laboratory,lab_samples_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+lab_samples,Laboratory,lab_samples_lab_order_id_fkey,lab_order_id,lab_orders,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_samples,Laboratory,lab_samples_received_by_fkey,received_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_samples,Laboratory,lab_samples_recollected_from_sample_id_fkey,recollected_from_sample_id,lab_samples,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_samples,Laboratory,lab_samples_rejected_by_fkey,rejected_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_test_group_items,Laboratory,lab_test_group_items_group_id_fkey,group_id,lab_test_groups,id,CASCADE,NO ACTION,YES,none,OK
+lab_test_group_items,Laboratory,lab_test_group_items_test_id_fkey,test_id,lab_test_master,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+lab_test_groups,Laboratory,lab_test_groups_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+lab_test_master,Laboratory,lab_test_master_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+leakage_reports,Other,leakage_reports_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+leave_balance,HR,leave_balance_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+leave_balance,HR,leave_balance_user_id_fkey,user_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+leave_requests,HR,leave_requests_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+leave_requests,HR,leave_requests_reviewed_by_fkey,reviewed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+leave_requests,HR,leave_requests_user_id_fkey,user_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lifecycle_nudge_actions,Other,lifecycle_nudge_actions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+linen_records,Housekeeping,linen_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+linen_records,Housekeeping,linen_records_ward_id_fkey,ward_id,wards,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+lms_certificates,LMS,lms_certificates_course_id_fkey,course_id,lms_courses,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+lms_certificates,LMS,lms_certificates_enrollment_id_fkey,enrollment_id,lms_enrollments,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+lms_certificates,LMS,lms_certificates_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+lms_certificates,LMS,lms_certificates_user_id_fkey,user_id,users,id,CASCADE,NO ACTION,YES,none,OK
+lms_courses,LMS,lms_courses_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+lms_enrollments,LMS,lms_enrollments_course_id_fkey,course_id,lms_courses,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+lms_enrollments,LMS,lms_enrollments_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+lms_enrollments,LMS,lms_enrollments_user_id_fkey,user_id,users,id,CASCADE,NO ACTION,YES,none,OK
+lms_quiz_attempts,LMS,lms_quiz_attempts_enrollment_id_fkey,enrollment_id,lms_enrollments,id,CASCADE,NO ACTION,YES,none,OK
+lms_quiz_questions,LMS,lms_quiz_questions_course_id_fkey,course_id,lms_courses,id,CASCADE,NO ACTION,YES,none,OK
+mar_double_checks,Other,mar_double_checks_first_nurse_id_fkey,first_nurse_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+mar_double_checks,Other,mar_double_checks_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+mar_double_checks,Other,mar_double_checks_mar_id_fkey,mar_id,nursing_mar,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+mar_double_checks,Other,mar_double_checks_second_nurse_id_fkey,second_nurse_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+mar_records,Other,mar_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+mar_records,Other,mar_records_source_mar_id_fkey,source_mar_id,nursing_mar,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+marketing_campaigns,Other,marketing_campaigns_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+marketing_campaigns,Other,marketing_campaigns_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+mccd_certificates,Other,mccd_certificates_certifying_doctor_fkey,certifying_doctor,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+mccd_certificates,Other,mccd_certificates_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+mccd_certificates,Other,mccd_certificates_mortuary_id_fkey,mortuary_id,mortuary_admissions,id,NO ACTION,NO ACTION,YES,none,OK
+mccd_certificates,Other,mccd_certificates_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+mci_events,Emergency,mci_events_activated_by_fkey,activated_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+mci_events,Emergency,mci_events_deactivated_by_fkey,deactivated_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+mci_events,Emergency,mci_events_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+mci_triage_patients,Emergency,mci_triage_patients_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+mci_triage_patients,Emergency,mci_triage_patients_mci_event_id_fkey,mci_event_id,mci_events,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+mci_triage_patients,Emergency,mci_triage_patients_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+mci_triage_patients,Emergency,mci_triage_patients_triaged_by_fkey,triaged_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+meal_deliveries,Dietetics,meal_deliveries_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+meal_deliveries,Dietetics,meal_deliveries_delivered_by_fkey,delivered_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+meal_deliveries,Dietetics,meal_deliveries_diet_order_id_fkey,diet_order_id,diet_orders,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+meal_deliveries,Dietetics,meal_deliveries_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+meal_deliveries,Dietetics,meal_deliveries_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+med_admin_records,Other,med_admin_records_administered_by_fkey,administered_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+med_admin_records,Other,med_admin_records_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,YES,none,OK
+med_admin_records,Other,med_admin_records_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+med_admin_records,Other,med_admin_records_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+med_reconciliation_events,Other,med_reconciliation_events_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,YES,none,OK
+med_reconciliation_events,Other,med_reconciliation_events_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+med_reconciliation_events,Other,med_reconciliation_events_reconciled_by_fkey,reconciled_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+med_reconciliation_events,Other,med_reconciliation_events_verified_by_fkey,verified_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+medical_gas_logs,Other,medical_gas_logs_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+medical_gas_logs,Other,medical_gas_logs_recorded_by_fkey,recorded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+medical_records,Other,medical_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+medical_records,Other,medical_records_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+medication_adherence,Other,medication_adherence_care_plan_id_fkey,care_plan_id,care_plans,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+migration_jobs,Other,migration_jobs_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+migration_jobs,Other,migration_jobs_started_by_fkey,started_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+migration_logs,Other,migration_logs_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+migration_logs,Other,migration_logs_job_id_fkey,job_id,migration_jobs,id,NO ACTION,NO ACTION,YES,none,OK
+mlc_cases,Other,mlc_cases_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,YES,none,OK
+mlc_cases,Other,mlc_cases_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+mlc_cases,Other,mlc_cases_ed_visit_id_fkey,ed_visit_id,ed_visits,id,NO ACTION,NO ACTION,YES,none,OK
+mlc_cases,Other,mlc_cases_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+mlc_cases,Other,mlc_cases_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+mlc_records,Other,mlc_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+mlc_records,Other,mlc_records_mortuary_id_fkey,mortuary_id,mortuary_admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+mlc_records,Other,mlc_records_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+mortuary_admissions,Emergency,mortuary_admissions_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+mortuary_admissions,Emergency,mortuary_admissions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+mortuary_admissions,Emergency,mortuary_admissions_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+mortuary_admissions,Emergency,mortuary_admissions_pronounced_by_fkey,pronounced_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+mrr_snapshots,Platform,mrr_snapshots_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+mrr_snapshots,Platform,mrr_snapshots_plan_id_fkey,plan_id,subscription_plans,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+nabh_criteria,Quality/NABH,nabh_criteria_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+nabh_evidence_items,Quality/NABH,nabh_evidence_items_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+nabh_evidence_items,Quality/NABH,nabh_evidence_items_nabh_compliance_id_fkey,nabh_compliance_id,nabh_hospital_compliance,id,CASCADE,NO ACTION,YES,none,OK
+nabh_evidence_items,Quality/NABH,nabh_evidence_items_uploaded_by_fkey,uploaded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+nabh_evidence_log,Quality/NABH,nabh_evidence_log_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+nabh_evidence_log,Quality/NABH,nabh_evidence_log_logged_by_fkey,logged_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+nabh_hospital_compliance,Quality/NABH,nabh_hospital_compliance_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+nabh_hospital_compliance,Quality/NABH,nabh_hospital_compliance_last_assessed_by_fkey,last_assessed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+nabh_hospital_compliance,Quality/NABH,nabh_hospital_compliance_nabh_standard_id_fkey,nabh_standard_id,nabh_standards,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+nabh_hospital_compliance,Quality/NABH,nabh_hospital_compliance_process_owner_id_fkey,process_owner_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ndps_pending_dispenses,Pharmacy,ndps_pending_dispenses_countersigner_id_fkey,countersigner_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ndps_pending_dispenses,Pharmacy,ndps_pending_dispenses_drug_id_fkey,drug_id,drug_master,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ndps_pending_dispenses,Pharmacy,ndps_pending_dispenses_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+ndps_pending_dispenses,Pharmacy,ndps_pending_dispenses_primary_pharmacist_id_fkey,primary_pharmacist_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ndps_register,Pharmacy,ndps_register_countersigned_by_fkey,countersigned_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ndps_register,Pharmacy,ndps_register_dispensing_id_fkey,dispensing_id,pharmacy_dispensing,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ndps_register,Pharmacy,ndps_register_drug_id_fkey,drug_id,drug_master,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ndps_register,Pharmacy,ndps_register_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED; CASCADE on financial/audit data,HIGH
+ndps_register,Pharmacy,ndps_register_pharmacist_id_fkey,pharmacist_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ndps_register,Pharmacy,ndps_register_second_pharmacist_id_fkey,second_pharmacist_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+neonatal_records,Other,neonatal_records_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+neonatal_records,Other,neonatal_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+neonatal_records,Other,neonatal_records_mother_patient_id_fkey,mother_patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+neonatal_records,Other,neonatal_records_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+no_show_predictions,Other,no_show_predictions_appointment_id_fkey,appointment_id,opd_tokens,id,SET NULL,NO ACTION,YES,none,OK
+no_show_predictions,Other,no_show_predictions_appointment_ref_fkey,appointment_ref,appointments,id,SET NULL,NO ACTION,YES,none,OK
+no_show_predictions,Other,no_show_predictions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+no_show_predictions,Other,no_show_predictions_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,YES,none,OK
+no_show_predictions,Other,no_show_predictions_token_id_fkey,token_id,opd_tokens,id,SET NULL,NO ACTION,YES,none,OK
+notification_log,Notifications,notification_log_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+notification_log,Notifications,notification_log_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+notification_preferences,Notifications,notification_preferences_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+notification_preferences,Notifications,notification_preferences_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+notification_queue,Notifications,notification_queue_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+nps_responses,Other,nps_responses_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+nps_responses,Other,nps_responses_survey_id_fkey,survey_id,nps_surveys,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+nps_surveys,Other,nps_surveys_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+nps_surveys,Other,nps_surveys_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+nursing_care_plans,Nursing,nursing_care_plans_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,YES,none,OK
+nursing_care_plans,Nursing,nursing_care_plans_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+nursing_care_plans,Nursing,nursing_care_plans_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+nursing_fluid_outputs,Nursing,nursing_fluid_outputs_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,YES,none,OK
+nursing_fluid_outputs,Nursing,nursing_fluid_outputs_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+nursing_fluid_outputs,Nursing,nursing_fluid_outputs_recorded_by_fkey,recorded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+nursing_handovers,Nursing,nursing_handovers_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+nursing_handovers,Nursing,nursing_handovers_incoming_nurse_id_fkey,incoming_nurse_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+nursing_handovers,Nursing,nursing_handovers_outgoing_nurse_id_fkey,outgoing_nurse_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+nursing_handovers,Nursing,nursing_handovers_ward_id_fkey,ward_id,wards,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+nursing_mar,Nursing,nursing_mar_administered_by_fkey,administered_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+nursing_mar,Nursing,nursing_mar_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,YES,none,OK
+nursing_mar,Nursing,nursing_mar_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+nursing_mar,Nursing,nursing_mar_medication_id_fkey,medication_id,ipd_medications,id,NO ACTION,NO ACTION,YES,none,OK
+nursing_mar,Nursing,nursing_mar_second_nurse_id_fkey,second_nurse_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+nursing_procedure_consumables,Nursing,nursing_procedure_consumables_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,NO,UNINDEXED; tenant FK without CASCADE/RESTRICT policy,HIGH
+nursing_procedure_consumables,Nursing,nursing_procedure_consumables_inventory_item_id_fkey,inventory_item_id,inventory_items,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+nursing_procedure_consumables,Nursing,nursing_procedure_consumables_nursing_procedure_id_fkey,nursing_procedure_id,nursing_procedures,id,CASCADE,NO ACTION,YES,none,OK
+nursing_procedures,Nursing,nursing_procedures_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+nursing_procedures,Nursing,nursing_procedures_bill_id_fkey,bill_id,bills,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+nursing_procedures,Nursing,nursing_procedures_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+nursing_procedures,Nursing,nursing_procedures_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+nursing_procedures,Nursing,nursing_procedures_performed_by_fkey,performed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+nursing_vitals,Nursing,nursing_vitals_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,YES,none,OK
+nursing_vitals,Nursing,nursing_vitals_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+nursing_vitals,Nursing,nursing_vitals_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+nursing_vitals,Nursing,nursing_vitals_recorded_by_fkey,recorded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+nutrition_screenings,Dietetics,nutrition_screenings_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,YES,none,OK
+nutrition_screenings,Dietetics,nutrition_screenings_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+nutrition_screenings,Dietetics,nutrition_screenings_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+nutrition_screenings,Dietetics,nutrition_screenings_screened_by_fkey,screened_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+nutritional_screenings,Dietetics,nutritional_screenings_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,YES,none,OK
+nutritional_screenings,Dietetics,nutritional_screenings_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+nutritional_screenings,Dietetics,nutritional_screenings_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+nutritional_screenings,Dietetics,nutritional_screenings_screened_by_fkey,screened_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+obstetric_records,Other,obstetric_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+obstetric_records,Other,obstetric_records_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+occupational_health_records,Other,occupational_health_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+occupational_health_records,Other,occupational_health_records_recorded_by_fkey,recorded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+occupational_health_records,Other,occupational_health_records_user_id_fkey,user_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+onboarding_tasks,HR,onboarding_tasks_applicant_id_fkey,applicant_id,job_applicants,id,CASCADE,NO ACTION,YES,none,OK
+onboarding_tasks,HR,onboarding_tasks_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+oncology_patients,IPD,oncology_patients_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+oncology_patients,IPD,oncology_patients_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+oncology_patients,IPD,oncology_patients_protocol_id_fkey,protocol_id,chemo_protocols,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+oncology_patients,IPD,oncology_patients_treating_oncologist_fkey,treating_oncologist,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+online_reviews,Other,online_reviews_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+online_reviews,Other,online_reviews_responded_by_fkey,responded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+opd_diagnoses,OPD,opd_diagnoses_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+opd_diagnoses,OPD,opd_diagnoses_encounter_id_fkey,encounter_id,opd_encounters,id,CASCADE,NO ACTION,YES,none,OK
+opd_diagnoses,OPD,opd_diagnoses_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+opd_diagnoses,OPD,opd_diagnoses_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+opd_encounters,OPD,opd_encounters_consultation_bill_id_fkey,consultation_bill_id,bills,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+opd_encounters,OPD,opd_encounters_doctor_id_fkey,doctor_id,users,id,NO ACTION,NO ACTION,YES,none,OK
+opd_encounters,OPD,opd_encounters_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+opd_encounters,OPD,opd_encounters_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+opd_encounters,OPD,opd_encounters_revisit_of_encounter_id_fkey,revisit_of_encounter_id,opd_encounters,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+opd_encounters,OPD,opd_encounters_token_id_fkey,token_id,opd_tokens,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+opd_token_sequences,OPD,opd_token_sequences_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+opd_tokens,OPD,opd_tokens_appointment_id_fkey,appointment_id,appointments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+opd_tokens,OPD,opd_tokens_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+opd_tokens,OPD,opd_tokens_doctor_id_fkey,doctor_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+opd_tokens,OPD,opd_tokens_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+opd_tokens,OPD,opd_tokens_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+opd_tokens,OPD,opd_tokens_payer_id_fkey,payer_id,payer_masters,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+opd_tokens,OPD,opd_tokens_revisit_of_token_id_fkey,revisit_of_token_id,opd_tokens,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+opd_visits,OPD,opd_visits_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+opd_visits,OPD,opd_visits_doctor_id_fkey,doctor_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+opd_visits,OPD,opd_visits_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+opd_visits,OPD,opd_visits_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+ophthalmology_records,Other,ophthalmology_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+ophthalmology_records,Other,ophthalmology_records_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+organ_donations,Other,organ_donations_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+organ_donations,Other,organ_donations_mortuary_id_fkey,mortuary_id,mortuary_admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+organ_donations,Other,organ_donations_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+ot_checklist_custom_items,OT,ot_checklist_custom_items_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+ot_checklists,OT,ot_checklists_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+ot_checklists,OT,ot_checklists_ot_schedule_id_fkey,ot_schedule_id,ot_schedules,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ot_consumables,OT,ot_consumables_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+ot_consumables,OT,ot_consumables_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+ot_consumables,OT,ot_consumables_inventory_item_id_fkey,inventory_item_id,inventory_items,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ot_consumables,OT,ot_consumables_schedule_id_fkey,schedule_id,ot_schedules,id,CASCADE,NO ACTION,YES,none,OK
+ot_equipment_checklist,OT,ot_equipment_checklist_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,NO,UNINDEXED; tenant FK without CASCADE/RESTRICT policy,HIGH
+ot_equipment_checklist,OT,ot_equipment_checklist_ot_schedule_id_fkey,ot_schedule_id,ot_schedules,id,NO ACTION,NO ACTION,YES,none,OK
+ot_implants,OT,ot_implants_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+ot_implants,OT,ot_implants_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+ot_implants,OT,ot_implants_inventory_item_id_fkey,inventory_item_id,inventory_items,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ot_implants,OT,ot_implants_schedule_id_fkey,schedule_id,ot_schedules,id,CASCADE,NO ACTION,YES,none,OK
+ot_instrument_counts,OT,ot_instrument_counts_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,NO,UNINDEXED; tenant FK without CASCADE/RESTRICT policy,HIGH
+ot_instrument_counts,OT,ot_instrument_counts_ot_schedule_id_fkey,ot_schedule_id,ot_schedules,id,NO ACTION,NO ACTION,YES,none,OK
+ot_rooms,OT,ot_rooms_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+ot_schedules,OT,ot_schedules_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ot_schedules,OT,ot_schedules_anaesthetist_id_fkey,anaesthetist_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ot_schedules,OT,ot_schedules_bill_id_fkey,bill_id,bills,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+ot_schedules,OT,ot_schedules_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ot_schedules,OT,ot_schedules_ot_room_id_fkey,ot_room_id,ot_rooms,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ot_schedules,OT,ot_schedules_pac_done_by_fkey,pac_done_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ot_schedules,OT,ot_schedules_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+ot_schedules,OT,ot_schedules_privilege_override_by_fkey,privilege_override_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ot_schedules,OT,ot_schedules_scrub_nurse_id_fkey,scrub_nurse_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ot_schedules,OT,ot_schedules_surgeon_id_fkey,surgeon_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ot_team_members,OT,ot_team_members_ot_schedule_id_fkey,ot_schedule_id,ot_schedules,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+outcome_scores,Other,outcome_scores_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+outcome_scores,Other,outcome_scores_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+outcome_scores,Other,outcome_scores_referral_id_fkey,referral_id,physio_referrals,id,NO ACTION,NO ACTION,YES,none,OK
+outcome_scores,Other,outcome_scores_scored_by_fkey,scored_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+overtime_requests,Other,overtime_requests_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+overtime_requests,Other,overtime_requests_reviewed_by_fkey,reviewed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+overtime_requests,Other,overtime_requests_user_id_fkey,user_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+package_bookings,Billing,package_bookings_bill_id_fkey,bill_id,bills,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+package_bookings,Billing,package_bookings_coordinator_fkey,coordinator,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+package_bookings,Billing,package_bookings_corporate_account_id_fkey,corporate_account_id,corporate_accounts,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+package_bookings,Billing,package_bookings_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+package_bookings,Billing,package_bookings_package_id_fkey,package_id,health_packages,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+package_bookings,Billing,package_bookings_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+package_extras,Billing,package_extras_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+package_extras,Billing,package_extras_package_id_fkey,package_id,hospital_packages,id,CASCADE,NO ACTION,YES,none,OK
+package_extras,Billing,package_extras_service_id_fkey,service_id,service_master,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+package_inclusions,Billing,package_inclusions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+package_inclusions,Billing,package_inclusions_package_id_fkey,package_id,hospital_packages,id,CASCADE,NO ACTION,YES,none,OK
+package_inclusions,Billing,package_inclusions_service_id_fkey,service_id,service_master,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+package_station_logs,Billing,package_station_logs_booking_id_fkey,booking_id,package_bookings,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+package_station_logs,Billing,package_station_logs_completed_by_fkey,completed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+package_station_logs,Billing,package_station_logs_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,NO,UNINDEXED; tenant FK without CASCADE/RESTRICT policy,HIGH
+pacs_connectors,Radiology,pacs_connectors_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+pacu_assessments,OT,pacu_assessments_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+pain_audit_records,Other,pain_audit_records_auditor_id_fkey,auditor_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pain_audit_records,Other,pain_audit_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+pain_audit_records,Other,pain_audit_records_ward_id_fkey,ward_id,wards,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+palliative_care_plans,Other,palliative_care_plans_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+palliative_care_plans,Other,palliative_care_plans_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+palliative_care_plans,Other,palliative_care_plans_key_nurse_id_fkey,key_nurse_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+palliative_care_plans,Other,palliative_care_plans_palliative_physician_id_fkey,palliative_physician_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+palliative_care_plans,Other,palliative_care_plans_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+panchakarma_schedules,Other,panchakarma_schedules_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+panchakarma_schedules,Other,panchakarma_schedules_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+panchakarma_schedules,Other,panchakarma_schedules_prescribed_by_fkey,prescribed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+panchakarma_schedules,Other,panchakarma_schedules_therapist_id_fkey,therapist_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+partograph_entries,Other,partograph_entries_admission_id_fkey,admission_id,admissions,id,SET NULL,NO ACTION,YES,none,OK
+partograph_entries,Other,partograph_entries_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+partograph_entries,Other,partograph_entries_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,YES,none,OK
+partograph_entries,Other,partograph_entries_recorded_by_fkey,recorded_by,users,id,SET NULL,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+partograph_records,Other,partograph_records_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+partograph_records,Other,partograph_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+partograph_records,Other,partograph_records_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+pathology_cases,Other,pathology_cases_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+pathology_cases,Other,pathology_cases_final_signed_by_fkey,final_signed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pathology_cases,Other,pathology_cases_first_signed_by_fkey,first_signed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pathology_cases,Other,pathology_cases_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+pathology_cases,Other,pathology_cases_lab_order_id_fkey,lab_order_id,lab_orders,id,SET NULL,NO ACTION,YES,none,OK
+pathology_cases,Other,pathology_cases_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+patient_abha_profiles,ABDM,patient_abha_profiles_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+patient_abha_profiles,ABDM,patient_abha_profiles_linked_by_fkey,linked_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+patient_abha_profiles,ABDM,patient_abha_profiles_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+patient_acquisition,Patient,patient_acquisition_campaign_id_fkey,campaign_id,marketing_campaigns,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+patient_acquisition,Patient,patient_acquisition_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+patient_acquisition,Patient,patient_acquisition_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+patient_acquisition,Patient,patient_acquisition_referral_doctor_id_fkey,referral_doctor_id,referral_doctors,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+patient_consents,Patient,patient_consents_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+patient_consents,Patient,patient_consents_ed_visit_id_fkey,ed_visit_id,ed_visits,id,NO ACTION,NO ACTION,YES,none,OK
+patient_consents,Patient,patient_consents_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+patient_consents,Patient,patient_consents_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+patient_consents,Patient,patient_consents_signed_by_user_id_fkey,signed_by_user_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+patient_consents,Patient,patient_consents_template_id_fkey,template_id,consent_form_templates,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+patient_documents,Patient,patient_documents_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+patient_documents,Patient,patient_documents_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+patient_documents,Patient,patient_documents_uploaded_by_fkey,uploaded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+patient_encounter_templates,Patient,patient_encounter_templates_clinician_id_fkey,clinician_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+patient_encounter_templates,Patient,patient_encounter_templates_encounter_id_fkey,encounter_id,opd_encounters,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+patient_encounter_templates,Patient,patient_encounter_templates_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+patient_encounter_templates,Patient,patient_encounter_templates_template_definition_id_fkey,template_definition_id,emr_template_definitions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+patient_feedback,Patient,patient_feedback_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+patient_feedback,Patient,patient_feedback_encounter_id_fkey,encounter_id,opd_encounters,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+patient_feedback,Patient,patient_feedback_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+patient_feedback,Patient,patient_feedback_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+patient_history_digests,Patient,patient_history_digests_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+patient_history_digests,Patient,patient_history_digests_job_id_fkey,job_id,patient_history_ingest_jobs,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+patient_history_digests,Patient,patient_history_digests_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,YES,none,OK
+patient_history_digests,Patient,patient_history_digests_reviewed_by_fkey,reviewed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+patient_history_ingest_jobs,Patient,patient_history_ingest_jobs_encounter_id_fkey,encounter_id,opd_encounters,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+patient_history_ingest_jobs,Patient,patient_history_ingest_jobs_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,NO,UNINDEXED; tenant FK without CASCADE/RESTRICT policy,HIGH
+patient_history_ingest_jobs,Patient,patient_history_ingest_jobs_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,YES,none,OK
+patient_history_ingest_jobs,Patient,patient_history_ingest_jobs_requested_by_fkey,requested_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+patient_history_source_chunks,Patient,patient_history_source_chunks_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,NO,UNINDEXED; tenant FK without CASCADE/RESTRICT policy,HIGH
+patient_history_source_chunks,Patient,patient_history_source_chunks_job_id_fkey,job_id,patient_history_ingest_jobs,id,CASCADE,NO ACTION,YES,none,OK
+patient_history_source_chunks,Patient,patient_history_source_chunks_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+patient_history_source_chunks,Patient,patient_history_source_chunks_source_id_fkey,source_id,patient_history_sources,id,CASCADE,NO ACTION,YES,none,OK
+patient_history_sources,Patient,patient_history_sources_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,NO,UNINDEXED; tenant FK without CASCADE/RESTRICT policy,HIGH
+patient_history_sources,Patient,patient_history_sources_job_id_fkey,job_id,patient_history_ingest_jobs,id,CASCADE,NO ACTION,YES,none,OK
+patient_history_sources,Patient,patient_history_sources_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,YES,none,OK
+patient_portal_sessions,Patient,patient_portal_sessions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+patient_portal_sessions,Patient,patient_portal_sessions_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+patient_rights_acknowledgements,Patient,patient_rights_acknowledgements_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+patient_rights_acknowledgements,Patient,patient_rights_acknowledgements_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+patient_rights_acknowledgements,Patient,patient_rights_acknowledgements_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+patient_segments,Patient,patient_segments_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+patient_template_responses,Patient,patient_template_responses_encounter_template_id_fkey,encounter_template_id,patient_encounter_templates,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+patient_template_responses,Patient,patient_template_responses_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+patients,Patient,patients_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+payer_masters,Insurance,payer_masters_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+payment_links,Payments,payment_links_bill_id_fkey,bill_id,bills,id,NO ACTION,NO ACTION,YES,none,OK
+payment_links,Payments,payment_links_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+payment_links,Payments,payment_links_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+payment_links,Payments,payment_links_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+payroll_hooks,Payroll,payroll_hooks_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+payroll_items,Payroll,payroll_items_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+payroll_items,Payroll,payroll_items_payroll_run_id_fkey,payroll_run_id,payroll_runs,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+payroll_items,Payroll,payroll_items_user_id_fkey,user_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+payroll_runs,Payroll,payroll_runs_approved_by_fkey,approved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+payroll_runs,Payroll,payroll_runs_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+payroll_runs,Payroll,payroll_runs_processed_by_fkey,processed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+payslips,Other,payslips_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+payslips,Other,payslips_run_id_fkey,run_id,payroll_runs,id,CASCADE,NO ACTION,YES,none,OK
+payslips,Other,payslips_staff_id_fkey,staff_id,users,id,NO ACTION,NO ACTION,YES,none,OK
+payslips,Other,payslips_structure_id_fkey,structure_id,salary_structures,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pcpndt_form_f,Other,pcpndt_form_f_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+pcpndt_form_f,Other,pcpndt_form_f_order_id_fkey,order_id,radiology_orders,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pcpndt_form_f,Other,pcpndt_form_f_signed_by_fkey,signed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pcpndt_records,Other,pcpndt_records_consent_obtained_by_fkey,consent_obtained_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pcpndt_records,Other,pcpndt_records_declared_by_fkey,declared_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pcpndt_records,Other,pcpndt_records_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+pcpndt_records,Other,pcpndt_records_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+pcpndt_records,Other,pcpndt_records_radiology_order_id_fkey,radiology_order_id,radiology_orders,id,NO ACTION,NO ACTION,YES,none,OK
+pcpndt_settings,Other,pcpndt_settings_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+performance_appraisals,Other,performance_appraisals_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+performance_appraisals,Other,performance_appraisals_manager_id_fkey,manager_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+performance_appraisals,Other,performance_appraisals_user_id_fkey,user_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+periodontal_charts,Other,periodontal_charts_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+periodontal_charts,Other,periodontal_charts_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+periodontal_charts,Other,periodontal_charts_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+pharmacy_dispensing,Pharmacy,pharmacy_dispensing_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,YES,none,OK
+pharmacy_dispensing,Pharmacy,pharmacy_dispensing_dispensed_by_fkey,dispensed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_dispensing,Pharmacy,pharmacy_dispensing_encounter_id_fkey,encounter_id,opd_encounters,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_dispensing,Pharmacy,pharmacy_dispensing_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+pharmacy_dispensing,Pharmacy,pharmacy_dispensing_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+pharmacy_dispensing,Pharmacy,pharmacy_dispensing_prescription_id_fkey,prescription_id,prescriptions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_dispensing_items,Pharmacy,pharmacy_dispensing_items_batch_id_fkey,batch_id,drug_batches,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_dispensing_items,Pharmacy,pharmacy_dispensing_items_dispensing_id_fkey,dispensing_id,pharmacy_dispensing,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_dispensing_items,Pharmacy,pharmacy_dispensing_items_drug_id_fkey,drug_id,drug_master,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_dispensing_items,Pharmacy,pharmacy_dispensing_items_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+pharmacy_dispensing_items,Pharmacy,pharmacy_dispensing_items_ndps_return_senior_id_fkey,ndps_return_senior_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_dispensing_items,Pharmacy,pharmacy_dispensing_items_ndps_second_pharmacist_id_fkey,ndps_second_pharmacist_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_dispensing_items,Pharmacy,pharmacy_dispensing_items_return_confirmed_by_fkey,return_confirmed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_dispensing_items,Pharmacy,pharmacy_dispensing_items_returned_by_fkey,returned_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_return_audit,Audit/Compliance,pharmacy_return_audit_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_return_audit,Audit/Compliance,pharmacy_return_audit_bill_id_fkey,bill_id,bills,id,NO ACTION,NO ACTION,YES,none,OK
+pharmacy_return_audit,Audit/Compliance,pharmacy_return_audit_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+pharmacy_return_audit,Audit/Compliance,pharmacy_return_audit_credit_note_id_fkey,credit_note_id,credit_notes,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_return_audit,Audit/Compliance,pharmacy_return_audit_dispensing_item_id_fkey,dispensing_item_id,pharmacy_dispensing_items,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_return_audit,Audit/Compliance,pharmacy_return_audit_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+pharmacy_return_audit,Audit/Compliance,pharmacy_return_audit_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+pharmacy_stock_alerts,Pharmacy,pharmacy_stock_alerts_acknowledged_by_fkey,acknowledged_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_stock_alerts,Pharmacy,pharmacy_stock_alerts_batch_id_fkey,batch_id,drug_batches,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_stock_alerts,Pharmacy,pharmacy_stock_alerts_drug_id_fkey,drug_id,drug_master,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_stock_alerts,Pharmacy,pharmacy_stock_alerts_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+pharmacy_supplier_returns,Pharmacy,pharmacy_supplier_returns_batch_id_fkey,batch_id,drug_batches,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_supplier_returns,Pharmacy,pharmacy_supplier_returns_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+pharmacy_supplier_returns,Pharmacy,pharmacy_supplier_returns_drug_id_fkey,drug_id,drug_master,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_supplier_returns,Pharmacy,pharmacy_supplier_returns_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+pharmacy_waste_disposal,Pharmacy,pharmacy_waste_disposal_batch_id_fkey,batch_id,drug_batches,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_waste_disposal,Pharmacy,pharmacy_waste_disposal_disposed_by_fkey,disposed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_waste_disposal,Pharmacy,pharmacy_waste_disposal_drug_id_fkey,drug_id,drug_master,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pharmacy_waste_disposal,Pharmacy,pharmacy_waste_disposal_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+phi_access_audit,Audit/Compliance,phi_access_audit_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+phi_access_audit,Audit/Compliance,phi_access_audit_user_id_fkey,user_id,users,id,SET NULL,NO ACTION,YES,none,OK
+phi_backfill_log,Audit/Compliance,phi_backfill_log_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED; CASCADE on financial/audit data,HIGH
+phi_encryption_keys,Audit/Compliance,phi_encryption_keys_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+physio_equipment_bookings,Other,physio_equipment_bookings_booked_for_fkey,booked_for,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+physio_equipment_bookings,Other,physio_equipment_bookings_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+physio_equipment_bookings,Other,physio_equipment_bookings_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+physio_equipment_bookings,Other,physio_equipment_bookings_session_id_fkey,session_id,physio_sessions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+physio_referrals,Other,physio_referrals_accepted_by_fkey,accepted_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+physio_referrals,Other,physio_referrals_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+physio_referrals,Other,physio_referrals_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+physio_referrals,Other,physio_referrals_opd_encounter_id_fkey,opd_encounter_id,opd_encounters,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+physio_referrals,Other,physio_referrals_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+physio_referrals,Other,physio_referrals_referred_by_fkey,referred_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+physio_sessions,Other,physio_sessions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+physio_sessions,Other,physio_sessions_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+physio_sessions,Other,physio_sessions_referral_id_fkey,referral_id,physio_referrals,id,NO ACTION,NO ACTION,YES,none,OK
+physio_sessions,Other,physio_sessions_therapist_id_fkey,therapist_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+plan_features,Platform,plan_features_plan_id_fkey,plan_id,subscription_plans,id,CASCADE,NO ACTION,YES,none,OK
+platform_feature_flag_overrides,Platform,platform_feature_flag_overrides_flag_id_fkey,flag_id,platform_feature_flags,id,CASCADE,NO ACTION,YES,none,OK
+platform_feature_flag_overrides,Platform,platform_feature_flag_overrides_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+platform_feature_flags,Platform,platform_feature_flags_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+platform_incident_updates,Platform,platform_incident_updates_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+platform_incident_updates,Platform,platform_incident_updates_incident_id_fkey,incident_id,platform_incidents,id,CASCADE,NO ACTION,YES,none,OK
+platform_incidents,Platform,platform_incidents_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+platform_support_tickets,Platform,platform_support_tickets_assigned_to_fkey,assigned_to,aumrti_admins,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+platform_support_tickets,Platform,platform_support_tickets_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+platform_support_tickets,Platform,platform_support_tickets_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+platform_support_tickets,Platform,platform_support_tickets_parent_id_fkey,parent_id,platform_support_tickets,id,CASCADE,NO ACTION,YES,none,OK
+pm_schedules,Other,pm_schedules_done_by_fkey,done_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pm_schedules,Other,pm_schedules_equipment_id_fkey,equipment_id,equipment_master,id,NO ACTION,NO ACTION,YES,none,OK
+pm_schedules,Other,pm_schedules_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+pmjay_claims,PM-JAY,pmjay_claims_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pmjay_claims,PM-JAY,pmjay_claims_bill_id_fkey,bill_id,bills,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pmjay_claims,PM-JAY,pmjay_claims_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+pmjay_claims,PM-JAY,pmjay_claims_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+pmjay_claims,PM-JAY,pmjay_claims_pre_auth_id_fkey,pre_auth_id,pre_auth_requests,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pmjay_claims,PM-JAY,pmjay_claims_scheme_id_fkey,scheme_id,govt_schemes,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pmjay_package_master,PM-JAY,pmjay_package_master_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+pmjay_packages,PM-JAY,pmjay_packages_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+pmjay_packages,PM-JAY,pmjay_packages_scheme_id_fkey,scheme_id,govt_schemes,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pmjay_preauth_requests,PM-JAY,pmjay_preauth_requests_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,NO,UNINDEXED; tenant FK without CASCADE/RESTRICT policy,HIGH
+pmjay_preauth_requests,PM-JAY,pmjay_preauth_requests_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+pmjay_preauth_requests,PM-JAY,pmjay_preauth_requests_requested_by_fkey,requested_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+po_approval_rules,Other,po_approval_rules_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+po_items,Other,po_items_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+po_items,Other,po_items_item_id_fkey,item_id,inventory_items,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+po_items,Other,po_items_po_id_fkey,po_id,purchase_orders,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+portal_chat_messages,Patient,portal_chat_messages_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+portal_chat_messages,Patient,portal_chat_messages_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,YES,none,OK
+prakriti_assessments,Other,prakriti_assessments_assessed_by_fkey,assessed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+prakriti_assessments,Other,prakriti_assessments_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+prakriti_assessments,Other,prakriti_assessments_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+pre_auth_requests,Insurance,pre_auth_requests_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pre_auth_requests,Insurance,pre_auth_requests_beneficiary_id_fkey,beneficiary_id,scheme_beneficiaries,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pre_auth_requests,Insurance,pre_auth_requests_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+pre_auth_requests,Insurance,pre_auth_requests_package_id_fkey,package_id,pmjay_packages,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+pre_auth_requests,Insurance,pre_auth_requests_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+pre_auth_requests,Insurance,pre_auth_requests_scheme_id_fkey,scheme_id,govt_schemes,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+prescriptions,Pharmacy,prescriptions_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,YES,none,OK
+prescriptions,Pharmacy,prescriptions_doctor_id_fkey,doctor_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+prescriptions,Pharmacy,prescriptions_encounter_id_fkey,encounter_id,opd_encounters,id,NO ACTION,NO ACTION,YES,none,OK
+prescriptions,Pharmacy,prescriptions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+prescriptions,Pharmacy,prescriptions_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+preventive_screenings,Other,preventive_screenings_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+preventive_screenings,Other,preventive_screenings_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+preventive_screenings,Other,preventive_screenings_screened_by_fkey,screened_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+procurement_recommendations,Procurement,procurement_recommendations_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+procurement_recommendations,Procurement,procurement_recommendations_item_id_fkey,item_id,inventory_items,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+product_analytics_events,Other,product_analytics_events_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+product_analytics_events,Other,product_analytics_events_user_id_fkey,user_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+product_modes,Other,product_modes_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+prom_prem_surveys,Patient,prom_prem_surveys_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+prom_prem_surveys,Patient,prom_prem_surveys_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+prompt_registry,AI,prompt_registry_approved_by_fkey,approved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+psychometric_assessments,Other,psychometric_assessments_encounter_id_fkey,encounter_id,mental_health_encounters,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+purchase_orders,Procurement,purchase_orders_approved_by_fkey,approved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+purchase_orders,Procurement,purchase_orders_cost_centre_id_fkey,cost_centre_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+purchase_orders,Procurement,purchase_orders_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+purchase_orders,Procurement,purchase_orders_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+purchase_orders,Procurement,purchase_orders_paid_by_fkey,paid_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+purchase_orders,Procurement,purchase_orders_vendor_id_fkey,vendor_id,vendors,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+purchase_requisitions,Procurement,purchase_requisitions_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+purchase_requisitions,Procurement,purchase_requisitions_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,NO,UNINDEXED; tenant FK without CASCADE/RESTRICT policy,HIGH
+purchase_requisitions,Procurement,purchase_requisitions_requested_by_fkey,requested_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+push_notifications,Notifications,push_notifications_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+push_notifications,Notifications,push_notifications_user_id_fkey,user_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+qi_cycles,Other,qi_cycles_qi_project_id_fkey,qi_project_id,qi_projects,id,CASCADE,NO ACTION,YES,none,OK
+qi_projects,Other,qi_projects_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+qi_projects,Other,qi_projects_linked_nabh_standard_id_fkey,linked_nabh_standard_id,nabh_standards,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+qi_projects,Other,qi_projects_project_owner_id_fkey,project_owner_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+qi_projects,Other,qi_projects_source_audit_id_fkey,source_audit_id,clinical_audits,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+quality_indicator_overrides,Quality/NABH,quality_indicator_overrides_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+quality_indicator_overrides,Quality/NABH,quality_indicator_overrides_indicator_code_fkey,indicator_code,quality_indicator_definitions,indicator_code,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+quality_indicator_overrides,Quality/NABH,quality_indicator_overrides_updated_by_fkey,updated_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+quality_indicators,Quality/NABH,quality_indicators_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+queue_state,OPD,queue_state_called_by_fkey,called_by,users,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+queue_state,OPD,queue_state_current_token_id_fkey,current_token_id,opd_tokens,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+queue_state,OPD,queue_state_department_id_fkey,department_id,departments,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+queue_state,OPD,queue_state_doctor_id_fkey,doctor_id,users,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+queue_state,OPD,queue_state_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+quotation_items,Other,quotation_items_item_id_fkey,item_id,inventory_items,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+quotation_items,Other,quotation_items_quotation_id_fkey,quotation_id,vendor_quotations,id,CASCADE,NO ACTION,YES,none,OK
+radiology_modalities,Radiology,radiology_modalities_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+radiology_orders,Radiology,radiology_orders_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,YES,none,OK
+radiology_orders,Radiology,radiology_orders_encounter_id_fkey,encounter_id,opd_encounters,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+radiology_orders,Radiology,radiology_orders_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+radiology_orders,Radiology,radiology_orders_modality_id_fkey,modality_id,radiology_modalities,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+radiology_orders,Radiology,radiology_orders_ordered_by_fkey,ordered_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+radiology_orders,Radiology,radiology_orders_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+radiology_reports,Radiology,radiology_reports_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+radiology_reports,Radiology,radiology_reports_order_id_fkey,order_id,radiology_orders,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+radiology_reports,Radiology,radiology_reports_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+radiology_reports,Radiology,radiology_reports_radiologist_id_fkey,radiologist_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+radiology_reports,Radiology,radiology_reports_validated_by_fkey,validated_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+radiology_study_master,Radiology,radiology_study_master_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+radiology_study_master,Radiology,radiology_study_master_modality_id_fkey,modality_id,radiology_modalities,id,CASCADE,NO ACTION,YES,none,OK
+razorpay_plan_registry,Payments,razorpay_plan_registry_plan_id_fkey,plan_id,subscription_plans,id,CASCADE,NO ACTION,YES,none,OK
+reconciliation_discrepancies,Other,reconciliation_discrepancies_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+reconciliation_discrepancies,Other,reconciliation_discrepancies_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+reconciliation_discrepancies,Other,reconciliation_discrepancies_reconciliation_id_fkey,reconciliation_id,med_reconciliation_events,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+reconciliation_discrepancies,Other,reconciliation_discrepancies_resolved_by_fkey,resolved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+record_access_logs,Other,record_access_logs_accessed_by_fkey,accessed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+record_access_logs,Other,record_access_logs_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+record_access_logs,Other,record_access_logs_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+record_requests,Other,record_requests_approved_by_fkey,approved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+record_requests,Other,record_requests_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+record_requests,Other,record_requests_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+record_requests,Other,record_requests_record_id_fkey,record_id,medical_records,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+record_retention_policies,Other,record_retention_policies_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+referral_codes,Platform,referral_codes_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+referral_codes,Platform,referral_codes_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+referral_codes,Platform,referral_codes_partner_id_fkey,partner_id,referral_partners,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+referral_doctors,Platform,referral_doctors_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+referral_partners,Platform,referral_partners_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+referral_redemptions,Platform,referral_redemptions_code_id_fkey,code_id,referral_codes,id,CASCADE,NO ACTION,YES,none,OK
+referral_redemptions,Platform,referral_redemptions_referred_hospital_id_fkey,referred_hospital_id,hospitals,id,SET NULL,NO ACTION,YES,none,OK
+refund_payables,Billing,refund_payables_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,YES,none,OK
+refund_payables,Billing,refund_payables_approved_by_fkey,approved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+refund_payables,Billing,refund_payables_bill_id_fkey,bill_id,bills,id,NO ACTION,NO ACTION,YES,none,OK
+refund_payables,Billing,refund_payables_credit_note_id_fkey,credit_note_id,credit_notes,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+refund_payables,Billing,refund_payables_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+refund_payables,Billing,refund_payables_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+refund_payables,Billing,refund_payables_requested_by_fkey,requested_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+report_schedules,Reporting,report_schedules_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+requisition_items,Other,requisition_items_item_id_fkey,item_id,inventory_items,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+requisition_items,Other,requisition_items_requisition_id_fkey,requisition_id,purchase_requisitions,id,CASCADE,NO ACTION,YES,none,OK
+research_cohorts,Other,research_cohorts_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+research_cohorts,Other,research_cohorts_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+restraint_records,Other,restraint_records_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,YES,none,OK
+restraint_records,Other,restraint_records_applied_by_fkey,applied_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+restraint_records,Other,restraint_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+restraint_records,Other,restraint_records_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+retention_schedules,Other,retention_schedules_destruction_authorized_by_fkey,destruction_authorized_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+retention_schedules,Other,retention_schedules_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+retention_schedules,Other,retention_schedules_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+revenue_alerts,Billing,revenue_alerts_bill_id_fkey,bill_id,bills,id,NO ACTION,NO ACTION,YES,none,OK
+revenue_alerts,Billing,revenue_alerts_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+revenue_alerts,Billing,revenue_alerts_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+revenue_alerts,Billing,revenue_alerts_resolved_by_fkey,resolved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+revenue_leak_actions,Billing,revenue_leak_actions_assigned_by_fkey,assigned_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+revenue_leak_actions,Billing,revenue_leak_actions_assigned_to_fkey,assigned_to,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+revenue_leak_actions,Billing,revenue_leak_actions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+revenue_leak_actions,Billing,revenue_leak_actions_resolved_by_fkey,resolved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+rfq_vendors,Procurement,rfq_vendors_rfq_id_fkey,rfq_id,rfqs,id,CASCADE,NO ACTION,YES,none,OK
+rfq_vendors,Procurement,rfq_vendors_vendor_id_fkey,vendor_id,vendors,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+rfqs,Procurement,rfqs_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+rfqs,Procurement,rfqs_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,NO,UNINDEXED; tenant FK without CASCADE/RESTRICT policy,HIGH
+rfqs,Procurement,rfqs_requisition_id_fkey,requisition_id,purchase_requisitions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+role_permissions,Identity,role_permissions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+safety_event_capa,Other,safety_event_capa_responsible_owner_id_fkey,responsible_owner_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+safety_event_capa,Other,safety_event_capa_safety_event_id_fkey,safety_event_id,safety_events,id,CASCADE,NO ACTION,YES,none,OK
+safety_event_rca,Other,safety_event_rca_completed_by_fkey,completed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+safety_event_rca,Other,safety_event_rca_safety_event_id_fkey,safety_event_id,safety_events,id,CASCADE,NO ACTION,YES,none,OK
+safety_events,Other,safety_events_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+safety_events,Other,safety_events_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+safety_events,Other,safety_events_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+safety_events,Other,safety_events_linked_nabh_standard_id_fkey,linked_nabh_standard_id,nabh_standards,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+safety_events,Other,safety_events_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+safety_events,Other,safety_events_reported_by_fkey,reported_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+safety_rounds,Other,safety_rounds_conducted_by_fkey,conducted_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+safety_rounds,Other,safety_rounds_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+salary_structures,Payroll,salary_structures_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+scheme_beneficiaries,Other,scheme_beneficiaries_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+scheme_beneficiaries,Other,scheme_beneficiaries_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+scheme_beneficiaries,Other,scheme_beneficiaries_scheme_id_fkey,scheme_id,govt_schemes,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+second_victim_cases,Other,second_victim_cases_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+second_victim_cases,Other,second_victim_cases_staff_id_fkey,staff_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+second_victim_cases,Other,second_victim_cases_support_assigned_to_fkey,support_assigned_to,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+second_victim_sessions,Other,second_victim_sessions_case_id_fkey,case_id,second_victim_cases,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+second_victim_sessions,Other,second_victim_sessions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+sedation_scores,ICU,sedation_scores_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+sedation_scores,ICU,sedation_scores_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+sedation_scores,ICU,sedation_scores_recorded_by_fkey,recorded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+service_charges,Billing,service_charges_admission_id_fkey,admission_id,admissions,id,SET NULL,NO ACTION,YES,none,OK
+service_charges,Billing,service_charges_bill_id_fkey,bill_id,bills,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+service_charges,Billing,service_charges_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+service_charges,Billing,service_charges_encounter_id_fkey,encounter_id,opd_encounters,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+service_charges,Billing,service_charges_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+service_charges,Billing,service_charges_patient_id_fkey,patient_id,patients,id,SET NULL,NO ACTION,YES,none,OK
+service_charges,Billing,service_charges_therapist_id_fkey,therapist_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+service_master,Billing,service_master_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+service_master,Billing,service_master_doctor_id_fkey,doctor_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+service_master,Billing,service_master_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+service_rates,Billing,service_rates_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+service_rates,Billing,service_rates_payer_id_fkey,payer_id,payer_masters,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+set_issues,Other,set_issues_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+set_issues,Other,set_issues_issued_by_fkey,issued_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+set_issues,Other,set_issues_returned_by_fkey,returned_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+set_issues,Other,set_issues_set_id_fkey,set_id,instrument_sets,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+settlement_reconciliation_flags,Payments,settlement_reconciliation_flags_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+settlement_reconciliation_flags,Payments,settlement_reconciliation_flags_invoice_id_fkey,invoice_id,subscription_invoices,id,CASCADE,NO ACTION,YES,none,OK
+settlement_reconciliation_flags,Payments,settlement_reconciliation_flags_resolved_by_fkey,resolved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+shift_master,HR,shift_master_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+shift_swap_requests,HR,shift_swap_requests_counterparty_id_fkey,counterparty_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+shift_swap_requests,HR,shift_swap_requests_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+shift_swap_requests,HR,shift_swap_requests_requester_id_fkey,requester_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+shift_swap_requests,HR,shift_swap_requests_reviewed_by_fkey,reviewed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+sms_notifications,Notifications,sms_notifications_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+staff_attendance,HR,staff_attendance_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+staff_attendance,HR,staff_attendance_marked_by_fkey,marked_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+staff_attendance,HR,staff_attendance_user_id_fkey,user_id,users,id,CASCADE,NO ACTION,YES,none,OK
+staff_burnout_scores,HR,staff_burnout_scores_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+staff_burnout_scores,HR,staff_burnout_scores_user_id_fkey,user_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+staff_credentials,HR,staff_credentials_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+staff_credentials,HR,staff_credentials_user_id_fkey,user_id,users,id,CASCADE,NO ACTION,YES,none,OK
+staff_credentials,HR,staff_credentials_verified_by_fkey,verified_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+staff_documents,HR,staff_documents_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+staff_documents,HR,staff_documents_uploaded_by_fkey,uploaded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+staff_documents,HR,staff_documents_user_id_fkey,user_id,users,id,CASCADE,NO ACTION,YES,none,OK
+staff_documents,HR,staff_documents_verified_by_fkey,verified_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+staff_exits,HR,staff_exits_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+staff_exits,HR,staff_exits_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+staff_exits,HR,staff_exits_user_id_fkey,user_id,users,id,NO ACTION,NO ACTION,YES,none,OK
+staff_grievances,HR,staff_grievances_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+staff_grievances,HR,staff_grievances_raised_by_fkey,raised_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+staff_grievances,HR,staff_grievances_resolved_by_fkey,resolved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+staff_injuries,HR,staff_injuries_employee_id_fkey,employee_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+staff_injuries,HR,staff_injuries_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+staff_privileges,HR,staff_privileges_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+staff_privileges,HR,staff_privileges_granted_by_fkey,granted_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+staff_privileges,HR,staff_privileges_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+staff_privileges,HR,staff_privileges_user_id_fkey,user_id,users,id,CASCADE,NO ACTION,YES,none,OK
+staff_profiles,HR,staff_profiles_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+staff_profiles,HR,staff_profiles_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+staff_profiles,HR,staff_profiles_user_id_fkey,user_id,users,id,CASCADE,NO ACTION,YES,none,OK
+staff_salary_assignments,HR,staff_salary_assignments_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+staff_salary_assignments,HR,staff_salary_assignments_staff_id_fkey,staff_id,users,id,CASCADE,NO ACTION,YES,none,OK
+staff_salary_assignments,HR,staff_salary_assignments_structure_id_fkey,structure_id,salary_structures,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+staff_training_records,HR,staff_training_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+staff_training_records,HR,staff_training_records_user_id_fkey,user_id,users,id,CASCADE,NO ACTION,YES,none,OK
+staffing_alerts,HR,staffing_alerts_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+staffing_alerts,HR,staffing_alerts_snapshot_id_fkey,snapshot_id,ward_acuity_snapshots,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+sterilization_cycles,Infection Control,sterilization_cycles_bi_read_by_fkey,bi_read_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+sterilization_cycles,Infection Control,sterilization_cycles_flash_approved_by_fkey,flash_approved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+sterilization_cycles,Infection Control,sterilization_cycles_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+sterilization_cycles,Infection Control,sterilization_cycles_operator_id_fkey,operator_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+stimulation_monitoring,Other,stimulation_monitoring_cycle_id_fkey,cycle_id,ivf_cycles,id,NO ACTION,NO ACTION,YES,none,OK
+stimulation_monitoring,Other,stimulation_monitoring_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+stimulation_monitoring,Other,stimulation_monitoring_recorded_by_fkey,recorded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+stock_count_items,Inventory,stock_count_items_count_id_fkey,count_id,stock_counts,id,CASCADE,NO ACTION,YES,none,OK
+stock_count_items,Inventory,stock_count_items_item_id_fkey,item_id,inventory_items,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+stock_counts,Inventory,stock_counts_approved_by_fkey,approved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+stock_counts,Inventory,stock_counts_counted_by_fkey,counted_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+stock_counts,Inventory,stock_counts_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+stock_counts,Inventory,stock_counts_store_id_fkey,store_id,store_locations,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+stock_reorder_triggers,Inventory,stock_reorder_triggers_created_by_fkey,created_by,users,id,SET NULL,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+stock_reorder_triggers,Inventory,stock_reorder_triggers_drug_id_fkey,drug_id,drug_master,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+stock_transactions,Inventory,stock_transactions_created_by_fkey,created_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+stock_transactions,Inventory,stock_transactions_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+stock_transactions,Inventory,stock_transactions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+stock_transactions,Inventory,stock_transactions_item_id_fkey,item_id,inventory_items,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+store_indent_items,Inventory,store_indent_items_indent_id_fkey,indent_id,store_indents,id,CASCADE,NO ACTION,YES,none,OK
+store_indent_items,Inventory,store_indent_items_item_id_fkey,item_id,inventory_items,id,NO ACTION,NO ACTION,YES,none,OK
+store_indents,Inventory,store_indents_approved_by_fkey,approved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+store_indents,Inventory,store_indents_from_store_id_fkey,from_store_id,store_locations,id,NO ACTION,NO ACTION,YES,none,OK
+store_indents,Inventory,store_indents_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+store_indents,Inventory,store_indents_received_by_fkey,received_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+store_indents,Inventory,store_indents_requested_by_fkey,requested_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+store_indents,Inventory,store_indents_to_store_id_fkey,to_store_id,store_locations,id,NO ACTION,NO ACTION,YES,none,OK
+store_locations,Inventory,store_locations_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+store_locations,Inventory,store_locations_ward_id_fkey,ward_id,wards,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+store_stock,Inventory,store_stock_consignment_vendor_id_fkey,consignment_vendor_id,vendors,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+store_stock,Inventory,store_stock_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+store_stock,Inventory,store_stock_item_id_fkey,item_id,inventory_items,id,NO ACTION,NO ACTION,YES,none,OK
+store_stock,Inventory,store_stock_store_id_fkey,store_id,store_locations,id,NO ACTION,NO ACTION,YES,none,OK
+store_stock_movements,Inventory,store_stock_movements_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+store_stock_movements,Inventory,store_stock_movements_indent_id_fkey,indent_id,store_indents,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+store_stock_movements,Inventory,store_stock_movements_item_id_fkey,item_id,inventory_items,id,NO ACTION,NO ACTION,YES,none,OK
+store_stock_movements,Inventory,store_stock_movements_moved_by_fkey,moved_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+store_stock_movements,Inventory,store_stock_movements_store_id_fkey,store_id,store_locations,id,NO ACTION,NO ACTION,YES,none,OK
+subscription_events,Platform,subscription_events_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+subscription_invoices,Platform,subscription_invoices_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+subscription_invoices,Platform,subscription_invoices_subscription_id_fkey,subscription_id,hospital_subscriptions,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+system_config,Other,system_config_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+tally_export_log,Other,tally_export_log_exported_by_fkey,exported_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+tally_export_log,Other,tally_export_log_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+tally_ledger_mapping,Other,tally_ledger_mapping_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,CASCADE on financial/audit data,HIGH
+tds_annual_summary,Payroll,tds_annual_summary_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+tds_annual_summary,Payroll,tds_annual_summary_staff_id_fkey,staff_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+tds_sections,Payroll,tds_sections_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+teleconsult_sessions,Telemedicine,teleconsult_sessions_doctor_id_fkey,doctor_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+teleconsult_sessions,Telemedicine,teleconsult_sessions_encounter_id_fkey,encounter_id,opd_encounters,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+teleconsult_sessions,Telemedicine,teleconsult_sessions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+teleconsult_sessions,Telemedicine,teleconsult_sessions_opd_token_id_fkey,opd_token_id,opd_tokens,id,SET NULL,NO ACTION,YES,none,OK
+teleconsult_sessions,Telemedicine,teleconsult_sessions_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+therapy_sessions,Other,therapy_sessions_plan_id_fkey,plan_id,therapy_plans,id,CASCADE,NO ACTION,YES,none,OK
+toxicity_events,Other,toxicity_events_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+toxicity_events,Other,toxicity_events_order_id_fkey,order_id,chemo_orders,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+toxicity_events,Other,toxicity_events_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+toxicity_events,Other,toxicity_events_reported_by_fkey,reported_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+tpa_config,TPA,tpa_config_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+tpa_dispute_communications,TPA,tpa_dispute_communications_dispute_id_fkey,dispute_id,tpa_disputes,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+tpa_dispute_communications,TPA,tpa_dispute_communications_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+tpa_dispute_communications,TPA,tpa_dispute_communications_sent_by_fkey,sent_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+tpa_disputes,TPA,tpa_disputes_claim_id_fkey,claim_id,insurance_claims,id,CASCADE,NO ACTION,YES,none,OK
+tpa_disputes,TPA,tpa_disputes_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+tpa_disputes,TPA,tpa_disputes_raised_by_fkey,raised_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+tpa_disputes,TPA,tpa_disputes_reconciliation_id_fkey,reconciliation_id,insurance_payment_reconciliation,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+tpa_queries,TPA,tpa_queries_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+tpa_queries,TPA,tpa_queries_claim_id_fkey,claim_id,insurance_claims,id,NO ACTION,NO ACTION,YES,none,OK
+tpa_queries,TPA,tpa_queries_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+tpa_queries,TPA,tpa_queries_pre_auth_id_fkey,pre_auth_id,insurance_pre_auth,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+tpa_queries,TPA,tpa_queries_replied_by_fkey,replied_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+transfusion_reactions,Blood Bank,transfusion_reactions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+transfusion_reactions,Blood Bank,transfusion_reactions_issue_id_fkey,issue_id,blood_issues,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+transfusion_reactions,Blood Bank,transfusion_reactions_patient_id_fkey,patient_id,patients,id,SET NULL,NO ACTION,NO,UNINDEXED,HIGH
+transfusion_reactions,Blood Bank,transfusion_reactions_reported_by_fkey,reported_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+transfusion_reactions,Blood Bank,transfusion_reactions_unit_id_fkey,unit_id,blood_units,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+tv_display_settings,Other,tv_display_settings_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+user_permission_overrides,Identity,user_permission_overrides_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+user_permission_overrides,Identity,user_permission_overrides_user_id_fkey,user_id,users,id,CASCADE,NO ACTION,YES,none,OK
+user_tour_progress,Identity,user_tour_progress_tour_key_fkey,tour_key,platform_onboarding_tours,tour_key,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+user_tour_progress,Identity,user_tour_progress_user_id_fkey,user_id,users,id,CASCADE,NO ACTION,YES,none,OK
+user_trusted_devices,Identity,user_trusted_devices_user_id_fkey,user_id,users,id,CASCADE,NO ACTION,YES,none,OK
+users,Identity,users_auth_user_id_fkey,auth_user_id,users,id,CASCADE,NO ACTION,YES,none,OK
+users,Identity,users_branch_id_fkey,branch_id,branches,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+users,Identity,users_department_id_fkey,department_id,departments,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+users,Identity,users_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+users,Identity,users_role_hospital_fkey,hospital_id role,role_permissions,hospital_id role_name,NO ACTION,NO ACTION,NO,UNINDEXED; tenant FK without CASCADE/RESTRICT policy,HIGH
+vaccination_due,Vaccination,vaccination_due_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+vaccination_due,Vaccination,vaccination_due_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+vaccination_due,Vaccination,vaccination_due_vaccine_id_fkey,vaccine_id,vaccine_master,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+vaccination_records,Vaccination,vaccination_records_administered_by_fkey,administered_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+vaccination_records,Vaccination,vaccination_records_bill_id_fkey,bill_id,bills,id,SET NULL,NO ACTION,NO,UNINDEXED,MEDIUM
+vaccination_records,Vaccination,vaccination_records_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+vaccination_records,Vaccination,vaccination_records_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+vaccination_records,Vaccination,vaccination_records_vaccine_id_fkey,vaccine_id,vaccine_master,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+vaccine_camps,Vaccination,vaccine_camps_conducted_by_fkey,conducted_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+vaccine_camps,Vaccination,vaccine_camps_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+vaccine_master,Vaccination,vaccine_master_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+vaccine_stock,Vaccination,vaccine_stock_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+vaccine_stock,Vaccination,vaccine_stock_vaccine_id_fkey,vaccine_id,vaccine_master,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+vendor_quotations,Procurement,vendor_quotations_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,NO,UNINDEXED; tenant FK without CASCADE/RESTRICT policy,HIGH
+vendor_quotations,Procurement,vendor_quotations_po_id_fkey,po_id,purchase_orders,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+vendor_quotations,Procurement,vendor_quotations_rfq_id_fkey,rfq_id,rfqs,id,CASCADE,NO ACTION,YES,none,OK
+vendor_quotations,Procurement,vendor_quotations_vendor_id_fkey,vendor_id,vendors,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+vendor_rate_contracts,Procurement,vendor_rate_contracts_hospital_id_fkey,hospital_id,hospitals,id,NO ACTION,NO ACTION,YES,tenant FK without CASCADE/RESTRICT policy,OK
+vendor_rate_contracts,Procurement,vendor_rate_contracts_item_id_fkey,item_id,inventory_items,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+vendor_rate_contracts,Procurement,vendor_rate_contracts_vendor_id_fkey,vendor_id,vendors,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+vendors,Procurement,vendors_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+ventilator_params,ICU,ventilator_params_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+ventilator_params,ICU,ventilator_params_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ventilator_params,ICU,ventilator_params_recorded_by_fkey,recorded_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED; actor FK -> public.users,MEDIUM
+vial_wastage,Other,vial_wastage_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+vial_wastage,Other,vial_wastage_order_id_fkey,order_id,chemo_orders,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+visitor_passes,OPD,visitor_passes_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+visitor_passes,OPD,visitor_passes_issued_by_fkey,issued_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+visitor_passes,OPD,visitor_passes_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,YES,none,OK
+ward_acuity_snapshots,IPD,ward_acuity_snapshots_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+ward_round_notes,IPD,ward_round_notes_admission_id_fkey,admission_id,admissions,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ward_round_notes,IPD,ward_round_notes_doctor_id_fkey,doctor_id,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+ward_round_notes,IPD,ward_round_notes_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+ward_round_notes,IPD,ward_round_notes_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+wards,IPD,wards_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+whatsapp_bot_messages,Notifications,whatsapp_bot_messages_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+whatsapp_bot_messages,Notifications,whatsapp_bot_messages_session_id_fkey,session_id,whatsapp_bot_sessions,id,CASCADE,NO ACTION,YES,none,OK
+whatsapp_bot_sessions,Notifications,whatsapp_bot_sessions_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+whatsapp_bot_sessions,Notifications,whatsapp_bot_sessions_patient_id_fkey,patient_id,patients,id,NO ACTION,NO ACTION,NO,UNINDEXED,HIGH
+whatsapp_connectors,Notifications,whatsapp_connectors_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+whatsapp_notifications,Notifications,whatsapp_notifications_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+whatsapp_notifications,Notifications,whatsapp_notifications_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+whatsapp_templates,Notifications,whatsapp_templates_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH
+wound_assessments,Nursing,wound_assessments_admission_id_fkey,admission_id,admissions,id,CASCADE,NO ACTION,NO,UNINDEXED,MEDIUM
+wound_assessments,Nursing,wound_assessments_assessed_by_fkey,assessed_by,users,id,NO ACTION,NO ACTION,NO,UNINDEXED,MEDIUM
+wound_assessments,Nursing,wound_assessments_hospital_id_fkey,hospital_id,hospitals,id,CASCADE,NO ACTION,YES,none,OK
+wound_assessments,Nursing,wound_assessments_patient_id_fkey,patient_id,patients,id,CASCADE,NO ACTION,NO,UNINDEXED,HIGH

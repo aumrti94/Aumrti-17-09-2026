@@ -29,16 +29,41 @@ import { checkDrugSafety } from "./drugSafetyCheck";
 // Test-controlled DB rows (reset per test)
 let interactionsData: unknown[] = [];
 let crossReactData: unknown[] = [];
+/** The hospital formulary: brand → generic. Drives the brand-resolution tests below. */
+let drugMasterData: { drug_name: string; generic_name: string | null }[] = [];
 
 beforeEach(() => {
   interactionsData = [];
   crossReactData = [];
+  drugMasterData = [];
   mockDDI.mockResolvedValue([]);
   mockFrom.mockImplementation((table: string) => ({
     select: () => {
       if (table === "drug_interactions") {
         // SUT does .select("*").or(...) then awaits
         return { or: () => Promise.resolve({ data: interactionsData }) };
+      }
+      if (table === "drug_master") {
+        // SUT does .select(...)[.eq(...)].in("drug_name", names).limit(n)
+        //     and .select(...)[.eq(...)].ilike("drug_name", name).limit(1)
+        const builder = {
+          eq: () => builder,
+          in: (_col: string, names: string[]) => ({
+            limit: () =>
+              Promise.resolve({
+                data: drugMasterData.filter((d) => names.includes(d.drug_name)),
+              }),
+          }),
+          ilike: (_col: string, name: string) => ({
+            limit: () =>
+              Promise.resolve({
+                data: drugMasterData.filter(
+                  (d) => d.drug_name.toLowerCase() === String(name).toLowerCase()
+                ),
+              }),
+          }),
+        };
+        return builder;
       }
       // drug_allergy_cross_reactivity: SUT awaits .select("*") directly
       return Promise.resolve({ data: crossReactData });
@@ -141,5 +166,128 @@ describe("checkDrugSafety — cross-reactivity allergy", () => {
     expect(cross).toBeDefined();
     expect(cross?.severity).toBe("major");
     expect(r.hasIssues).toBe(true);
+  });
+});
+
+/**
+ * BUG-P4-001 regression suite — brand names must not defeat the allergy check.
+ *
+ * The reference tables are keyed on GENERICS; Indian doctors prescribe by BRAND. Before the
+ * fix, "Amoxicillin" was correctly contraindicated for a penicillin-allergic patient while
+ * "Mox 500" — the same molecule under its Indian brand name — was added silently, because
+ * normalize() strips only the strength and leaves "mox".
+ *
+ * Locked by TC-P4F-022 / TC-P4F-023 in the Phase 4 catalogue. Do not weaken these.
+ */
+describe("checkDrugSafety — brand → generic resolution (BUG-P4-001)", () => {
+  const PENICILLIN_CROSS = [
+    {
+      allergen: "penicillin",
+      cross_reacts: ["amoxicillin", "ampicillin", "co-amoxiclav", "clavulanate"],
+      risk_level: "contraindicated",
+    },
+  ];
+
+  it("blocks the GENERIC name in a penicillin-allergic patient (unchanged behaviour)", async () => {
+    crossReactData = PENICILLIN_CROSS;
+    const r = await checkDrugSafety("Amoxicillin", [], ["Penicillin"]);
+    expect(r.allergyConflicts.some((c) => c.type === "cross_reactivity")).toBe(true);
+    expect(r.worstSeverity).toBe("contraindicated");
+  });
+
+  it("blocks the BRAND name once it resolves to the same generic", async () => {
+    crossReactData = PENICILLIN_CROSS;
+    drugMasterData = [{ drug_name: "Mox 500", generic_name: "Amoxicillin" }];
+    const r = await checkDrugSafety("Mox 500", [], ["Penicillin"]);
+    expect(
+      r.allergyConflicts.some((c) => c.type === "cross_reactivity"),
+      "Mox 500 IS amoxicillin — a penicillin-allergic patient must not receive it"
+    ).toBe(true);
+    expect(r.hasIssues).toBe(true);
+  });
+
+  it("blocks a COMBINATION brand when only one constituent is cross-reactive", async () => {
+    crossReactData = PENICILLIN_CROSS;
+    drugMasterData = [
+      { drug_name: "Augmentin 625", generic_name: "Amoxicillin + Clavulanate" },
+    ];
+    const r = await checkDrugSafety("Augmentin 625", [], ["Penicillin"]);
+    expect(r.allergyConflicts.some((c) => c.type === "cross_reactivity")).toBe(true);
+  });
+
+  it("blocks a brand whose generic IS the allergen, as a direct conflict", async () => {
+    drugMasterData = [{ drug_name: "Mox 500", generic_name: "Amoxicillin" }];
+    const r = await checkDrugSafety("Mox 500", [], ["Amoxicillin"]);
+    expect(r.allergyConflicts.some((c) => c.type === "direct")).toBe(true);
+    expect(r.worstSeverity).toBe("contraindicated");
+  });
+
+  it("still does NOT flag an unrelated brand — the fix must not create false positives", async () => {
+    crossReactData = PENICILLIN_CROSS;
+    drugMasterData = [
+      { drug_name: "Zifi 200", generic_name: "Cefixime" },
+      { drug_name: "Mox 500", generic_name: "Amoxicillin" },
+    ];
+    const r = await checkDrugSafety("Zifi 200", [], ["Penicillin"]);
+    expect(r.allergyConflicts).toEqual([]);
+    expect(r.hasIssues).toBe(false);
+  });
+
+  it("resolves a brand typed in a different case", async () => {
+    crossReactData = PENICILLIN_CROSS;
+    drugMasterData = [{ drug_name: "Mox 500", generic_name: "Amoxicillin" }];
+    const r = await checkDrugSafety("mox 500", [], ["Penicillin"]);
+    expect(r.allergyConflicts.some((c) => c.type === "cross_reactivity")).toBe(true);
+  });
+
+  it("falls back to the typed name when the drug is not in the formulary", async () => {
+    crossReactData = PENICILLIN_CROSS;
+    drugMasterData = [];
+    const r = await checkDrugSafety("Amoxicillin", [], ["Penicillin"]);
+    expect(
+      r.allergyConflicts.some((c) => c.type === "cross_reactivity"),
+      "an unlisted drug must still be matched on what the prescriber actually typed"
+    ).toBe(true);
+  });
+
+  it("catches two brands of the same molecule as a duplicate", async () => {
+    drugMasterData = [
+      { drug_name: "Dolo 650", generic_name: "Paracetamol" },
+      { drug_name: "Crocin Syrup", generic_name: "Paracetamol" },
+    ];
+    const r = await checkDrugSafety("Dolo 650", ["Crocin Syrup"], []);
+    expect(
+      r.duplicates,
+      "both are paracetamol — prescribing them together is a silent overdose"
+    ).toContain("Crocin Syrup");
+  });
+
+  it("matches an interaction recorded against generics when both drugs are brands", async () => {
+    drugMasterData = [
+      { drug_name: "Telma 40", generic_name: "Telmisartan" },
+      { drug_name: "Lasix 40", generic_name: "Furosemide" },
+    ];
+    interactionsData = [
+      {
+        id: "1", drug_a: "telmisartan", drug_b: "furosemide", severity: "moderate",
+        mechanism: null, clinical_effect: "Additive hypotension", recommendation: null,
+      },
+    ];
+    const r = await checkDrugSafety("Lasix 40", ["Telma 40"], []);
+    expect(r.interactions).toHaveLength(1);
+    expect(r.worstSeverity).toBe("moderate");
+  });
+
+  it("survives a formulary lookup failure without blocking prescribing", async () => {
+    crossReactData = PENICILLIN_CROSS;
+    mockFrom.mockImplementation((table: string) => ({
+      select: () => {
+        if (table === "drug_master") throw new Error("formulary unavailable");
+        if (table === "drug_interactions") return { or: () => Promise.resolve({ data: [] }) };
+        return Promise.resolve({ data: crossReactData });
+      },
+    }));
+    const r = await checkDrugSafety("Amoxicillin", [], ["Penicillin"]);
+    expect(r.allergyConflicts.some((c) => c.type === "cross_reactivity")).toBe(true);
   });
 });

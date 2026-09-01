@@ -30,6 +30,15 @@ interface RiskScore {
   reason: string;
 }
 
+// Appointments still ahead of the patient arriving — the ones worth scoring.
+// "booked" was the only non-confirmed status this panel used to look for, but
+// validate_appointment() (20260418180322) rejects it outright: the allowed set is
+// scheduled|confirmed|arrived|in_consultation|completed|cancelled|no_show. Every booking
+// path writes "scheduled", so the panel matched almost nothing and reported "No upcoming
+// appointments to analyse" on a full clinic day. "booked" is kept here purely as a
+// harmless guard in case any legacy row carries it.
+const UPCOMING_STATUSES = ["scheduled", "confirmed", "booked"];
+
 const RISK_CONFIG = {
   low:    { label: "Low",    color: "bg-emerald-100 text-emerald-700 border-emerald-200", dot: "bg-emerald-500" },
   medium: { label: "Medium", color: "bg-amber-100 text-amber-700 border-amber-200",   dot: "bg-amber-500"   },
@@ -53,7 +62,7 @@ const NoShowRiskPanel: React.FC<Props> = ({ hospitalId, date, appointments }) =>
     if (!appointments.length) return;
     setLoading(true);
 
-    const upcoming = appointments.filter(a => a.status === "booked" || a.status === "confirmed");
+    const upcoming = appointments.filter(a => UPCOMING_STATUSES.includes(a.status));
     if (!upcoming.length) { setLoading(false); return; }
 
     // Fetch prior no-show history for these patients in batch
@@ -119,6 +128,28 @@ low = <25%, medium = 25-55%, high = >55%`;
             }
           }
           setScores(newScores);
+
+          // Persist, so the prediction can be compared against what actually happened.
+          // These scores were previously held in component state only and thrown away on
+          // unmount, which left no_show_predictions with no appointment-based rows at all
+          // and nothing for the outcome triggers (20261014000003) to settle.
+          const byId = new Map(upcoming.map(a => [a.id, a]));
+          const rows = Object.entries(newScores).flatMap(([apptId, s]) => {
+            const appt = byId.get(apptId);
+            if (!appt) return [];
+            return [{
+              hospital_id:     hospitalId,
+              patient_id:      appt.patient_id,
+              appointment_ref: apptId,
+              risk_score:      Math.max(0, Math.min(100, Math.round(s.pct))),
+              risk_level:      s.level,
+              risk_factors:    [s.reason],
+            }];
+          });
+          if (rows.length) {
+            const { error: saveErr } = await (supabase as any).from("no_show_predictions").insert(rows);
+            if (saveErr) console.warn("Could not persist no-show predictions", saveErr);
+          }
         }
       } catch {
         toast({ title: "Could not parse AI predictions", variant: "destructive" });
@@ -133,14 +164,19 @@ low = <25%, medium = 25-55%, high = >55%`;
       return;
     }
     setSendingReminder(appt.id);
-    await sendWhatsApp(hospitalId, appt.patient_phone,
-      `Reminder: You have an appointment scheduled for ${format(parseISO(appt.appointment_date), "dd MMM yyyy")} at ${appt.slot_time}${appt.doctor_name ? ` with Dr. ${appt.doctor_name}` : ""}. Please confirm or reschedule if needed. Reply CONFIRM or CANCEL.`
-    );
+    // sendWhatsApp takes a single SendOpts object. This call site passed three positional
+    // arguments, so opts was the hospitalId string, opts.phone was undefined, and
+    // cleanPhone(undefined) threw — the Remind button could never send anything.
+    await sendWhatsApp({
+      hospitalId,
+      phone: appt.patient_phone,
+      message: `Reminder: You have an appointment scheduled for ${format(parseISO(appt.appointment_date), "dd MMM yyyy")} at ${appt.slot_time}${appt.doctor_name ? ` with Dr. ${appt.doctor_name}` : ""}. Please confirm or reschedule if needed. Reply CONFIRM or CANCEL.`,
+    });
     toast({ title: `Reminder sent to ${appt.patient_name}` });
     setSendingReminder(null);
   };
 
-  const upcoming = appointments.filter(a => a.status === "booked" || a.status === "confirmed");
+  const upcoming = appointments.filter(a => UPCOMING_STATUSES.includes(a.status));
   const highRisk = Object.values(scores).filter(s => s.level === "high").length;
   const hasScores = Object.keys(scores).length > 0;
 

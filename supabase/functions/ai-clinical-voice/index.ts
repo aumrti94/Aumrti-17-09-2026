@@ -24,7 +24,7 @@ Capture clinical facts stated by EITHER speaker:
 - When the doctor asks a question and the patient answers (e.g. "since when is the pain?" → "3 days"), combine them into the fact (pain × 3 days).
 - Spoken advice or instructions (e.g. "reduce sweets", "come back in a week") go into "plan" and/or "follow_up".
 - Spoken lab/vital VALUES (e.g. blood sugar 165, BP 130/80) go into "examination_findings" and/or "investigations", recorded verbatim WITH the value (do not drop the number).
-- FOLLOW-UP INTERVAL (frequently missed — check for this explicitly before finishing): any instruction to come back / return / be reviewed / be seen AGAIN after a period of time MUST populate "follow_up". In Indian consultations the interval is usually spoken as code-mixed English inside the local language — e.g. "ఫైవ్ డేస్ తర్వాత", "five days ke baad", "one week", "10 రోజులు", "after 2 weeks". Wordings that all mean follow-up include "come see me after X", "show yourself after X", "come again after X", "come back after X", "review after X". Speech-to-text frequently mangles or flattens the imperative verb ending in Indian languages, so when the doctor mentions being seen/returning AGAIN together with a time period, record it as a follow-up (e.g. "• Review after 5 days"). Normalise the interval to digits + unit. This is recognising what WAS said — not inventing.
+- FOLLOW-UP INTERVAL (frequently missed — check for this explicitly before finishing): any instruction to come back / return / be reviewed / be seen AGAIN after a period of time MUST populate "follow_up". In Indian consultations the interval is usually spoken as code-mixed English inside the local language: an English number and time unit ("five days", "one week", "10 days", "2 weeks") wrapped in a local-language phrase meaning "after" or "later". Treat ANY such number+unit near a returning/being-seen verb as a follow-up interval, in whatever language it appears. Wordings that all mean follow-up include "come see me after X", "show yourself after X", "come again after X", "come back after X", "review after X". Speech-to-text frequently mangles or flattens the imperative verb ending in Indian languages, so when the doctor mentions being seen/returning AGAIN together with a time period, record it as a follow-up (e.g. "• Review after 5 days"). Normalise the interval to digits + unit. This is recognising what WAS said — not inventing.
 
 List every symptom/finding EXPLICITLY stated (do not omit a clearly-stated one), but NEVER add, infer, or invent anything that was not actually said.
 
@@ -511,6 +511,9 @@ Merge rules:
       // lexicon pass has now already repaired deterministically.
       langNote = `\n\nNOTE: This transcript arrived in English from an Indic speech engine, so some medical terms may still be phonetically mangled. Where the intended clinical meaning is clear, correct the term to standard English medical terminology.`;
     } else {
+      // All 22 scheduled languages, not the 9 this used to cover. A language absent from the
+      // map fell through to the generic branch, so two-thirds of the catalogue got a vaguer
+      // prompt than the rest — a quality gap that tracked the language, not the audio.
       const LANG_LABELS: Record<string, string> = {
         "hi-IN": "Hindi (हिन्दी)",
         "te-IN": "Telugu (తెలుగు)",
@@ -521,11 +524,26 @@ Merge rules:
         "bn-IN": "Bengali (বাংলা)",
         "gu-IN": "Gujarati (ગુજરાતી)",
         "pa-IN": "Punjabi (ਪੰਜਾਬੀ)",
+        "od-IN": "Odia (ଓଡ଼ିଆ)",
+        "as-IN": "Assamese (অসমীয়া)",
+        "ur-IN": "Urdu (اردو)",
+        "sa-IN": "Sanskrit (संस्कृतम्)",
+        "ne-IN": "Nepali (नेपाली)",
+        "sd-IN": "Sindhi (سنڌي)",
+        "ks-IN": "Kashmiri (کٲشُر)",
+        "kok-IN": "Konkani (कोंकणी)",
+        "doi-IN": "Dogri (डोगरी)",
+        "mai-IN": "Maithili (मैथिली)",
+        "mni-IN": "Manipuri (ꯃꯤꯇꯩ ꯂꯣꯟ)",
+        "sat-IN": "Santali (ᱥᱟᱱᱛᱟᱲᱤ)",
+        "brx-IN": "Bodo (बड़ो)",
       };
       const langLabel = language_code ? LANG_LABELS[language_code] : null;
       langNote = langLabel
         ? `\n\nIMPORTANT: The conversation is in ${langLabel}. TRANSLATE and return ALL text field VALUES in clear, professional English. Keep JSON keys in English. Preserve medical drug names and ICD codes exactly.`
-        : `\n\nIMPORTANT: The conversation may be in English or an Indian regional language (e.g. Telugu, Hindi, Tamil). Detect the language, then TRANSLATE and return ALL text field VALUES in clear, professional English. Keep JSON keys in English. Preserve medical drug names and ICD codes exactly.`;
+        // No example languages here on purpose: naming three of twenty-two biased the model
+        // toward them when the language was genuinely unknown.
+        : `\n\nIMPORTANT: The conversation may be in English or any Indian regional language. Detect the language, then TRANSLATE and return ALL text field VALUES in clear, professional English. Keep JSON keys in English. Preserve medical drug names and ICD codes exactly.`;
     }
 
     // Accuracy guardrails — applied to EVERY session type. Symptoms must be strict
@@ -534,6 +552,7 @@ Merge rules:
     const guardNote = `\n\nACCURACY RULES (most important):
 - Use ONLY the doctor↔patient conversation as your source. NEVER invent, infer, assume, exaggerate, add, or "recommend" anything that was not actually spoken.
 - For chief_complaint, history_of_present_illness and examination_findings: record ONLY symptoms/findings/values a speaker EXPLICITLY states. A clinical fact stated inside a question or an answer STILL counts — capture it (e.g. doctor "since when the fever?" + patient "3 days" → fever × 3 days). Only ignore PURE social pleasantries, filler, and unclear/garbled audio — never turn those into clinical findings. Preserve the EXACT anatomical location (e.g. lower back / waist must NOT become "abdomen"). If a symptom is genuinely ambiguous, leave it out.
+- A consulting room may have OTHER PEOPLE talking nearby, and their words can leak into the recording. If a passage is plainly an unrelated conversation — different topic, no connection to this patient's problem, addressed to somebody else — ignore it. This does NOT apply to the patient or their attendant: the doctor↔patient exchange IS the source of the note and every clinical fact in it must be captured, however briefly stated. When you cannot tell whether a passage belongs to this consultation, KEEP it — losing something the patient said is worse than including a stray sentence.
 - For "examination_findings" vs "systemic_examination": general whole-patient survey goes in the first, findings for a NAMED system or site go in the second. Never put the same finding in both. If the doctor examined nothing, leave both empty rather than inventing a normal examination.
 - For "diagnosis" and "icd_suggestion": EXTRACT-ONLY. Fill these ONLY if a diagnosis is explicitly spoken in the conversation (by the doctor or patient). If no diagnosis is stated, leave BOTH empty ("" and ""). Do NOT put your own inference here — this pair records what was actually SAID.
 - For "suggested_diagnosis" / "suggested_icd" / "diagnosis_basis": this is where your OWN clinical inference belongs, and ONLY here. Offer one when the described findings genuinely support a most-likely working diagnosis and the doctor did not state one. It is presented to the doctor as an unconfirmed suggestion, so it must be defensible from the findings you cite in "diagnosis_basis" — leave all three empty rather than guessing from thin or non-specific symptoms. Never repeat a diagnosis that was actually spoken (that belongs in "diagnosis").

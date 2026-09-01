@@ -12,6 +12,9 @@ const TYPE_LABELS: Record<string, string> = {
   appointment_confirmation: "Appointment",
   appointment_reminder: "Reminder",
   lab_result_ready: "Lab Report",
+  radiology_report_ready: "Imaging Report",
+  pathology_report_ready: "Pathology Report",
+  external_lab_report_ready: "External Lab Report",
   bill_generated: "Bill",
   payment_received: "Payment",
   discharge_summary: "Discharge",
@@ -24,6 +27,7 @@ const NotificationCentre: React.FC<{ hospitalId: string | null }> = ({ hospitalI
   const [pending, setPending] = useState<any[]>([]);
   const [tab, setTab] = useState<"whatsapp" | "alerts">("whatsapp");
   const [alerts, setAlerts] = useState<any[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const fetchPending = useCallback(async () => {
     if (!hospitalId) return;
@@ -37,17 +41,40 @@ const NotificationCentre: React.FC<{ hospitalId: string | null }> = ({ hospitalI
     setPending(data || []);
   }, [hospitalId]);
 
+  // Resolve who is looking, so alerts addressed to a specific clinician reach only them.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user || !alive) return;
+      const { data } = await supabase
+        .from("users").select("id").eq("auth_user_id", user.id).maybeSingle();
+      if (alive) setCurrentUserId(data?.id ?? null);
+    })();
+    return () => { alive = false; };
+  }, []);
+
   const fetchAlerts = useCallback(async () => {
     if (!hospitalId) return;
-    const { data } = await supabase
+    let q = (supabase as any)
       .from("clinical_alerts")
-      .select("id, alert_type, alert_message, severity, created_at, is_acknowledged")
+      .select("id, alert_type, alert_message, severity, created_at, is_acknowledged, recipient_user_id")
       .eq("hospital_id", hospitalId)
-      .eq("is_acknowledged", false)
-      .order("created_at", { ascending: false })
-      .limit(10);
+      .eq("is_acknowledged", false);
+
+    // Result-ready alerts carry a recipient — the doctor who ordered the investigation. Every
+    // other alert type has recipient_user_id NULL and stays hospital-wide, so this filter
+    // keeps the existing behaviour intact while stopping one doctor's reports appearing in
+    // every other clinician's bell.
+    if (currentUserId) {
+      q = q.or(`recipient_user_id.is.null,recipient_user_id.eq.${currentUserId}`);
+    } else {
+      q = q.is("recipient_user_id", null);
+    }
+
+    const { data } = await q.order("created_at", { ascending: false }).limit(10);
     setAlerts(data || []);
-  }, [hospitalId]);
+  }, [hospitalId, currentUserId]);
 
   useEffect(() => {
     fetchPending();

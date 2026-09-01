@@ -10,6 +10,8 @@ import OnboardingTour from "@/components/onboarding/OnboardingTour";
 import type { OpdToken } from "@/pages/opd/OPDPage";
 import VoiceDictationButton from "@/components/voice/VoiceDictationButton";
 import ClinicalCalculatorPanel from "@/components/clinical/ClinicalCalculatorPanel";
+import InvestigationResultsPanel from "@/components/clinical/InvestigationResultsPanel";
+import { useUnreviewedResultCount } from "@/hooks/useUnreviewedResultCount";
 import { useVoiceScribe } from "@/hooks/useVoiceScribe";
 import ComplaintTab from "./tabs/ComplaintTab";
 import VitalsTab from "./tabs/VitalsTab";
@@ -33,6 +35,7 @@ import { isRadiologyKeyword } from "@/lib/investigationSync";
 import { resolveDrugStock, calcDrugQuantity } from "@/lib/drugStock";
 import { loadOrderCatalogue, resolveOrders } from "@/lib/orderCatalogue";
 import { printDocument, printHeader } from "@/lib/printUtils";
+import { buildInvestigationResultsHtml } from "@/lib/investigationPrint";
 import { logRecordAccess } from "@/lib/ims";
 import { translateText, getHospitalLanguages, ALL_PATIENT_LANGUAGES, buildBilingualHtml } from "@/lib/translateUtils";
 import { useCurrentHistoryDigest, formatDigestForPrompt, digestComorbidities } from "@/lib/historyDigest";
@@ -60,6 +63,8 @@ export interface EncounterData {
   soap_plan: string;
   diagnosis: string;
   icd10_code: string;
+  /** Recorded ALONGSIDE icd10_code, never instead of it — the statutory exports read ICD-10. */
+  icd11_code: string;
   follow_up_date: string;
   follow_up_notes: string;
   /**
@@ -110,7 +115,20 @@ export interface DrugEntry {
   stock_qty?: number;
 }
 
-export interface LabOrder {
+/**
+ * Set when an order was auto-selected from a name that did not match the catalogue verbatim.
+ *
+ * `matched_from` is the doctor's own wording; the UI renders it as `matched from "…"` so a
+ * rewrite that leads to a charge is never silent. `keep_as_typed` is what the revert control
+ * sets — it means "I looked at your match and I do not want it", and the resolver must leave
+ * the entry alone from then on or it would simply re-apply on the next render.
+ */
+export interface OrderMatchTrace {
+  matched_from?: string;
+  keep_as_typed?: boolean;
+}
+
+export interface LabOrder extends OrderMatchTrace {
   test_name: string;
   urgency: string;
   clinical_indication: string;
@@ -119,7 +137,7 @@ export interface LabOrder {
   catalogue_id?: string;
 }
 
-export interface RadiologyOrder {
+export interface RadiologyOrder extends OrderMatchTrace {
   study_name: string;
   urgency: string;
   clinical_indication: string;
@@ -131,7 +149,7 @@ export interface RadiologyOrder {
 const emptyEncounter: EncounterData = {
   chief_complaint: "", history_of_present_illness: "", vitals: {},
   examination_notes: "", soap_subjective: "", soap_objective: "",
-  soap_assessment: "", soap_plan: "", diagnosis: "", icd10_code: "",
+  soap_assessment: "", soap_plan: "", diagnosis: "", icd10_code: "", icd11_code: "",
   follow_up_date: "", follow_up_notes: "",
   ai_clarifying_questions: null,
 };
@@ -141,12 +159,47 @@ const emptyPrescription: PrescriptionData = {
   advice_notes: "", review_date: "", is_signed: false,
 };
 
+/* Row → state mappers. Shared by the token loader and by the print handler, which re-reads both
+ * rows so the sheet handed to the patient can never be built from stale or blanked state. */
+
+const mapEncounterRow = (enc: Record<string, any>): EncounterData => ({
+  chief_complaint: enc.chief_complaint || "",
+  history_of_present_illness: enc.history_of_present_illness || "",
+  vitals: (enc.vitals as Record<string, unknown>) || {},
+  examination_notes: enc.examination_notes || "",
+  soap_subjective: enc.soap_subjective || "",
+  soap_objective: enc.soap_objective || "",
+  soap_assessment: enc.soap_assessment || "",
+  soap_plan: enc.soap_plan || "",
+  diagnosis: enc.diagnosis || "",
+  icd10_code: enc.icd10_code || "",
+  icd11_code: enc.icd11_code || "",
+  follow_up_date: enc.follow_up_date || "",
+  follow_up_notes: enc.follow_up_notes || "",
+  ai_clarifying_questions:
+    (enc.ai_clarifying_questions as unknown as ClarifyingQuestionsState | null) ?? null,
+});
+
+const mapPrescriptionRow = (rx: Record<string, any>): PrescriptionData => ({
+  drugs: (rx.drugs as unknown as DrugEntry[]) || [],
+  lab_orders: (rx.lab_orders as unknown as LabOrder[]) || [],
+  radiology_orders: (rx.radiology_orders as unknown as RadiologyOrder[]) || [],
+  advice_notes: rx.advice_notes || "",
+  review_date: rx.review_date || "",
+  is_signed: rx.is_signed || false,
+});
+
 const BASE_TABS = [
   { key: "complaint", label: "Complaint" },
   { key: "vitals", label: "Vitals" },
   { key: "examination", label: "Examination" },
   { key: "guidance", label: "AI Guidance" },
   { key: "rx_orders", label: "Rx & Orders" },
+  // Results of what was ordered — labs, cultures, histopathology, referred-out tests and
+  // imaging, live. Sits immediately after Rx & Orders because ordering and reading results
+  // are the same clinical loop; before this tab existed the doctor had to leave the
+  // consultation and open the Lab module to close it.
+  { key: "investigations", label: "🧪 Reports" },
   { key: "plan_advice", label: "Plan & Advice" },
   { key: "history", label: "History" },
 ] as const;
@@ -187,6 +240,18 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
   const prevTokenId = useRef<string | null>(null);
   const isDirtyRef = useRef(false);
+  /**
+   * Which encounter the prescription currently in state was loaded for.
+   *
+   * The last line of defence against saving an empty prescription over a real one. `prescription`
+   * is reset to `emptyPrescription` whenever the token selection clears, and if anything then
+   * triggers a save before the real one has been re-read, the patient's whole investigation list
+   * is overwritten with []. Nothing recovers that — the autosave writes straight over the row.
+   * autoSavePrescription refuses to write unless this matches the encounter it is writing to.
+   */
+  const prescriptionLoadedFor = useRef<string | null>(null);
+  /** Encounter whose prescription save last failed — latches the warning to one toast. */
+  const rxSaveFailedFor = useRef<string | null>(null);
   const radStudyNamesRef = useRef<Set<string>>(new Set());
   const [deptName, setDeptName] = useState<string | null>(null);
   const [showAdmitModal, setShowAdmitModal] = useState(false);
@@ -256,6 +321,15 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
     return all.filter((t) => hasTabAccess("opd", t.key, permissions, role));
   }, [specialty, permissions, role]);
 
+  // Badge on the Reports tab — counted even while the tab is closed, which is the point:
+  // the doctor should learn a result has landed without going to look for it.
+  const unreviewedResults = useUnreviewedResultCount({
+    hospitalId,
+    patientId: token?.patient_id ?? null,
+    encounterId,
+    enabled: TABS.some((t) => t.key === "investigations"),
+  });
+
   /**
    * The doctor-patient conversation, for the AI Clarifying Questions card.
    *
@@ -298,6 +372,10 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
   const enrichVoiceOrdersRef = useRef<((added: {
     drugs: DrugEntry[]; labOrders: LabOrder[]; radOrders: RadiologyOrder[];
   }) => Promise<void>) | null>(null);
+  /** Lets the token-change effect flush a pending save before it clears state. */
+  const autoSavePrescriptionRef = useRef<
+    ((data: PrescriptionData, encounterIdOverride?: string) => Promise<void>) | null
+  >(null);
 
   // Register fill function for voice scribe
   useEffect(() => {
@@ -431,9 +509,38 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
     return () => unregisterScreen("opd_consultation");
   }, [registerScreen, unregisterScreen]);
 
-  // Load encounter when token changes
+  // Load encounter when token changes.
+  //
+  // Keyed on the token ID, not the token object: OPDPage re-derives `selectedToken` from a list
+  // it refetches on every realtime opd_tokens event and on tab focus, so the object identity
+  // churns constantly while the doctor is mid-consultation. Only a change of PATIENT should
+  // reload anything.
   useEffect(() => {
-    if (!token || !hospitalId || !userId) {
+    const tokenId = token?.id ?? null;
+
+    if (!tokenId || !hospitalId || !userId) {
+      // The selection genuinely cleared — the queue's date arrows moved to another day, the
+      // mobile Back button was pressed, or a refetch returned a list without this token.
+      //
+      // prevTokenId MUST be reset here. It used to be left pointing at the token that was just
+      // cleared, so re-selecting that same patient hit the `tokenId === prevTokenId.current`
+      // short-circuit below and never re-read anything: the doctor came back to an Rx & Orders
+      // tab with every prescribed test gone, over a prescription that was still intact in the
+      // database. The next autosave then wrote that empty state back and made the loss real.
+      // That is the "prescribed tests disappeared" report.
+      //
+      // Flush anything still sitting in the 2s autosave debounce first, or clearing the
+      // selection silently discards the last few seconds of work.
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = undefined;
+        if (isDirtyRef.current && encounterId) {
+          void autoSavePrescriptionRef.current?.(prescriptionRef.current, encounterId);
+        }
+      }
+      prevTokenId.current = null;
+      prescriptionLoadedFor.current = null;
+      isDirtyRef.current = false;
       setEncounter(emptyEncounter);
       setPrescription(emptyPrescription);
       setEncounterId(null);
@@ -441,66 +548,118 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
       setDiagnosisSeed(null);
       return;
     }
-    if (token.id === prevTokenId.current) return;
-    prevTokenId.current = token.id;
+    if (tokenId === prevTokenId.current) return;
+    prevTokenId.current = tokenId;
     isDirtyRef.current = false;
+    prescriptionLoadedFor.current = null;
     setDiagnosisSeed(null);
 
     (async () => {
-      // Fetch existing encounter for this token
-      const { data: enc } = await supabase
+      // Fetch existing encounter for this token.
+      //
+      // THIS IS WHERE "the prescribed tests are missing after a refresh" comes from.
+      //
+      // .maybeSingle() errors when more than one row matches, and there is no unique index on
+      // opd_encounters.token_id. autoSaveEncounter picks insert-vs-update from the encounterId
+      // React state, so two saves that both observe it as null — the 2-second debounced
+      // autosave racing the explicit save on Complete — each INSERT, leaving two encounter
+      // rows for one token. From then on this query fails on EVERY load, `enc` comes back
+      // null, and the else-branch below blanks the encounter AND the prescription. The
+      // doctor's tests are still in the database; the workspace simply stops being able to
+      // read them. Reload again and they are still gone. (The identical bug on `prescriptions`
+      // was fixed by migration 20261013000021; nobody applied the same guard one level up.)
+      //
+      // Recover by taking the most recent encounter instead of blanking. A companion migration
+      // dedupes and adds the missing unique index so the state stops arising.
+      const { data: enc, error: encErr } = await supabase
         .from("opd_encounters")
         .select("*")
         .eq("token_id", token.id)
         .maybeSingle();
 
-      if (enc) {
-        setEncounterId(enc.id);
-        setEncounter({
-          chief_complaint: enc.chief_complaint || "",
-          history_of_present_illness: enc.history_of_present_illness || "",
-          vitals: (enc.vitals as Record<string, unknown>) || {},
-          examination_notes: enc.examination_notes || "",
-          soap_subjective: enc.soap_subjective || "",
-          soap_objective: enc.soap_objective || "",
-          soap_assessment: enc.soap_assessment || "",
-          soap_plan: enc.soap_plan || "",
-          diagnosis: enc.diagnosis || "",
-          icd10_code: enc.icd10_code || "",
-          follow_up_date: enc.follow_up_date || "",
-          follow_up_notes: enc.follow_up_notes || "",
-          ai_clarifying_questions:
-            (enc.ai_clarifying_questions as unknown as ClarifyingQuestionsState | null) ?? null,
-        });
+      let encRow: any = enc;
+      if (encErr) {
+        console.error(
+          `Encounter load failed for token ${token.id}: ${encErr.message}. ` +
+          `Falling back to the most recent encounter — blanking the workspace would hide ` +
+          `clinical data that is still stored.`
+        );
+        const { data: newest } = await supabase
+          .from("opd_encounters")
+          .select("*")
+          .eq("token_id", token.id)
+          .order("created_at", { ascending: false })
+          .limit(1);
+        encRow = newest?.[0] ?? null;
+      }
 
-        // Fetch prescription
-        const { data: rx } = await supabase
+      if (encRow) {
+        const enc = encRow;
+        setEncounterId(enc.id);
+        setEncounter(mapEncounterRow(enc));
+
+        // Fetch prescription.
+        //
+        // The error is checked, not discarded, because the two outcomes are opposites and
+        // .maybeSingle() reports both as `data: null`:
+        //   * genuinely no prescription yet  → an empty prescription IS the truth;
+        //   * the query FAILED               → an empty prescription is a lie, and writing it
+        //                                      back blanks the doctor's tests and drugs.
+        //
+        // .maybeSingle() errors when more than one row matches. A unique index now prevents
+        // duplicate prescriptions per encounter (20261013000021), but any row pair written
+        // before that migration landed still errors here forever — the prescription loads
+        // empty, the "Selected" list shows nothing, and the next save then tries to INSERT
+        // (prescriptionId having been cleared), which the unique index rejects. That is how a
+        // doctor's prescribed tests silently disappear and never come back.
+        //
+        // On error, fall back to the newest row rather than blanking.
+        const { data: rx, error: rxErr } = await supabase
           .from("prescriptions")
           .select("*")
           .eq("encounter_id", enc.id)
           .maybeSingle();
-        if (rx) {
-          setPrescriptionId(rx.id);
-          setPrescription({
-            drugs: (rx.drugs as unknown as DrugEntry[]) || [],
-            lab_orders: (rx.lab_orders as unknown as LabOrder[]) || [],
-            radiology_orders: (rx.radiology_orders as unknown as RadiologyOrder[]) || [],
-            advice_notes: rx.advice_notes || "",
-            review_date: rx.review_date || "",
-            is_signed: rx.is_signed || false,
-          });
-        } else {
+
+        let rxRow: any = rx;
+        if (rxErr) {
+          console.error(
+            `Prescription load failed for encounter ${enc.id}: ${rxErr.message}. ` +
+            `Falling back to the most recent row — do NOT blank the prescription on a read error.`
+          );
+          const { data: newest } = await supabase
+            .from("prescriptions")
+            .select("*")
+            .eq("encounter_id", enc.id)
+            .order("created_at", { ascending: false })
+            .limit(1);
+          rxRow = newest?.[0] ?? null;
+        }
+
+        if (rxRow) {
+          setPrescriptionId(rxRow.id);
+          setPrescription(mapPrescriptionRow(rxRow));
+        } else if (!rxErr) {
           setPrescription(emptyPrescription);
           setPrescriptionId(null);
         }
+        // On an error with no recoverable row, deliberately leave the in-memory prescription
+        // alone: prescriptionLoadedFor stays unset below, so the save guard blocks any write.
+        // Only now is the in-memory prescription a true picture of this encounter, so only now
+        // may it be written back. See prescriptionLoadedFor's declaration.
+        prescriptionLoadedFor.current = enc.id;
       } else {
+        // No encounter row yet — a consultation that has not been started. The empty
+        // prescription IS the truth here, and with no prescriptionId the save path INSERTs,
+        // so there is nothing for the guard to protect.
         setEncounter(emptyEncounter);
         setPrescription(emptyPrescription);
         setEncounterId(null);
         setPrescriptionId(null);
       }
     })();
-  }, [token, hospitalId, userId]);
+    // token?.id, not token — see the note above the effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token?.id, hospitalId, userId]);
 
   // Auto-save encounter. Returns the encounter id (existing or newly created) so
   // callers that must act on a saved encounter — e.g. handleComplete — can proceed
@@ -526,6 +685,7 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
         soap_plan: data.soap_plan || null,
         diagnosis: data.diagnosis || null,
         icd10_code: data.icd10_code || null,
+        icd11_code: data.icd11_code || null,
         follow_up_date: data.follow_up_date || null,
         follow_up_notes: data.follow_up_notes || null,
         ai_clarifying_questions:
@@ -537,7 +697,37 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
       if (encounterId) {
         await supabase.from("opd_encounters").update(payload as never).eq("id", encounterId);
       } else {
-        const { data: newEnc } = await supabase.from("opd_encounters").insert([payload] as never).select("id").maybeSingle();
+        // Adopt-don't-duplicate. Two saves can both reach here with encounterId still null
+        // (the debounced autosave racing Complete), and a second INSERT gives the token two
+        // encounters — after which the workspace can no longer load either of them. Once the
+        // companion unique index exists this INSERT is rejected outright, so the duplicate is
+        // caught here and the existing row is adopted; until then the pre-check does the same
+        // job. Either way the second writer updates the first writer's row instead of
+        // creating a rival to it.
+        const { data: existingEnc } = await supabase
+          .from("opd_encounters")
+          .select("id")
+          .eq("token_id", token.id)
+          .order("created_at", { ascending: false })
+          .limit(1);
+
+        if (existingEnc?.[0]?.id) {
+          savedId = existingEnc[0].id;
+          setEncounterId(savedId);
+          const { error: updErr } = await supabase
+            .from("opd_encounters").update(payload as never).eq("id", savedId);
+          if (updErr) throw updErr;
+          setSaved(true);
+          setTimeout(() => setSaved(false), 2000);
+          return savedId;
+        }
+
+        const { data: newEnc, error: insErr } = await supabase
+          .from("opd_encounters").insert([payload] as never).select("id").maybeSingle();
+        if (insErr) {
+          console.error(`Encounter insert failed for token ${token.id}: ${insErr.message}`);
+          throw insErr;
+        }
         if (newEnc) {
           savedId = newEnc.id;
           setEncounterId(newEnc.id);
@@ -583,6 +773,26 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
   const autoSavePrescription = useCallback(async (data: PrescriptionData, encounterIdOverride?: string) => {
     const targetEncounterId = encounterIdOverride ?? encounterId;
     if (!token || !hospitalId || !userId || !targetEncounterId) return;
+
+    // Never overwrite a STORED prescription with state that was not loaded from it.
+    //
+    // `prescription` gets reset to empty whenever the token selection clears. If a save then
+    // fires — a debounce that outlived the switch, a Complete on a workspace that silently
+    // blanked — the UPDATE below replaces the patient's drugs and investigations with []. There
+    // is no undo: prescription_history snapshots the row we are about to destroy, but nothing
+    // in the UI restores from it.
+    //
+    // Only the UPDATE path needs guarding. With no prescriptionId this INSERTs, and there is by
+    // definition no stored row to lose.
+    if (prescriptionId && prescriptionLoadedFor.current !== targetEncounterId) {
+      console.warn(
+        `Refusing to save prescription ${prescriptionId}: in-memory state belongs to ` +
+        `${prescriptionLoadedFor.current ?? "no encounter"}, not ${targetEncounterId}. ` +
+        `This is the guard against blanking a prescription after the token selection cleared.`
+      );
+      return;
+    }
+
     try {
       const payload = {
         hospital_id: hospitalId,
@@ -622,15 +832,86 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
         } catch (histErr) {
           console.error("Prescription history save error (non-blocking):", histErr);
         }
-        await supabase.from("prescriptions").update(payload as never).eq("id", prescriptionId);
+        const { error: updErr } = await supabase.from("prescriptions").update(payload as never).eq("id", prescriptionId);
+        if (updErr) {
+          console.error(`Prescription update failed for ${prescriptionId}: ${updErr.message}`);
+          throw updErr;
+        }
       } else {
-        const { data: newRx } = await supabase.from("prescriptions").insert([payload] as never).select("id").maybeSingle();
-        if (newRx) setPrescriptionId(newRx.id);
+        const { data: newRx, error: insErr } = await supabase
+          .from("prescriptions").insert([payload] as never).select("id").maybeSingle();
+
+        // A swallowed error here is why prescribed tests survived on screen but were gone
+        // after a refresh.
+        //
+        // prescriptions has a unique index on encounter_id (20261013000021). Whenever this
+        // component holds prescriptionId === null while a row already exists for the encounter
+        // — a load that errored, or two saves racing so the loser's INSERT collides — this
+        // INSERT is rejected with 23505. The error was discarded, so `newRx` was null,
+        // prescriptionId stayed null, and EVERY later save took this same INSERT branch and
+        // failed identically. The prescription was frozen: the doctor kept adding tests, the UI
+        // kept showing them from memory, and nothing was ever written. Reload, and they were
+        // gone.
+        //
+        // Recover instead of failing: adopt the existing row and switch to UPDATE, which also
+        // self-heals an encounter already stuck in this state.
+        if (insErr) {
+          const isDuplicate = (insErr as any).code === "23505"
+            || /duplicate key|unique constraint/i.test(insErr.message || "");
+          if (!isDuplicate) {
+            console.error(`Prescription insert failed: ${insErr.message}`);
+            throw insErr;
+          }
+
+          const { data: existing } = await supabase
+            .from("prescriptions")
+            .select("id")
+            .eq("encounter_id", targetEncounterId)
+            .order("created_at", { ascending: false })
+            .limit(1);
+          const existingId = existing?.[0]?.id;
+          if (!existingId) throw insErr;
+
+          console.warn(
+            `Prescription for encounter ${targetEncounterId} already existed; adopting row ` +
+            `${existingId} and updating it instead of inserting a duplicate.`
+          );
+          setPrescriptionId(existingId);
+          prescriptionLoadedFor.current = targetEncounterId;
+          const { error: updErr } = await supabase
+            .from("prescriptions").update(payload as never).eq("id", existingId);
+          if (updErr) throw updErr;
+        } else if (newRx) {
+          setPrescriptionId(newRx.id);
+          // From here on there IS a stored row, so later saves have something to destroy and
+          // must satisfy the guard above. Stamped only on this branch: on the update branch the
+          // guard has already proved the pointer matches, and re-stamping there could resurrect
+          // it after a concurrent clear had deliberately blanked it.
+          prescriptionLoadedFor.current = targetEncounterId;
+        }
       }
-    } catch (err) {
+      // A save that worked clears the "could not save" latch below.
+      rxSaveFailedFor.current = null;
+    } catch (err: any) {
       console.error("Prescription save error:", err);
+      // TELL THE DOCTOR. This used to fail silently: the drugs and investigations stayed on
+      // screen because they live in React state, so everything looked saved until the page
+      // was reloaded and they were simply gone. A save failure the prescriber never learns
+      // about is worse than one that interrupts them. Latched per encounter so a repeating
+      // 2-second autosave cannot spam the same warning.
+      if (rxSaveFailedFor.current !== targetEncounterId) {
+        rxSaveFailedFor.current = targetEncounterId;
+        toast({
+          title: "Prescription not saved",
+          description:
+            "Your drugs and investigations are still on screen but have NOT been stored. " +
+            "Do not reload — try Complete again, or copy them out first.",
+          variant: "destructive",
+        });
+      }
     }
-  }, [token, hospitalId, userId, encounterId, prescriptionId]);
+  }, [token, hospitalId, userId, encounterId, prescriptionId, toast]);
+  autoSavePrescriptionRef.current = autoSavePrescription;
 
   // Debounced update
   const updateEncounter = useCallback((partial: Partial<EncounterData>) => {
@@ -661,14 +942,68 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
     });
   }, [updateEncounter]);
 
-  const handlePrintPrescription = () => {
+  const handlePrintPrescription = async () => {
     if (!token || !hospitalInfo) {
       toast({ title: "Hospital details not found", variant: "destructive" });
       return;
     }
     logRecordAccess({ hospitalId, recordType: "OPD_Record", recordId: token.id, patientId: token.patient_id, action: "print" });
 
-    const drugsHtml = prescription.drugs.length > 0 
+    // The printed sheet is what the patient walks out of the building with, so it is built from
+    // what is SAVED, not from whatever is in component state. Those can differ two ways:
+    //
+    //   - edits still sitting inside the 2s autosave debounce, which would print as missing;
+    //   - a workspace whose state was blanked when the token selection cleared, which printed a
+    //     prescription with no complaint, no drugs and no investigations over a database row
+    //     that held all three. That is the "lab tests and radiology missing from the printout"
+    //     report — the template below was always correct, it was handed empty arrays.
+    //
+    // Flush first, then re-read. A patient handed a blank prescription has no way to know
+    // anything is wrong, which is what makes this worth a round trip.
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = undefined;
+      if (isDirtyRef.current) {
+        await autoSaveEncounter(encounter);
+        await autoSavePrescription(prescriptionRef.current, encounterId ?? undefined);
+        isDirtyRef.current = false;
+      }
+    }
+
+    let prescription = prescriptionRef.current;
+    let encounterForPrint = encounter;
+    if (encounterId) {
+      const [{ data: encRow }, { data: rxRow }] = await Promise.all([
+        supabase.from("opd_encounters").select("*").eq("id", encounterId).maybeSingle(),
+        supabase.from("prescriptions").select("*").eq("encounter_id", encounterId).maybeSingle(),
+      ]);
+      if (encRow) encounterForPrint = mapEncounterRow(encRow);
+      if (rxRow) prescription = mapPrescriptionRow(rxRow);
+    }
+    const encounter_ = encounterForPrint;
+
+    // A sheet with nothing clinical on it is a printing failure, not a valid prescription.
+    // Say so instead of emitting it.
+    const hasContent =
+      prescription.drugs.length > 0 ||
+      prescription.lab_orders.length > 0 ||
+      prescription.radiology_orders.length > 0 ||
+      !!prescription.advice_notes?.trim() ||
+      !!encounter_.chief_complaint?.trim() ||
+      !!encounter_.diagnosis?.trim() ||
+      !!encounter_.soap_plan?.trim();
+    if (!hasContent) {
+      toast({
+        title: "Nothing to print yet",
+        description:
+          "This consultation has no complaint, medication or investigation saved against it. " +
+          "Add them and try again — printing now would hand the patient a blank prescription.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const drugsHtml = prescription.drugs.length > 0
       ? `<table>
           <tr><th>Drug Name</th><th>Dose</th><th>Freq</th><th>Duration</th><th>Instructions</th></tr>
           ${prescription.drugs.map(d => `<tr>
@@ -681,30 +1016,103 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
         </table>`
       : "<p>No medications prescribed.</p>";
 
-    const labHtml = prescription.lab_orders.length > 0
-      ? `<div class="section-title">Lab Orders</div><ul style="margin:0;padding-left:20px;">${prescription.lab_orders.map(l => `<li>${l.test_name}</li>`).join("")}</ul>`
-      : "";
-    const radHtml = prescription.radiology_orders.length > 0
-      ? `<div class="section-title" style="margin-top:10px;">Radiology Orders</div><ul style="margin:0;padding-left:20px;">${prescription.radiology_orders.map(r => `<li>${r.study_name}</li>`).join("")}</ul>`
-      : "";
-    const investigationsHtml = labHtml || radHtml ? `${labHtml}${radHtml}` : "";
+    // Everything the lab and radiology have released for this visit, abnormal values in bold.
+    // Anything already reported is dropped from the "ordered" lists below, so each test appears
+    // once — either as something still awaited, or with the value that came back.
+    const { html: resultsHtml, resultedNames } = await buildInvestigationResultsHtml({
+      hospitalId: hospitalId ?? "",
+      encounterId,
+    });
+    const awaited = <T,>(rows: T[], nameOf: (row: T) => string) =>
+      rows.filter((r) => !resultedNames.has(nameOf(r).toLowerCase().trim()));
 
-    const vitalsHtml = Object.entries(encounter.vitals).length > 0
-      ? `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:15px;background:#f8fafc;padding:10px;border-radius:4px;border:1px solid #e2e8f0;">
-          ${Object.entries(encounter.vitals).map(([k, v]) => `<div><span class="label" style="text-transform:capitalize">${k}:</span> <b>${v}</b></div>`).join("")}
-        </div>`
+    const pendingLabs = awaited(prescription.lab_orders, (l) => l.test_name);
+    const pendingRads = awaited(prescription.radiology_orders, (r) => r.study_name);
+    const orderedHeading = resultsHtml ? "Awaiting Results" : "Lab Orders";
+
+    // Same space problem as the results table: a column of ten short test names down the left of
+    // an otherwise blank page. Two columns above six items. `break-inside:avoid` keeps a name
+    // from being split across the column boundary.
+    const nameList = (names: string[]) =>
+      `<ul style="margin:0;padding-left:20px;${names.length > 6 ? "column-count:2;column-gap:24px;" : ""}">${
+        names.map(n => `<li style="break-inside:avoid;">${n}</li>`).join("")
+      }</ul>`;
+
+    const labHtml = pendingLabs.length > 0
+      ? `<div class="section-title">${orderedHeading}</div>${nameList(pendingLabs.map(l => l.test_name))}`
+      : "";
+    const radHtml = pendingRads.length > 0
+      ? `<div class="section-title" style="margin-top:10px;">${resultsHtml ? "Imaging Awaiting Report" : "Radiology Orders"}</div>${nameList(pendingRads.map(r => r.study_name))}`
+      : "";
+    // Results first — they are the actionable part and the reason the sheet is worth reading.
+    // What is still outstanding follows, so "Awaiting Results" cannot appear above the results.
+    const investigationsHtml = `${resultsHtml}${labHtml}${radHtml}`;
+
+    // Vitals sit in the top-right of the patient header, stacked vertically, instead of the
+    // full-width band they used to occupy. That band cost a whole horizontal strip of the page
+    // for six short numbers; on a one-page prescription that space belongs to the drug table
+    // and the results. The column beside Date/Doctor/Dept was empty anyway.
+    //
+    // Systolic and diastolic are stored as two keys but are one reading, so they print as
+    // "BP: 120/80" — two separate lines would be both longer and clinically odd.
+    const VITAL_LABELS: Record<string, string> = {
+      pulse: "Pulse", spo2: "SpO₂", temperature: "Temp", weight_kg: "Weight",
+      height_cm: "Height", respiratory_rate: "Resp. Rate", bmi: "BMI",
+      blood_sugar: "Blood Sugar", pain_score: "Pain Score",
+    };
+    const VITAL_UNITS: Record<string, string> = {
+      pulse: "/min", spo2: "%", weight_kg: "kg", height_cm: "cm", respiratory_rate: "/min",
+    };
+    const prettyVital = (k: string) =>
+      VITAL_LABELS[k] ?? k.replace(/_(kg|cm)$/, "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+    const rawVitals = (encounter_.vitals || {}) as Record<string, unknown>;
+    const filled = (v: unknown) => v !== null && v !== undefined && String(v).trim() !== "";
+
+    // Two columns, not one right-aligned run: labels right-aligned against the colon, values
+    // left-aligned beside it, so every key starts and every value starts on its own vertical
+    // line. Flush-right text leaves both edges ragged, which is what made the box hard to scan.
+    //
+    // The global print stylesheet sets `table { width:100% }` and puts a bottom border and 5/8px
+    // padding on every `td`, so each cell overrides those explicitly — otherwise this renders as
+    // a full-width ruled table instead of a compact block.
+    const TD = "border:none;padding:1px 0;vertical-align:baseline;";
+    const vitalLines: string[] = [];
+    const vitalRow = (label: string, value: string, unit?: string) =>
+      `<tr>
+         <td class="label" style="${TD}text-align:right;padding-right:5px;white-space:nowrap;">${label}:</td>
+         <td style="${TD}text-align:left;white-space:nowrap;"><b>${value}</b>${unit ? ` ${unit}` : ""}</td>
+       </tr>`;
+
+    if (filled(rawVitals.bp_systolic) || filled(rawVitals.bp_diastolic)) {
+      vitalLines.push(vitalRow("BP", `${rawVitals.bp_systolic ?? "--"}/${rawVitals.bp_diastolic ?? "--"}`, "mmHg"));
+    }
+    for (const [k, v] of Object.entries(rawVitals)) {
+      if (k === "bp_systolic" || k === "bp_diastolic" || !filled(v)) continue;
+      vitalLines.push(vitalRow(prettyVital(k), String(v), VITAL_UNITS[k]));
+    }
+
+    // Floated right so the Clinical Notes / Rx content flows up the left of it instead of
+    // starting below it — a right-aligned block on its own line would give back the vertical
+    // space this change was meant to save.
+    const vitalsHtml = vitalLines.length > 0
+      ? `<div style="float:right;font-size:11px;color:#475569;line-height:1.5;
+                     border:1px solid #e2e8f0;border-radius:4px;padding:6px 10px;margin:0 0 8px 14px;background:#f8fafc;">
+           <div class="label" style="font-weight:bold;text-align:center;margin-bottom:3px;">Vitals</div>
+           <table style="width:auto;border-collapse:collapse;margin:0;">${vitalLines.join("")}</table>
+         </div>`
       : "";
 
     const body = `
       ${printHeader(hospitalInfo.name, "OPD PRESCRIPTION", `<p style="font-size:12px;color:#64748b;margin:2px 0;">${hospitalInfo.address || ""}</p>`)}
       
-      <div style="display:flex;justify-content:space-between;border-bottom:1px solid #e2e8f0;padding-bottom:10px;margin-bottom:20px;">
-        <div style="flex:1">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;border-bottom:1px solid #e2e8f0;padding-bottom:10px;margin-bottom:14px;">
+        <div style="flex:1;min-width:0;">
           <div style="margin-bottom:4px;"><span class="label">Patient:</span> <b>${token.patient?.full_name}</b></div>
           <div style="margin-bottom:4px;"><span class="label">UHID:</span> <b>${token.patient?.uhid}</b></div>
           <div style="margin-bottom:4px;"><span class="label">Age/Sex:</span> <span>${token.patient?.dob ? Math.floor((Date.now() - new Date(token.patient.dob).getTime()) / 31557600000) : "--"}y / ${token.patient?.gender || "--"}</span></div>
         </div>
-        <div style="text-align:right;flex:1">
+        <div style="text-align:right;flex:1;min-width:0;">
           <div style="margin-bottom:4px;"><span class="label">Date:</span> <b>${new Date().toLocaleDateString("en-IN")}</b></div>
           <div style="margin-bottom:4px;"><span class="label">Doctor:</span> <b>${token.doctor?.full_name || "Dr. Consultation"}</b></div>
           <div style="margin-bottom:4px;"><span class="label">Dept:</span> <span>${deptName || "--"}</span></div>
@@ -715,19 +1123,21 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
 
       <div class="section-title">Clinical Notes</div>
       <div style="margin-bottom:15px;line-height:1.5;">
-        <p style="margin:4px 0;"><span class="label">Chief Complaint:</span> ${encounter.chief_complaint || "--"}</p>
-        ${encounter.history_of_present_illness ? `<p style="margin:4px 0 0 0;"><span class="label">History of Present Illness:</span></p><div style="white-space:pre-wrap;margin:0 0 4px 0;">${encounter.history_of_present_illness}</div>` : ""}
-        ${encounter.soap_assessment ? `<p style="margin:4px 0;"><span class="label">Assessment:</span> ${encounter.soap_assessment}</p>` : ""}
-        ${encounter.diagnosis ? `<p style="margin:4px 0;"><span class="label">Diagnosis:</span> <b>${encounter.diagnosis}</b> ${encounter.icd10_code ? `(${encounter.icd10_code})` : ""}</p>` : ""}
+        <p style="margin:4px 0;"><span class="label">Chief Complaint:</span> ${encounter_.chief_complaint || "--"}</p>
+        ${encounter_.history_of_present_illness ? `<p style="margin:4px 0 0 0;"><span class="label">History of Present Illness:</span></p><div style="white-space:pre-wrap;margin:0 0 4px 0;">${encounter_.history_of_present_illness}</div>` : ""}
+        ${encounter_.soap_assessment ? `<p style="margin:4px 0;"><span class="label">Assessment:</span> ${encounter_.soap_assessment}</p>` : ""}
+        ${encounter_.diagnosis ? `<p style="margin:4px 0;"><span class="label">Diagnosis:</span> <b>${encounter_.diagnosis}</b> ${encounter_.icd10_code ? `(${encounter_.icd10_code})` : ""}${encounter_.icd11_code ? ` [ICD-11 ${encounter_.icd11_code}]` : ""}</p>` : ""}
       </div>
+
+      <div style="clear:both;"></div>
 
       <div class="section-title">Rx (Prescription)</div>
       ${drugsHtml}
 
       ${investigationsHtml}
 
-      ${encounter.soap_plan
-          ? `<div class="section-title" style="margin-top:10px;">Plan &amp; Investigations</div><div style="white-space:pre-wrap;background:#f8fafc;padding:10px;border-radius:4px;border:1px solid #e2e8f0;">${encounter.soap_plan}</div>`
+      ${encounter_.soap_plan
+          ? `<div class="section-title" style="margin-top:10px;">Plan &amp; Investigations</div><div style="white-space:pre-wrap;background:#f8fafc;padding:10px;border-radius:4px;border:1px solid #e2e8f0;">${encounter_.soap_plan}</div>`
           : ""}
 
       ${prescription.advice_notes
@@ -737,11 +1147,11 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
           : ""}
 
       ${(() => {
-        const reviewDate = prescription.review_date || encounter.follow_up_date;
-        return (encounter.follow_up_notes || reviewDate) ? `<div style="margin-top:20px;padding:10px;border:1px dashed #1A2F5A;border-radius:4px;background:#f0f7ff;">
+        const reviewDate = prescription.review_date || encounter_.follow_up_date;
+        return (encounter_.follow_up_notes || reviewDate) ? `<div style="margin-top:20px;padding:10px;border:1px dashed #1A2F5A;border-radius:4px;background:#f0f7ff;">
         <b style="color:#1A2F5A">Follow-up</b>
         ${reviewDate ? `<span style="margin-left:6px;color:#1A2F5A;">Review date: ${new Date(reviewDate).toLocaleDateString("en-IN")}</span>` : ""}
-        ${encounter.follow_up_notes ? `<p style="margin-top:5px;font-size:12px;color:#475569;white-space:pre-wrap;">${encounter.follow_up_notes}</p>` : ""}
+        ${encounter_.follow_up_notes ? `<p style="margin-top:5px;font-size:12px;color:#475569;white-space:pre-wrap;">${encounter_.follow_up_notes}</p>` : ""}
       </div>` : "";
       })()}
 
@@ -831,9 +1241,9 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
             ? byDictated.get(l.test_name) : null;
           if (!r) { keepLabs.push(l); continue; }
           if (r.kind === "radiology") {
-            keepRads.push({ study_name: r.name, urgency: l.urgency, clinical_indication: l.clinical_indication, availability: "in_stock", catalogue_id: r.catalogueId ?? undefined });
+            keepRads.push({ study_name: r.name, urgency: l.urgency, clinical_indication: l.clinical_indication, availability: "in_stock", catalogue_id: r.catalogueId ?? undefined, matched_from: r.matchedFrom });
           } else {
-            keepLabs.push({ ...l, test_name: r.name, catalogue_id: r.catalogueId ?? undefined, availability: r.offered ? "in_stock" : "not_stocked" });
+            keepLabs.push({ ...l, test_name: r.name, catalogue_id: r.catalogueId ?? undefined, availability: r.offered ? "in_stock" : "not_stocked", matched_from: r.matchedFrom });
           }
         }
         for (const rad of prev.radiology_orders) {
@@ -841,9 +1251,9 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
             ? byDictated.get(rad.study_name) : null;
           if (!r) { keepRads.push(rad); continue; }
           if (r.kind === "lab" || r.kind === "lab_group") {
-            keepLabs.push({ test_name: r.name, urgency: rad.urgency, clinical_indication: rad.clinical_indication, availability: "in_stock", catalogue_id: r.catalogueId ?? undefined });
+            keepLabs.push({ test_name: r.name, urgency: rad.urgency, clinical_indication: rad.clinical_indication, availability: "in_stock", catalogue_id: r.catalogueId ?? undefined, matched_from: r.matchedFrom });
           } else {
-            keepRads.push({ ...rad, study_name: r.name, catalogue_id: r.catalogueId ?? undefined, availability: r.offered ? "in_stock" : "not_stocked" });
+            keepRads.push({ ...rad, study_name: r.name, catalogue_id: r.catalogueId ?? undefined, availability: r.offered ? "in_stock" : "not_stocked", matched_from: r.matchedFrom });
           }
         }
         nextLabs = keepLabs;
@@ -861,12 +1271,24 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
   enrichVoiceOrdersRef.current = enrichVoiceOrders;
 
   // Add a lab test (used by the Clinical Guidance recommended-investigations chips)
+  //
+  // The model writes what a clinician writes — "CBC", "LFT", "RFT" — not this hospital's
+  // catalogue spelling. Marking the entry `unresolved` hands it to the resolver in
+  // RxOrdersTab, which rewrites it to the row it actually means, moves it to the radiology
+  // list if that is what it turned out to be, and shows the doctor what it matched. Added raw
+  // and unmarked, an AI-suggested test failed syncLabOrders' exact-name match and was dropped.
   const addLabOrder = useCallback((name: string) => {
     if (!name.trim()) return;
     setPrescription((prev) => {
       // Case-insensitive so "Fever Profile" can't be added alongside "fever profile".
       if (prev.lab_orders.some((l) => l.test_name.trim().toLowerCase() === name.trim().toLowerCase())) return prev;
-      const next = { ...prev, lab_orders: [...prev.lab_orders, { test_name: name, urgency: "routine", clinical_indication: "" }] };
+      const next = {
+        ...prev,
+        lab_orders: [
+          ...prev.lab_orders,
+          { test_name: name, urgency: "routine", clinical_indication: "", availability: "unresolved" as const },
+        ],
+      };
       isDirtyRef.current = true;
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => autoSavePrescription(next), 2000);
@@ -939,23 +1361,46 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
   const finalizeConsultation = async (encounterId: string) => {
     if (!token) return;
 
-    // Soft reminder if doctor has pending lab/radiology orders in the prescription JSON.
-    // Lab/Radiology orders are created through the billing flow (New Lab Order / New Radiology Order)
-    // after payment — they should NOT be auto-created here.
-    const pendingLabCount = prescription.lab_orders.length;
-    const pendingRadCount = prescription.radiology_orders.length;
-    if (pendingLabCount > 0 || pendingRadCount > 0) {
-      const parts: string[] = [];
-      if (pendingLabCount > 0) parts.push(`${pendingLabCount} lab test(s)`);
-      if (pendingRadCount > 0) parts.push(`${pendingRadCount} radiology study(s)`);
-      toast({
-        title: `Reminder: ${parts.join(" and ")} in prescription`,
-        description: "Ensure billing has collected payment and created the lab/radiology orders.",
-      });
-    }
-
     await autoSavePrescription(prescription, encounterId);
     isDirtyRef.current = false;
+
+    // Lab / Radiology handoff — PAYMENT FIRST, ORDER SECOND.
+    //
+    // Completing a consultation deliberately creates NO lab_orders / radiology_orders row and
+    // posts NO charge. The prescription JSON saved just above is the handoff: the Lab and
+    // Radiology modules read it through getPendingInvestigations (lib/pendingInvestigations.ts)
+    // and list the patient under "Pending from OPD", where the desk runs the Collect Payment
+    // wizard in NewLabOrderModal / NewRadiologyOrderModal — one step that takes the cash and
+    // creates the order, already paid and billed, in the same transaction.
+    //
+    // This reverts an attempt to create-and-charge here. Two things went wrong with it:
+    //
+    //   1. It billed without collecting. postCharge resolves payment_status from admissionId,
+    //      which is absent on this path, so every test landed as "pending_payment" on an UNPAID
+    //      OPD bill — while the order was simultaneously stamped billing_status:"billed",
+    //      billed:true. The lab then drew the sample on the strength of a payment nobody had
+    //      taken.
+    //   2. It starved the module that was supposed to collect. getPendingInvestigations
+    //      subtracts already-ordered tests from the prescription, so the moment this created
+    //      the order there was nothing left in "Pending from OPD" to charge for.
+    //
+    // BUG-P4-009 (OPD orders sat "unbilled" forever, invisible to the lab worklist, which
+    // filters .neq("billing_status","unbilled")) is what motivated that attempt. It no longer
+    // applies: under payment-first no order row exists to go stale, and every order the lab
+    // worklist sees was created paid.
+    //
+    // IPD is unaffected — IPDWorkspace already branches on the hospital's IPD Ancillary Payment
+    // policy (post_paid accrues to the admission bill at commit; pre_paid leaves the items on
+    // the prescription for the module to collect on), which is the same contract as this.
+    const pendingInvestigations =
+      prescription.lab_orders.length + prescription.radiology_orders.length;
+    if (pendingInvestigations > 0) {
+      toast({
+        title: `${pendingInvestigations} investigation(s) sent for billing`,
+        description:
+          "The order is raised in Lab / Radiology once payment is collected — see “Pending from OPD”.",
+      });
+    }
     await supabase.from("opd_tokens").update({
       status: "completed",
       consultation_end_at: new Date().toISOString(),
@@ -1048,26 +1493,30 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
           const { autoChargeService, MODULE_OPD_CONSULT } = await import("@/lib/serviceBilling");
           const { autoPostJournalEntry } = await import("@/lib/accounting");
 
-          // Rate lookup priority: doctor → department → global → ₹500 fallback
-          let fee = 500;
-          if (token.doctor_id) {
-            const { data: docSvc } = await (supabase as any).from("service_master").select("fee")
-              .eq("hospital_id", hospitalId).eq("item_type", "consultation").eq("is_active", true)
-              .eq("doctor_id", token.doctor_id).limit(1).maybeSingle();
-            if (docSvc?.fee) fee = Number(docSvc.fee);
-          }
-          if (fee === 500 && token.department_id) {
-            const { data: deptSvc } = await (supabase as any).from("service_master").select("fee")
-              .eq("hospital_id", hospitalId).eq("item_type", "consultation").eq("is_active", true)
-              .eq("department_id", token.department_id).is("doctor_id", null).limit(1).maybeSingle();
-            if (deptSvc?.fee) fee = Number(deptSvc.fee);
-          }
-          if (fee === 500) {
-            const { data: globalSvc } = await (supabase as any).from("service_master").select("fee")
-              .eq("hospital_id", hospitalId).eq("item_type", "consultation").eq("is_active", true)
-              .is("doctor_id", null).is("department_id", null).limit(1).maybeSingle();
-            if (globalSvc?.fee) fee = Number(globalSvc.fee);
-          }
+          // Priced by the SAME engine the front desk used (@/lib/consultationFee), so the
+          // amount posted here can no longer diverge from the amount collected.
+          //
+          // This block used to run its own ladder with `fee === 500` as a "not resolved yet"
+          // sentinel, which meant a doctor legitimately priced at ₹500 fell through to the
+          // department and global tiers. It also had no notion of follow-up rates, validity,
+          // or emergency pricing, so a follow-up collected at ₹300 was billed here at ₹700.
+          //
+          // The token's own charged_tier is authoritative: it records what the desk actually
+          // charged. Re-deriving the tier from the patient's history would double-count this
+          // very visit, since its token row already exists by now.
+          const { priceConsultation } = await import("@/lib/consultationFee");
+          const priced = await priceConsultation({
+            hospitalId,
+            patientId: token.patient_id,
+            doctorId: token.doctor_id,
+            departmentId: token.department_id,
+            visitType:
+              token.charged_tier === "emergency" ? "emergency"
+              : token.charged_tier === "follow_up" ? "followup"
+              : "new",
+            excludeTokenId: token.id,
+          });
+          const fee = priced.fee;
 
           // Find the OPD bill for this encounter.
           // Primary: bill already linked to this encounter (the "link block" above runs first).
@@ -1190,6 +1639,19 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
     if (!encounter.chief_complaint.trim()) {
       toast({ title: "Chief complaint is required", variant: "destructive" });
       return;
+    }
+
+    // updatePrescription/addLabOrder arm a 2s debounced autosave (saveTimer) that calls
+    // autoSaveEncounter + autoSavePrescription on its own. If Complete is clicked before that
+    // timer fires, it survives this function and later runs concurrently with the saves below.
+    // autoSavePrescription decides insert-vs-update from the prescriptionId React state, which
+    // neither call has updated yet at that point, so both insert — leaving two prescriptions
+    // rows for one encounter_id. The reload query uses .maybeSingle(), which then throws on the
+    // duplicate and silently falls back to an empty prescription (BUG: chips/orders vanish on
+    // reopen). Cancel the pending debounce so completion is the only save that runs.
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = undefined;
     }
 
     setFinalizing(true);
@@ -1337,6 +1799,13 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
             )}
           >
             {tab.label}
+            {/* Results that have landed but not been read. This is what replaces the doctor
+                having to remember to go and check the Lab module. */}
+            {tab.key === "investigations" && unreviewedResults > 0 && (
+              <span className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-emerald-600 text-white text-[11px] font-bold align-middle">
+                {unreviewedResults > 9 ? "9+" : unreviewedResults}
+              </span>
+            )}
           </button>
         ))}
         {/* Save indicator */}
@@ -1355,6 +1824,16 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
         {activeTab === "vitals" && <VitalsTab encounter={encounter} onChange={updateEncounter} />}
         {activeTab === "examination" && (
           <ExaminationTab encounter={encounter} onChange={updateEncounter} encounterId={encounterId} hospitalId={hospitalId} patientId={token?.patient_id ?? null} userId={userId} seedDiagnosis={diagnosisSeed} />
+        )}
+        {activeTab === "investigations" && hospitalId && token?.patient_id && (
+          // encounterId is created lazily on first save, so it can still be null here — the
+          // panel falls back to patient scope rather than showing an empty tab.
+          <InvestigationResultsPanel
+            hospitalId={hospitalId}
+            patientId={token.patient_id}
+            encounterId={encounterId}
+            currentUserId={userId}
+          />
         )}
         {activeTab === "guidance" && (
           <div className="h-full overflow-y-auto p-4 space-y-4">
@@ -1444,7 +1923,11 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
             )}
           </div>
         )}
-        {activeTab === "rx_orders" && <RxOrdersTab prescription={prescription} onChange={updatePrescription} hospitalId={hospitalId} patientAllergies={token?.patient?.allergies ? token.patient.allergies.split(",").map(a => a.trim()) : []} diagnosis={encounter.diagnosis} icdCode={encounter.icd10_code} patientAge={patientAge || undefined} patientGender={token?.patient?.gender || undefined} />}
+        {/* encounterId, patientId and userId are all load-bearing, not decorative:
+            encounterId drives the "BILLED & ORDERED" confirmation chips (they could never
+            appear while it was unset), and patientId/userId are what attach a drug-safety
+            override to the patient and the prescriber (BUG-P4-004). */}
+        {activeTab === "rx_orders" && <RxOrdersTab prescription={prescription} onChange={updatePrescription} hospitalId={hospitalId} patientAllergies={token?.patient?.allergies ? token.patient.allergies.split(",").map(a => a.trim()) : []} diagnosis={encounter.diagnosis} icdCode={encounter.icd10_code} patientAge={patientAge || undefined} patientGender={token?.patient?.gender || undefined} encounterId={encounterId} patientId={token?.patient_id ?? null} userId={userId} />}
         {activeTab === "plan_advice" && <PlanAdviceTab prescription={prescription} onChange={updatePrescription} encounter={encounter} onEncounterChange={updateEncounter} />}
         {activeTab === "history" && (
           <HistoryTab
@@ -1492,10 +1975,14 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
         {hasActionAccess("opd", "refer_physio", permissions, role) && (
           <button onClick={async () => {
             if (!token || !hospitalId || !userId) return;
+            // The encounter autosave is debounced (see saveTimer above), so a referral made
+            // right after typing can race a still-pending save and land with no encounter
+            // link. Force the save first and use its returned id, same as handleComplete does.
+            const savedEncounterId = encounterId || (await autoSaveEncounter(encounter));
             const { error } = await supabase.from("physio_referrals").insert({
               hospital_id: hospitalId,
               patient_id: token.patient_id,
-              opd_encounter_id: encounterId || undefined,
+              opd_encounter_id: savedEncounterId || undefined,
               referred_by: userId,
               diagnosis: encounter.diagnosis || encounter.chief_complaint || "Physiotherapy referral",
               goals: [],

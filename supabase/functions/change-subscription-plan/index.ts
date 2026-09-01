@@ -31,6 +31,7 @@ import {
   type BillingCycle,
 } from "../_shared/platform-billing.ts";
 import { getRazorpaySubscriptionKeys } from "../_shared/platform-razorpay-config.ts";
+import { SUPPORT_EMAIL } from "../_shared/brand.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -94,7 +95,7 @@ serve(async (req) => {
       .maybeSingle();
 
     if (!newPlan) return err("Plan not found");
-    if (newPlan.is_custom_price) return err("Enterprise plans require a custom quote. Contact support@aumrti.in");
+    if (newPlan.is_custom_price) return err(`Enterprise plans require a custom quote. Contact ${SUPPORT_EMAIL}`);
 
     const currentPlan = (currentSub as any)?.subscription_plans;
     const currentStatus = currentSub?.status || "no_subscription";
@@ -164,7 +165,7 @@ serve(async (req) => {
     }
 
     if (!rzpKeyId || !rzpSecret) {
-      return err("Payment gateway not configured. Contact support@aumrti.in", 500);
+      return err(`Payment gateway not configured. Contact ${SUPPORT_EMAIL}`, 500);
     }
     const auth = btoa(`${rzpKeyId}:${rzpSecret}`);
 
@@ -197,7 +198,7 @@ serve(async (req) => {
       if (!createPlanRes.ok) {
         const rzpErr = await createPlanRes.json().catch(() => ({}));
         console.error("Auto-create Razorpay plan failed:", rzpErr);
-        return err("Payment gateway error while setting up plan. Contact support@aumrti.in", 502);
+        return err(`Payment gateway error while setting up plan. Contact ${SUPPORT_EMAIL}`, 502);
       }
       const rzpPlan = await createPlanRes.json();
       const { data: claimed } = await db.rpc("claim_razorpay_plan_slot", {
@@ -210,7 +211,7 @@ serve(async (req) => {
     }
 
     if (!rzpPlanId) {
-      return err("Payment gateway not configured for this plan. Contact support@aumrti.in");
+      return err(`Payment gateway not configured for this plan. Contact ${SUPPORT_EMAIL}`);
     }
 
     // ── Create the NEW Razorpay subscription first ─────────────────────────

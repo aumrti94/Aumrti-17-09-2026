@@ -119,7 +119,9 @@ const UnbilledServicesModal: React.FC<Props> = ({ bill, hospitalId, onClose, onA
         .eq("billed", false);
       const modalityIds = Array.from(new Set((radOrders || []).map((r: any) => r.modality_id).filter(Boolean)));
       const { data: modalities } = modalityIds.length
-        ? await (supabase as any).from("modalities").select("id, fee").in("id", modalityIds)
+        // Table is radiology_modalities; "modalities" has never existed, so this lookup always
+        // returned an error and every radiology line fell back to a fee of 0 (see modMap below).
+        ? await (supabase as any).from("radiology_modalities").select("id, fee").in("id", modalityIds)
         : { data: [] as any[] };
       const modMap = new Map<string, number>((modalities || []).map((m: any) => [m.id as string, Number(m.fee) || 0]));
       const radRows: RadRow[] = (radOrders || []).map((r: any) => ({

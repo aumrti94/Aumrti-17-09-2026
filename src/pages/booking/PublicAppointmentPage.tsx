@@ -74,6 +74,7 @@ export default function PublicAppointmentPage() {
   const [complaint, setComplaint]   = useState("");
   const [booking, setBooking]       = useState(false);
   const [bookingRef, setBookingRef] = useState("");
+  const [bookingError, setBookingError] = useState("");
 
   // Load hospital by subdomain slug
   useEffect(() => {
@@ -139,50 +140,36 @@ export default function PublicAppointmentPage() {
   const confirmBooking = async () => {
     if (!hospital || !selectedDoctor || !selectedSlot || !name.trim() || !phone.trim()) return;
     setBooking(true);
+    setBookingError("");
 
-    // Get or create patient
-    const { data: existing } = await (supabase as any)
-      .from("patients")
-      .select("id")
-      .eq("hospital_id", hospital.id)
-      .eq("phone", phone.trim())
-      .maybeSingle();
-
-    let patientId = existing?.id;
-
-    if (!patientId) {
-      const uhid = `WEB-${Date.now().toString(36).toUpperCase()}`;
-      const { data: newPt } = await (supabase as any).from("patients").insert({
-        hospital_id: hospital.id, full_name: name.trim(),
-        phone: phone.trim(), uhid,
-      }).select("id").maybeSingle();
-      patientId = newPt?.id;
-    }
-
-    if (!patientId) { setBooking(false); return; }
-
-    const ref = `APT-${Date.now().toString(36).toUpperCase().slice(-6)}`;
-
-    // Create appointment
-    await (supabase as any).from("appointments").insert({
-      hospital_id: hospital.id,
-      patient_id: patientId,
-      doctor_id: selectedDoctor.id,
-      appointment_date: format(selectedDate, "yyyy-MM-dd"),
-      slot_time: selectedSlot.slot_time,
-      slot_id: selectedSlot.id,
-      status: "booked",
-      visit_type: visitType,
-      chief_complaint: complaint || null,
-      consultation_fee: selectedDoctor.consultation_fee || 0,
-      booking_source: "patient_web",
-      notes: `Online booking ref: ${ref}`,
+    // The booking is done server-side by create_public_appointment (SECURITY DEFINER).
+    // An anonymous visitor has no users row, so get_user_hospital_id() returns NULL and a
+    // direct insert into patients / appointments can never pass RLS — which is why this
+    // page never actually created an appointment. The RPC also derives doctor, department,
+    // date, time, slot_end_time, fee and status from the slot itself, so none of those can
+    // be tampered with from the browser, and it enforces slot capacity under a row lock.
+    const { data, error } = await (supabase as any).rpc("create_public_appointment", {
+      p_hospital_id:     hospital.id,
+      p_slot_id:         selectedSlot.id,
+      p_patient_name:    name.trim(),
+      p_patient_phone:   phone.trim(),
+      p_visit_type:      visitType,
+      p_chief_complaint: complaint || null,
     });
 
-    // Update booked_count on slot
-    await (supabase as any).from("doctor_slots")
-      .update({ booked_count: (selectedSlot.booked_count || 0) + 1 })
-      .eq("id", selectedSlot.id);
+    if (error || !data?.appointment_id) {
+      // Never advance to the confirmation screen on failure. Showing "Appointment
+      // Confirmed" after a failed write is precisely the bug this replaces.
+      setBookingError(
+        error?.message ||
+        "We could not complete your booking. Please try again, or call the hospital."
+      );
+      setBooking(false);
+      loadSlots(); // the slot may have just been taken — refresh availability
+      return;
+    }
+
+    const ref = data.reference as string;
 
     // WhatsApp confirmation via wa.me (no auth needed for public page)
     const msg = `*Appointment Confirmed* ✅\n\nHospital: ${hospital.name}\nDoctor: Dr. ${selectedDoctor.full_name}\nDate: ${format(selectedDate, "dd MMM yyyy")}\nTime: ${fmtTime(selectedSlot.slot_time)}\nRef: ${ref}\n\nPlease arrive 10 minutes early.`;
@@ -399,6 +386,13 @@ export default function PublicAppointmentPage() {
               </div>
             </div>
 
+            {bookingError && (
+              <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-3">
+                <AlertCircle size={15} className="text-red-600 mt-0.5 flex-shrink-0" />
+                <p className="text-[13px] text-red-700">{bookingError}</p>
+              </div>
+            )}
+
             <Button
               onClick={confirmBooking}
               disabled={booking || !name.trim() || !phone.trim()}
@@ -428,7 +422,7 @@ export default function PublicAppointmentPage() {
               {hospital?.address && <p className="text-[12px] text-slate-500">{hospital.address}</p>}
             </div>
             <p className="text-[12px] text-slate-400">Please arrive 10 minutes before your appointment time.</p>
-            <button onClick={() => { setStep("select"); setSelectedSlot(null); setSelectedDoctor(null); setName(""); setPhone(""); setComplaint(""); }} className="text-[13px] text-blue-600 hover:underline">
+            <button onClick={() => { setStep("select"); setSelectedSlot(null); setSelectedDoctor(null); setName(""); setPhone(""); setComplaint(""); setBookingError(""); }} className="text-[13px] text-blue-600 hover:underline">
               Book another appointment
             </button>
           </div>

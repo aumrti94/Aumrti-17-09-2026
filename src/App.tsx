@@ -71,7 +71,6 @@ const SettingsRazorpayPage = lazy(() => import("./pages/settings/SettingsRazorpa
 const SettingsGSTPage = lazy(() => import("./pages/settings/SettingsGSTPage"));
 const SettingsABDMPage = lazy(() => import("./pages/settings/SettingsABDMPage"));
 const SettingsBackupPage = lazy(() => import("./pages/settings/SettingsBackupPage"));
-const SettingsAPIKeysPage = lazy(() => import("./pages/settings/SettingsAPIKeysPage"));
 const APIConfigHubPage = lazy(() => import("./pages/settings/APIConfigHubPage"));
 const SettingsICDCodesPage = lazy(() => import("./pages/settings/SettingsICDCodesPage"));
 const SpecialtyTemplateBuilderPage = lazy(() => import("./pages/settings/SpecialtyTemplateBuilderPage"));
@@ -391,7 +390,11 @@ const App = () => (
             <Route path="/ims/access-logs" element={<RG path="/settings"><SM name="IMS Access Logs"><IMSAccessLogsPage /></SM></RG>} />
             <Route path="/settings/change-log" element={<RG path="/settings/change-log"><SM name="Config Change Log"><ConfigChangeLogPage /></SM></RG>} />
             <Route path="/settings/tv-display" element={<RG path="/settings"><SM name="TV Display & Kiosk"><SettingsTVDisplayPage /></SM></RG>} />
-            <Route path="/settings/api-keys" element={<RG path="/settings"><SM name="API Keys"><SettingsAPIKeysPage /></SM></RG>} />
+            {/* Key management is consolidated into the API Portal — one screen, one way of
+                issuing a credential. The retired /settings/api-keys screen wrote the same table
+                with a different key format, and the two disagreed about whether the stored value
+                was a hash or the secret itself. */}
+            <Route path="/settings/api-keys" element={<Navigate to="/settings/api-portal" replace />} />
             <Route path="/settings/api-portal" element={<RG path="/settings"><SM name="API Portal"><SettingsAPIPortalPage /></SM></RG>} />
             <Route path="/settings/hl7" element={<RG path="/settings"><SM name="HL7 Integration"><SettingsHL7Page /></SM></RG>} />
             <Route path="/settings/white-label" element={<RG path="/settings"><SM name="White-Label Branding"><SettingsWhiteLabelPage /></SM></RG>} />

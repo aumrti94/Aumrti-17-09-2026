@@ -7,6 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { formatDateTimeIST } from "@/lib/dateUtils";
+import { SUPPORT_EMAIL } from "@/lib/brand";
 
 interface Ticket {
   id: string;
@@ -116,7 +117,7 @@ const SettingsSupportPage: React.FC = () => {
         <div className="flex items-start justify-between">
           <p className="text-sm text-muted-foreground max-w-xl">
             Raise a support ticket and Aumrti's team will respond here. For anything urgent, you can still{" "}
-            <a href="mailto:support@aumrti.in" className="text-primary underline">email support directly</a>.
+            <a href={`mailto:${SUPPORT_EMAIL}`} className="text-primary underline">email support directly</a>.
           </p>
           <Button size="sm" onClick={() => setShowNew(true)}><Plus className="h-3.5 w-3.5 mr-1.5" /> New Ticket</Button>
         </div>

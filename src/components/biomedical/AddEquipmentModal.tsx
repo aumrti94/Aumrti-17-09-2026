@@ -8,12 +8,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useHospitalId } from '@/hooks/useHospitalId';
-
-const CATEGORIES = ["diagnostic","therapeutic","monitoring","laboratory","surgical","ot_equipment","it_equipment","utility","radiation","other"];
+import { useConfigValues } from "@/hooks/useConfigValues";
 
 interface Props { open: boolean; onClose: () => void; onSaved: () => void; }
 
 const AddEquipmentModal: React.FC<Props> = ({ open, onClose, onSaved }) => {
+  const categories = useConfigValues("equipment_categories");
   const { hospitalId } = useHospitalId();
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
@@ -82,7 +82,7 @@ const AddEquipmentModal: React.FC<Props> = ({ open, onClose, onSaved }) => {
             <div><Label>Category *</Label>
               <Select value={form.category} onValueChange={(v) => set("category", v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{CATEGORIES.map((c) => <SelectItem key={c} value={c}>{c.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase())}</SelectItem>)}</SelectContent>
+                <SelectContent>{categories.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div><Label>Make *</Label><Input value={form.make} onChange={(e) => set("make", e.target.value)} /></div>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isLockExempt, lockedDayMessage } from "./lockedDay";
+import { isLockExempt, isRunningBill, lockedDayMessage } from "./lockedDay";
 
 /**
  * Parity with the SQL predicate in
@@ -43,6 +43,32 @@ describe("isLockExempt", () => {
 
   it("does not exempt on a missing status", () => {
     expect(isLockExempt({ billDate: "2026-07-16", billStatus: null, admissionId: "adm-1" })).toBe(false);
+  });
+});
+
+/**
+ * Gates whether the IPD ledger re-runs the charge sweep, i.e. whether room and
+ * nursing charges keep following the length of stay. Too strict here and the
+ * bill silently stops accruing mid-admission.
+ */
+describe("isRunningBill", () => {
+  it("keeps accruing through every mid-stay status", () => {
+    for (const status of ["draft", "pending_approval", "partially_paid", "paid", "insurance_pending"]) {
+      expect(isRunningBill(status)).toBe(true);
+    }
+  });
+
+  it("treats a missing status as still running", () => {
+    // Unlike isLockExempt, which fails closed: this only decides whether to
+    // RECOMPUTE charges, and a bill row with no status is an open worksheet.
+    expect(isRunningBill(null)).toBe(true);
+    expect(isRunningBill(undefined)).toBe(true);
+  });
+
+  it("stops accruing once the bill is finalised at discharge", () => {
+    for (const status of ["final", "irn_locked", "cancelled", "refunded"]) {
+      expect(isRunningBill(status)).toBe(false);
+    }
   });
 });
 

@@ -60,6 +60,27 @@ function detectIntent(message: string): Intent {
   return "unknown";
 }
 
+// Match the WhatsApp sender to a patient in this hospital. Meta delivers the number in
+// full international form ("919876543210"); patients rows are stored inconsistently as
+// 10-digit, 91-prefixed or +91-prefixed, so try all three rather than assuming one.
+// Returns null when the number matches no patient, or matches more than one — an
+// ambiguous match must never be resolved to an arbitrary patient's record.
+async function resolvePatientByPhone(hospitalId: string, phone: string): Promise<string | null> {
+  const digits = (phone || "").replace(/\D/g, "");
+  if (digits.length < 10) return null;
+  const last10 = digits.slice(-10);
+
+  const { data } = await supabaseAdmin
+    .from("patients")
+    .select("id")
+    .eq("hospital_id", hospitalId)
+    .in("phone", [last10, `91${last10}`, `+91${last10}`])
+    .limit(2);
+
+  if (!data || data.length !== 1) return null;
+  return data[0].id;
+}
+
 async function getOrCreateSession(hospitalId: string, phone: string, patientId?: string) {
   const { data: existing } = await supabaseAdmin
     .from("whatsapp_bot_sessions")
@@ -130,10 +151,23 @@ What do you need help with today? Reply HELP to speak with our staff.`;
       if (!contextPhone) {
         return `To check your appointments, please share your UHID (patient ID) and date of birth (DD/MM/YYYY) for verification. Reply HELP to speak with our staff.`;
       }
+
+      // Scope to THIS patient. The query below previously filtered on hospital_id alone,
+      // so it returned the next three appointments belonging to anyone in the hospital.
+      // It was unreachable in practice only because nothing in the codebase ever sets
+      // context_json.verified_phone — the moment a verification step did, every sender
+      // would have received other patients' names, dates and doctors. Requiring a
+      // resolved patient_id here means that can no longer happen by accident.
+      const patientId = session.patient_id || await resolvePatientByPhone(hospitalId, session.phone);
+      if (!patientId) {
+        return `We could not match this number to a patient record at ${hospitalName}. Please share your UHID (patient ID) for verification, or reply HELP to speak with our staff.`;
+      }
+
       const { data: appointments } = await supabaseAdmin
         .from("appointments")
         .select("appointment_date, slot_time, status, users(full_name)")
         .eq("hospital_id", hospitalId)
+        .eq("patient_id", patientId)
         .gte("appointment_date", new Date().toISOString().split("T")[0])
         .eq("status", "scheduled")
         .limit(3);
@@ -328,7 +362,13 @@ serve(async (req) => {
           continue;
         }
 
-        const session = await getOrCreateSession(hospitalId, fromPhone);
+        // Resolve the sender to a patient up front so the session carries it. Previously
+        // getOrCreateSession was always called without a patientId, so patient_id stayed
+        // null on every session row and nothing downstream could scope to a patient.
+        // A null result is fine — it just means the bot answers only non-PHI intents.
+        const matchedPatientId = await resolvePatientByPhone(hospitalId, fromPhone);
+
+        const session = await getOrCreateSession(hospitalId, fromPhone, matchedPatientId || undefined);
         if (!session) continue;
 
         const intent = detectIntent(inboundText);

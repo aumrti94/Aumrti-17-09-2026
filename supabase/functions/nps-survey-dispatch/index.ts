@@ -17,6 +17,7 @@
 // for something that wasn't actually sent.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { APP_URL } from "../_shared/brand.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -122,7 +123,7 @@ serve(async (req) => {
     // a Twilio webhook pointed at this project from the Twilio console, which
     // isn't something this session can configure. A link to our own page
     // needs no inbound SMS setup at all.
-    const appUrl = (Deno.env.get("APP_PUBLIC_URL") || "https://app.aumrti.in").replace(/\/$/, "");
+    const appUrl = (Deno.env.get("APP_PUBLIC_URL") || APP_URL).replace(/\/$/, "");
     const surveyMessage = (hospitalName: string, surveyId: string) =>
       `We hope your recent visit to ${hospitalName || "our hospital"} went well. Please rate your experience (30 seconds): ${appUrl}/survey/${surveyId}`;
 

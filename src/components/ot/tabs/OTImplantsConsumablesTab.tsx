@@ -177,7 +177,16 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
 
   // Implants bill through bill_line_items (same table/GST/dedupe scheme as OT charges &
   // fees) so they land on the real OT bill instead of a separate, GST-less list.
-  const insertImplantLineItems = async (unbilled: OTImplant[], opts?: { isInsuranceCovered?: boolean }): Promise<number> => {
+  // Shared by implants and consumables. Consumables used to take a separate path that inserted
+  // into "bill_items" — a table that has never existed — with admission_id/unit_price/total_price
+  // columns that do not exist on bill_line_items either. That insert always failed, so OT
+  // consumables were never billed; the error surfaced only as a toast. Routing them through this
+  // helper reuses the bill resolution, dedupe and total recalculation that implants already had.
+  const insertOtLineItems = async (
+    unbilled: Array<{ id: string; item_name: string; unit_cost: number; quantity: number }>,
+    kind: "implant" | "consumable",
+    opts?: { isInsuranceCovered?: boolean },
+  ): Promise<number> => {
     if (unbilled.length === 0 || !hospitalId || !schedule.admission_id) return 0;
 
     const { data: existingBill } = await supabase
@@ -217,6 +226,7 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
       .eq("bill_id", billId)
       .eq("source_module", "ot");
     const existingSet = new Set<string>((existingKeys || []).map((k: any) => k.source_dedupe_key).filter(Boolean));
+    const label = kind === "implant" ? "Implant" : "Consumable";
 
     const lineItems = unbilled
       .map((i) => {
@@ -224,14 +234,17 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
         const gst = calcGST(total, 12);
         const li: Record<string, unknown> = {
           hospital_id: hospitalId, bill_id: billId,
-          item_type: "implant",
-          description: `Implant: ${i.item_name}`,
+          item_type: kind,
+          description: `${label}: ${i.item_name}`,
           quantity: i.quantity, unit_rate: i.unit_cost,
           taxable_amount: total, gst_percent: 12, gst_amount: gst,
           total_amount: roundCurrency(total + gst),
-          hsn_code: "9021", source_module: "ot",
+          // HSN 9021 is the orthopaedic-appliance heading and applies to implants only; a
+          // consumable's HSN varies by item, so it is left unset rather than asserted wrongly.
+          ...(kind === "implant" ? { hsn_code: "9021" } : {}),
+          source_module: "ot",
           source_record_id: schedule.id,
-          source_dedupe_key: `ot:${schedule.id}:implant:${i.id}`,
+          source_dedupe_key: `ot:${schedule.id}:${kind}:${i.id}`,
         };
         if (opts?.isInsuranceCovered === false) li.is_insurance_covered = false;
         return li;
@@ -243,7 +256,10 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
       await recalculateBillTotalsSafe(billId);
     }
 
-    await (supabase as any).from("ot_implants").update({ billed: true }).in("id", unbilled.map((i) => i.id));
+    await (supabase as any)
+      .from(kind === "implant" ? "ot_implants" : "ot_consumables")
+      .update({ billed: true })
+      .in("id", unbilled.map((i) => i.id));
     return unbilled.length;
   };
 
@@ -285,7 +301,7 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
       }
     }
 
-    return insertImplantLineItems(unbilled);
+    return insertOtLineItems(unbilled, "implant");
   };
 
   const billAll = async () => {
@@ -311,20 +327,19 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
     }
 
     if (unbilledConsumables.length > 0) {
-      const billItems = unbilledConsumables.map((c) => ({
-        admission_id: schedule.admission_id,
-        item_name: `Consumable: ${c.item_name}`,
-        category: "consumable",
-        quantity: c.quantity,
-        unit_price: c.unit_cost,
-        total_price: c.unit_cost * c.quantity,
-      }));
-      const { error } = await (supabase as any).from("bill_items").insert(billItems);
-      if (!error) {
-        await (supabase as any).from("ot_consumables").update({ billed: true }).in("id", unbilledConsumables.map((c) => c.id));
-        billedCount += unbilledConsumables.length;
-      } else {
-        toast({ title: "Failed to bill consumables", description: error.message, variant: "destructive" });
+      // Was a direct insert into "bill_items" — a table that has never existed — with
+      // admission_id/unit_price/total_price columns that bill_line_items does not have either.
+      // It always failed, so OT consumables were never billed. insertOtLineItems() resolves or
+      // creates the IPD bill, applies GST, dedupes on source_dedupe_key, recalculates the bill
+      // total and marks the rows billed — the same path implants already use.
+      try {
+        billedCount += await insertOtLineItems(unbilledConsumables, "consumable");
+      } catch (e) {
+        toast({
+          title: "Failed to bill consumables",
+          description: e instanceof Error ? e.message : "Unknown error",
+          variant: "destructive",
+        });
       }
     }
 
@@ -683,7 +698,7 @@ const OTImplantsConsumablesTab: React.FC<Props> = ({ schedule, hospitalId, onRef
           onMarkPatientPayable={async () => {
             const blocked = enhancementBlocked;
             setEnhancementBlocked(null);
-            await insertImplantLineItems(blocked.implants, { isInsuranceCovered: false });
+            await insertOtLineItems(blocked.implants, "implant", { isInsuranceCovered: false });
             if (schedule.admission_id && hospitalId) {
               fetchPreAuthCeiling(schedule.admission_id, hospitalId).then(setPreAuthCeiling);
             }

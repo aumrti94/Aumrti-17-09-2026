@@ -111,6 +111,45 @@ const SchedulingPage: React.FC = () => {
 
   const dateStr = format(date, "yyyy-MM-dd");
 
+  // Both contexts are memoised because WalkInModal keys effects on these objects — the one
+  // that locks the doctor to the slot, and the one that seeds the check-in patient/fee.
+  // Built inline they were a new reference on EVERY render of this page, including the
+  // frequent realtime refetches, so those effects re-fired continuously: re-setting doctorId
+  // (which re-triggers the fee lookup) and resetting the modal's step mid-payment.
+  const bookingContext = useMemo(
+    () =>
+      bookingSlot
+        ? {
+            id: bookingSlot.id,
+            doctor_id: bookingSlot.doctor_id,
+            slot_date: bookingSlot.slot_date,
+            slot_time: bookingSlot.slot_time,
+            slot_duration_mins: bookingSlot.slot_duration_mins,
+            slot_type: bookingSlot.slot_type,
+          }
+        : null,
+    [bookingSlot]
+  );
+
+  const checkinContext = useMemo(
+    () =>
+      checkinAppt
+        ? {
+            id: checkinAppt.id,
+            patient_id: checkinAppt.patient_id,
+            patient_name: checkinAppt.patient?.full_name || "",
+            uhid: checkinAppt.patient?.uhid || "",
+            phone: checkinAppt.patient?.phone || null,
+            doctor_id: checkinAppt.doctor_id,
+            department_id: checkinAppt.department_id,
+            consultation_fee: checkinAppt.consultation_fee,
+            visit_type: checkinAppt.visit_type,
+            visit_purpose: checkinAppt.visit_purpose,
+          }
+        : null,
+    [checkinAppt]
+  );
+
   const { data: slots = [], isLoading: loadingSlots } = useQuery({
     queryKey: ["doctor-slots", hospitalId, dateStr],
     enabled: !!hospitalId,
@@ -349,40 +388,22 @@ const SchedulingPage: React.FC = () => {
         </div>
       </div>
 
-      {bookingSlot && (
+      {bookingContext && (
         <WalkInModal
           hospitalId={hospitalId!}
           mode="appointment"
-          appointmentSlot={{
-            id: bookingSlot.id,
-            doctor_id: bookingSlot.doctor_id,
-            slot_date: bookingSlot.slot_date,
-            slot_time: bookingSlot.slot_time,
-            slot_duration_mins: bookingSlot.slot_duration_mins,
-            slot_type: bookingSlot.slot_type,
-          }}
+          appointmentSlot={bookingContext}
           appointmentDoctorName={selectedDoctorName || ""}
           onClose={() => setBookingSlot(null)}
           onCreated={() => { setBookingSlot(null); refresh(); }}
         />
       )}
 
-      {checkinAppt && (
+      {checkinContext && (
         <WalkInModal
           hospitalId={hospitalId!}
           mode="checkin"
-          checkinAppointment={{
-            id: checkinAppt.id,
-            patient_id: checkinAppt.patient_id,
-            patient_name: checkinAppt.patient?.full_name || "",
-            uhid: checkinAppt.patient?.uhid || "",
-            phone: checkinAppt.patient?.phone || null,
-            doctor_id: checkinAppt.doctor_id,
-            department_id: checkinAppt.department_id,
-            consultation_fee: checkinAppt.consultation_fee,
-            visit_type: checkinAppt.visit_type,
-            visit_purpose: checkinAppt.visit_purpose,
-          }}
+          checkinAppointment={checkinContext}
           onClose={() => setCheckinAppt(null)}
           onCreated={() => { setCheckinAppt(null); refresh(); }}
         />
@@ -470,7 +491,7 @@ const SlotGrid: React.FC<{
                 <div className="text-[11px] text-slate-400 truncate">{slot.block_reason || "Blocked"}</div>
               ) : appt ? (
                 <>
-                  <div className="text-[11px] truncate text-slate-700">{appt.patient?.full_name || "Booked"}</div>
+                  <div className="text-[11px] truncate text-slate-700">{appt.patient?.full_name || "Unnamed patient"}</div>
                   <div className={cn("text-[10px] mt-0.5 px-1 py-px rounded inline-block", STATUS_COLORS[appt.status] || "bg-slate-100 text-slate-500")}>
                     {appt.status.replace("_", " ")}
                   </div>
@@ -515,7 +536,7 @@ const QueuePanel: React.FC<{
   const handleMarkArrived = (appt: Appt) => act(appt.id, async () => {
     const { error } = await (supabase as any).from("appointments").update({ status: "arrived" }).eq("id", appt.id);
     if (error) throw error;
-    toast.success(`${appt.patient?.full_name} marked as arrived`);
+    toast.success(`${appt.patient?.full_name || "Patient"} marked as arrived`);
     onRefresh();
   });
 
@@ -523,7 +544,7 @@ const QueuePanel: React.FC<{
   // issue token linked to this appointment). Handled by the parent via onCheckin.
 
   const handleNoShow = (appt: Appt) => act(appt.id, async () => {
-    if (!confirm(`Mark ${appt.patient?.full_name} as no-show?`)) return;
+    if (!confirm(`Mark ${appt.patient?.full_name || "this patient"} as no-show?`)) return;
     await (supabase as any).from("appointments").update({ status: "no_show" }).eq("id", appt.id);
     toast.success("Marked as no-show");
     onRefresh();
@@ -541,7 +562,7 @@ const QueuePanel: React.FC<{
           <div key={appt.id} className="border rounded-lg p-3 bg-card flex items-center gap-3">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-medium text-sm">{appt.patient?.full_name}</span>
+                <span className="font-medium text-sm">{appt.patient?.full_name || "Unnamed patient"}</span>
                 <span className="text-xs text-muted-foreground">{appt.patient?.uhid}</span>
                 <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-medium capitalize", statusStyle)}>
                   {appt.status.replace("_", " ")}
@@ -580,133 +601,6 @@ const QueuePanel: React.FC<{
   );
 };
 
-// ── Booking Modal ─────────────────────────────────────────────────────────────
-
-const BookingModal: React.FC<{
-  hospitalId: string;
-  slot: DoctorSlot;
-  doctorName: string;
-  onClose: () => void;
-  onBooked: () => void;
-}> = ({ hospitalId, slot, doctorName, onClose, onBooked }) => {
-  const [patientId, setPatientId] = useState("");
-  const [visitType, setVisitType] = useState<"new" | "follow_up" | "review">("new");
-  const [chiefComplaint, setChiefComplaint] = useState("");
-  const [notes, setNotes] = useState("");
-  const [fee, setFee] = useState("0");
-  const [saving, setSaving] = useState(false);
-
-  React.useEffect(() => {
-    (async () => {
-      const { data } = await supabase
-        .from("service_rates")
-        .select("default_rate")
-        .eq("hospital_id", hospitalId)
-        .eq("item_code", "consultation")
-        .eq("is_active", true)
-        .maybeSingle();
-      if (data?.default_rate != null) setFee(String(data.default_rate));
-    })();
-  }, [hospitalId]);
-
-  const handleBook = async () => {
-    if (!patientId) { toast.error("Please select a patient"); return; }
-    setSaving(true);
-    try {
-      const endTime = slotEndTime(slot.slot_time, slot.slot_duration_mins || 15);
-
-      const { error: aerr } = await (supabase as any).from("appointments").insert({
-        hospital_id: hospitalId,
-        patient_id: patientId,
-        doctor_id: slot.doctor_id,
-        appointment_date: slot.slot_date,
-        slot_time: slot.slot_time,
-        slot_end_time: endTime + ":00",
-        slot_id: slot.id,
-        status: "scheduled",
-        visit_type: visitType,
-        chief_complaint: chiefComplaint || null,
-        consultation_fee: Number(fee) || 0,
-        booked_via: "front_desk",
-      });
-      if (aerr) throw aerr;
-
-      // Increment booked_count — best-effort
-      await (supabase as any).from("doctor_slots")
-        .update({ booked_count: slot.booked_count + 1 })
-        .eq("id", slot.id);
-
-      // WhatsApp confirmation — best-effort
-      try {
-        const [{ data: pat }, { data: hosp }] = await Promise.all([
-          supabase.from("patients").select("full_name, phone").eq("id", patientId).maybeSingle(),
-          supabase.from("hospitals").select("name").eq("id", hospitalId).maybeSingle(),
-        ]);
-        if (pat?.phone) {
-          const msg = `Dear ${pat.full_name}, your appointment with Dr. ${doctorName} on ${format(parseISO(slot.slot_date), "dd MMM yyyy")} at ${fmtTime(slot.slot_time)} is confirmed. — ${hosp?.name || ""}`;
-          await sendWhatsApp({ hospitalId, phone: pat.phone, message: msg });
-        }
-      } catch (e) { console.warn("WhatsApp send failed", e); }
-
-      toast.success("Appointment booked");
-      onBooked();
-    } catch (e: any) {
-      toast.error(e.message || "Failed to book appointment");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const endStr = slotEndTime(slot.slot_time, slot.slot_duration_mins || 15);
-
-  return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Book Appointment</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          <div className="text-sm bg-muted/40 rounded p-2.5 space-y-0.5">
-            <div><b>Dr.</b> {doctorName}</div>
-            <div><b>Date:</b> {format(parseISO(slot.slot_date), "dd MMM yyyy")} · <b>Time:</b> {fmtTime(slot.slot_time)} – {fmtTime(endStr)}</div>
-            <div><b>Type:</b> <span className="capitalize">{slot.slot_type || "OPD"}</span></div>
-          </div>
-          <div>
-            <Label>Patient *</Label>
-            <PatientSearchPicker hospitalId={hospitalId} value={patientId} onChange={setPatientId} />
-          </div>
-          <div>
-            <Label>Visit Type</Label>
-            <Select value={visitType} onValueChange={(v) => setVisitType(v as any)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="new">New</SelectItem>
-                <SelectItem value="follow_up">Follow-up</SelectItem>
-                <SelectItem value="review">Review</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label>Chief Complaint</Label>
-            <Textarea value={chiefComplaint} onChange={e => setChiefComplaint(e.target.value)} rows={2} placeholder="Brief reason for visit" />
-          </div>
-          <div>
-            <Label>Consultation Fee (₹)</Label>
-            <Input type="number" value={fee} onChange={e => setFee(e.target.value)} />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={handleBook} disabled={saving}>
-            {saving && <Loader2 className="animate-spin mr-2" size={14} />}
-            Book Appointment
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-};
-
 // ── Appointment Detail / Cancel ───────────────────────────────────────────────
 
 const ApptDetailModal: React.FC<{
@@ -726,7 +620,7 @@ const ApptDetailModal: React.FC<{
       const { error } = await (supabase as any).from("appointments").update({ status: "arrived" }).eq("id", appt.id);
       if (error) throw error;
       setStatus("arrived");
-      toast.success(`${appt.patient?.full_name} marked as arrived`);
+      toast.success(`${appt.patient?.full_name || "Patient"} marked as arrived`);
       onRefresh();
     } catch (e: any) {
       toast.error(e.message || "Failed to mark arrived");
@@ -781,7 +675,7 @@ const ApptDetailModal: React.FC<{
           <DialogTitle>Appointment Details</DialogTitle>
         </DialogHeader>
         <div className="space-y-2 text-sm">
-          <div><b>Patient:</b> {appt.patient?.full_name} ({appt.patient?.uhid})</div>
+          <div><b>Patient:</b> {appt.patient?.full_name || "Unnamed patient"}{appt.patient?.uhid ? ` (${appt.patient.uhid})` : ""}</div>
           {appt.patient?.phone && <div><b>Phone:</b> {appt.patient.phone}</div>}
           <div><b>Time:</b> {fmtTime(appt.slot_time)}</div>
           <div><b>Visit:</b> <span className="capitalize">{(appt.visit_type || "").replace("_", " ") || "—"}</span></div>

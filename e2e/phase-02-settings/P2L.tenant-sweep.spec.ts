@@ -249,8 +249,11 @@ test.describe('P2L — Full-tenant configuration sweep', () => {
     await sweepStep(page, 43, '/settings/hmis-portal', "HMIS / IHIP Portal", 'api_configurations');
   });
 
+  /* Key issuance moved into the API Portal, so this step now checks the same screen from the
+     credential side — it still asserts api_keys holds a Hospital A row, which is what makes the
+     tenant programmatically integrable. Step 45 covers the webhook side of the same screen. */
   test('TC-P2L-044 Sweep step 44 of 50 — API Keys is configured and holds', async ({ page }) => {
-    await sweepStep(page, 44, '/settings/api-keys', "API Keys", 'api_keys');
+    await sweepStep(page, 44, '/settings/api-portal', "API Portal (keys)", 'api_keys');
   });
 
   test('TC-P2L-045 Sweep step 45 of 50 — API Portal is configured and holds', async ({ page }) => {

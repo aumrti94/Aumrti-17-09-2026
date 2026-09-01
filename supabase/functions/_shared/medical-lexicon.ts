@@ -172,7 +172,22 @@ export const COMMON_ENGLISH_WORDS: ReadonlySet<string> = new Set([
 
 export type RepairSource =
   | "drug_master" | "ayush_drug_master" | "lab_test_master" | "lab_test_groups"
-  | "service_master" | "radiology_study_master" | "icd10_codes" | "abbreviation";
+  | "service_master" | "radiology_study_master" | "icd10_codes" | "abbreviation"
+  /**
+   * Presenting complaints, working diagnoses and anatomical sites.
+   *
+   * SUGGESTION-ONLY — never auto-applied, enforced in `shouldAutoApply`. The reason this
+   * source exists at all is that a mis-heard SYMPTOM previously had nothing to match
+   * against: the catalogue held drugs, tests, services and radiology, so when the ASR
+   * turned "neck pain" into "headache" no layer downstream could even notice, let alone
+   * flag it. These terms give the structuring model something to notice it WITH.
+   *
+   * They must not be rewritten silently, because they collide head-on with ordinary
+   * speech — "cold", "pain", "back", "head" are all real English words a doctor says in
+   * their plain sense, and COMMON_ENGLISH_WORDS deliberately protects them. Suggesting is
+   * safe; substituting is not.
+   */
+  | "symptom";
 
 export interface LexiconEntry {
   /** Canonical, display-ready term. */
@@ -262,10 +277,16 @@ export function shouldAutoApply(args: {
   phoneticExact: boolean;
   autoApplyThreshold: number;
   ambiguityMargin: number;
+  /** Which catalogue the winning candidate came from. Omitted = a non-symptom source. */
+  candidateSource?: RepairSource;
 }): boolean {
   const { sourceWords, candidateScore, runnerUpScore, phoneticExact,
-          autoApplyThreshold, ambiguityMargin } = args;
+          autoApplyThreshold, ambiguityMargin, candidateSource } = args;
 
+  // 0. Symptoms, diagnoses and body sites are offered to the LLM, never substituted.
+  //    Rewriting a symptom is how a transcript stops matching what the doctor said, and
+  //    unlike a drug name there is no spelling a clinician would recognise as "wrong".
+  if (candidateSource === "symptom") return false;
   // 1. The phonetic skeletons must agree exactly — similarity alone is not enough.
   if (!phoneticExact) return false;
   // 2. Close enough by edit distance.
@@ -463,7 +484,11 @@ export function repairTranscript(
           replacement[i] = exact.term;
           for (let k = 1; k < phraseLen; k++) replacement[i + k] = "";
         }
-        candidateTokens++; resolvedTokens++;
+        // Symptom terms are excluded from the hit rate. They are everyday words that
+        // appear in almost every dictation, so counting them would push the score up
+        // regardless of whether the CLINICAL vocabulary — the drug and test names this
+        // metric exists to track — actually landed, and confidence is scaled off it.
+        if (exact.source !== "symptom") { candidateTokens++; resolvedTokens++; }
         continue;
       }
 
@@ -483,6 +508,7 @@ export function repairTranscript(
       if (shouldAutoApply({
         sourceWords, candidateScore: best.score, runnerUpScore: runnerUp,
         phoneticExact: true, autoApplyThreshold, ambiguityMargin,
+        candidateSource: best.entry.source,
       })) {
         for (let k = 0; k < phraseLen; k++) consumed[i + k] = true;
         replacement[i] = best.entry.term;
@@ -493,13 +519,15 @@ export function repairTranscript(
         });
         candidateTokens++; resolvedTokens++;
       } else if (best.score >= suggestThreshold) {
-        // Not confident enough to rewrite — hand it to the LLM as context instead.
+        // Not confident enough to rewrite — hand it to the LLM as context instead. This is
+        // also the ONLY channel a symptom match can ever take (see shouldAutoApply), and
+        // it is what gives a mis-heard "neck pain" a chance to be caught downstream.
         suggestions.push({
           from: sourceWords.join(" "),
           candidates: scored.slice(0, 3).map(s => s.entry.term),
           score: Number(best.score.toFixed(3)),
         });
-        if (phraseLen === 1) candidateTokens++;
+        if (phraseLen === 1 && best.entry.source !== "symptom") candidateTokens++;
       }
     }
   }
@@ -541,6 +569,41 @@ export const CLINICAL_ABBREVIATIONS: readonly string[] = [
   "IV", "IM", "SC", "PO", "NG", "ET",
   "COPD", "CAD", "CKD", "DM", "HTN", "IHD", "UTI", "URTI", "LRTI", "AKI", "CVA",
   "K/C/O", "C/O", "H/O", "N/V", "SOB", "LOC",
+];
+
+/**
+ * Presenting complaints and working diagnoses every Indian OPD sees, used when a hospital
+ * has not customised its quick picks.
+ *
+ * Mirrors src/lib/quickPickDefaults.ts, which is what the doctor sees as the "Quick add"
+ * chips under Chief Complaint. Duplicated rather than imported because edge functions
+ * cannot reach into src/ — the same constraint that produced _shared/asr-languages.ts.
+ */
+export const DEFAULT_SYMPTOM_TERMS: readonly string[] = [
+  // complaints
+  "Fever", "Cough", "Cold", "Headache", "Body pain", "Vomiting", "Diarrhoea",
+  "Chest pain", "Breathlessness", "Abdominal pain", "Burning urination",
+  "Knee pain", "Back pain", "Skin rash",
+  // diagnoses
+  "Upper Respiratory Tract Infection", "Hypertension", "Type 2 Diabetes Mellitus",
+  "Acute Gastroenteritis", "Migraine", "Urinary Tract Infection",
+  "Bronchial Asthma", "Anaemia",
+];
+
+/**
+ * Site + symptom phrases, so the location a doctor actually named survives.
+ *
+ * "Preserve the EXACT anatomical location" is already an explicit rule in the structuring
+ * prompt, but the model can only preserve what reached it. When the ASR substitutes one
+ * body part for another the prompt has nothing to work from — these give the deterministic
+ * pass a phrase to match and surface as a suggestion.
+ */
+export const ANATOMY_SYMPTOM_TERMS: readonly string[] = [
+  "neck pain", "lower back pain", "upper back pain", "shoulder pain", "left shoulder pain",
+  "right shoulder pain", "hip pain", "ankle pain", "wrist pain", "elbow pain",
+  "joint pain", "calf pain", "thigh pain", "jaw pain", "ear pain", "eye pain",
+  "throat pain", "tooth pain", "heel pain", "flank pain", "loin pain",
+  "left hand", "right hand", "left leg", "right leg", "left side", "right side",
 ];
 
 // ── Deno-only: load the hospital's catalogue ────────────────────────────────
@@ -592,13 +655,18 @@ export async function loadHospitalLexicon(
 
   const activeOnly = (q: any) => q.eq("is_active", true);
 
-  const [drugs, ayush, labs, labGroups, services, radiology] = await Promise.all([
+  const [drugs, ayush, labs, labGroups, services, radiology, quickPicks] = await Promise.all([
     safeSelect(sb, "drug_master", ["drug_name", "generic_name"], hospitalId, activeOnly),
     safeSelect(sb, "ayush_drug_master", ["drug_name"], hospitalId),
     safeSelect(sb, "lab_test_master", ["test_name", "test_code"], hospitalId),
     safeSelect(sb, "lab_test_groups", ["group_name", "group_code"], hospitalId),
     safeSelect(sb, "service_master", ["name"], hospitalId, activeOnly),
     safeSelect(sb, "radiology_study_master", ["study_name"], hospitalId),
+    // The doctors' own complaint and diagnosis chips — the closest thing the system has to
+    // a record of the words THIS hospital's clinicians actually say. `items` is a JSON
+    // array of strings for these two categories (see src/hooks/useDoctorQuickPicks.ts).
+    safeSelect(sb, "doctor_quick_picks", ["category", "items"], hospitalId,
+      (q: any) => q.in("category", ["complaints", "diagnoses"])),
   ]);
 
   const entries: LexiconEntry[] = [];
@@ -616,6 +684,24 @@ export async function loadHospitalLexicon(
   // The Indian clinical shorthand every hospital shares, regardless of catalogue.
   for (const a of CLINICAL_ABBREVIATIONS) entries.push({ term: a, source: "abbreviation" });
 
+  // Symptoms LAST, deliberately. buildLexiconIndex keeps the FIRST entry for a given
+  // normalised term, so appending here guarantees a real catalogue item always wins a
+  // collision — a symptom term must never shadow a drug or test of the same name and
+  // turn an auto-repairable term into a suggestion-only one.
+  for (const r of quickPicks) {
+    const items = r.items;
+    if (!Array.isArray(items)) continue;
+    for (const it of items) {
+      if (typeof it === "string" && it.trim()) entries.push({ term: it.trim(), source: "symptom" });
+    }
+  }
+  // Fall back to the shared defaults only where the hospital supplied nothing — a doctor
+  // who has curated their chips should not have the stock list competing with them.
+  if (!quickPicks.some(r => Array.isArray(r.items) && r.items.length > 0)) {
+    for (const t of DEFAULT_SYMPTOM_TERMS) entries.push({ term: t, source: "symptom" });
+  }
+  for (const t of ANATOMY_SYMPTOM_TERMS) entries.push({ term: t, source: "symptom" });
+
   const index = buildLexiconIndex(entries);
   lexiconCache.set(hospitalId, { index, loadedAt: Date.now() });
   console.log(`medical-lexicon: indexed ${index.size} terms for hospital ${hospitalId}`);
@@ -625,10 +711,19 @@ export async function loadHospitalLexicon(
 /**
  * Highest-value terms to offer the ASR as hotword bias, shortest-first so the cap
  * favours the compact drug names most likely to be mangled.
+ *
+ * Symptoms are included even though they can never be auto-repaired. Biasing and repairing
+ * are opposite ends of the problem: repair is a rewrite AFTER the damage, and is unsafe for
+ * everyday words; biasing happens BEFORE, inside the recogniser, where making "neck pain"
+ * more likely to be heard costs nothing and risks nothing. Preventing the substitution is
+ * strictly better than detecting it.
  */
 export function topHotwords(index: LexiconIndex, limit = 100): string[] {
+  const BIASED: ReadonlySet<RepairSource> = new Set<RepairSource>([
+    "drug_master", "lab_test_master", "abbreviation", "symptom",
+  ]);
   return Array.from(index.byExact.values())
-    .filter(e => e.source === "drug_master" || e.source === "lab_test_master" || e.source === "abbreviation")
+    .filter(e => BIASED.has(e.source))
     .map(e => e.term)
     .sort((a, b) => a.length - b.length)
     .slice(0, limit);

@@ -62,6 +62,13 @@ const SettingsTrainingPage: React.FC = () => {
           <p className="text-sm text-muted-foreground text-center py-10">Loading…</p>
         ) : videos.length === 0 ? (
           <p className="text-sm text-muted-foreground text-center py-10">No training videos published yet.</p>
+        ) : filtered.length === 0 ? (
+          // The list below renders `filtered`, so a search matching nothing used to fall
+          // through to an empty grid — a blank panel reads as a broken page, and someone who
+          // thinks training is broken stops looking for the video they needed.
+          <p className="text-sm text-muted-foreground text-center py-10">
+            No videos match “{search}”. Try a shorter search, or clear it to see all {videos.length}.
+          </p>
         ) : (
           categories.map((cat) => (
             <div key={cat} className="space-y-3">

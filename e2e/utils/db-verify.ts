@@ -38,7 +38,19 @@ export function anonDb(): SupabaseClient {
   });
 }
 
+// Resolved once per run and reused after that. Two separate product bugs have now each
+// managed to blank out hospitals.name mid-run (a Branding save race, then an unvalidated
+// Hospital Profile save) and cascade-failed everything after them purely because this
+// function re-resolves the tenant by name on every call. Once the id is known it never needs
+// the name again — re-querying it on every one of a thousand-plus calls only exists to
+// re-expose the same fragility. A test that specifically wants to assert on a corrupted name
+// should read hospitals.name directly rather than go through this helper.
+const hospitalIdCache = new Map<'A' | 'B', string>();
+
 export async function hospitalIdFor(key: 'A' | 'B'): Promise<string> {
+  const cached = hospitalIdCache.get(key);
+  if (cached) return cached;
+
   const name = MOCK.hospitals[key].name;
   const { data, error } = await db()
     .from('hospitals').select('id, name').eq('name', name).maybeSingle();
@@ -49,6 +61,7 @@ export async function hospitalIdFor(key: 'A' | 'B'): Promise<string> {
     );
   }
   assertQaHospitalName(data.name, `resolving Hospital ${key}`);
+  hospitalIdCache.set(key, data.id);
   return data.id;
 }
 
@@ -136,4 +149,43 @@ export async function expectNoCrossTenantRows(
   } finally {
     await client.auth.signOut();
   }
+}
+
+/**
+ * Recompute a bill's total_amount/patient_payable/balance_due/payment_status from its live
+ * line items and payments.
+ *
+ * WHY THIS EXISTS, NOT AN IMPORT OF src/lib/billTotals.ts: a test that inserts a payment
+ * directly via the service-role client (bypassing the browser) needs something to recompute
+ * the bill afterward — nothing else will (there is no DB trigger, and the
+ * `recalculate_bill_totals` RPC the app's client-side fallback tries first does not exist as
+ * a Postgres function on this project). `billTotals.ts` cannot be imported into a Playwright
+ * spec: it transitively imports `src/integrations/supabase/client.ts`, which reads
+ * `import.meta.env.VITE_SUPABASE_URL` — a Vite-browser-only global that is `undefined` under
+ * Playwright's Node runtime, so the import would crash the test process. This re-derives the
+ * same arithmetic independently, using only the already-imported service-role `db()` client.
+ */
+export async function recomputeBillTotalsForTest(billId: string): Promise<void> {
+  const [{ data: items }, { data: payments }, { data: bill }] = await Promise.all([
+    db().from('bill_line_items').select('taxable_amount, gst_amount').eq('bill_id', billId),
+    db().from('bill_payments').select('amount').eq('bill_id', billId),
+    db().from('bills').select('discount_amount, advance_received, insurance_amount').eq('id', billId).maybeSingle(),
+  ]);
+  const subtotal = (items ?? []).reduce((s: number, i: { taxable_amount: number }) => s + Number(i.taxable_amount || 0), 0);
+  const gst = (items ?? []).reduce((s: number, i: { gst_amount: number }) => s + Number(i.gst_amount || 0), 0);
+  const b = bill as { discount_amount: number | null; advance_received: number | null; insurance_amount: number | null } | null;
+  const discount = Number(b?.discount_amount || 0);
+  const total = Math.max(subtotal + gst - discount, 0);
+  const patientPayable = Math.max(total - Number(b?.advance_received || 0) - Number(b?.insurance_amount || 0), 0);
+  const paid = (payments ?? []).reduce((s: number, p: { amount: number }) => s + Number(p.amount || 0), 0);
+  const balanceDue = Math.max(patientPayable - paid, 0);
+  const paymentStatus = balanceDue <= 0 && paid > 0 ? 'paid' : paid > 0 ? 'partial' : 'unpaid';
+
+  const { error } = await db().from('bills')
+    .update({
+      total_amount: total, patient_payable: patientPayable,
+      balance_due: balanceDue, payment_status: paymentStatus,
+    } as never)
+    .eq('id', billId);
+  if (error) throw new Error(`recomputeBillTotalsForTest: ${error.message}`);
 }

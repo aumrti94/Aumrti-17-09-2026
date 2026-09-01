@@ -71,11 +71,16 @@ export const predictNoShow = async (
     const prediction = parseAIJson(response.text);
     if (!prediction) return null;
 
+    // risk_level was previously omitted, leaving the column NULL on every row and making
+    // the stored predictions unusable for any level-based analysis. The table's CHECK
+    // allows only low | medium | high, so anything else is dropped rather than rejected.
+    const level = String(prediction.risk_level || "").toLowerCase();
     await supabase.from("no_show_predictions").insert({
       hospital_id: token.hospital_id,
       patient_id: token.patient_id,
       token_id: token.id,
       risk_score: prediction.risk_score,
+      risk_level: ["low", "medium", "high"].includes(level) ? level : null,
       risk_factors: prediction.risk_factors || [],
     } as any);
 

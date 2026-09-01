@@ -108,7 +108,7 @@ serve(async (req: Request) => {
       // Sample compliance rates
       const auditIds = (audits || []).map((a: any) => a.id);
       const { data: samples } = await sb
-        .from("audit_samples")
+        .from("clinical_audit_samples")
         .select("audit_id, is_compliant")
         .in("audit_id", auditIds.length ? auditIds : ["00000000-0000-0000-0000-000000000000"]);
 
@@ -297,10 +297,17 @@ serve(async (req: Request) => {
       }, {});
 
       // 4. CAPA overdue: committee_actions with due_date < today and not completed/deferred
+      // Table is committee_action_items. It is meeting-scoped and carries no hospital_id, so the
+      // tenant filter goes through committee_meetings -> hospital_committees, which is where
+      // hospital_id actually lives. Previously this queried "committee_actions" with a
+      // hospital_id filter — neither exists — so the read always failed and the NABH digest
+      // reported zero overdue CAPA actions instead of raising them.
       const { data: overdueActions } = await sb
-        .from("committee_actions")
-        .select("description, priority, due_date, status, committees(name)")
-        .eq("hospital_id", hospital_id)
+        .from("committee_action_items")
+        .select(
+          "description, priority, due_date, status, committee_meetings!inner(hospital_committees!inner(hospital_id, name))",
+        )
+        .eq("committee_meetings.hospital_committees.hospital_id", hospital_id)
         .lt("due_date", todayStr)
         .not("status", "in", '("completed","deferred")')
         .order("due_date", { ascending: true })
@@ -366,7 +373,7 @@ serve(async (req: Request) => {
 
       const meetingIds = (meetings || []).map((m: any) => m.id);
       const { data: actions } = await sb
-        .from("committee_actions")
+        .from("committee_action_items")
         .select("description, status, due_date, priority")
         .in("meeting_id", meetingIds.length ? meetingIds : ["00000000-0000-0000-0000-000000000000"])
         .in("status", ["open", "in_progress"])

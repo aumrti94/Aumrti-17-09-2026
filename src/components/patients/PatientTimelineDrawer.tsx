@@ -9,6 +9,10 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { printDocument, printHeader } from "@/lib/printUtils";
+import {
+  printLabReport as printLabReportShared,
+  printRadiologyReport as printRadiologyReportShared,
+} from "@/lib/investigationPrint";
 import PatientPrintHubModal from "./PatientPrintHubModal";
 
 type Patient = {
@@ -292,44 +296,12 @@ const PatientTimelineDrawer: React.FC<Props> = ({ patient, hospitalId, onClose }
   const patientRow = () =>
     `<div class="row"><span class="label">Patient</span><span>${patient.full_name} · <span style="font-family:monospace">${patient.uhid}</span>${ageStr ? ` · ${ageStr}` : ""}${patient.gender ? ` / ${patient.gender}` : ""}</span></div>`;
 
+  // Lab and radiology report printing now lives in src/lib/investigationPrint.ts so the
+  // OPD/IPD Reports panel prints the identical document. These stay as thin wrappers to keep
+  // the drawer's own printingId spinner behaviour.
   async function printLabReport(orderId: string) {
     setPrintingId(orderId + "_rep");
-    const { data: order } = await supabase.from("lab_orders")
-      .select("id, order_date, clinical_notes, lab_order_items(result_value, result_unit, result_flag, reference_range, test:lab_test_master(test_name, category, normal_min, normal_max))")
-      .eq("id", orderId).maybeSingle();
-
-    const grouped: Record<string, any[]> = {};
-    for (const item of (order as any)?.lab_order_items || []) {
-      const cat = item.test?.category || "General";
-      (grouped[cat] = grouped[cat] || []).push(item);
-    }
-    const categorySections = Object.entries(grouped).map(([cat, items]) => {
-      const rows = items.map((i: any) => {
-        const flag = i.result_flag;
-        const isCritical = flag === "CH" || flag === "CL";
-        const isAbnormal = flag === "H" || flag === "L";
-        const style = isCritical ? "background:#fee2e2;font-weight:bold" : isAbnormal ? "background:#fef3c7" : "";
-        return `<tr style="${style}">
-          <td>${i.test?.test_name || "—"}</td>
-          <td style="text-align:right;font-family:monospace">${i.result_value || "pending"}</td>
-          <td>${i.result_unit || ""}</td>
-          <td>${i.reference_range || (i.test?.normal_min != null ? `${i.test.normal_min}–${i.test.normal_max}` : "")}</td>
-          <td style="text-align:center">${flag ? `<b>${flag}</b>` : ""}</td>
-        </tr>`;
-      }).join("");
-      return `<div class="section-title">${cat}</div>
-        <table><thead><tr><th>Test</th><th style="text-align:right">Result</th><th>Unit</th><th>Ref Range</th><th>Flag</th></tr></thead>
-        <tbody>${rows}</tbody></table>`;
-    }).join("");
-
-    printDocument(`Lab Report — ${patient.full_name}`,
-      `${hospHeader()}
-       <div class="section-title" style="margin-bottom:12px;">LAB REPORT</div>
-       ${patientRow()}
-       <div class="row"><span class="label">Order Date</span><span>${(order as any)?.order_date || "—"}</span></div>
-       ${(order as any)?.clinical_notes ? `<div class="row"><span class="label">Clinical Notes</span><span>${(order as any).clinical_notes}</span></div>` : ""}
-       ${categorySections || "<p style='color:#94a3b8;font-style:italic'>No results recorded yet.</p>"}`
-    );
+    await printLabReportShared(hospitalId, orderId, patient);
     setPrintingId(null);
   }
 
@@ -383,26 +355,7 @@ const PatientTimelineDrawer: React.FC<Props> = ({ patient, hospitalId, onClose }
 
   async function printRadiologyReport(orderId: string) {
     setPrintingId(orderId + "_rep");
-    const { data: order } = await (supabase as any).from("radiology_orders")
-      .select("*, radiology_reports(*)")
-      .eq("id", orderId).maybeSingle();
-
-    const report = order?.radiology_reports?.[0] || null;
-    printDocument(`Radiology — ${order?.study_name || "Report"}`,
-      `${hospHeader()}
-       <div class="section-title" style="margin-bottom:12px;">RADIOLOGY REPORT</div>
-       ${patientRow()}
-       <div class="row"><span class="label">Study</span><span>${order?.study_name || "—"}</span></div>
-       <div class="row"><span class="label">Modality</span><span style="text-transform:uppercase">${order?.modality_type || "—"}</span></div>
-       <div class="row"><span class="label">Date</span><span>${order?.order_date || "—"}</span></div>
-       ${order?.indication ? `<div class="row"><span class="label">Indication</span><span>${order.indication}</span></div>` : ""}
-       ${report?.technique ? `<div class="section-title">Technique</div><p>${report.technique}</p>` : ""}
-       ${report?.findings ? `<div class="section-title">Findings</div><pre>${report.findings}</pre>` : ""}
-       ${report?.impression ? `<div class="section-title">Impression</div><pre>${report.impression}</pre>` : ""}
-       ${report?.recommendations ? `<div class="section-title">Recommendations</div><pre>${report.recommendations}</pre>` : ""}
-       ${report?.is_critical ? `<p style="color:#dc2626;font-weight:bold;margin-top:12px">⚠️ CRITICAL FINDING: ${report.critical_finding || ""}</p>` : ""}
-       ${!report ? `<p style="color:#94a3b8;font-style:italic;margin-top:16px">Report not yet available — order status: ${order?.status || "unknown"}</p>` : ""}`
-    );
+    await printRadiologyReportShared(hospitalId, orderId, patient);
     setPrintingId(null);
   }
 

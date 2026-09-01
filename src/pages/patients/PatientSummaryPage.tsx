@@ -84,7 +84,14 @@ const PatientSummaryPage: React.FC = () => {
       // Postgres sorts NULLs first on DESC — a future booking would otherwise head up the
       // patient's admission history with a blank date. (20261008000138)
       (supabase as any).from("admissions").select("id,admitted_at,discharged_at,status,final_diagnosis,ward_id").eq("patient_id", patientId).neq("status", "scheduled").order("admitted_at", { ascending: false }).limit(10),
-      (supabase as any).from("lab_order_items").select("id,test_name,result_value,reference_range,resulted_at,lab_orders!inner(created_at,patient_id)").eq("lab_orders.patient_id", patientId).order("lab_orders.created_at", { ascending: false }).limit(30),
+      // `test_name` and `resulted_at` do not exist on lab_order_items — the test's name lives
+      // on lab_test_master and the timestamp is result_entered_at. PostgREST rejects the whole
+      // request on an unknown column, and this call only destructures `data`, so `labs` was
+      // always undefined and the patient's lab history silently rendered empty.
+      (supabase as any).from("lab_order_items")
+        .select("id,result_value,result_unit,reference_range,result_flag,result_entered_at,lab_test_master:lab_test_master!lab_order_items_test_id_fkey(test_name),lab_orders!inner(created_at,patient_id)")
+        .eq("lab_orders.patient_id", patientId)
+        .order("lab_orders.created_at", { ascending: false }).limit(30),
       (supabase as any).from("prescriptions").select("id,items,created_at").eq("patient_id", patientId).order("created_at", { ascending: false }).limit(5),
       (supabase as any).from("opd_tokens").select("id,visit_date,token_number,doctor_id,status").eq("patient_id", patientId).gte("visit_date", new Date().toISOString().slice(0, 10)).neq("status", "cancelled").limit(3),
       (supabase as any).from("patient_ai_context").select("*").eq("patient_id", patientId).maybeSingle(),
@@ -105,7 +112,15 @@ const PatientSummaryPage: React.FC = () => {
       events.push({ id: a.id, type: "ipd", date: a.admitted_at, summary: a.final_diagnosis || "IPD Admission", detail: a.discharged_at ? `Discharged ${new Date(a.discharged_at).toLocaleDateString("en-IN")}` : "Active", status: a.status });
     }
     for (const l of (labs || [])) {
-      events.push({ id: l.id, type: "lab", date: l.resulted_at || l.lab_orders?.created_at, summary: `${l.test_name}: ${l.result_value || "Pending"}`, detail: l.reference_range });
+      const testName = l.lab_test_master?.test_name || "Investigation";
+      const value = l.result_value ? `${l.result_value}${l.result_unit ? ` ${l.result_unit}` : ""}` : "Pending";
+      events.push({
+        id: l.id,
+        type: "lab",
+        date: l.result_entered_at || l.lab_orders?.created_at,
+        summary: `${testName}: ${value}`,
+        detail: l.reference_range,
+      });
     }
     events.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     setTimeline(events);

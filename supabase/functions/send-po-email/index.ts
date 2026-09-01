@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { PROCUREMENT_EMAIL } from "../_shared/brand.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -42,7 +43,7 @@ serve(async (req) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: "HMS Procurement <procurement@aumrti.in>",
+        from: `HMS Procurement <${PROCUREMENT_EMAIL}>`,
         to: [to],
         subject: `Purchase Order Approved — ${po_number}`,
         html,

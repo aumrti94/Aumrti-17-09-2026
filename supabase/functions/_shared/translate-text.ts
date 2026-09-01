@@ -16,6 +16,11 @@
 
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getUsdToInr } from "./platform-rate.ts";
+// Language codes come from _shared/asr-languages.ts. They used to be restated in this file
+// and had drifted: it carried `or-IN`/`bo-IN`, which Sarvam rejects (Odia is `od-IN`, Bodo is
+// `brx-IN`), and it forwarded any unmapped value — including the literal "auto" — to the API
+// as a source language.
+import { toSarvamTranslateLang, toBhashiniLang } from "./asr-languages.ts";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -28,26 +33,13 @@ export interface TranslateResult {
   fallback: boolean;
 }
 
-// ─── Language code mapping ────────────────────────────────────────────────────
-
-/** Map IETF locale codes (used by the frontend) to the 2-char codes Sarvam expects. */
-const SARVAM_LANG_MAP: Record<string, string> = {
-  "hi-IN": "hi-IN", "te-IN": "te-IN", "ta-IN": "ta-IN", "kn-IN": "kn-IN",
-  "ml-IN": "ml-IN", "mr-IN": "mr-IN", "bn-IN": "bn-IN", "gu-IN": "gu-IN",
-  "or-IN": "or-IN", "pa-IN": "pa-IN", "as-IN": "as-IN", "ur-IN": "ur-IN",
-  "sa-IN": "sa-IN", "ne-IN": "ne-IN", "sd-IN": "sd-IN", "kok-IN": "kok-IN",
-  "doi-IN": "doi-IN", "mai-IN": "mai-IN", "mni-IN": "mni-IN",
-  "sat-IN": "sat-IN", "bo-IN": "bo-IN",
-};
-
-const BHASHINI_LANG_MAP: Record<string, string> = {
-  "hi-IN": "hi", "te-IN": "te", "ta-IN": "ta", "kn-IN": "kn",
-  "ml-IN": "ml", "mr-IN": "mr", "bn-IN": "bn", "gu-IN": "gu",
-  "or-IN": "or", "pa-IN": "pa", "as-IN": "as", "ur-IN": "ur",
-  "sa-IN": "sa", "ne-IN": "ne", "sd-IN": "sd", "ks-IN": "ks",
-  "doi-IN": "doi", "kok-IN": "kok", "mai-IN": "mai", "mni-IN": "mni",
-  "sat-IN": "sat", "bo-IN": "bo", "en-IN": "en",
-};
+/** Returned when the source language cannot be resolved — the caller keeps the original text. */
+function unresolvedLanguage(
+  text: string, provider: "sarvam" | "bhashini", sourceLanguage: string,
+): TranslateResult {
+  console.warn(`translate: no ${provider} route for source language "${sourceLanguage}" — skipping translation`);
+  return { translatedText: text, provider, sourceLanguage, charactersTranslated: 0, fallback: true };
+}
 
 // ─── Sentence splitting ───────────────────────────────────────────────────────
 
@@ -137,7 +129,10 @@ export async function translateWithSarvam(
   sourceLanguage: string,
   apiKey: string,
 ): Promise<TranslateResult> {
-  const sourceLang = SARVAM_LANG_MAP[sourceLanguage] || sourceLanguage;
+  // Refuse rather than forward an unresolvable code. `|| sourceLanguage` used to let the
+  // literal "auto" through to the API as a source language, which failed the whole call.
+  const sourceLang = toSarvamTranslateLang(sourceLanguage);
+  if (!sourceLang) return unresolvedLanguage(text, "sarvam", sourceLanguage);
 
   try {
     const chunks = splitAtSentenceBoundary(text, SARVAM_CHAR_LIMIT);
@@ -176,7 +171,10 @@ export async function translateWithBhashini(
   apiKey: string,
   userId: string,
 ): Promise<TranslateResult> {
-  const sourceLang = BHASHINI_LANG_MAP[sourceLanguage] || sourceLanguage.split("-")[0];
+  // `split("-")[0]` used to stand in for a map, which is wrong for exactly the codes that
+  // matter: Bhashini wants "or" for od-IN and "brx" for brx-IN, not "od" and "brx".
+  const sourceLang = toBhashiniLang(sourceLanguage);
+  if (!sourceLang) return unresolvedLanguage(text, "bhashini", sourceLanguage);
 
   try {
     // Step 1: Get NMT pipeline config from ULCA

@@ -105,7 +105,7 @@ export const SETTINGS_SCREENS: SettingsScreen[] = [
     wasWriteNothing: 'BUG-P2-003 — toast behind a fake 500ms setTimeout, zero supabase calls. Now persists to hospital_settings key "notification_config".' },
   { route: '/settings/radiology',           title: 'Radiology Modalities', group: 'Clinical',  tier: 1, section: '2G', table: 'radiology_modalities',
     alsoWrites: ['radiology_study_master', 'pcpndt_settings', 'hospital_pacs_config'] },
-  { route: '/settings/icd-codes',           title: 'ICD-10 Code Master',   group: 'Clinical',  tier: 1, section: '2G', table: 'hospital_icd_settings' },
+  { route: '/settings/icd-codes',           title: 'ICD-10 / ICD-11 Code Master', group: 'Clinical',  tier: 1, section: '2G', table: 'hospital_icd_settings' },
   { route: '/settings/consent-forms',       title: 'Consent Forms',        group: 'Clinical',  tier: 1, section: '2G', table: 'consent_form_templates' },
   { route: '/settings/ot-checklist',        title: 'OT Checklist',         group: 'Clinical',  tier: 1, section: '2G', table: 'ot_checklist_custom_items' },
   { route: '/settings/protocols',           title: 'Clinical Protocols',   group: 'Clinical',  tier: 1, section: '2G', table: 'clinical_protocols',
@@ -130,7 +130,8 @@ export const SETTINGS_SCREENS: SettingsScreen[] = [
   { route: '/settings/hl7',              title: 'HL7 / FHIR Integration', group: 'Integrations',    tier: 1, section: '2I', table: 'config_values' },
   { route: '/settings/abdm',             title: 'ABDM / ABHA',          group: 'Integrations',      tier: 1, section: '2I', table: 'hospital_abdm_config' },
   { route: '/settings/hmis-portal',      title: 'HMIS / IHIP Portal',   group: 'Integrations',      tier: 1, section: '2I', table: 'api_configurations' },
-  { route: '/settings/api-keys',         title: 'API Keys',             group: 'Integrations',      tier: 1, section: '2I', table: 'api_keys' },
+  /* /settings/api-keys is retired and redirects here — key issuance and webhook registration are
+     one screen now, so this single entry owns both tables. */
   { route: '/settings/api-portal',       title: 'API Portal',           group: 'Integrations',      tier: 1, section: '2I', table: 'webhook_endpoints',
     alsoWrites: ['api_keys'] },
   { route: '/settings/api-hub',          title: 'Integration Keys',     group: 'Integrations',      tier: 1, section: '2I', table: 'api_configurations' },

@@ -8,6 +8,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Upload, FileSpreadsheet, ImageIcon, Trash2, Download, Loader2, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { fileToBase64 } from "@/lib/documentAI";
+import { useConfigValues } from "@/hooks/useConfigValues";
 
 interface ImportRow {
   test_name: string;
@@ -27,14 +28,40 @@ interface Props {
   hospitalId: string;
 }
 
-const CATEGORIES = ["Haematology", "Biochemistry", "Pathology", "Microbiology", "Serology", "Immunology"];
-const SAMPLES = ["Blood", "Urine", "Stool", "Swab", "CSF", "Other"];
+// These lists used to be hardcoded here — a FOURTH lab vocabulary alongside the seed
+// migration, the QA fixture and hospital_config_values, and the only one that omitted
+// Coagulation and Endocrinology. They now come from the same config the settings
+// dropdowns render, so an import cannot introduce a category the filter will not match
+// or a sample type that splits one draw across two barcodes.
+const FALLBACK_CATEGORY = "Biochemistry";
+const FALLBACK_SAMPLE = "Blood";
 
 const blankRow = (): ImportRow => ({
-  test_name: "", test_code: "", category: "Biochemistry",
-  sample_type: "Blood", unit: "", normal_min: "", normal_max: "",
+  test_name: "", test_code: "", category: FALLBACK_CATEGORY,
+  sample_type: FALLBACK_SAMPLE, unit: "", normal_min: "", normal_max: "",
   tat_minutes: "60", fee: "0",
 });
+
+type ConfigOption = { value: string; label: string };
+
+/**
+ * Map a spreadsheet cell onto a configured value.
+ *
+ * A hospital's own price list says "blood" or "HAEMATOLOGY", so matching is
+ * case-insensitive on both the stored value and its label. Anything that still does
+ * not match is returned UNCHANGED rather than quietly replaced with a default — the
+ * import is then blocked and the offending value named. Silently defaulting is how a
+ * misspelt category used to become 'Biochemistry' without anyone noticing the test
+ * had been filed in the wrong discipline.
+ */
+function canonicalise(raw: string, options: ConfigOption[], fallback: string): string {
+  const t = (raw || "").trim();
+  if (!t) return fallback;
+  const hit = options.find(
+    o => o.value.toLowerCase() === t.toLowerCase() || o.label.toLowerCase() === t.toLowerCase(),
+  );
+  return hit ? hit.value : t;
+}
 
 // Fuzzy column header → field mapping
 function mapHeader(h: string): keyof ImportRow | null {
@@ -55,8 +82,8 @@ function normalizeRow(raw: Record<string, any>): ImportRow {
   return {
     test_name: String(raw.test_name ?? "").trim(),
     test_code: String(raw.test_code ?? "").trim(),
-    category: raw.category ? String(raw.category).trim() : "Biochemistry",
-    sample_type: raw.sample_type ? String(raw.sample_type).trim() : "Blood",
+    category: raw.category ? String(raw.category).trim() : FALLBACK_CATEGORY,
+    sample_type: raw.sample_type ? String(raw.sample_type).trim() : FALLBACK_SAMPLE,
     unit: String(raw.unit ?? "").trim(),
     normal_min: raw.normal_min != null ? String(raw.normal_min) : "",
     normal_max: raw.normal_max != null ? String(raw.normal_max) : "",
@@ -68,9 +95,16 @@ function normalizeRow(raw: Record<string, any>): ImportRow {
 function downloadTemplate() {
   const headers = ["Test Name", "Code", "Category", "Sample Type", "Unit", "Normal Min", "Normal Max", "TAT (minutes)", "Fee (INR)"];
   const sample = [
-    ["Complete Blood Count", "CBC", "Haematology", "Blood", "cells/µL", "4.5", "11.0", "120", "250"],
-    ["Blood Sugar Fasting", "BSF", "Biochemistry", "Blood", "mg/dL", "70", "100", "60", "150"],
-    ["Urine Routine", "URE", "Pathology", "Urine", "", "", "", "60", "100"],
+    // Sample rows double as documentation: a qualitative test carries unit 'report'
+    // and no range, exactly as the Unit Field Guide on the settings page describes.
+    //
+    // NOT 'Complete Blood Count' — that is a GROUP now, not a test row, and it is still
+    // present per hospital as a deactivated row. Importing this template would have
+    // collided with it on the (hospital_id, test_name) unique key and failed the whole
+    // sheet, which is a poor first experience of a downloaded template.
+    ["Peripheral Smear Examination", "PS", "Haematology", "EDTA Blood", "report", "", "", "240", "250"],
+    ["Blood Sugar Fasting", "BSF", "Biochemistry", "Fluoride Blood", "mg/dL", "70", "100", "60", "80"],
+    ["Urine Routine & Microscopy", "URM", "Clinical Pathology", "Urine", "report", "", "", "60", "150"],
   ];
   const ws = XLSX.utils.aoa_to_sheet([headers, ...sample]);
   ws["!cols"] = headers.map(() => ({ wch: 18 }));
@@ -82,6 +116,8 @@ function downloadTemplate() {
 const BulkLabTestImportModal: React.FC<Props> = ({ open, onClose, hospitalId }) => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const categoryOptions = useConfigValues("lab_test_categories");
+  const sampleOptions = useConfigValues("sample_types");
   const [mode, setMode] = useState<"excel" | "image">("excel");
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [scanning, setScanning] = useState(false);
@@ -182,14 +218,40 @@ const BulkLabTestImportModal: React.FC<Props> = ({ open, onClose, hospitalId }) 
   const handleImport = async () => {
     const valid = rows.filter(r => r.test_name.trim());
     if (valid.length === 0) { toast({ title: "Nothing to import", variant: "destructive" }); return; }
+
+    // Block the import rather than let an unlisted value through. The category filter
+    // and the pathologist dual-sign-off gate both match this string exactly, so a test
+    // filed under a category nobody configured is invisible to the filter and silently
+    // exempt from second-signature review. The database trigger would reject it anyway;
+    // failing here names the offending row instead of surfacing a Postgres error.
+    const canonRows = valid.map(r => ({
+      ...r,
+      category: canonicalise(r.category, categoryOptions, FALLBACK_CATEGORY),
+      sample_type: canonicalise(r.sample_type, sampleOptions, FALLBACK_SAMPLE),
+    }));
+    const unlisted = canonRows.flatMap(r => [
+      ...(categoryOptions.some(o => o.value === r.category) ? [] : [`${r.test_name}: category "${r.category}"`]),
+      ...(sampleOptions.some(o => o.value === r.sample_type) ? [] : [`${r.test_name}: sample type "${r.sample_type}"`]),
+    ]);
+    if (unlisted.length > 0) {
+      toast({
+        title: `${unlisted.length} row${unlisted.length !== 1 ? "s use" : " uses"} an unconfigured value`,
+        description:
+          `${unlisted.slice(0, 4).join("; ")}${unlisted.length > 4 ? `; +${unlisted.length - 4} more` : ""}. ` +
+          `Correct the column, or add the value under Settings > Config Values first.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
     setImporting(true);
     try {
-      const payload = valid.map(r => ({
+      const payload = canonRows.map(r => ({
         hospital_id: hospitalId,
         test_name: r.test_name.trim(),
         test_code: r.test_code.trim() || null,
-        category: r.category || "Biochemistry",
-        sample_type: r.sample_type || "Blood",
+        category: r.category,
+        sample_type: r.sample_type,
         unit: r.unit.trim() || null,
         normal_min: r.normal_min !== "" ? Number(r.normal_min) : null,
         normal_max: r.normal_max !== "" ? Number(r.normal_max) : null,
@@ -349,13 +411,17 @@ const BulkLabTestImportModal: React.FC<Props> = ({ open, onClose, hospitalId }) 
                         <td className="px-1 py-1">
                           <select value={row.category} onChange={e => updateRow(i, "category", e.target.value)}
                             className="w-28 px-1 py-1 border border-border rounded text-xs bg-background">
-                            {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                            {categoryOptions.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                            {!categoryOptions.some(c => c.value === row.category) && row.category &&
+                              <option value={row.category}>{row.category} (not in list)</option>}
                           </select>
                         </td>
                         <td className="px-1 py-1">
                           <select value={row.sample_type} onChange={e => updateRow(i, "sample_type", e.target.value)}
                             className="w-20 px-1 py-1 border border-border rounded text-xs bg-background">
-                            {SAMPLES.map(s => <option key={s}>{s}</option>)}
+                            {sampleOptions.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                            {!sampleOptions.some(s => s.value === row.sample_type) && row.sample_type &&
+                              <option value={row.sample_type}>{row.sample_type} (not in list)</option>}
                           </select>
                         </td>
                         <td className="px-1 py-1">

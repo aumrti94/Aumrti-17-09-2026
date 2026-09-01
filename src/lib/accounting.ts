@@ -49,7 +49,7 @@ export const autoPostJournalEntry = async (data: PostingData) => {
         posted_by:       data.postedBy || null,
         entry_date:      data.entryDate || null,
         cost_centre_id:  data.costCentreId || null,
-      }).catch(() => {});
+      }).then(() => {}, () => {});
       return null;
     }
 
@@ -230,7 +230,7 @@ export const postMultiLineJournal = async (data: {
         source_module: data.sourceModule, source_id: data.sourceId,
         amount: totalDebit, description: data.description, posted_by: data.postedBy || null,
         entry_date: data.entryDate || null,
-      }).catch(() => {});
+      }).then(() => {}, () => {});
       return null;
     }
 

@@ -45,7 +45,7 @@ async function fetchHospitalUsage(hospitalId: string): Promise<UsageData> {
       .eq("hospital_id", hid).gte("created_at", thirtyDaysAgo),
     (supabase as any).from("insurance_claims").select("id", { count: "exact", head: true })
       .eq("hospital_id", hid).gte("created_at", thirtyDaysAgo),
-    (supabase as any).from("pharmacy_dispenses").select("id", { count: "exact", head: true })
+    (supabase as any).from("pharmacy_dispensing").select("id", { count: "exact", head: true })
       .eq("hospital_id", hid).gte("created_at", thirtyDaysAgo),
     (supabase as any).from("staff_attendance").select("id", { count: "exact", head: true })
       .eq("hospital_id", hid).gte("date", thirtyDaysAgo.substring(0, 10)),

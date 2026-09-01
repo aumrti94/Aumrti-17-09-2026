@@ -132,9 +132,21 @@ function resolveModPerms(permissions: Record<string, any>, moduleKey: string): a
   return undefined;
 }
 
-/** Find the longest keyed entry in `keys` that `path` is an exact match or sub-path of. */
+/** Find a keyed entry in `keys` that `path` is an exact match or sub-path of (first match wins). */
 function findParentPath(keys: string[], path: string): string | undefined {
   return keys.find(p => path === p || path.startsWith(p + "/"));
+}
+
+/**
+ * Resolve a path against the static ROUTE_ROLES table: exact entry first, then the
+ * nearest parent prefix. Shared by the settings gate below and the no-permissions-row
+ * fallback in `hasAccess`.
+ */
+function staticRolesFor(path: string): string[] | undefined {
+  const exact = ROUTE_ROLES[path];
+  if (exact) return exact;
+  const parentPath = findParentPath(Object.keys(ROUTE_ROLES), path);
+  return parentPath ? ROUTE_ROLES[parentPath] : undefined;
 }
 
 /**
@@ -155,6 +167,26 @@ export function hasAccess(
   // 1.5 Core routes that all authenticated users can access
   const coreRoutes = ["/dashboard", "/modules", "/settings/profile", "/inbox", "/my-hr"];
   if (coreRoutes.includes(normalizedPath)) return true;
+
+  // 1.6 The settings surface is gated by ROLE, never by module entitlement.
+  //
+  // ROUTE_TO_MODULE below is derived from ROUTE_TO_MODULE_KEY, which is a SUBSCRIPTION-PLAN
+  // map: it answers "does this hospital's plan include this screen", not "may this user
+  // configure it". Routing /settings/* through it conflates the two and hands the settings
+  // screen for a module to everyone who can merely USE that module — a nurse with `ipd` view
+  // reached /settings/discharge-workflow and could delete the billing-clearance step, a
+  // receptionist with `opd` view reached /settings/opd-workflow and could change the token
+  // scheme mid-clinic, and every remaining /settings/* page fell through to the `settings`
+  // key (ALWAYS_ENABLED) for anyone whose blob carried it.
+  //
+  // ROUTE_ROLES already encodes the correct intent — admin-only, with the two deliberate
+  // exceptions (/settings/profile above, /settings/tv-display for reception) — so consult it
+  // directly and do NOT fall through to the permissions blob. Restoring the module lookup
+  // here would reopen the hole; entitlement gating for these screens is ModuleGate's job.
+  if (normalizedPath === "/settings" || normalizedPath.startsWith("/settings/")) {
+    const settingsRoles = staticRolesFor(normalizedPath);
+    return settingsRoles ? settingsRoles.includes(role) : false;
+  }
 
   // 2. Check Database Overrides (Dynamic Permissions)
   // When permissions is explicitly set (even empty {}), use ONLY permissions — no static fallthrough.
@@ -196,11 +228,7 @@ export function hasAccess(
   // ROUTE_ROLES entry inherits its parent module's allowed roles, so a future /accounts/*
   // (or any module's) sub-page doesn't silently deny everyone until someone remembers to
   // add it explicitly.
-  let allowedRoles = ROUTE_ROLES[normalizedPath];
-  if (!allowedRoles) {
-    const parentPath = findParentPath(Object.keys(ROUTE_ROLES), normalizedPath);
-    if (parentPath) allowedRoles = ROUTE_ROLES[parentPath];
-  }
+  const allowedRoles = staticRolesFor(normalizedPath);
   if (!allowedRoles) return false;
 
   return allowedRoles.includes(role);

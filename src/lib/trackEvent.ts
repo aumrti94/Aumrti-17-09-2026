@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import type { Json } from "@/integrations/supabase/types";
 
 let cachedContext: { hospitalId: string; userId: string } | null = null;
 
@@ -26,7 +27,10 @@ export function trackEvent(eventName: string, context?: Record<string, unknown>)
         hospital_id: ctx.hospitalId,
         user_id: ctx.userId,
         event_name: eventName,
-        event_context: context ?? null,
+        // Record<string, unknown> is not structurally assignable to Json (Json requires every
+        // value to be Json too). Callers pass JSON-serialisable analytics payloads, so the cast
+        // states that contract rather than loosening the column type.
+        event_context: (context ?? null) as Json,
       });
     })
     .catch(err => {

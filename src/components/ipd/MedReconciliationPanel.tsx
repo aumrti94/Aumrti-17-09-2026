@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
+import { useConfigValues } from "@/hooks/useConfigValues";
 
 interface Props {
   admissionId: string;
@@ -70,31 +71,14 @@ const SOURCES = [
   { value: "gp_letter", label: "GP / Referral letter" },
 ];
 
-const ROUTES = [
-  "Oral", "IV", "IM", "SC", "Sublingual", "Topical", "Inhalation",
-  "Rectal", "Nasal", "Ophthalmic", "Otic", "Transdermal",
-];
-
-const FREQUENCIES = [
-  { value: "OD", label: "OD — once daily" },
-  { value: "BD", label: "BD — twice daily" },
-  { value: "TDS", label: "TDS — thrice daily" },
-  { value: "QID", label: "QID — four times daily" },
-  { value: "HS", label: "HS — at bedtime" },
-  { value: "SOS", label: "SOS — as needed" },
-  { value: "STAT", label: "STAT — immediately" },
-  { value: "Q6H", label: "Q6H — every 6 hours" },
-  { value: "Q8H", label: "Q8H — every 8 hours" },
-  { value: "Q12H", label: "Q12H — every 12 hours" },
-  { value: "Weekly", label: "Weekly" },
-];
-
 const HIGH_ALERT_DRUGS = ["insulin", "heparin", "kcl", "potassium chloride", "methotrexate", "lithium", "warfarin", "chemotherapy"];
 
 export default function MedReconciliationPanel({
   admissionId, patientId, hospitalId, userId, eventType = "admission",
 }: Props) {
   const { toast } = useToast();
+  const routes      = useConfigValues("drug_routes");
+  const frequencies = useConfigValues("drug_frequencies");
 
   const [bpmhList, setBpmhList]         = useState<BPMHDrug[]>([]);
   const [ipdMeds, setIpdMeds]           = useState<IPDMed[]>([]);
@@ -302,14 +286,14 @@ export default function MedReconciliationPanel({
                         <label className="text-[11px] text-muted-foreground">Route</label>
                         <Select value={newDrug.route} onValueChange={v => setNewDrug(p => ({ ...p, route: v }))}>
                           <SelectTrigger className="h-9 mt-1 text-[12px]"><SelectValue placeholder="Select route" /></SelectTrigger>
-                          <SelectContent>{ROUTES.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
+                          <SelectContent>{routes.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}</SelectContent>
                         </Select>
                       </div>
                       <div>
                         <label className="text-[11px] text-muted-foreground">Frequency</label>
                         <Select value={newDrug.frequency || undefined} onValueChange={v => setNewDrug(p => ({ ...p, frequency: v }))}>
                           <SelectTrigger className="h-9 mt-1 text-[12px]"><SelectValue placeholder="Select frequency" /></SelectTrigger>
-                          <SelectContent>{FREQUENCIES.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}</SelectContent>
+                          <SelectContent>{frequencies.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}</SelectContent>
                         </Select>
                       </div>
                       <div className="col-span-3">

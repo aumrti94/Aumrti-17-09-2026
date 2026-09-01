@@ -89,6 +89,19 @@ export interface AsrUsage {
   latencyMs?: number;
   success?: boolean;
   errorMessage?: string;
+  /**
+   * The language actually sent to the provider, and the Saaras mode for a Sarvam call.
+   *
+   * Recorded because nothing did. The scribe offers 23 languages and doctors report that
+   * only some of them transcribe — but with provider and model logged and language not,
+   * there was NO WAY to tell which ones fail, for which hospital, or how often. Every
+   * answer to "which languages actually work" was a guess.
+   *
+   * Folded into `model_name` rather than added as a column so this needs no migration:
+   * read it as `saaras:v3 [te-IN translate]`.
+   */
+  languageCode?: string | null;
+  mode?: string | null;
 }
 
 /**
@@ -121,13 +134,21 @@ export async function recordAsrUsage(sb: SupabaseClient, usage: AsrUsage): Promi
     const costUsd = rate > 0 ? costInr / rate : 0;
     const seconds = Math.round(usage.seconds);
 
+    // `saaras:v3 [te-IN translate] (est. duration)` — one string carrying model, language,
+    // decode mode and whether the duration was measured. Grouping on it, filtered by
+    // `success`, is what finally makes per-language ASR coverage answerable.
+    const langPart = [usage.languageCode, usage.mode].filter(Boolean).join(" ");
+    const modelName = [
+      usage.model,
+      langPart ? `[${langPart}]` : "",
+      usage.estimated ? "(est. duration)" : "",
+    ].filter(Boolean).join(" ");
+
     await sb.from("ai_usage_logs").insert({
       hospital_id: usage.hospitalId,
       feature_key: ASR_FEATURE_KEY,
       provider: usage.provider,
-      // Suffix marks an estimated duration so a later reconciliation against
-      // the provider's invoice can tell measured rows from inferred ones.
-      model_name: usage.estimated ? `${usage.model} (est. duration)` : usage.model,
+      model_name: modelName,
       tokens_input: seconds,     // seconds of audio — see the note above
       tokens_output: 0,
       estimated_cost_usd: costUsd,

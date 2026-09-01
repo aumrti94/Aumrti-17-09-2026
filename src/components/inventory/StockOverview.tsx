@@ -12,6 +12,7 @@ import StockAdjustmentModal from "./StockAdjustmentModal";
 import DrugForecastPanel from "./DrugForecastPanel";
 import { callAI } from "@/lib/aiProvider";
 import { Sparkles } from "lucide-react";
+import { useConfigValues } from "@/hooks/useConfigValues";
 
 interface StockItem {
   id: string;
@@ -28,7 +29,6 @@ interface StockItem {
   batches: any[];
 }
 
-const categories = ["all", "surgical", "consumable", "linen", "medical_gas", "other"];
 const abcFilters = ["all", "A", "B", "C"];
 const statusFilters = ["all", "low", "expiring", "out", "consignment"];
 
@@ -50,6 +50,11 @@ const abcColors: Record<string, string> = {
 };
 
 const StockOverview: React.FC = () => {
+  // "All" is a filter affordance, not a category — it stays local and leads the row.
+  const categories = [
+    { value: "all", label: "All" },
+    ...useConfigValues("inventory_categories"),
+  ];
   const { toast } = useToast();
   const [items, setItems] = useState<StockItem[]>([]);
   const [search, setSearch] = useState("");
@@ -163,8 +168,8 @@ const StockOverview: React.FC = () => {
         </div>
         <div className="flex gap-1">
           {categories.map((c) => (
-            <button key={c} onClick={() => setCatFilter(c)} className={cn("px-2.5 py-1 rounded-full text-[10px] font-medium capitalize transition-colors", catFilter === c ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80")}>
-              {c === "all" ? "All" : c.replace("_", " ")}
+            <button key={c.value} onClick={() => setCatFilter(c.value)} className={cn("px-2.5 py-1 rounded-full text-[10px] font-medium transition-colors", catFilter === c.value ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80")}>
+              {c.label}
             </button>
           ))}
         </div>

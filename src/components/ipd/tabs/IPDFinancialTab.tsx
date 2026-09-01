@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { syncAdvanceToBill } from "@/lib/advanceBillSync";
 import { resolveRoomRateFallback } from "@/lib/ipdBilling";
+import { computeBedSegments, formatSegmentDateRange } from "@/lib/ipdBedSegments";
+import { isRunningBill } from "@/lib/lockedDay";
 import { bundlesNursingIntoRoom } from "@/lib/payerTypes";
 import { getWardNursingRate } from "@/lib/wardNursingRate";
 import {
@@ -127,7 +129,7 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
     const [admRes, billRes, balRes, txRes, receiptsRes, ipdAdvRefs] = await Promise.all([
       (supabase as any)
         .from("admissions")
-        .select("admitted_at, admitting_diagnosis, payer_type, ward_id, wards(name, rate_per_day), beds!admissions_bed_id_fkey(bed_category)")
+        .select("admitted_at, discharged_at, admitting_diagnosis, payer_type, ward_id, bed_id, wards(name, rate_per_day), beds!admissions_bed_id_fkey(bed_category)")
         .eq("id", admissionId)
         .maybeSingle(),
       (supabase as any)
@@ -203,31 +205,60 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
       setIsEstimate(true);
 
       if (adm?.admitted_at) {
-        const days = Math.max(1, Math.ceil(
-          (Date.now() - new Date(adm.admitted_at).getTime()) / 86400000
-        ));
-        const cat = adm.beds?.bed_category || "general";
-        // Ward's configured Rate Per Day (Settings → Wards & Beds), else the category
-        // default — shared with ipdBilling.ts so the estimate matches the eventual bill.
-        const rate = resolveRoomRateFallback(adm.wards?.rate_per_day, cat);
-        charges.push({
-          date: new Date(adm.admitted_at).toISOString().split("T")[0],
-          description: `Room — ${cat.replace("_", " ")} × ${days} day${days !== 1 ? "s" : ""} @ ₹${rate.toLocaleString("en-IN")}`,
-          amount: rate * days,
-          category: "room",
+        // Split by ward/bed segment (mid-stay transfers), same rule the real bill applies
+        // in lib/ipdBilling.ts: the old ward keeps the transfer day, the new ward starts the
+        // next calendar day. With zero transfers this is exactly one segment, whole-stay,
+        // at the current ward — identical to the previous single-block estimate.
+        const { data: transferRows } = await (supabase as any)
+          .from("bed_transfers")
+          .select("from_ward_id, from_bed_id, to_ward_id, to_bed_id, transferred_at")
+          .eq("admission_id", admissionId)
+          .order("transferred_at", { ascending: true });
+
+        const segments = computeBedSegments({
+          admittedAt: adm.admitted_at,
+          dischargedAt: adm.discharged_at,
+          currentWardId: adm.ward_id,
+          currentBedId: adm.bed_id,
+          transfers: transferRows || [],
         });
 
-        // Mirror the bill's nursing rule so the estimate doesn't understate the stay:
-        // per-ward rate, and nothing at all for payers that bundle nursing into room rent.
-        // Fetched separately — see lib/wardNursingRate.ts.
-        const nursingRate = await getWardNursingRate(adm.ward_id);
-        if (nursingRate > 0 && !bundlesNursingIntoRoom(adm.payer_type)) {
+        const wardIds = [...new Set(segments.map((s) => s.wardId))];
+        const bedIds = [...new Set(segments.map((s) => s.bedId))];
+        const [{ data: wardRows }, { data: bedRows }] = await Promise.all([
+          (supabase as any).from("wards").select("id, rate_per_day").in("id", wardIds),
+          (supabase as any).from("beds").select("id, bed_category").in("id", bedIds),
+        ]);
+        const wardRateById = new Map((wardRows || []).map((w: any) => [w.id, Number(w.rate_per_day) || 0]));
+        const bedCatById = new Map((bedRows || []).map((b: any) => [b.id, b.bed_category || "general"]));
+
+        for (const seg of segments) {
+          const cat = bedCatById.get(seg.bedId) || adm.beds?.bed_category || "general";
+          // Same simplified resolver the estimate has always used (wards.rate_per_day →
+          // static fallback table) — deliberately not upgraded to the full
+          // service_rates/service_master chain the real bill uses; that gap predates this
+          // change and is out of scope here.
+          const rate = resolveRoomRateFallback(wardRateById.get(seg.wardId), cat);
+          const dateRange = formatSegmentDateRange(seg.startDate, seg.endDate);
           charges.push({
-            date: new Date(adm.admitted_at).toISOString().split("T")[0],
-            description: `Nursing — ${days} day${days !== 1 ? "s" : ""} @ ₹${nursingRate.toLocaleString("en-IN")}`,
-            amount: nursingRate * days,
-            category: "nursing",
+            date: seg.startDate,
+            description: `Room — ${cat.replace("_", " ")} (${dateRange}, ${seg.days} day${seg.days !== 1 ? "s" : ""}) @ ₹${rate.toLocaleString("en-IN")}`,
+            amount: rate * seg.days,
+            category: "room",
           });
+
+          // Mirror the bill's nursing rule so the estimate doesn't understate the stay:
+          // per-ward rate, and nothing at all for payers that bundle nursing into room rent.
+          // Fetched separately — see lib/wardNursingRate.ts.
+          const nursingRate = await getWardNursingRate(seg.wardId);
+          if (nursingRate > 0 && !bundlesNursingIntoRoom(adm.payer_type)) {
+            charges.push({
+              date: seg.startDate,
+              description: `Nursing — (${dateRange}, ${seg.days} day${seg.days !== 1 ? "s" : ""}) @ ₹${nursingRate.toLocaleString("en-IN")}`,
+              amount: nursingRate * seg.days,
+              category: "nursing",
+            });
+          }
         }
       }
 
@@ -320,9 +351,14 @@ const IPDFinancialTab: React.FC<Props> = ({ admissionId, patientId, hospitalId, 
     setAdvanceTxns(all);
     setLoading(false);  // ← Data visible immediately; autoPull runs in background below
 
-    // Fire autoPull in background for draft bills — never blocks the UI.
+    // Fire autoPull in background while the bill is still running — never blocks the UI.
     // When it completes, silently refresh the charge list in place.
-    if (ipdBill?.id && (!ipdBill.bill_status || ipdBill.bill_status === "draft")) {
+    //
+    // "Running", not "draft": a bill leaves 'draft' mid-stay the moment someone
+    // requests a discount ('pending_approval'), and a strict draft test froze the
+    // room and nursing charges at that day's count for the rest of the admission.
+    // isRunningBill is the same rule the day-closure guard already uses.
+    if (ipdBill?.id && isRunningBill(ipdBill.bill_status)) {
       const billId = ipdBill.id;
       import("@/lib/ipdBilling").then(({ autoPullAdmissionCharges }) => {
         autoPullAdmissionCharges(billId, admissionId, hospitalId).then(result => {

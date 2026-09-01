@@ -1,7 +1,7 @@
 /**
  * Plan picker for the "Upgrade Now" / "Reactivate" calls to action.
  *
- * These buttons used to open `mailto:support@aumrti.in` — every one of them, on
+ * These buttons used to open a hardcoded support mailto — every one of them, on
  * every banner. A hospital that wanted to pay had no way to do so from the
  * product. They now open this, which reuses SubscribeButton (and therefore the
  * real Razorpay checkout, the monthly/yearly toggle, and the shared price
@@ -20,6 +20,7 @@ import SubscribeButton from "./SubscribeButton";
 import { formatINRExact } from "@/lib/currency";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { resolveEffectivePrice } from "@/lib/platformBilling";
+import { SUPPORT_EMAIL } from "@/lib/brand";
 
 interface Props {
   open: boolean;
@@ -148,7 +149,7 @@ export default function UpgradeDialog({
                     <Button
                       variant="outline"
                       className="w-full gap-2"
-                      onClick={() => window.open("mailto:support@aumrti.in?subject=Enterprise Plan Enquiry")}
+                      onClick={() => window.open(`mailto:${SUPPORT_EMAIL}?subject=Enterprise Plan Enquiry`)}
                     >
                       <Mail size={14} /> Contact Sales
                     </Button>

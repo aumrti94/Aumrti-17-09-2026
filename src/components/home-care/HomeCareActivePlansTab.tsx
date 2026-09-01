@@ -9,9 +9,10 @@ import { Badge } from "@/components/ui/badge";
 import { Plus, Home } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { logNABHEvidence } from "@/lib/nabh-evidence";
+import { generateVisits, HOME_CARE_FREQUENCIES } from "@/lib/homeCarePlans";
+import { useConfigValues } from "@/hooks/useConfigValues";
 
-const SERVICES = ["Wound dressing","IV antibiotics","Physiotherapy","Vitals monitoring","Medication administration","Catheter care","Nasogastric tube care","Oxygen therapy","Blood sugar monitoring","Palliative care"];
-const FREQUENCIES = ["daily", "alternate_days", "weekly", "twice_daily"];
+const FREQUENCIES = HOME_CARE_FREQUENCIES;
 const PLAN_TYPES = { post_discharge: "Post-Discharge", chronic_care: "Chronic Care", palliative: "Palliative" };
 const STATUS_COLORS: Record<string, string> = { active: "bg-green-100 text-green-800", completed: "bg-gray-100 text-gray-700", cancelled: "bg-red-100 text-red-800" };
 
@@ -23,7 +24,8 @@ interface Plan {
 interface Patient { id: string; full_name: string; uhid: string; }
 
 const HomeCareActivePlansTab: React.FC = () => {
-  const { hospitalId } = useHospitalId();
+  const services = useConfigValues("home_care_services");
+  const { hospitalId, userId } = useHospitalId();
   const { toast } = useToast();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -40,21 +42,27 @@ const HomeCareActivePlansTab: React.FC = () => {
   const load = useCallback(async () => {
     if (!hospitalId) return;
     setLoading(true);
-    const { data } = await (supabase as any)
+    const { data, error } = await (supabase as any)
       .from("home_care_plans")
       .select("*, patients!home_care_plans_patient_id_fkey(full_name)")
       .eq("hospital_id", hospitalId).eq("is_deleted", false)
       .order("created_at", { ascending: false });
+    if (error) {
+      toast({ title: "Could not load plans", description: error.message, variant: "destructive" });
+    }
     setPlans((data || []).map((p: any) => ({ ...p, patient_name: p.patients?.full_name })));
     setLoading(false);
-  }, [hospitalId]);
+  }, [hospitalId, toast]);
 
   const searchPatients = useCallback(async (q: string) => {
     if (!hospitalId || q.length < 2) { setPatients([]); return; }
-    const { data } = await supabase.from("patients").select("id, full_name, uhid")
+    const { data, error } = await supabase.from("patients").select("id, full_name, uhid")
       .eq("hospital_id", hospitalId).eq("is_active", true).ilike("full_name", `%${q}%`).limit(8);
+    if (error) {
+      toast({ title: "Patient search failed", description: error.message, variant: "destructive" });
+    }
     setPatients(data || []);
-  }, [hospitalId]);
+  }, [hospitalId, toast]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { searchPatients(patientSearch); }, [patientSearch, searchPatients]);
@@ -68,41 +76,50 @@ const HomeCareActivePlansTab: React.FC = () => {
     }));
   };
 
-  const generateVisits = async (planId: string, startDate: string, endDate: string, frequency: string) => {
-    const start = new Date(startDate);
-    const end = endDate ? new Date(endDate) : new Date(start.getTime() + 30 * 86400000);
-    const step = frequency === "daily" ? 1 : frequency === "alternate_days" ? 2 : frequency === "twice_daily" ? 1 : 7;
-    const visits = [];
-    const cur = new Date(start);
-    while (cur <= end) {
-      visits.push({ hospital_id: hospitalId, plan_id: planId, patient_id: form.patient_id, scheduled_date: cur.toISOString().split("T")[0], status: "scheduled" });
-      cur.setDate(cur.getDate() + step);
-    }
-    if (visits.length > 0) await (supabase as any).from("home_care_visits").insert(visits);
-  };
-
   const save = async () => {
     if (!form.patient_id || !form.start_date || !hospitalId) {
       toast({ title: "Patient and start date are required", variant: "destructive" }); return;
     }
     setSaving(true);
-    const { data: { user } } = await supabase.auth.getUser();
+    // created_by / care_coordinator FK to public.users(id) — the app user id, NOT
+    // the auth user id. useHospitalId() already carries it; auth.getUser().id here
+    // violates home_care_plans_created_by_fkey.
     const { data, error } = await (supabase as any).from("home_care_plans").insert({
       hospital_id: hospitalId, patient_id: form.patient_id, plan_type: form.plan_type,
       diagnosis: form.diagnosis || null, services_needed: form.services_needed,
       frequency: form.frequency, start_date: form.start_date,
       end_date: form.end_date || null, notes: form.notes || null,
-      created_by: user?.id,
-    }).select("id").single();
-    if (error) { toast({ title: "Save failed", description: error.message, variant: "destructive" }); }
-    else {
-      await generateVisits(data.id, form.start_date, form.end_date, form.frequency);
-      await logNABHEvidence(hospitalId, "AAC.12", `Home care plan created: ${PLAN_TYPES[form.plan_type as keyof typeof PLAN_TYPES]}`);
-      toast({ title: "Home care plan created + visits scheduled" });
-      setShowForm(false);
-      setForm({ patient_id: "", plan_type: "post_discharge", diagnosis: "", services_needed: [], frequency: "daily", start_date: new Date().toISOString().split("T")[0], end_date: "", notes: "" });
-      load();
+      created_by: userId ?? null,
+      care_coordinator: userId ?? null,
+    }).select("id").maybeSingle();
+
+    if (error) {
+      toast({ title: "Save failed", description: error.message, variant: "destructive" });
+      setSaving(false);
+      return;
     }
+    if (!data?.id) {
+      toast({ title: "Save failed", description: "Plan was not created — please retry.", variant: "destructive" });
+      setSaving(false);
+      return;
+    }
+
+    try {
+      const count = await generateVisits({
+        hospitalId, planId: data.id, patientId: form.patient_id,
+        startDate: form.start_date, endDate: form.end_date || null, frequency: form.frequency,
+      });
+      await logNABHEvidence(hospitalId, "AAC.12", `Home care plan created: ${PLAN_TYPES[form.plan_type as keyof typeof PLAN_TYPES]}`);
+      toast({ title: `Home care plan created — ${count} visit${count === 1 ? "" : "s"} scheduled` });
+    } catch (e: any) {
+      // Plan saved but the schedule did not — say so rather than claiming success.
+      toast({ title: "Plan created, but visits could not be scheduled", description: e?.message, variant: "destructive" });
+    }
+
+    setShowForm(false);
+    setForm({ patient_id: "", plan_type: "post_discharge", diagnosis: "", services_needed: [], frequency: "daily", start_date: new Date().toISOString().split("T")[0], end_date: "", notes: "" });
+    setPatientSearch("");
+    load();
     setSaving(false);
   };
 
@@ -171,10 +188,10 @@ const HomeCareActivePlansTab: React.FC = () => {
             <div>
               <label className="text-xs font-medium mb-1 block">Services Needed</label>
               <div className="grid grid-cols-2 gap-1">
-                {SERVICES.map(s => (
-                  <label key={s} className="flex items-center gap-1.5 text-xs cursor-pointer">
-                    <input type="checkbox" checked={form.services_needed.includes(s)} onChange={() => toggleService(s)} />
-                    {s}
+                {services.map(s => (
+                  <label key={s.value} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                    <input type="checkbox" checked={form.services_needed.includes(s.value)} onChange={() => toggleService(s.value)} />
+                    {s.label}
                   </label>
                 ))}
               </div>

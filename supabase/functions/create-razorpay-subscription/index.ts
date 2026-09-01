@@ -38,6 +38,7 @@ import {
   type BillingCycle,
 } from "../_shared/platform-billing.ts";
 import { getRazorpaySubscriptionKeys } from "../_shared/platform-razorpay-config.ts";
+import { SUPPORT_EMAIL } from "../_shared/brand.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -127,7 +128,7 @@ serve(async (req) => {
       .maybeSingle();
 
     if (!plan) return err("Plan not found");
-    if (plan.is_custom_price) return err("Enterprise plans require a custom quote. Please contact support@aumrti.in");
+    if (plan.is_custom_price) return err(`Enterprise plans require a custom quote. Please contact ${SUPPORT_EMAIL}`);
 
     // ── Validate coupon ───────────────────────────────────────────────────
     // Must happen BEFORE price resolution: the coupon changes the amount, and
@@ -233,7 +234,7 @@ serve(async (req) => {
       if (!createPlanRes.ok) {
         const rzpErr = await createPlanRes.json().catch(() => ({}));
         console.error("Auto-create Razorpay plan failed:", rzpErr);
-        return err("Payment gateway error while setting up plan. Contact support@aumrti.in", 502);
+        return err(`Payment gateway error while setting up plan. Contact ${SUPPORT_EMAIL}`, 502);
       }
       const rzpPlan = await createPlanRes.json();
 
@@ -308,10 +309,40 @@ serve(async (req) => {
     const rzpSub = await rzpRes.json();
 
     // ── Upsert hospital_subscriptions (pending until webhook confirms) ────
+    //
+    // NEVER DEMOTE AN ALREADY-ACTIVE HOSPITAL TO "trial".
+    //
+    // This upsert used to write `status: "trial"` unconditionally. On a first-time checkout
+    // that is right. On a RE-SUBSCRIBE or a plan change by a hospital that is already paying,
+    // it is a silent outage:
+    //
+    //   · the webhook stamps `trial_ends_at = new Date().toISOString()` on first activation
+    //     (razorpay-subscription-webhook/index.ts), i.e. the activation instant — permanently
+    //     in the past;
+    //   · so the moment status flips back to "trial", resolveSubscriptionAccess() sees a trial
+    //     that ended `graceDays` ago and returns blocked;
+    //   · `enforce_subscription_access()` (migration ...163) then refuses EVERY write from
+    //     every user of that hospital, and the read-only banner appears.
+    //
+    // A paying hospital is put into read-only by starting a checkout. It happened to the QA
+    // tenant on 2026-08-31 and took a manual database edit to undo.
+    //
+    // `change-subscription-plan/index.ts` already guards this correctly; this is the same
+    // guard. Reading the current status first is what makes the upsert non-destructive.
+    const { data: existingSub } = await db
+      .from("hospital_subscriptions")
+      .select("status")
+      .eq("hospital_id", hospital_id)
+      .maybeSingle();
+
+    const currentStatus = String(existingSub?.status ?? "").toLowerCase();
+
     await db.from("hospital_subscriptions").upsert({
       hospital_id,
       plan_id: plan.id,
-      status: "trial",               // stays trial until webhook confirms payment
+      // An active hospital stays active while it re-subscribes; anything else stays/becomes
+      // trial until the webhook confirms payment.
+      status: currentStatus === "active" ? "active" : "trial",
       razorpay_subscription_id: rzpSub.id,
       razorpay_plan_id: razorpayPlanId,
       billing_cycle: cycle,

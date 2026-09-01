@@ -487,72 +487,46 @@ const PayrollTab: React.FC = () => {
           postedBy: userData.id,
         });
 
-        // Post detailed payroll journal entry
+        // Post the payroll journal entry.
+        //
+        // This used to be assembled here in the browser against a schema that does not exist
+        // (journal_number/status/reference_type, and a "journal_entry_lines" table that is
+        // actually journal_line_items), with every error discarded — so payroll silently never
+        // reached the GL while this code reported success. Worse, the account codes were
+        // hardcoded and wrong for the seeded chart of accounts: 2101 is "Bank Loan" and 2102 is
+        // "Equipment Finance Loan", not Salaries/TDS Payable.
+        //
+        // Posting now happens in post_payroll_journal(), which resolves accounts from the
+        // hospital's configured 'payroll_processed' auto_posting_rule — the same mechanism
+        // auto_post_bill_journal() already uses for billing — and writes header and lines in one
+        // transaction so they can never diverge. It is idempotent per run.
         const totalGross = Number(run.total_gross || 0);
-        const totalDeductions = Number(run.total_deductions || 0);
-        const totalNet = Number(run.total_net || 0);
 
         if (totalGross > 0) {
-          const { data: nextNum } = await supabase.rpc("get_next_journal_number", {
-            p_hospital_id: userData.hospital_id,
-          });
+          const { data: journalId, error: journalError } = await (supabase as any).rpc(
+            "post_payroll_journal",
+            { p_run_id: runId },
+          );
 
-          const journalNum = nextNum || `JV-${Date.now()}`;
-          const payrollDate = new Date().toISOString().split("T")[0];
-
-          const { data: journal } = await (supabase as any)
-            .from("journal_entries")
-            .insert({
-              hospital_id: userData.hospital_id,
-              journal_number: journalNum,
-              entry_date: payrollDate,
-              description: `Payroll: ${run.run_month || "Monthly"}`,
-              total_debit: totalGross,
-              total_credit: totalGross,
-              status: "posted",
-              reference_type: "payroll",
-              reference_id: runId,
-              created_by: userData.id,
-            })
-            .select("id")
-            .maybeSingle();
-
-          if (journal) {
-            const lines: any[] = [
-              {
-                journal_id: journal.id,
-                hospital_id: userData.hospital_id,
-                account_code: "5001",
-                account_name: "Salaries & Wages",
-                debit_amount: totalGross,
-                credit_amount: 0,
-                description: `Gross salary for ${run.run_month || "month"}`,
-              },
-              {
-                journal_id: journal.id,
-                hospital_id: userData.hospital_id,
-                account_code: "2101",
-                account_name: "Salaries Payable",
-                debit_amount: 0,
-                credit_amount: totalNet,
-                description: "Net salary payable",
-              },
-            ];
-
-            if (totalDeductions > 0) {
-              lines.push({
-                journal_id: journal.id,
-                hospital_id: userData.hospital_id,
-                account_code: "2102",
-                account_name: "TDS / PF Payable",
-                debit_amount: 0,
-                credit_amount: totalDeductions,
-                description: "Statutory deductions payable",
-              });
-            }
-
-            await (supabase as any).from("journal_entry_lines").insert(lines);
+          if (journalError) {
+            // Payroll itself is already approved; surface the accounting failure rather than
+            // claiming success, so it can be corrected instead of silently going missing.
+            toast({
+              title: "Payroll approved, but the journal entry was not posted",
+              description: journalError.message,
+              variant: "destructive",
+            });
+          } else if (journalId) {
             toast({ title: "Payroll journal entry posted to accounts" });
+          } else {
+            // No 'payroll_processed' auto-posting rule configured for this hospital. The RPC
+            // deliberately does not fail in this case, so approval is not blocked by an
+            // accounting misconfiguration.
+            toast({
+              title: "Payroll approved — no journal entry posted",
+              description:
+                "No 'payroll_processed' auto-posting rule is configured for this hospital. Set one up in Accounts to post payroll to the ledger.",
+            });
           }
         }
       }

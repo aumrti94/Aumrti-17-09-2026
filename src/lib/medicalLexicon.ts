@@ -188,7 +188,22 @@ export const COMMON_ENGLISH_WORDS: ReadonlySet<string> = new Set([
 
 export type RepairSource =
   | "drug_master" | "ayush_drug_master" | "lab_test_master" | "lab_test_groups"
-  | "service_master" | "radiology_study_master" | "icd10_codes" | "abbreviation";
+  | "service_master" | "radiology_study_master" | "icd10_codes" | "abbreviation"
+  /**
+   * Presenting complaints, working diagnoses and anatomical sites.
+   *
+   * SUGGESTION-ONLY — never auto-applied, enforced in `shouldAutoApply`. The reason this
+   * source exists at all is that a mis-heard SYMPTOM previously had nothing to match
+   * against: the catalogue held drugs, tests, services and radiology, so when the ASR
+   * turned "neck pain" into "headache" no layer downstream could even notice, let alone
+   * flag it. These terms give the structuring model something to notice it WITH.
+   *
+   * They must not be rewritten silently, because they collide head-on with ordinary
+   * speech — "cold", "pain", "back", "head" are all real English words a doctor says in
+   * their plain sense, and COMMON_ENGLISH_WORDS deliberately protects them. Suggesting is
+   * safe; substituting is not.
+   */
+  | "symptom";
 
 export interface LexiconEntry {
   /** Canonical, display-ready term. */
@@ -278,10 +293,16 @@ export function shouldAutoApply(args: {
   phoneticExact: boolean;
   autoApplyThreshold: number;
   ambiguityMargin: number;
+  /** Which catalogue the winning candidate came from. Omitted = a non-symptom source. */
+  candidateSource?: RepairSource;
 }): boolean {
   const { sourceWords, candidateScore, runnerUpScore, phoneticExact,
-          autoApplyThreshold, ambiguityMargin } = args;
+          autoApplyThreshold, ambiguityMargin, candidateSource } = args;
 
+  // 0. Symptoms, diagnoses and body sites are offered to the LLM, never substituted.
+  //    Rewriting a symptom is how a transcript stops matching what the doctor said, and
+  //    unlike a drug name there is no spelling a clinician would recognise as "wrong".
+  if (candidateSource === "symptom") return false;
   // 1. The phonetic skeletons must agree exactly — similarity alone is not enough.
   if (!phoneticExact) return false;
   // 2. Close enough by edit distance.
@@ -479,7 +500,11 @@ export function repairTranscript(
           replacement[i] = exact.term;
           for (let k = 1; k < phraseLen; k++) replacement[i + k] = "";
         }
-        candidateTokens++; resolvedTokens++;
+        // Symptom terms are excluded from the hit rate. They are everyday words that
+        // appear in almost every dictation, so counting them would push the score up
+        // regardless of whether the CLINICAL vocabulary — the drug and test names this
+        // metric exists to track — actually landed, and confidence is scaled off it.
+        if (exact.source !== "symptom") { candidateTokens++; resolvedTokens++; }
         continue;
       }
 
@@ -499,6 +524,7 @@ export function repairTranscript(
       if (shouldAutoApply({
         sourceWords, candidateScore: best.score, runnerUpScore: runnerUp,
         phoneticExact: true, autoApplyThreshold, ambiguityMargin,
+        candidateSource: best.entry.source,
       })) {
         for (let k = 0; k < phraseLen; k++) consumed[i + k] = true;
         replacement[i] = best.entry.term;
@@ -509,13 +535,15 @@ export function repairTranscript(
         });
         candidateTokens++; resolvedTokens++;
       } else if (best.score >= suggestThreshold) {
-        // Not confident enough to rewrite — hand it to the LLM as context instead.
+        // Not confident enough to rewrite — hand it to the LLM as context instead. This is
+        // also the ONLY channel a symptom match can ever take (see shouldAutoApply), and
+        // it is what gives a mis-heard "neck pain" a chance to be caught downstream.
         suggestions.push({
           from: sourceWords.join(" "),
           candidates: scored.slice(0, 3).map(s => s.entry.term),
           score: Number(best.score.toFixed(3)),
         });
-        if (phraseLen === 1) candidateTokens++;
+        if (phraseLen === 1 && best.entry.source !== "symptom") candidateTokens++;
       }
     }
   }

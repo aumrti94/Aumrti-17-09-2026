@@ -25,13 +25,21 @@ import {
 const routesOf = (entries: { route: string }[]) => entries.map((e) => e.route);
 const bare = (route: string) => route.split("?")[0];
 
-/** Every /settings/* (and settings-owned /admin, /ims) route declared in the router. */
+/**
+ * Every /settings/* (and settings-owned /admin, /ims) route declared in the router.
+ *
+ * Redirect-only routes are excluded. A <Navigate> route is a retired path kept alive so existing
+ * bookmarks and links still land somewhere — it renders no page, so requiring a catalog entry for
+ * it would put a duplicate card in the Settings hub pointing at the same destination as the real
+ * one. /settings/api-keys is the first of these, retired into /settings/api-portal.
+ */
 function routerSettingsRoutes(): string[] {
   const app = readFileSync(resolve(__dirname, "../App.tsx"), "utf8");
   const found = new Set<string>();
-  for (const m of app.matchAll(/<Route\s+path="([^"]+)"/g)) {
-    const path = m[1];
+  for (const m of app.matchAll(/<Route\s+path="([^"]+)"([^\n]*)/g)) {
+    const [, path, rest] = m;
     if (path === "/settings") continue; // the hub itself
+    if (rest.includes("<Navigate")) continue; // retired path, redirects elsewhere
     if (path.startsWith("/settings/")) found.add(path);
   }
   return [...found];

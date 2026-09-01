@@ -1,0 +1,1069 @@
+table,domain,constraint,type,definition,flags
+abdm_audit_log,ABDM,abdm_audit_log_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+abdm_care_contexts,ABDM,abdm_care_contexts_context_type_check,CHECK,"CHECK ((context_type = ANY (ARRAY['OPDRecord'::text, 'DischargeSummaryRecord'::text, 'DiagnosticReportRecord'::text, 'PrescriptionRecord'::text, 'ImmunizationRecord'::text, 'HealthDocumentRecord'::text])))",status/type enumeration via CHECK
+abdm_care_contexts,ABDM,abdm_care_contexts_link_status_check,CHECK,"CHECK ((link_status = ANY (ARRAY['unlinked'::text, 'pending'::text, 'linked'::text, 'failed'::text])))",status/type enumeration via CHECK
+abdm_care_contexts,ABDM,abdm_care_contexts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+abdm_consent_logs,ABDM,abdm_consent_logs_consent_type_check,CHECK,"CHECK ((consent_type = ANY (ARRAY['linking'::text, 'data_access'::text, 'hip_sharing'::text])))",status/type enumeration via CHECK
+abdm_consent_logs,ABDM,abdm_consent_logs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+abdm_consents,ABDM,abdm_consents_consent_id_key,UNIQUE,UNIQUE (consent_id),GLOBAL uniqueness on tenant table - verify intent
+abdm_consents,ABDM,abdm_consents_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+abdm_consents,ABDM,abdm_consents_status_check,CHECK,"CHECK ((status = ANY (ARRAY['REQUESTED'::text, 'GRANTED'::text, 'DENIED'::text, 'REVOKED'::text, 'EXPIRED'::text])))",status/type enumeration via CHECK
+abdm_gateway_logs,ABDM,abdm_gateway_logs_direction_check,CHECK,"CHECK ((direction = ANY (ARRAY['inbound'::text, 'outbound'::text])))",none
+abdm_gateway_logs,ABDM,abdm_gateway_logs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+abdm_rate_limits,ABDM,abdm_rate_limits_pkey,PRIMARY KEY,PRIMARY KEY (key),none
+accounting_posting_failures,Other,accounting_posting_failures_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+addon_skus,Platform,addon_skus_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+addon_skus,Platform,addon_skus_slug_key,UNIQUE,UNIQUE (slug),none
+admin_audit_log,Other,admin_audit_log_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+admission_day_care_procedures,IPD,admission_day_care_procedures_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+admission_day_care_procedures,IPD,admission_day_care_procedures_quantity_check,CHECK,CHECK ((quantity > 0)),none
+admission_day_care_procedures,IPD,admission_day_care_procedures_rate_check,CHECK,CHECK ((rate >= (0)::numeric)),none
+admission_estimates,IPD,admission_estimates_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+admission_sequences,IPD,admission_sequences_pkey,PRIMARY KEY,"PRIMARY KEY (hospital_id, prefix)",none
+admissions,IPD,admissions_bed_required_unless_daycare,CHECK,"CHECK (((COALESCE(admission_type, ''::text) = 'daycare'::text) OR ((bed_id IS NOT NULL) AND (ward_id IS NOT NULL))))",status/type enumeration via CHECK
+admissions,IPD,admissions_deposit_disposition_check,CHECK,"CHECK (((deposit_disposition IS NULL) OR (deposit_disposition = ANY (ARRAY['refund'::text, 'retain_fee'::text, 'carry_forward'::text]))))",none
+admissions,IPD,admissions_hospital_admission_number_key,UNIQUE,"UNIQUE (hospital_id, admission_number)",tenant-scoped uniqueness
+admissions,IPD,admissions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+adult_immunization_schedule,Other,adult_immunization_schedule_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+adult_immunization_schedule,Other,adult_immunization_schedule_status_check,CHECK,"CHECK ((status = ANY (ARRAY['due'::text, 'given'::text, 'overdue'::text, 'deferred'::text])))",status/type enumeration via CHECK
+advance_receipts,Other,advance_receipts_hospital_receipt_number_key,UNIQUE,"UNIQUE (hospital_id, receipt_number)",tenant-scoped uniqueness
+advance_receipts,Other,advance_receipts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ai_attestations,AI,ai_attestations_feature_check,CHECK,"CHECK ((feature = ANY (ARRAY['clinical_note'::text, 'discharge_summary'::text, 'differential_dx'::text, 'icd_suggest'::text, 'radiology_impression'::text, 'voice_dictation'::text, 'executive_digest'::text, 'triage_assist'::text, 'sepsis_screening'::text])))",none
+ai_attestations,AI,ai_attestations_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ai_cost_daily,AI,ai_cost_daily_hospital_id_date_feature_key_provider_key,UNIQUE,"UNIQUE (hospital_id, date, feature_key, provider)",tenant-scoped uniqueness
+ai_cost_daily,AI,ai_cost_daily_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ai_digests,AI,ai_digests_hospital_id_digest_date_key,UNIQUE,"UNIQUE (hospital_id, digest_date)",tenant-scoped uniqueness
+ai_digests,AI,ai_digests_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ai_feature_classes,AI,ai_feature_classes_class_check,CHECK,"CHECK ((class = ANY (ARRAY['safety'::text, 'productivity'::text, 'analytical'::text])))",none
+ai_feature_classes,AI,ai_feature_classes_pkey,PRIMARY KEY,PRIMARY KEY (feature_key),none
+ai_feature_logs,AI,ai_feature_logs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ai_language_settings,AI,ai_language_settings_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ai_language_settings,AI,uq_ai_lang_hospital_feature,UNIQUE,"UNIQUE (hospital_id, feature_key)",tenant-scoped uniqueness
+ai_provider_config,AI,ai_provider_config_hospital_id_feature_key_key,UNIQUE,"UNIQUE (hospital_id, feature_key)",tenant-scoped uniqueness
+ai_provider_config,AI,ai_provider_config_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ai_provider_config,AI,ai_provider_config_provider_check,CHECK,"CHECK ((provider = ANY (ARRAY['claude'::text, 'openai'::text, 'azure_openai'::text, 'gemini'::text, 'perplexity'::text, 'openrouter'::text, 'ollama'::text])))",none
+ai_safety_flags,AI,ai_safety_flags_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ai_suggestions_audit,AI,ai_suggestions_audit_confidence_check,CHECK,CHECK (((confidence IS NULL) OR ((confidence >= (0)::numeric) AND (confidence <= (1)::numeric)))),none
+ai_suggestions_audit,AI,ai_suggestions_audit_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ai_suggestions_audit,AI,ai_suggestions_audit_user_action_check,CHECK,"CHECK ((user_action = ANY (ARRAY['accepted'::text, 'overridden'::text, 'rejected'::text, 'flagged'::text])))",none
+ai_usage_logs,AI,ai_usage_logs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ai_wallet_transactions,AI,ai_wallet_transactions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ai_wallet_transactions,AI,ai_wallet_transactions_type_check,CHECK,"CHECK ((type = ANY (ARRAY['topup'::text, 'debit'::text, 'grant'::text, 'adjustment'::text, 'refund'::text])))",status/type enumeration via CHECK
+alert_escalation_log,Other,alert_escalation_log_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+alert_escalation_rules,Other,alert_escalation_rules_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ambulance_dispatches,Emergency,ambulance_dispatches_billing_status_check,CHECK,"CHECK ((billing_status = ANY (ARRAY['unbilled'::text, 'billed'::text, 'waived'::text, 'included'::text])))",status/type enumeration via CHECK
+ambulance_dispatches,Emergency,ambulance_dispatches_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ambulance_dispatches,Emergency,ambulance_dispatches_status_check,CHECK,"CHECK ((status = ANY (ARRAY['dispatched'::text, 'en_route'::text, 'at_scene'::text, 'transporting'::text, 'completed'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+ambulance_equipment_checks,Emergency,ambulance_equipment_checks_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ambulance_transit_treatment,Emergency,ambulance_transit_treatment_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ambulance_vehicles,Emergency,ambulance_vehicles_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ambulance_vehicles,Emergency,ambulance_vehicles_vehicle_type_check,CHECK,"CHECK ((vehicle_type = ANY (ARRAY['bls'::text, 'als'::text, 'nicu_transport'::text, 'mortuary'::text])))",status/type enumeration via CHECK
+amc_contracts,Other,amc_contracts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+anaesthesia_records,Other,anaesthesia_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+andrology_reports,IVF/ART,andrology_reports_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+antibiotic_justifications,Other,antibiotic_justifications_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+antibiotic_restricted_list,Other,antibiotic_restricted_list_hospital_id_drug_name_key,UNIQUE,"UNIQUE (hospital_id, drug_name)",tenant-scoped uniqueness
+antibiotic_restricted_list,Other,antibiotic_restricted_list_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+antibiotic_restricted_list,Other,antibiotic_restricted_list_restriction_level_check,CHECK,"CHECK ((restriction_level = ANY (ARRAY['restricted'::text, 'reserve'::text, 'watch'::text])))",none
+api_configurations,Integration,api_configurations_hospital_id_service_key_key,UNIQUE,"UNIQUE (hospital_id, service_key)",tenant-scoped uniqueness
+api_configurations,Integration,api_configurations_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+api_keys,Integration,api_keys_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+appointments,OPD,appointments_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+arogyasri_enrollments,PM-JAY,arogyasri_enrollments_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+arogyasri_enrollments,PM-JAY,arogyasri_enrollments_status_check,CHECK,"CHECK ((status = ANY (ARRAY['active'::text, 'expired'::text, 'suspended'::text])))",status/type enumeration via CHECK
+art_couples,IVF/ART,art_couples_hospital_couple_code_key,UNIQUE,"UNIQUE (hospital_id, couple_code)",tenant-scoped uniqueness
+art_couples,IVF/ART,art_couples_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+asr_pricing,Other,asr_pricing_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+asr_pricing,Other,asr_pricing_provider_key,UNIQUE,UNIQUE (provider),none
+attendance_regularization_requests,HR,attendance_regularization_requests_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+audit_log,Audit/Compliance,audit_log_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+audit_records,Audit/Compliance,audit_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+aumrti_admins,Identity,aumrti_admins_auth_user_id_key,UNIQUE,UNIQUE (auth_user_id),none
+aumrti_admins,Identity,aumrti_admins_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+auto_posting_rules,Other,auto_posting_rules_hospital_trigger_unique,UNIQUE,"UNIQUE (hospital_id, trigger_event)",tenant-scoped uniqueness
+auto_posting_rules,Other,auto_posting_rules_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ayush_drug_master,Other,ayush_drug_master_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ayush_encounters,Other,ayush_encounters_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+bank_accounts,Other,bank_accounts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+bank_transactions,Other,bank_transactions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+bed_demand_forecasts,IPD,bed_demand_forecasts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+bed_reservations,IPD,bed_reservations_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+bed_reservations,IPD,bed_reservations_status_check,CHECK,"CHECK ((status = ANY (ARRAY['reserved'::text, 'checked_in'::text, 'cancelled'::text, 'no_show'::text])))",status/type enumeration via CHECK
+beds,IPD,beds_bed_category_check,CHECK,"CHECK ((bed_category = ANY (ARRAY['general'::text, 'semi_private'::text, 'private'::text, 'icu'::text, 'nicu'::text, 'sicu'::text, 'picu'::text, 'hdu'::text, 'isolation'::text])))",none
+beds,IPD,beds_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+bill_amendments,Billing,bill_amendments_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+bill_discount_approvals,Billing,bill_discount_approvals_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+bill_discount_approvals,Billing,bill_discount_approvals_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text])))",status/type enumeration via CHECK
+bill_line_items,Billing,bill_line_items_payment_status_check,CHECK,"CHECK ((payment_status = ANY (ARRAY['pending_payment'::text, 'paid'::text, 'advance_covered'::text, 'waived'::text, 'insurance_auth'::text])))",status/type enumeration via CHECK
+bill_line_items,Billing,bill_line_items_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+bill_payments,Billing,bill_payments_payment_mode_check,CHECK,"CHECK ((payment_mode = ANY (ARRAY['cash'::text, 'upi'::text, 'card'::text, 'net_banking'::text, 'cheque'::text, 'insurance'::text, 'pmjay'::text, 'cghs'::text, 'echs'::text, 'credit'::text, 'advance_adjust'::text])))",none
+bill_payments,Billing,bill_payments_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+bill_sequences,Billing,bill_sequences_pkey,PRIMARY KEY,"PRIMARY KEY (hospital_id, prefix)",none
+bills,Billing,bills_bill_status_check,CHECK,"CHECK ((bill_status = ANY (ARRAY['draft'::text, 'final'::text, 'partially_paid'::text, 'paid'::text, 'cancelled'::text, 'refunded'::text, 'insurance_pending'::text])))",status/type enumeration via CHECK
+bills,Billing,bills_bill_type_check,CHECK,"CHECK ((bill_type = ANY (ARRAY['opd'::text, 'ipd'::text, 'emergency'::text, 'daycare'::text, 'package'::text, 'lab'::text, 'radiology'::text, 'pharmacy'::text, 'dialysis'::text, 'ot'::text, 'blood_bank'::text, 'vaccination'::text, 'dental'::text, 'physiotherapy'::text, 'nursing'::text, 'telemedicine'::text, 'ivf'::text, 'ayush'::text, 'retail'::text])))",status/type enumeration via CHECK
+bills,Billing,bills_hospital_bill_number_key,UNIQUE,"UNIQUE (hospital_id, bill_number)",tenant-scoped uniqueness
+bills,Billing,bills_payment_status_check,CHECK,"CHECK ((payment_status = ANY (ARRAY['unpaid'::text, 'partial'::text, 'paid'::text, 'refund_pending'::text, 'refunded'::text])))",status/type enumeration via CHECK
+bills,Billing,bills_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+blood_antibody_screening,Blood Bank,blood_antibody_screening_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+blood_issues,Blood Bank,blood_issues_billing_status_check,CHECK,"CHECK ((billing_status = ANY (ARRAY['unbilled'::text, 'billed'::text, 'waived'::text, 'included'::text])))",status/type enumeration via CHECK
+blood_issues,Blood Bank,blood_issues_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+blood_requests,Blood Bank,blood_requests_blood_group_check,CHECK,"CHECK ((blood_group = ANY (ARRAY['A'::text, 'B'::text, 'AB'::text, 'O'::text])))",none
+blood_requests,Blood Bank,blood_requests_component_check,CHECK,"CHECK ((component = ANY (ARRAY['whole_blood'::text, 'rbc'::text, 'ffp'::text, 'platelets'::text, 'cryoprecipitate'::text])))",none
+blood_requests,Blood Bank,blood_requests_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+blood_requests,Blood Bank,blood_requests_rh_factor_check,CHECK,"CHECK ((rh_factor = ANY (ARRAY['positive'::text, 'negative'::text])))",none
+blood_requests,Blood Bank,blood_requests_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'processing'::text, 'fulfilled'::text, 'partially_fulfilled'::text, 'cancelled'::text, 'external_requested'::text])))",status/type enumeration via CHECK
+blood_requests,Blood Bank,blood_requests_urgency_check,CHECK,"CHECK ((urgency = ANY (ARRAY['routine'::text, 'urgent'::text, 'emergency'::text])))",none
+blood_unit_tti_tests,Blood Bank,blood_unit_tti_tests_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+blood_unit_tti_tests,Blood Bank,blood_unit_tti_tests_unit_id_key,UNIQUE,UNIQUE (unit_id),GLOBAL uniqueness on tenant table - verify intent
+blood_units,Blood Bank,blood_units_blood_group_check,CHECK,"CHECK ((blood_group = ANY (ARRAY['A'::text, 'B'::text, 'AB'::text, 'O'::text])))",none
+blood_units,Blood Bank,blood_units_component_check,CHECK,"CHECK ((component = ANY (ARRAY['whole_blood'::text, 'rbc'::text, 'ffp'::text, 'platelets'::text, 'cryoprecipitate'::text])))",none
+blood_units,Blood Bank,blood_units_hospital_unit_number_key,UNIQUE,"UNIQUE (hospital_id, unit_number)",tenant-scoped uniqueness
+blood_units,Blood Bank,blood_units_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+blood_units,Blood Bank,blood_units_rh_factor_check,CHECK,"CHECK ((rh_factor = ANY (ARRAY['positive'::text, 'negative'::text])))",none
+blood_units,Blood Bank,blood_units_status_check,CHECK,"CHECK ((status = ANY (ARRAY['available'::text, 'reserved'::text, 'issued'::text, 'discarded'::text, 'quarantine'::text, 'returned'::text, 'expired'::text])))",status/type enumeration via CHECK
+bmw_manifests,Biomedical Waste,bmw_manifests_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+bmw_records,Biomedical Waste,bmw_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+body_releases,Other,body_releases_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+bpmh_records,Other,bpmh_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+bpmh_records,Other,bpmh_records_source_check,CHECK,"CHECK ((source = ANY (ARRAY['patient_reported'::text, 'caregiver_reported'::text, 'prescription_card'::text, 'pharmacy_record'::text, 'gp_letter'::text])))",none
+braden_scale_assessments,Other,braden_scale_assessments_activity_check,CHECK,CHECK (((activity >= 1) AND (activity <= 4))),none
+braden_scale_assessments,Other,braden_scale_assessments_friction_shear_check,CHECK,CHECK (((friction_shear >= 1) AND (friction_shear <= 3))),none
+braden_scale_assessments,Other,braden_scale_assessments_mobility_check,CHECK,CHECK (((mobility >= 1) AND (mobility <= 4))),none
+braden_scale_assessments,Other,braden_scale_assessments_moisture_check,CHECK,CHECK (((moisture >= 1) AND (moisture <= 4))),none
+braden_scale_assessments,Other,braden_scale_assessments_nutrition_score_check,CHECK,CHECK (((nutrition_score >= 1) AND (nutrition_score <= 4))),none
+braden_scale_assessments,Other,braden_scale_assessments_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+braden_scale_assessments,Other,braden_scale_assessments_sensory_perception_check,CHECK,CHECK (((sensory_perception >= 1) AND (sensory_perception <= 4))),none
+branches,Tenant,branches_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+breakdown_logs,Other,breakdown_logs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+budget_lines,Other,budget_lines_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+budget_lines,Other,budget_lines_status_check,CHECK,"CHECK ((status = ANY (ARRAY['draft'::text, 'pending_approval'::text, 'approved'::text, 'rejected'::text])))",status/type enumeration via CHECK
+calibration_records,Other,calibration_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+capa_records,Other,capa_records_hospital_capa_number_key,UNIQUE,"UNIQUE (hospital_id, capa_number)",tenant-scoped uniqueness
+capa_records,Other,capa_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+care_bundle_checks,Other,care_bundle_checks_bundle_type_check,CHECK,"CHECK ((bundle_type = ANY (ARRAY['vap'::text, 'clabsi'::text, 'cauti'::text, 'sepsis_6'::text])))",status/type enumeration via CHECK
+care_bundle_checks,Other,care_bundle_checks_hospital_id_admission_id_bundle_type_che_key,UNIQUE,"UNIQUE (hospital_id, admission_id, bundle_type, check_date)",tenant-scoped uniqueness
+care_bundle_checks,Other,care_bundle_checks_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+care_plan_tasks,Nursing,care_plan_tasks_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+care_plan_tasks,Nursing,care_plan_tasks_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'completed'::text, 'overdue'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+care_plan_tasks,Nursing,care_plan_tasks_task_type_check,CHECK,"CHECK ((task_type = ANY (ARRAY['lab_test'::text, 'appointment'::text, 'medication_refill'::text, 'vitals_check'::text, 'education'::text, 'referral'::text])))",status/type enumeration via CHECK
+care_plans,Nursing,care_plans_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+care_plans,Nursing,care_plans_plan_type_check,CHECK,"CHECK ((plan_type = ANY (ARRAY['standard'::text, 'intensive'::text, 'palliative'::text])))",status/type enumeration via CHECK
+care_plans,Nursing,care_plans_status_check,CHECK,"CHECK ((status = ANY (ARRAY['active'::text, 'completed'::text, 'paused'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+case_sheet_templates,Other,case_sheet_templates_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+cghs_echs_beneficiaries,PM-JAY,cghs_echs_beneficiaries_card_type_check,CHECK,"CHECK ((card_type = ANY (ARRAY['cghs'::text, 'echs'::text])))",status/type enumeration via CHECK
+cghs_echs_beneficiaries,PM-JAY,cghs_echs_beneficiaries_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+chain_memberships,Tenant,chain_memberships_chain_id_hospital_id_key,UNIQUE,"UNIQUE (chain_id, hospital_id)",tenant-scoped uniqueness
+chain_memberships,Tenant,chain_memberships_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+chain_memberships,Tenant,chain_memberships_role_check,CHECK,"CHECK ((role = ANY (ARRAY['owner'::text, 'member'::text])))",none
+chart_of_accounts,Other,chart_of_accounts_hospital_id_code_key,UNIQUE,"UNIQUE (hospital_id, code)",tenant-scoped uniqueness
+chart_of_accounts,Other,chart_of_accounts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+chemo_order_drugs,IPD,chemo_order_drugs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+chemo_orders,IPD,chemo_orders_billing_status_check,CHECK,"CHECK ((billing_status = ANY (ARRAY['unbilled'::text, 'billed'::text, 'waived'::text, 'included'::text])))",status/type enumeration via CHECK
+chemo_orders,IPD,chemo_orders_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+chemo_protocols,IPD,chemo_protocols_hospital_id_protocol_code_key,UNIQUE,"UNIQUE (hospital_id, protocol_code)",tenant-scoped uniqueness
+chemo_protocols,IPD,chemo_protocols_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+chronic_disease_programs,Other,chronic_disease_programs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+churn_remediation_actions,Platform,churn_remediation_actions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+churn_remediation_actions,Platform,churn_remediation_actions_status_check,CHECK,"CHECK ((status = ANY (ARRAY['sent'::text, 'failed'::text, 'skipped_no_admin_email'::text])))",status/type enumeration via CHECK
+cleaning_schedules,Other,cleaning_schedules_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+clinical_alerts,Other,clinical_alerts_alert_type_check,CHECK,"CHECK ((alert_type = ANY (ARRAY['drug_interaction'::text, 'allergy_alert'::text, 'critical_value'::text, 'high_alert_med'::text, 'drug_override'::text, 'antibiotic_stewardship'::text, 'patient_safety'::text, 'payment_override'::text, 'high_news2'::text, 'vitals_critical'::text, 'mar_overdue'::text, 'sepsis_risk'::text, 'critical_lab_value'::text, 'stat_lab_order'::text, 'lab_trend'::text, 'lab_tat_overdue'::text, 'lab_tat_breach'::text, 'critical_radiology'::text, 'critical_incidental'::text, 'radiology_report_overdue'::text, 'blood_request'::text, 'specialist_consult'::text, 'code_blue'::text, 'escalation'::text, 'discharge_initiated'::text, 'discharge_delay'::text, 'pre_op_blood_group_unknown'::text, 'ratio_breach'::text, 'ndps_countersign_required'::text, 'ndps_dispense_rejected'::text, 'expiring'::text, 'cold_chain_breach'::text, 'obstetric_risk'::text, 'neonatal_jaundice'::text, 'credential_expiry'::text, 'infection'::text, 'incident'::text, 'mental_health_risk'::text, 'high_nutritional_risk'::text, 'equipment_breakdown'::text, 'calibration_failed'::text, 'missed_dialysis'::text, 'inadequate_dialysis'::text, 'flash_sterilization'::text, 'sterility_failure'::text, 'instrument_loss'::text, 'sla_pre_auth_risk'::text, 'sla_pre_auth_breach'::text, 'supplementary_pre_auth_needed'::text, 'claim_query_received'::text, 'claim_query_overdue'::text, 'appeal_deadline_approaching'::text, 'payment_received'::text, 'ipd_ancillary_payment_override'::text])))",status/type enumeration via CHECK
+clinical_alerts,Other,clinical_alerts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+clinical_alerts,Other,clinical_alerts_severity_check,CHECK,"CHECK ((severity = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'critical'::text])))",none
+clinical_audit_samples,Quality/NABH,clinical_audit_samples_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+clinical_audits,Quality/NABH,clinical_audits_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+clinical_audits,Quality/NABH,clinical_audits_sample_method_check,CHECK,"CHECK ((sample_method = ANY (ARRAY['random'::text, 'consecutive'::text, 'all'::text])))",none
+clinical_audits,Quality/NABH,clinical_audits_status_check,CHECK,"CHECK ((status = ANY (ARRAY['planning'::text, 'data_collection'::text, 'analysis'::text, 'action'::text, 'closed'::text])))",status/type enumeration via CHECK
+clinical_guidelines,Other,clinical_guidelines_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+clinical_note_templates,Other,clinical_note_templates_note_type_check,CHECK,"CHECK ((note_type = ANY (ARRAY['ward_round'::text, 'nursing'::text])))",status/type enumeration via CHECK
+clinical_note_templates,Other,clinical_note_templates_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+clinical_protocols,Other,clinical_protocols_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+clinical_reference_sources,Other,clinical_reference_sources_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+clinical_reference_sources,Other,clinical_reference_sources_region_check,CHECK,"CHECK ((region = ANY (ARRAY['india'::text, 'international'::text])))",none
+clinical_reference_sources,Other,clinical_reference_sources_source_key_key,UNIQUE,UNIQUE (source_key),GLOBAL uniqueness on tenant table - verify intent
+clinical_reference_sources,Other,clinical_reference_sources_source_type_check,CHECK,"CHECK ((source_type = ANY (ARRAY['guideline'::text, 'standard_treatment_guideline'::text, 'evidence_summary'::text, 'literature_index'::text, 'regulatory'::text, 'hospital_protocol'::text])))",status/type enumeration via CHECK
+clinical_reference_sources,Other,clinical_reference_sources_trust_tier_check,CHECK,CHECK (((trust_tier >= 1) AND (trust_tier <= 3))),none
+code_blue_audits,Other,code_blue_audits_cpr_quality_check,CHECK,"CHECK ((cpr_quality = ANY (ARRAY['adequate'::text, 'suboptimal'::text, 'poor'::text])))",none
+code_blue_audits,Other,code_blue_audits_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+code_blue_audits,Other,code_blue_audits_status_check,CHECK,"CHECK ((status = ANY (ARRAY['draft'::text, 'submitted'::text, 'approved'::text])))",status/type enumeration via CHECK
+code_blue_events,Other,code_blue_events_event_type_check,CHECK,"CHECK ((event_type = ANY (ARRAY['cardiac_arrest'::text, 'respiratory_arrest'::text, 'anaphylaxis'::text, 'status_epilepticus'::text, 'other'::text])))",status/type enumeration via CHECK
+code_blue_events,Other,code_blue_events_outcome_check,CHECK,"CHECK ((outcome = ANY (ARRAY['survived'::text, 'death'::text, 'transferred_icu'::text, 'discharged'::text])))",none
+code_blue_events,Other,code_blue_events_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+coding_audits,Other,coding_audits_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+cold_chain_log,Vaccination,cold_chain_log_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+cold_storage_log,Other,cold_storage_log_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+collection_campaigns,Other,collection_campaigns_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+committee_action_items,Quality/NABH,committee_action_items_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+committee_action_items,Quality/NABH,committee_action_items_status_check,CHECK,"CHECK ((status = ANY (ARRAY['open'::text, 'in_progress'::text, 'completed'::text, 'deferred'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+committee_meetings,Quality/NABH,committee_meetings_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+committee_members,Quality/NABH,committee_members_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+config_change_logs,Other,config_change_logs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+consent_form_templates,Audit/Compliance,consent_form_templates_consent_type_check,CHECK,"CHECK ((consent_type = ANY (ARRAY['treatment'::text, 'surgical'::text, 'anaesthesia'::text, 'transfusion'::text, 'hiv'::text, 'lama'::text, 'dnr'::text, 'implant'::text, 'research'::text, 'photography'::text, 'chemotherapy'::text, 'dialysis'::text, 'pcpndt'::text])))",status/type enumeration via CHECK
+consent_form_templates,Audit/Compliance,consent_form_templates_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+consent_templates,Audit/Compliance,consent_templates_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+corporate_accounts,Insurance,corporate_accounts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+credential_override_log,Other,credential_override_log_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+credit_note_items,Billing,credit_note_items_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+credit_notes,Billing,credit_notes_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+credit_notes,Billing,credit_notes_status_check,CHECK,"CHECK ((status = ANY (ARRAY['draft'::text, 'approved'::text, 'applied'::text, 'voided'::text])))",status/type enumeration via CHECK
+cross_match_records,Other,cross_match_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+cross_match_records,Other,cross_match_records_result_check,CHECK,"CHECK ((result = ANY (ARRAY['compatible'::text, 'incompatible'::text, 'minor_incompatible'::text])))",none
+cross_match_records,Other,cross_match_records_technique_check,CHECK,"CHECK ((technique = ANY (ARRAY['immediate_spin'::text, 'albumin'::text, 'antiglobulin'::text, 'electronic'::text])))",none
+cycle_instruments,Other,cycle_instruments_item_type_check,CHECK,"CHECK ((item_type = ANY (ARRAY['instrument'::text, 'set'::text])))",status/type enumeration via CHECK
+cycle_instruments,Other,cycle_instruments_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+daily_cash_closure,Other,daily_cash_closure_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+daily_cash_closure,Other,daily_cash_closure_status_check,CHECK,"CHECK ((status = ANY (ARRAY['open'::text, 'reconciled'::text, 'locked'::text])))",status/type enumeration via CHECK
+daily_cash_closure,Other,daily_cash_closure_unique,UNIQUE,"UNIQUE (hospital_id, closure_date)",tenant-scoped uniqueness
+daily_census_snapshots,Other,daily_census_snapshots_hospital_id_snapshot_date_key,UNIQUE,"UNIQUE (hospital_id, snapshot_date)",tenant-scoped uniqueness
+daily_census_snapshots,Other,daily_census_snapshots_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+data_erasure_requests,Other,data_erasure_requests_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+data_erasure_requests,Other,data_erasure_requests_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'in_review'::text, 'approved'::text, 'rejected'::text, 'completed'::text])))",status/type enumeration via CHECK
+day_care_procedures,Other,day_care_procedures_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+daycare_chairs,Other,daycare_chairs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+death_certificates,Other,death_certificates_hospital_mccd_form_number_key,UNIQUE,"UNIQUE (hospital_id, mccd_form_number)",tenant-scoped uniqueness
+death_certificates,Other,death_certificates_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+demand_forecasts,Other,demand_forecasts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+denial_logs,Other,denial_logs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+dental_charts,Dental,dental_charts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+dental_lab_orders,Dental,dental_lab_orders_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+dental_treatment_plans,Dental,dental_treatment_plans_billing_status_check,CHECK,"CHECK ((billing_status = ANY (ARRAY['unbilled'::text, 'billed'::text, 'waived'::text, 'included'::text])))",status/type enumeration via CHECK
+dental_treatment_plans,Dental,dental_treatment_plans_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+department_indents,Tenant,department_indents_hospital_indent_number_key,UNIQUE,"UNIQUE (hospital_id, indent_number)",tenant-scoped uniqueness
+department_indents,Tenant,department_indents_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+departments,Tenant,departments_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+depreciation_postings,Other,depreciation_postings_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+depreciation_postings,Other,depreciation_postings_unique,UNIQUE,"UNIQUE (hospital_id, asset_id, period)",tenant-scoped uniqueness
+dialysis_machines,IPD,dialysis_machines_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+dialysis_patients,IPD,dialysis_patients_hospital_id_patient_id_key,UNIQUE,"UNIQUE (hospital_id, patient_id)",tenant-scoped uniqueness
+dialysis_patients,IPD,dialysis_patients_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+dialysis_sessions,IPD,dialysis_sessions_billing_status_check,CHECK,"CHECK ((billing_status = ANY (ARRAY['unbilled'::text, 'billed'::text, 'waived'::text, 'included'::text])))",status/type enumeration via CHECK
+dialysis_sessions,IPD,dialysis_sessions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+dialyzer_reuse,Other,dialyzer_reuse_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+dicom_files,Radiology,dicom_files_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+diet_orders,Dietetics,diet_orders_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+diet_plans,Dietetics,diet_plans_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+dietitian_notes,Dietetics,dietitian_notes_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+disaster_drills,Emergency,disaster_drills_drill_type_check,CHECK,"CHECK ((drill_type = ANY (ARRAY['fire'::text, 'mass_casualty'::text, 'earthquake'::text, 'chemical'::text, 'flood'::text, 'epidemic'::text, 'code_pink'::text, 'code_black'::text])))",status/type enumeration via CHECK
+disaster_drills,Emergency,disaster_drills_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+disaster_drills,Emergency,disaster_drills_status_check,CHECK,"CHECK ((status = ANY (ARRAY['planned'::text, 'completed'::text, 'debrief_pending'::text])))",status/type enumeration via CHECK
+disciplinary_actions,Other,disciplinary_actions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+discount_approvals,Billing,discount_approvals_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+discount_approvals,Billing,discount_approvals_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text])))",status/type enumeration via CHECK
+discount_codes,Billing,discount_codes_code_key,UNIQUE,UNIQUE (code),none
+discount_codes,Billing,discount_codes_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+doctor_quick_picks,OPD,doctor_quick_picks_category_check,CHECK,"CHECK ((category = ANY (ARRAY['complaints'::text, 'exam_findings'::text, 'diagnoses'::text, 'rx_templates'::text, 'lab_templates'::text, 'radiology_templates'::text])))",none
+doctor_quick_picks,OPD,doctor_quick_picks_doctor_id_category_key,UNIQUE,"UNIQUE (doctor_id, category)",GLOBAL uniqueness on tenant table - verify intent
+doctor_quick_picks,OPD,doctor_quick_picks_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+doctor_schedules,OPD,doctor_schedules_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+doctor_schedules,OPD,doctor_schedules_unique,UNIQUE,"UNIQUE (hospital_id, doctor_id, day_of_week, session_start)",tenant-scoped uniqueness
+doctor_slots,OPD,doctor_slots_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+doctor_slots,OPD,doctor_slots_slot_type_check,CHECK,"CHECK ((slot_type = ANY (ARRAY['opd'::text, 'review'::text, 'procedure'::text, 'teleconsult'::text])))",status/type enumeration via CHECK
+donor_campaigns,Blood Bank,donor_campaigns_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+donor_campaigns,Blood Bank,donor_campaigns_status_check,CHECK,"CHECK ((status = ANY (ARRAY['running'::text, 'completed'::text, 'failed'::text, 'no_action'::text])))",status/type enumeration via CHECK
+donors,Blood Bank,donors_blood_group_check,CHECK,"CHECK ((blood_group = ANY (ARRAY['A'::text, 'B'::text, 'AB'::text, 'O'::text])))",none
+donors,Blood Bank,donors_gender_check,CHECK,"CHECK ((gender = ANY (ARRAY['male'::text, 'female'::text, 'other'::text])))",none
+donors,Blood Bank,donors_hbsag_status_check,CHECK,"CHECK ((hbsag_status = ANY (ARRAY['reactive'::text, 'non_reactive'::text, 'not_tested'::text])))",status/type enumeration via CHECK
+donors,Blood Bank,donors_hcv_status_check,CHECK,"CHECK ((hcv_status = ANY (ARRAY['reactive'::text, 'non_reactive'::text, 'not_tested'::text])))",status/type enumeration via CHECK
+donors,Blood Bank,donors_hiv_status_check,CHECK,"CHECK ((hiv_status = ANY (ARRAY['reactive'::text, 'non_reactive'::text, 'not_tested'::text])))",status/type enumeration via CHECK
+donors,Blood Bank,donors_hospital_donor_code_key,UNIQUE,"UNIQUE (hospital_id, donor_code)",tenant-scoped uniqueness
+donors,Blood Bank,donors_malaria_status_check,CHECK,"CHECK ((malaria_status = ANY (ARRAY['reactive'::text, 'non_reactive'::text, 'not_tested'::text])))",status/type enumeration via CHECK
+donors,Blood Bank,donors_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+donors,Blood Bank,donors_rh_factor_check,CHECK,"CHECK ((rh_factor = ANY (ARRAY['positive'::text, 'negative'::text])))",none
+donors,Blood Bank,donors_vdrl_status_check,CHECK,"CHECK ((vdrl_status = ANY (ARRAY['reactive'::text, 'non_reactive'::text, 'not_tested'::text])))",status/type enumeration via CHECK
+drug_allergy_cross_reactivity,Pharmacy,drug_allergy_cross_reactivity_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+drug_batches,Pharmacy,drug_batches_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+drug_batches,Pharmacy,drug_batches_sale_price_le_mrp,CHECK,CHECK ((sale_price <= mrp)),none
+drug_batches,Pharmacy,drug_batches_status_check,CHECK,"CHECK ((status = ANY (ARRAY['active'::text, 'quarantined'::text, 'destroyed'::text])))",status/type enumeration via CHECK
+drug_interactions,Pharmacy,drug_interactions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+drug_interactions,Pharmacy,drug_interactions_severity_check,CHECK,"CHECK ((severity = ANY (ARRAY['contraindicated'::text, 'major'::text, 'moderate'::text, 'minor'::text])))",none
+drug_master,Pharmacy,drug_master_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+drug_master,Pharmacy,drug_master_schedule_type_check,CHECK,"CHECK ((schedule_type = ANY (ARRAY['H'::text, 'H1'::text, 'X'::text, 'G'::text, 'OTC'::text, 'other'::text])))",status/type enumeration via CHECK
+dunning_attempts,Other,dunning_attempts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+dunning_attempts,Other,dunning_attempts_status_check,CHECK,"CHECK ((status = ANY (ARRAY['sent'::text, 'failed'::text])))",status/type enumeration via CHECK
+dunning_cadence_rules,Other,dunning_cadence_rules_channel_check,CHECK,"CHECK ((channel = ANY (ARRAY['email'::text, 'sms'::text, 'whatsapp'::text])))",none
+dunning_cadence_rules,Other,dunning_cadence_rules_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+duty_roster,HR,duty_roster_hospital_id_user_id_roster_date_key,UNIQUE,"UNIQUE (hospital_id, user_id, roster_date)",tenant-scoped uniqueness
+duty_roster,HR,duty_roster_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ed_charge_items,Emergency,ed_charge_items_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ed_handover_notes,Emergency,ed_handover_notes_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ed_medications,Emergency,ed_medications_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ed_visits,Emergency,ed_visits_billing_status_check,CHECK,"CHECK ((billing_status = ANY (ARRAY['unbilled'::text, 'billed'::text, 'waived'::text, 'included'::text])))",status/type enumeration via CHECK
+ed_visits,Emergency,ed_visits_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+electrical_safety_logs,Other,electrical_safety_logs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+email_notifications,Notifications,email_notifications_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+email_notifications,Notifications,email_notifications_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'sent'::text, 'failed'::text])))",status/type enumeration via CHECK
+embryo_bank,IVF/ART,embryo_bank_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+embryology_records,IVF/ART,embryology_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+emi_installments,Billing,emi_installments_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+emi_plans,Billing,emi_plans_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+emr_template_definitions,Other,emr_template_definitions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+enterprise_leads,Other,enterprise_leads_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+enterprise_leads,Other,enterprise_leads_status_check,CHECK,"CHECK ((status = ANY (ARRAY['new'::text, 'contacted'::text, 'demo_scheduled'::text, 'converted'::text, 'lost'::text])))",status/type enumeration via CHECK
+entitlement_fail_open_events,Platform,entitlement_fail_open_events_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+epidemic_protocols,Other,epidemic_protocols_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+epidemic_protocols,Other,epidemic_protocols_ppe_level_check,CHECK,"CHECK ((ppe_level = ANY (ARRAY['standard'::text, 'enhanced'::text, 'full'::text])))",none
+epidemic_protocols,Other,epidemic_protocols_triage_mode_check,CHECK,"CHECK ((triage_mode = ANY (ARRAY['standard'::text, 'mass_casualty'::text, 'epidemic'::text])))",none
+equipment_master,Inventory,equipment_master_hospital_id_equipment_code_key,UNIQUE,"UNIQUE (hospital_id, equipment_code)",tenant-scoped uniqueness
+equipment_master,Inventory,equipment_master_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+esg_monthly_metrics,Other,esg_monthly_metrics_hospital_id_month_year_key,UNIQUE,"UNIQUE (hospital_id, month_year)",tenant-scoped uniqueness
+esg_monthly_metrics,Other,esg_monthly_metrics_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+esi_beneficiaries,PM-JAY,esi_beneficiaries_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+esi_beneficiaries,PM-JAY,esi_beneficiaries_status_check,CHECK,"CHECK ((status = ANY (ARRAY['active'::text, 'expired'::text, 'suspended'::text])))",status/type enumeration via CHECK
+expense_records,Other,expense_records_expense_category_check,CHECK,"CHECK ((expense_category = ANY (ARRAY['salary'::text, 'rent'::text, 'electricity'::text, 'water'::text, 'telephone'::text, 'internet'::text, 'fuel'::text, 'vehicle'::text, 'maintenance'::text, 'repair'::text, 'housekeeping'::text, 'laundry'::text, 'catering'::text, 'insurance'::text, 'professional_fees'::text, 'marketing'::text, 'printing'::text, 'stationery'::text, 'bank_charges'::text, 'depreciation'::text, 'miscellaneous'::text, 'other'::text])))",none
+expense_records,Other,expense_records_payment_mode_check,CHECK,"CHECK ((payment_mode = ANY (ARRAY['cash'::text, 'bank_transfer'::text, 'cheque'::text, 'upi'::text, 'card'::text])))",none
+expense_records,Other,expense_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+external_lab_referrals,Other,external_lab_referrals_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+external_lab_referrals,Other,external_lab_referrals_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'sample_sent'::text, 'report_awaited'::text, 'completed'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+facility_assets,Tenant,facility_assets_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+facility_maintenance_logs,Tenant,facility_maintenance_logs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+facility_maintenance_logs,Tenant,facility_maintenance_logs_status_check,CHECK,"CHECK ((status = ANY (ARRAY['ok'::text, 'observation'::text, 'defect'::text])))",status/type enumeration via CHECK
+facility_maintenance_logs,Tenant,facility_maintenance_logs_type_check,CHECK,"CHECK ((type = ANY (ARRAY['preventive'::text, 'breakdown'::text, 'calibration'::text, 'safety_check'::text])))",status/type enumeration via CHECK
+fall_risk_assessments,Nursing,fall_risk_assessments_ambulatory_aid_check,CHECK,"CHECK ((ambulatory_aid = ANY (ARRAY[0, 15, 30])))",none
+fall_risk_assessments,Nursing,fall_risk_assessments_fall_history_check,CHECK,"CHECK ((fall_history = ANY (ARRAY[0, 25])))",none
+fall_risk_assessments,Nursing,fall_risk_assessments_gait_check,CHECK,"CHECK ((gait = ANY (ARRAY[0, 10, 20])))",none
+fall_risk_assessments,Nursing,fall_risk_assessments_iv_therapy_check,CHECK,"CHECK ((iv_therapy = ANY (ARRAY[0, 20])))",none
+fall_risk_assessments,Nursing,fall_risk_assessments_mental_status_check,CHECK,"CHECK ((mental_status = ANY (ARRAY[0, 15])))",status/type enumeration via CHECK
+fall_risk_assessments,Nursing,fall_risk_assessments_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+fall_risk_assessments,Nursing,fall_risk_assessments_secondary_diagnosis_check,CHECK,"CHECK ((secondary_diagnosis = ANY (ARRAY[0, 15])))",none
+fcm_tokens,Other,fcm_tokens_hospital_id_user_id_token_key,UNIQUE,"UNIQUE (hospital_id, user_id, token)",tenant-scoped uniqueness
+fcm_tokens,Other,fcm_tokens_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+fcm_tokens,Other,fcm_tokens_platform_check,CHECK,"CHECK ((platform = ANY (ARRAY['android'::text, 'ios'::text, 'web'::text])))",none
+feedback_records,Patient,feedback_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+fire_safety_drills,Other,fire_safety_drills_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+fixed_assets,Other,fixed_assets_category_check,CHECK,"CHECK ((category = ANY (ARRAY['medical_equipment'::text, 'furniture'::text, 'it_equipment'::text, 'vehicle'::text, 'building'::text, 'land'::text, 'other'::text])))",none
+fixed_assets,Other,fixed_assets_depreciation_method_check,CHECK,"CHECK ((depreciation_method = ANY (ARRAY['straight_line'::text, 'wdv'::text])))",none
+fixed_assets,Other,fixed_assets_hospital_id_asset_code_key,UNIQUE,"UNIQUE (hospital_id, asset_code)",tenant-scoped uniqueness
+fixed_assets,Other,fixed_assets_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+fixed_assets,Other,fixed_assets_status_check,CHECK,"CHECK ((status = ANY (ARRAY['active'::text, 'disposed'::text, 'under_maintenance'::text, 'fully_depreciated'::text])))",status/type enumeration via CHECK
+full_final_settlements,Other,full_final_settlements_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+govt_scheme_claims,PM-JAY,govt_scheme_claims_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+govt_scheme_claims,PM-JAY,govt_scheme_claims_scheme_type_check,CHECK,"CHECK ((scheme_type = ANY (ARRAY['CGHS'::text, 'ECHS'::text, 'ESI'::text, 'Arogyasri'::text, 'PMJAY'::text, 'RSBY'::text, 'state_scheme'::text])))",status/type enumeration via CHECK
+govt_scheme_claims,PM-JAY,govt_scheme_claims_status_check,CHECK,"CHECK ((status = ANY (ARRAY['draft'::text, 'submitted'::text, 'under_review'::text, 'approved'::text, 'rejected'::text, 'partially_approved'::text, 'settled'::text])))",status/type enumeration via CHECK
+govt_schemes,PM-JAY,govt_schemes_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+grievances,HR,grievances_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+grn_ai_log,AI,grn_ai_log_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+grn_items,Procurement,grn_items_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+grn_records,Procurement,grn_records_hospital_grn_number_key,UNIQUE,"UNIQUE (hospital_id, grn_number)",tenant-scoped uniqueness
+grn_records,Procurement,grn_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+guideline_adherence_log,Other,guideline_adherence_log_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hand_hygiene_audits,Infection Control,hand_hygiene_audits_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hcx_submissions,Other,hcx_submissions_direction_check,CHECK,"CHECK ((direction = ANY (ARRAY['outbound'::text, 'inbound'::text])))",none
+hcx_submissions,Other,hcx_submissions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+health_coach_sessions,Other,health_coach_sessions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+health_coach_sessions,Other,health_coach_sessions_role_check,CHECK,"CHECK ((role = ANY (ARRAY['user'::text, 'assistant'::text])))",none
+health_packages,Other,health_packages_hospital_code_key,UNIQUE,"UNIQUE (hospital_id, package_code)",tenant-scoped uniqueness
+health_packages,Other,health_packages_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hep_plans,Other,hep_plans_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+high_alert_double_checks,Other,high_alert_double_checks_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hmis_reports,Integration,hmis_reports_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hmis_reports,Integration,uq_hmis_report,UNIQUE,"UNIQUE NULLS NOT DISTINCT (hospital_id, report_type, period_year, period_month, period_week)",tenant-scoped uniqueness
+home_care_plans,Other,home_care_plans_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+home_care_plans,Other,home_care_plans_plan_type_check,CHECK,"CHECK ((plan_type = ANY (ARRAY['post_discharge'::text, 'chronic_care'::text, 'palliative'::text])))",status/type enumeration via CHECK
+home_care_plans,Other,home_care_plans_status_check,CHECK,"CHECK ((status = ANY (ARRAY['active'::text, 'completed'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+home_care_visits,Other,home_care_visits_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+home_care_visits,Other,home_care_visits_status_check,CHECK,"CHECK ((status = ANY (ARRAY['scheduled'::text, 'completed'::text, 'missed'::text, 'rescheduled'::text])))",status/type enumeration via CHECK
+home_care_visits,Other,home_care_visits_wound_condition_check,CHECK,"CHECK ((wound_condition = ANY (ARRAY['healing'::text, 'static'::text, 'deteriorating'::text, 'na'::text])))",none
+home_tele_monitoring,Other,home_tele_monitoring_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+home_tele_monitoring,Other,home_tele_monitoring_source_check,CHECK,"CHECK ((source = ANY (ARRAY['patient_entry'::text, 'nurse_entry'::text, 'device'::text])))",none
+hospital_abdm_config,Tenant,hospital_abdm_config_hospital_id_key,UNIQUE,UNIQUE (hospital_id),tenant-scoped uniqueness
+hospital_abdm_config,Tenant,hospital_abdm_config_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hospital_addons,Tenant,hospital_addons_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hospital_addons,Tenant,hospital_addons_source_check,CHECK,"CHECK ((source = ANY (ARRAY['admin'::text, 'self_service'::text])))",none
+hospital_addons,Tenant,hospital_addons_status_check,CHECK,"CHECK ((status = ANY (ARRAY['active'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+hospital_ai_wallet,AI,hospital_ai_wallet_pkey,PRIMARY KEY,PRIMARY KEY (hospital_id),none
+hospital_chains,Tenant,hospital_chains_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hospital_chains,Tenant,hospital_chains_slug_key,UNIQUE,UNIQUE (slug),none
+hospital_committees,Tenant,hospital_committees_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hospital_config_values,Tenant,hospital_config_values_hospital_id_category_value_key,UNIQUE,"UNIQUE (hospital_id, category, value)",tenant-scoped uniqueness
+hospital_config_values,Tenant,hospital_config_values_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hospital_feature_overrides,Tenant,hospital_feature_overrides_hospital_id_module_key_key,UNIQUE,"UNIQUE (hospital_id, module_key)",tenant-scoped uniqueness
+hospital_feature_overrides,Tenant,hospital_feature_overrides_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hospital_icd_settings,Tenant,hospital_icd_settings_hospital_id_key,UNIQUE,UNIQUE (hospital_id),tenant-scoped uniqueness
+hospital_icd_settings,Tenant,hospital_icd_settings_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hospital_insurance_settings,Tenant,his_alert_channel_chk,CHECK,"CHECK ((sla_alert_channel = ANY (ARRAY['in_app'::text, 'whatsapp'::text, 'email'::text, 'sms'::text])))",none
+hospital_insurance_settings,Tenant,his_plan_tier_chk,CHECK,"CHECK ((plan_tier = ANY (ARRAY['manual'::text, 'ai_assisted'::text, 'automated'::text])))",none
+hospital_insurance_settings,Tenant,hospital_insurance_settings_hospital_id_key,UNIQUE,UNIQUE (hospital_id),tenant-scoped uniqueness
+hospital_insurance_settings,Tenant,hospital_insurance_settings_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hospital_module_entitlements,Tenant,hospital_module_entitlements_hospital_id_module_key_key,UNIQUE,"UNIQUE (hospital_id, module_key)",tenant-scoped uniqueness
+hospital_module_entitlements,Tenant,hospital_module_entitlements_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hospital_packages,Tenant,hospital_packages_care_type_check,CHECK,"CHECK ((care_type = ANY (ARRAY['inpatient'::text, 'day_care'::text])))",status/type enumeration via CHECK
+hospital_packages,Tenant,hospital_packages_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hospital_pacs_config,Tenant,hospital_pacs_config_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hospital_pricing_overrides,Tenant,hospital_pricing_overrides_hospital_id_key,UNIQUE,UNIQUE (hospital_id),tenant-scoped uniqueness
+hospital_pricing_overrides,Tenant,hospital_pricing_overrides_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hospital_sequences,Tenant,hospital_sequences_pkey,PRIMARY KEY,"PRIMARY KEY (hospital_id, seq_type)",none
+hospital_settings,Tenant,hospital_settings_hospital_id_key_key,UNIQUE,"UNIQUE (hospital_id, key)",tenant-scoped uniqueness
+hospital_settings,Tenant,hospital_settings_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hospital_signup_consents,Tenant,hospital_signup_consents_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hospital_subscriptions,Tenant,hospital_subscriptions_billing_cycle_check,CHECK,"CHECK ((billing_cycle = ANY (ARRAY['monthly'::text, 'yearly'::text])))",none
+hospital_subscriptions,Tenant,hospital_subscriptions_conv_start_mode_check,CHECK,"CHECK ((conversion_period_start_mode = ANY (ARRAY['conversion_date'::text, 'trial_end'::text])))",none
+hospital_subscriptions,Tenant,hospital_subscriptions_hospital_id_key,UNIQUE,UNIQUE (hospital_id),tenant-scoped uniqueness
+hospital_subscriptions,Tenant,hospital_subscriptions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hospital_subscriptions,Tenant,hospital_subscriptions_status_check,CHECK,"CHECK ((status = ANY (ARRAY['trial'::text, 'active'::text, 'past_due'::text, 'suspended'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+hospitals,Tenant,hospitals_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+hospitals,Tenant,hospitals_room_billing_mode_check,CHECK,"CHECK ((room_billing_mode = ANY (ARRAY['calendar_day'::text, 'prorata_hourly'::text])))",none
+hospitals,Tenant,hospitals_subdomain_key,UNIQUE,UNIQUE (subdomain),none
+housekeeping_tasks,Housekeeping,housekeeping_tasks_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+icd10_code_sets,Other,icd10_code_sets_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+icd10_codes,Other,icd10_codes_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+icd_codings,Other,icd_codings_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+icu_daily_goals,ICU,icu_daily_goals_hospital_id_admission_id_goal_date_key,UNIQUE,"UNIQUE (hospital_id, admission_id, goal_date)",tenant-scoped uniqueness
+icu_daily_goals,ICU,icu_daily_goals_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+icu_flowsheet_entries,ICU,icu_flowsheet_entries_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+idsp_alerts,Public Health,idsp_alerts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+idsp_submissions,Public Health,idsp_submissions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+idsp_submissions,Public Health,idsp_submissions_status_check,CHECK,"CHECK ((status = ANY (ARRAY['submitted'::text, 'acknowledged'::text, 'failed'::text])))",status/type enumeration via CHECK
+inbox_messages,Other,inbox_messages_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+incident_reports,Quality/NABH,incident_reports_hospital_incident_number_key,UNIQUE,"UNIQUE (hospital_id, incident_number)",tenant-scoped uniqueness
+incident_reports,Quality/NABH,incident_reports_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+indent_items,Procurement,indent_items_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+instrument_sets,OT,instrument_sets_hospital_set_code_key,UNIQUE,"UNIQUE (hospital_id, set_code)",tenant-scoped uniqueness
+instrument_sets,OT,instrument_sets_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+instrument_sets,OT,instrument_sets_status_check,CHECK,"CHECK ((status = ANY (ARRAY['dirty'::text, 'processing'::text, 'sterile'::text, 'in_use'::text, 'quarantine'::text])))",status/type enumeration via CHECK
+instruments,OT,instruments_category_check,CHECK,"CHECK ((category = ANY (ARRAY['surgical'::text, 'endoscope'::text, 'implant'::text, 'electrical'::text, 'container'::text, 'other'::text])))",none
+instruments,OT,instruments_hospital_barcode_key,UNIQUE,"UNIQUE (hospital_id, barcode)",tenant-scoped uniqueness
+instruments,OT,instruments_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+instruments,OT,instruments_status_check,CHECK,"CHECK ((status = ANY (ARRAY['dirty'::text, 'decontamination'::text, 'inspection'::text, 'packaging'::text, 'in_sterilizer'::text, 'sterile'::text, 'in_use'::text, 'quarantine'::text, 'condemned'::text])))",status/type enumeration via CHECK
+insurance_automation_config,Insurance,insurance_automation_config_hospital_id_key,UNIQUE,UNIQUE (hospital_id),tenant-scoped uniqueness
+insurance_automation_config,Insurance,insurance_automation_config_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+insurance_automation_log,Insurance,insurance_automation_log_event_type_check,CHECK,"CHECK ((event_type = ANY (ARRAY['intimation_auto_sent'::text, 'pre_auth_ai_generated'::text, 'pre_auth_auto_submitted'::text, 'denial_risk_checked'::text, 'claim_auto_bundled'::text, 'claim_auto_submitted'::text, 'appeal_auto_generated'::text, 'deadline_alert_sent'::text, 'tpa_name_auto_matched'::text, 'manual_override'::text, 'auto_skipped_high_risk'::text, 'query_ai_reply_suggested'::text, 'pre_auth_expiry_alert'::text, 'irdai_deadline_alert'::text, 'intimation_deadline_alert'::text])))",status/type enumeration via CHECK
+insurance_automation_log,Insurance,insurance_automation_log_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+insurance_automation_log,Insurance,insurance_automation_log_status_check,CHECK,"CHECK ((status = ANY (ARRAY['success'::text, 'failed'::text, 'skipped'::text, 'pending_review'::text])))",status/type enumeration via CHECK
+insurance_claims,Insurance,insurance_claims_appeal_status_chk,CHECK,"CHECK ((appeal_status = ANY (ARRAY['draft'::text, 'submitted'::text, 'upheld'::text, 'reversed'::text])))",status/type enumeration via CHECK
+insurance_claims,Insurance,insurance_claims_hcx_status_check,CHECK,"CHECK ((hcx_status = ANY (ARRAY['submitted'::text, 'acknowledged'::text, 'processing'::text, 'approved'::text, 'rejected'::text, 'error'::text])))",status/type enumeration via CHECK
+insurance_claims,Insurance,insurance_claims_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+insurance_claims,Insurance,insurance_claims_rejection_code_chk,CHECK,"CHECK ((rejection_code = ANY (ARRAY['not_medically_necessary'::text, 'policy_exclusion'::text, 'pre_auth_not_obtained'::text, 'incorrect_icd_code'::text, 'document_deficiency'::text, 'duplicate_claim'::text, 'other'::text])))",none
+insurance_claims,Insurance,insurance_claims_submission_mode_chk,CHECK,"CHECK ((submission_mode = ANY (ARRAY['manual'::text, 'ai_assisted'::text, 'automated'::text])))",none
+insurance_enhancement_requests,Insurance,insurance_enhancement_requests_check,CHECK,CHECK ((new_requested_total = (current_approved_amount + additional_amount_requested))),none
+insurance_enhancement_requests,Insurance,insurance_enhancement_requests_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+insurance_enhancement_requests,Insurance,insurance_enhancement_requests_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text, 'withdrawn'::text])))",status/type enumeration via CHECK
+insurance_intimations,Insurance,insurance_intimations_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+insurance_intimations,Insurance,insurance_intimations_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'sent'::text, 'failed'::text, 'acknowledged'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+insurance_payment_reconciliation,Insurance,insurance_payment_reconciliation_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+insurance_pre_auth,Insurance,insurance_pre_auth_automation_mode_check,CHECK,"CHECK ((automation_mode = ANY (ARRAY['auto'::text, 'manual'::text, 'disabled'::text])))",none
+insurance_pre_auth,Insurance,insurance_pre_auth_care_type_check,CHECK,"CHECK ((care_type = ANY (ARRAY['inpatient'::text, 'day_care'::text])))",status/type enumeration via CHECK
+insurance_pre_auth,Insurance,insurance_pre_auth_hcx_status_check,CHECK,"CHECK ((hcx_status = ANY (ARRAY['submitted'::text, 'acknowledged'::text, 'processing'::text, 'approved'::text, 'rejected'::text, 'error'::text])))",status/type enumeration via CHECK
+insurance_pre_auth,Insurance,insurance_pre_auth_intimation_method_check,CHECK,"CHECK ((intimation_method = ANY (ARRAY['phone'::text, 'email'::text, 'portal'::text, 'walk-in'::text, 'auto_system'::text])))",none
+insurance_pre_auth,Insurance,insurance_pre_auth_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+insurance_pre_auth,Insurance,insurance_pre_auth_submission_mode_chk,CHECK,"CHECK ((submission_mode = ANY (ARRAY['manual'::text, 'ai_assisted'::text, 'automated'::text])))",none
+insurance_sla_log,Insurance,insurance_sla_log_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+insurance_sla_log,Insurance,insurance_sla_log_ref_type_chk,CHECK,"CHECK ((reference_type = ANY (ARRAY['pre_auth'::text, 'claim'::text, 'discharge'::text])))",status/type enumeration via CHECK
+inventory_anomalies,Inventory,inventory_anomalies_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+inventory_anomalies,Inventory,inventory_anomalies_status_check,CHECK,"CHECK ((status = ANY (ARRAY['open'::text, 'reviewed'::text, 'dismissed'::text])))",status/type enumeration via CHECK
+inventory_items,Inventory,inventory_items_itc_eligibility_check,CHECK,"CHECK ((itc_eligibility = ANY (ARRAY['eligible'::text, 'blocked'::text, 'proportionate'::text])))",none
+inventory_items,Inventory,inventory_items_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+inventory_stock,Inventory,inventory_stock_hospital_id_item_id_batch_number_key,UNIQUE,"UNIQUE (hospital_id, item_id, batch_number)",tenant-scoped uniqueness
+inventory_stock,Inventory,inventory_stock_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+io_balance_records,Other,io_balance_records_category_check,CHECK,"CHECK ((category = ANY (ARRAY['intake'::text, 'output'::text])))",none
+io_balance_records,Other,io_balance_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+io_balance_records,Other,io_balance_records_volume_ml_check,CHECK,CHECK ((volume_ml >= 0)),none
+ipc_bundle_checklists,Other,ipc_bundle_checklists_bundle_type_check,CHECK,"CHECK ((bundle_type = ANY (ARRAY['insert'::text, 'maintenance'::text, 'removal'::text])))",status/type enumeration via CHECK
+ipc_bundle_checklists,Other,ipc_bundle_checklists_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ipc_device_usage,Other,ipc_device_usage_device_type_check,CHECK,"CHECK ((device_type = ANY (ARRAY['central_line'::text, 'peripheral_line'::text, 'urinary_catheter'::text, 'ventilator'::text, 'tracheostomy'::text, 'others'::text])))",status/type enumeration via CHECK
+ipc_device_usage,Other,ipc_device_usage_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ipc_device_usage,Other,ipc_device_usage_removal_after_insertion,CHECK,CHECK (((device_removed_at IS NULL) OR (device_removed_at >= device_inserted_at))) NOT VALID,none
+ipc_infection_events,Other,ipc_infection_events_infection_type_check,CHECK,"CHECK ((infection_type = ANY (ARRAY['CLABSI'::text, 'CAUTI'::text, 'VAP'::text, 'SSI'::text, 'BSI'::text, 'CDI'::text, 'MDRO'::text, 'other'::text])))",status/type enumeration via CHECK
+ipc_infection_events,Other,ipc_infection_events_outcome_check,CHECK,"CHECK ((outcome = ANY (ARRAY['recovered'::text, 'transferred'::text, 'expired'::text, 'ongoing'::text, 'unknown'::text])))",none
+ipc_infection_events,Other,ipc_infection_events_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ipd_advances,IPD,ipd_advances_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ipd_advances,IPD,ipd_advances_transaction_type_check,CHECK,"CHECK ((transaction_type = ANY (ARRAY['deposit'::text, 'refund'::text, 'service_debit'::text, 'adjustment'::text])))",status/type enumeration via CHECK
+ipd_medications,IPD,ipd_medications_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ipd_nursing_notes,IPD,ipd_nursing_notes_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ipd_vitals,IPD,ipd_vitals_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+item_consumption_daily,Inventory,item_consumption_daily_pkey,PRIMARY KEY,"PRIMARY KEY (hospital_id, item_id, consumption_date)",none
+iv_fluids,Other,iv_fluids_fluid_type_check,CHECK,"CHECK ((fluid_type = ANY (ARRAY['maintenance'::text, 'replacement'::text, 'medication'::text, 'blood_product'::text, 'tpn'::text])))",status/type enumeration via CHECK
+iv_fluids,Other,iv_fluids_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+iv_fluids,Other,iv_fluids_status_check,CHECK,"CHECK ((status = ANY (ARRAY['running'::text, 'completed'::text, 'on_hold'::text, 'discontinued'::text])))",status/type enumeration via CHECK
+ivf_cycles,IVF/ART,ivf_cycles_billing_status_check,CHECK,"CHECK ((billing_status = ANY (ARRAY['unbilled'::text, 'billed'::text, 'waived'::text, 'included'::text])))",status/type enumeration via CHECK
+ivf_cycles,IVF/ART,ivf_cycles_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+jci_evidence_items,Other,jci_evidence_items_hospital_id_standard_code_key,UNIQUE,"UNIQUE (hospital_id, standard_code)",tenant-scoped uniqueness
+jci_evidence_items,Other,jci_evidence_items_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+jci_evidence_items,Other,jci_evidence_items_score_check,CHECK,CHECK (((score >= 0) AND (score <= 10))),none
+jci_evidence_items,Other,jci_evidence_items_status_check,CHECK,"CHECK ((status = ANY (ARRAY['not_started'::text, 'in_progress'::text, 'compliant'::text, 'non_compliant'::text, 'not_applicable'::text])))",status/type enumeration via CHECK
+job_applicants,Other,job_applicants_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+job_openings,Other,job_openings_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+journal_entries,Billing,journal_entries_entry_type_check,CHECK,"CHECK (((entry_type = ANY (ARRAY['manual'::text, 'opening_balance'::text, 'adjustment'::text, 'reversal'::text])) OR (entry_type ~~ 'auto_%'::text)))",status/type enumeration via CHECK
+journal_entries,Billing,journal_entries_hospital_entry_number_key,UNIQUE,"UNIQUE (hospital_id, entry_number)",tenant-scoped uniqueness
+journal_entries,Billing,journal_entries_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+journal_line_items,Billing,journal_line_items_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+lab_analyzer_messages,Laboratory,lab_analyzer_messages_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+lab_analyzer_test_mappings,Laboratory,lab_analyzer_test_mappings_device_id_analyzer_code_key,UNIQUE,"UNIQUE (device_id, analyzer_code)",GLOBAL uniqueness on tenant table - verify intent
+lab_analyzer_test_mappings,Laboratory,lab_analyzer_test_mappings_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+lab_calibration_records,Laboratory,lab_calibration_records_pass_fail_check,CHECK,"CHECK ((pass_fail = ANY (ARRAY['pass'::text, 'fail'::text, 'acceptable'::text])))",none
+lab_calibration_records,Laboratory,lab_calibration_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+lab_device_connectors,Laboratory,lab_device_connectors_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+lab_dual_validation_config,Laboratory,lab_dual_validation_config_hospital_id_test_category_key,UNIQUE,"UNIQUE (hospital_id, test_category)",tenant-scoped uniqueness
+lab_dual_validation_config,Laboratory,lab_dual_validation_config_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+lab_order_items,Laboratory,lab_order_items_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+lab_order_items,Laboratory,lab_order_items_verification_method_check,CHECK,"CHECK ((verification_method = ANY (ARRAY['manual'::text, 'auto'::text])))",none
+lab_orders,Laboratory,lab_orders_billing_status_check,CHECK,"CHECK ((billing_status = ANY (ARRAY['unbilled'::text, 'billed'::text, 'waived'::text])))",status/type enumeration via CHECK
+lab_orders,Laboratory,lab_orders_payment_status_check,CHECK,"CHECK ((payment_status = ANY (ARRAY['pending_payment'::text, 'paid'::text, 'advance_covered'::text, 'waived'::text, 'insurance_auth'::text])))",status/type enumeration via CHECK
+lab_orders,Laboratory,lab_orders_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+lab_orders,Laboratory,lab_orders_priority_check,CHECK,"CHECK ((priority = ANY (ARRAY['routine'::text, 'urgent'::text, 'stat'::text])))",none
+lab_orders,Laboratory,lab_orders_status_check,CHECK,"CHECK ((status = ANY (ARRAY['ordered'::text, 'sample_collected'::text, 'in_process'::text, 'partial_results'::text, 'result_entered'::text, 'pending_validation'::text, 'completed'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+lab_qc_entries,Laboratory,lab_qc_entries_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+lab_results,Laboratory,lab_results_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+lab_results,Laboratory,lab_results_report_status_check,CHECK,"CHECK ((report_status = ANY (ARRAY['preliminary'::text, 'final'::text])))",status/type enumeration via CHECK
+lab_samples,Laboratory,lab_samples_hospital_barcode_key,UNIQUE,"UNIQUE (hospital_id, barcode)",tenant-scoped uniqueness
+lab_samples,Laboratory,lab_samples_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+lab_samples,Laboratory,lab_samples_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'collected'::text, 'received'::text, 'processing'::text, 'rejected'::text, 'completed'::text])))",status/type enumeration via CHECK
+lab_test_group_items,Laboratory,lab_test_group_items_group_id_test_id_key,UNIQUE,"UNIQUE (group_id, test_id)",none
+lab_test_group_items,Laboratory,lab_test_group_items_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+lab_test_groups,Laboratory,lab_test_groups_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+lab_test_master,Laboratory,lab_test_master_hospital_id_test_name_key,UNIQUE,"UNIQUE (hospital_id, test_name)",tenant-scoped uniqueness
+lab_test_master,Laboratory,lab_test_master_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+leakage_reports,Other,leakage_reports_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+leakage_reports,Other,leakage_reports_unique,UNIQUE,"UNIQUE (hospital_id, report_date)",tenant-scoped uniqueness
+leave_balance,HR,leave_balance_hospital_id_user_id_year_key,UNIQUE,"UNIQUE (hospital_id, user_id, year)",tenant-scoped uniqueness
+leave_balance,HR,leave_balance_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+leave_requests,HR,leave_requests_leave_type_check,CHECK,"CHECK ((leave_type = ANY (ARRAY['casual'::text, 'sick'::text, 'earned'::text, 'maternity'::text, 'paternity'::text, 'compensatory'::text, 'unpaid'::text, 'study'::text, 'emergency'::text])))",status/type enumeration via CHECK
+leave_requests,HR,leave_requests_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+leave_requests,HR,leave_requests_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+lifecycle_nudge_actions,Other,lifecycle_nudge_actions_nudge_type_check,CHECK,"CHECK ((nudge_type = ANY (ARRAY['activation_nudge'::text, 'trial_reengagement'::text, 'win_back'::text])))",status/type enumeration via CHECK
+lifecycle_nudge_actions,Other,lifecycle_nudge_actions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+lifecycle_nudge_actions,Other,lifecycle_nudge_actions_status_check,CHECK,"CHECK ((status = ANY (ARRAY['sent'::text, 'failed'::text, 'skipped_no_admin_email'::text])))",status/type enumeration via CHECK
+linen_records,Housekeeping,linen_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+lms_certificates,LMS,lms_certificates_hospital_certificate_number_key,UNIQUE,"UNIQUE (hospital_id, certificate_number)",tenant-scoped uniqueness
+lms_certificates,LMS,lms_certificates_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+lms_courses,LMS,lms_courses_hospital_course_code_key,UNIQUE,"UNIQUE (hospital_id, course_code)",tenant-scoped uniqueness
+lms_courses,LMS,lms_courses_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+lms_enrollments,LMS,lms_enrollments_hospital_id_user_id_course_id_key,UNIQUE,"UNIQUE (hospital_id, user_id, course_id)",tenant-scoped uniqueness
+lms_enrollments,LMS,lms_enrollments_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+lms_quiz_attempts,LMS,lms_quiz_attempts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+lms_quiz_questions,LMS,lms_quiz_questions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+mar_double_checks,Other,mar_double_checks_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+mar_records,Other,mar_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+marketing_campaigns,Other,marketing_campaigns_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+mccd_certificates,Other,mccd_certificates_hospital_mccd_number_key,UNIQUE,"UNIQUE (hospital_id, mccd_number)",tenant-scoped uniqueness
+mccd_certificates,Other,mccd_certificates_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+mci_events,Emergency,mci_events_incident_type_check,CHECK,"CHECK ((incident_type = ANY (ARRAY['natural_disaster'::text, 'mass_casualty'::text, 'fire'::text, 'chemical'::text, 'biological'::text, 'radiological'::text, 'infrastructure'::text, 'other'::text])))",status/type enumeration via CHECK
+mci_events,Emergency,mci_events_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+mci_events,Emergency,mci_events_status_check,CHECK,"CHECK ((status = ANY (ARRAY['active'::text, 'standby'::text, 'deactivated'::text])))",status/type enumeration via CHECK
+mci_triage_patients,Emergency,mci_triage_patients_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+mci_triage_patients,Emergency,mci_triage_patients_triage_tag_check,CHECK,"CHECK ((triage_tag = ANY (ARRAY['P1_immediate'::text, 'P2_delayed'::text, 'P3_minor'::text, 'P4_expectant'::text, 'dead'::text])))",none
+meal_deliveries,Dietetics,meal_deliveries_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+med_admin_records,Other,med_admin_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+med_admin_records,Other,med_admin_records_route_check,CHECK,"CHECK ((route = ANY (ARRAY['oral'::text, 'iv'::text, 'im'::text, 'sc'::text, 'topical'::text, 'inhalation'::text, 'rectal'::text, 'other'::text])))",none
+med_admin_records,Other,med_admin_records_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'given'::text, 'omitted'::text, 'held'::text, 'refused'::text])))",status/type enumeration via CHECK
+med_reconciliation_events,Other,med_reconciliation_events_admission_id_event_type_key,UNIQUE,"UNIQUE (admission_id, event_type)",GLOBAL uniqueness on tenant table - verify intent
+med_reconciliation_events,Other,med_reconciliation_events_event_type_check,CHECK,"CHECK ((event_type = ANY (ARRAY['admission'::text, 'transfer'::text, 'discharge'::text])))",status/type enumeration via CHECK
+med_reconciliation_events,Other,med_reconciliation_events_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+medical_gas_logs,Other,medical_gas_logs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+medical_records,Other,medical_records_hospital_barcode_key,UNIQUE,"UNIQUE (hospital_id, barcode)",tenant-scoped uniqueness
+medical_records,Other,medical_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+medication_adherence,Other,medication_adherence_adherence_status_check,CHECK,"CHECK ((adherence_status = ANY (ARRAY['taken'::text, 'missed'::text, 'unknown'::text])))",status/type enumeration via CHECK
+medication_adherence,Other,medication_adherence_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+mental_health_encounters,Other,mental_health_encounters_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+mental_health_encounters,Other,mental_health_encounters_risk_level_check,CHECK,"CHECK ((risk_level = ANY (ARRAY['low'::text, 'moderate'::text, 'high'::text, 'crisis'::text])))",none
+mental_health_encounters,Other,mental_health_encounters_status_check,CHECK,"CHECK ((status = ANY (ARRAY['active'::text, 'completed'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+metrics_registry,Reporting,metrics_registry_metric_key_key,UNIQUE,UNIQUE (metric_key),none
+metrics_registry,Reporting,metrics_registry_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+migration_jobs,Other,migration_jobs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+migration_logs,Other,migration_logs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+mlc_cases,Other,mlc_cases_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+mlc_records,Other,mlc_records_hospital_mlc_number_key,UNIQUE,"UNIQUE (hospital_id, mlc_number)",tenant-scoped uniqueness
+mlc_records,Other,mlc_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+mortuary_admissions,Emergency,mortuary_admissions_hospital_body_number_key,UNIQUE,"UNIQUE (hospital_id, body_number)",tenant-scoped uniqueness
+mortuary_admissions,Emergency,mortuary_admissions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+mrr_snapshots,Platform,mrr_snapshots_hospital_id_snapshot_month_key,UNIQUE,"UNIQUE (hospital_id, snapshot_month)",tenant-scoped uniqueness
+mrr_snapshots,Platform,mrr_snapshots_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+nabh_chapter_names,Quality/NABH,nabh_chapter_names_pkey,PRIMARY KEY,PRIMARY KEY (chapter_code),none
+nabh_criteria,Quality/NABH,nabh_criteria_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+nabh_evidence_items,Quality/NABH,nabh_evidence_items_evidence_type_check,CHECK,"CHECK ((evidence_type = ANY (ARRAY['Policy'::text, 'SOP'::text, 'Form'::text, 'Record'::text, 'Report'::text, 'Screenshot'::text, 'Training'::text, 'Audit'::text, 'Committee Minutes'::text, 'Other'::text])))",status/type enumeration via CHECK
+nabh_evidence_items,Quality/NABH,nabh_evidence_items_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+nabh_evidence_log,Quality/NABH,nabh_evidence_log_compliance_status_check,CHECK,"CHECK ((compliance_status = ANY (ARRAY['compliant'::text, 'partially_compliant'::text, 'non_compliant'::text, 'not_applicable'::text, 'not_assessed'::text])))",status/type enumeration via CHECK
+nabh_evidence_log,Quality/NABH,nabh_evidence_log_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+nabh_evidence_log,Quality/NABH,nabh_evidence_log_source_check,CHECK,"CHECK ((source = ANY (ARRAY['module_event'::text, 'auto_collector'::text, 'manual'::text])))",none
+nabh_hospital_compliance,Quality/NABH,nabh_hospital_compliance_applicability_check,CHECK,"CHECK ((applicability = ANY (ARRAY['Applicable'::text, 'Not Applicable'::text])))",none
+nabh_hospital_compliance,Quality/NABH,nabh_hospital_compliance_assessor_score_check,CHECK,CHECK (((assessor_score IS NULL) OR ((assessor_score >= (0)::numeric) AND (assessor_score <= (5)::numeric)))),none
+nabh_hospital_compliance,Quality/NABH,nabh_hospital_compliance_hospital_id_nabh_standard_id_key,UNIQUE,"UNIQUE (hospital_id, nabh_standard_id)",tenant-scoped uniqueness
+nabh_hospital_compliance,Quality/NABH,nabh_hospital_compliance_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+nabh_hospital_compliance,Quality/NABH,nabh_hospital_compliance_risk_level_check,CHECK,"CHECK ((risk_level = ANY (ARRAY['Low'::text, 'Medium'::text, 'High'::text, 'Critical'::text])))",none
+nabh_hospital_compliance,Quality/NABH,nabh_hospital_compliance_status_check,CHECK,"CHECK ((status = ANY (ARRAY['Not Started'::text, 'In Progress'::text, 'Compliant'::text, 'Non-Compliant'::text, 'Partially Compliant'::text])))",status/type enumeration via CHECK
+nabh_standards,Quality/NABH,nabh_standards_level_check,CHECK,"CHECK ((level = ANY (ARRAY['Core'::text, 'Commitment'::text, 'Achievement'::text, 'Excellence'::text])))",none
+nabh_standards,Quality/NABH,nabh_standards_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+nabh_standards,Quality/NABH,nabh_standards_standard_code_objective_element_code_key,UNIQUE,"UNIQUE (standard_code, objective_element_code)",none
+ndps_pending_dispenses,Pharmacy,ndps_pending_dispenses_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ndps_pending_dispenses,Pharmacy,ndps_pending_dispenses_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text])))",status/type enumeration via CHECK
+ndps_register,Pharmacy,ndps_different_pharmacists,CHECK,CHECK (((countersigned_by IS NULL) OR (countersigned_by <> pharmacist_id))),none
+ndps_register,Pharmacy,ndps_register_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+neonatal_records,Other,neonatal_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+no_show_predictions,Other,no_show_predictions_outcome_check,CHECK,"CHECK ((outcome = ANY (ARRAY['attended'::text, 'no_show'::text])))",none
+no_show_predictions,Other,no_show_predictions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+no_show_predictions,Other,no_show_predictions_risk_level_check,CHECK,"CHECK ((risk_level = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text])))",none
+no_show_predictions,Other,no_show_predictions_risk_score_check,CHECK,CHECK (((risk_score >= 0) AND (risk_score <= 100))),none
+notification_log,Notifications,notification_log_channel_check,CHECK,"CHECK ((channel = ANY (ARRAY['whatsapp'::text, 'sms'::text, 'email'::text, 'push'::text, 'in_app'::text])))",none
+notification_log,Notifications,notification_log_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+notification_log,Notifications,notification_log_status_check,CHECK,"CHECK ((status = ANY (ARRAY['sent'::text, 'delivered'::text, 'failed'::text, 'pending'::text])))",status/type enumeration via CHECK
+notification_preferences,Notifications,notification_preferences_hospital_id_patient_id_key,UNIQUE,"UNIQUE (hospital_id, patient_id)",tenant-scoped uniqueness
+notification_preferences,Notifications,notification_preferences_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+notification_queue,Notifications,notification_queue_channel_check,CHECK,"CHECK ((channel = ANY (ARRAY['sms'::text, 'email'::text, 'whatsapp'::text, 'push'::text])))",none
+notification_queue,Notifications,notification_queue_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+notification_queue,Notifications,notification_queue_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'sent'::text, 'failed'::text, 'dead'::text])))",status/type enumeration via CHECK
+nps_responses,Other,nps_responses_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+nps_responses,Other,nps_responses_score_check,CHECK,CHECK (((score >= 0) AND (score <= 10))),none
+nps_surveys,Other,nps_surveys_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+nps_surveys,Other,nps_surveys_status_check,CHECK,"CHECK ((status = ANY (ARRAY['sent'::text, 'responded'::text, 'bounced'::text])))",status/type enumeration via CHECK
+nps_surveys,Other,nps_surveys_trigger_day_check,CHECK,"CHECK ((trigger_day = ANY (ARRAY[30, 90, 180])))",none
+nursing_care_plans,Nursing,nursing_care_plans_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+nursing_fluid_outputs,Nursing,nursing_fluid_outputs_output_type_check,CHECK,"CHECK ((output_type = ANY (ARRAY['drain'::text, 'vomitus'::text, 'nasogastric'::text, 'surgical'::text, 'other'::text])))",status/type enumeration via CHECK
+nursing_fluid_outputs,Nursing,nursing_fluid_outputs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+nursing_fluid_outputs,Nursing,nursing_fluid_outputs_volume_ml_check,CHECK,CHECK ((volume_ml > 0)),none
+nursing_handovers,Nursing,nursing_handovers_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+nursing_mar,Nursing,nursing_mar_admission_med_schedule_unique,UNIQUE,"UNIQUE (admission_id, medication_id, scheduled_date, scheduled_time)",GLOBAL uniqueness on tenant table - verify intent
+nursing_mar,Nursing,nursing_mar_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+nursing_procedure_consumables,Nursing,nursing_procedure_consumables_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+nursing_procedures,Nursing,nursing_procedures_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+nursing_vitals,Nursing,nursing_vitals_pain_score_check,CHECK,CHECK (((pain_score >= 0) AND (pain_score <= 10))),none
+nursing_vitals,Nursing,nursing_vitals_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+nursing_vitals,Nursing,nursing_vitals_shift_check,CHECK,"CHECK ((shift = ANY (ARRAY['morning'::text, 'afternoon'::text, 'evening'::text, 'night'::text])))",none
+nutrition_screenings,Dietetics,nutrition_screenings_admission_id_screening_tool_key,UNIQUE,"UNIQUE (admission_id, screening_tool)",GLOBAL uniqueness on tenant table - verify intent
+nutrition_screenings,Dietetics,nutrition_screenings_nrs_age_score_check,CHECK,CHECK (((nrs_age_score >= 0) AND (nrs_age_score <= 1))),none
+nutrition_screenings,Dietetics,nutrition_screenings_nrs_bmi_score_check,CHECK,CHECK (((nrs_bmi_score >= 0) AND (nrs_bmi_score <= 3))),none
+nutrition_screenings,Dietetics,nutrition_screenings_nrs_disease_score_check,CHECK,CHECK (((nrs_disease_score >= 0) AND (nrs_disease_score <= 3))),none
+nutrition_screenings,Dietetics,nutrition_screenings_nrs_intake_score_check,CHECK,CHECK (((nrs_intake_score >= 0) AND (nrs_intake_score <= 3))),none
+nutrition_screenings,Dietetics,nutrition_screenings_nrs_weight_loss_score_check,CHECK,CHECK (((nrs_weight_loss_score >= 0) AND (nrs_weight_loss_score <= 3))),none
+nutrition_screenings,Dietetics,nutrition_screenings_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+nutrition_screenings,Dietetics,nutrition_screenings_screening_tool_check,CHECK,"CHECK ((screening_tool = ANY (ARRAY['nrs_2002'::text, 'must'::text, 'mna'::text])))",none
+nutritional_screenings,Dietetics,nutritional_screenings_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+oauth_provider_settings,Identity,oauth_provider_settings_pkey,PRIMARY KEY,PRIMARY KEY (provider),none
+oauth_provider_settings,Identity,oauth_provider_settings_provider_check,CHECK,"CHECK ((provider = ANY (ARRAY['google'::text, 'azure'::text, 'facebook'::text])))",none
+obstetric_records,Other,obstetric_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+occupational_health_records,Other,occupational_health_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+onboarding_tasks,HR,onboarding_tasks_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+oncology_patients,IPD,oncology_patients_hospital_id_patient_id_key,UNIQUE,"UNIQUE (hospital_id, patient_id)",tenant-scoped uniqueness
+oncology_patients,IPD,oncology_patients_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+online_reviews,Other,online_reviews_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+opd_diagnoses,OPD,opd_diagnoses_diagnosis_type_check,CHECK,"CHECK ((diagnosis_type = ANY (ARRAY['working'::text, 'confirmed'::text, 'differential'::text, 'chronic'::text, 'comorbid'::text])))",status/type enumeration via CHECK
+opd_diagnoses,OPD,opd_diagnoses_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+opd_encounters,OPD,opd_encounters_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+opd_encounters,OPD,opd_encounters_visit_purpose_check,CHECK,"CHECK ((visit_purpose = ANY (ARRAY['new'::text, 'revisit'::text, 'follow_up'::text, 'emergency'::text, 'procedure'::text, 'review'::text])))",none
+opd_token_sequences,OPD,opd_token_sequences_pkey,PRIMARY KEY,"PRIMARY KEY (hospital_id, doctor_key, prefix)",none
+opd_tokens,OPD,opd_tokens_charged_tier_check,CHECK,"CHECK (((charged_tier IS NULL) OR (charged_tier = ANY (ARRAY['new'::text, 'follow_up'::text, 'emergency'::text]))))",none
+opd_tokens,OPD,opd_tokens_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+opd_tokens,OPD,opd_tokens_visit_type_check,CHECK,"CHECK ((visit_type = ANY (ARRAY['new'::text, 'revisit'::text, 'followup'::text, 'emergency'::text])))",status/type enumeration via CHECK
+opd_visits,OPD,opd_visits_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+opd_visits,OPD,opd_visits_status_check,CHECK,"CHECK ((status = ANY (ARRAY['waiting'::text, 'in_consultation'::text, 'completed'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+ophthalmology_records,Other,ophthalmology_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+organ_donations,Other,organ_donations_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ot_checklist_custom_items,OT,ot_checklist_custom_items_phase_check,CHECK,"CHECK ((phase = ANY (ARRAY['signin'::text, 'timeout'::text, 'signout'::text])))",none
+ot_checklist_custom_items,OT,ot_checklist_custom_items_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ot_checklists,OT,ot_checklists_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ot_consumables,OT,ot_consumables_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ot_equipment_checklist,OT,ot_equipment_checklist_ot_schedule_id_item_text_key,UNIQUE,"UNIQUE (ot_schedule_id, item_text)",GLOBAL uniqueness on tenant table - verify intent
+ot_equipment_checklist,OT,ot_equipment_checklist_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ot_implants,OT,ot_implants_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ot_instrument_counts,OT,ot_instrument_counts_count_type_check,CHECK,"CHECK ((count_type = ANY (ARRAY['instrument'::text, 'sponge'::text, 'needle'::text])))",status/type enumeration via CHECK
+ot_instrument_counts,OT,ot_instrument_counts_ot_schedule_id_count_type_key,UNIQUE,"UNIQUE (ot_schedule_id, count_type)",GLOBAL uniqueness on tenant table - verify intent
+ot_instrument_counts,OT,ot_instrument_counts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ot_rooms,OT,ot_rooms_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ot_rooms,OT,ot_rooms_type_check,CHECK,"CHECK ((type = ANY (ARRAY['major'::text, 'minor'::text, 'emergency'::text, 'day_care'::text, 'endoscopy'::text])))",status/type enumeration via CHECK
+ot_schedules,OT,ot_schedules_anaesthesia_check,CHECK,"CHECK ((anaesthesia_type = ANY (ARRAY['general'::text, 'spinal'::text, 'epidural'::text, 'regional'::text, 'local'::text, 'sedation'::text, 'none'::text])))",status/type enumeration via CHECK
+ot_schedules,OT,ot_schedules_case_type_check,CHECK,"CHECK ((case_type = ANY (ARRAY['elective'::text, 'emergency'::text, 'add_on'::text])))",status/type enumeration via CHECK
+ot_schedules,OT,ot_schedules_category_check,CHECK,"CHECK ((surgery_category = ANY (ARRAY['general'::text, 'orthopaedic'::text, 'gynaecology'::text, 'urology'::text, 'cardiothoracic'::text, 'neurosurgery'::text, 'ent'::text, 'ophthalmology'::text, 'paediatric'::text, 'plastic'::text, 'emergency'::text, 'endoscopy'::text, 'other'::text])))",none
+ot_schedules,OT,ot_schedules_no_overlap,EXCLUDE,"EXCLUDE USING gist (hospital_id WITH =, ot_room_id WITH =, tsrange((scheduled_date + scheduled_start_time), (scheduled_date + scheduled_end_time), '[)'::text) WITH &&) WHERE ((status <> ALL (ARRAY['cancelled'::text, 'postponed'::text])))",none
+ot_schedules,OT,ot_schedules_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ot_schedules,OT,ot_schedules_status_check,CHECK,"CHECK ((status = ANY (ARRAY['scheduled'::text, 'confirmed'::text, 'in_progress'::text, 'completed'::text, 'cancelled'::text, 'postponed'::text])))",status/type enumeration via CHECK
+ot_team_members,OT,ot_team_members_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ot_team_members,OT,ot_team_role_check,CHECK,"CHECK ((role_in_ot = ANY (ARRAY['primary_surgeon'::text, 'assistant_surgeon'::text, 'anaesthetist'::text, 'scrub_nurse'::text, 'circulating_nurse'::text, 'ot_technician'::text, 'other'::text])))",none
+outcome_scores,Other,outcome_scores_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+overtime_requests,Other,overtime_requests_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+package_bookings,Billing,package_bookings_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+package_extras,Billing,package_extras_has_target,CHECK,CHECK (((service_id IS NOT NULL) OR (service_category IS NOT NULL))),none
+package_extras,Billing,package_extras_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+package_inclusions,Billing,package_inclusions_has_target,CHECK,CHECK (((service_id IS NOT NULL) OR (service_category IS NOT NULL))),none
+package_inclusions,Billing,package_inclusions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+package_station_logs,Billing,package_station_logs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+pacs_connectors,Radiology,pacs_connectors_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+pacs_connectors,Radiology,uq_pacs_hospital,UNIQUE,UNIQUE (hospital_id),tenant-scoped uniqueness
+pacu_assessments,OT,pacu_assessments_activity_check,CHECK,"CHECK ((activity = ANY (ARRAY[0, 1, 2])))",none
+pacu_assessments,OT,pacu_assessments_circulation_check,CHECK,"CHECK ((circulation = ANY (ARRAY[0, 1, 2])))",none
+pacu_assessments,OT,pacu_assessments_consciousness_check,CHECK,"CHECK ((consciousness = ANY (ARRAY[0, 1, 2])))",none
+pacu_assessments,OT,pacu_assessments_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+pacu_assessments,OT,pacu_assessments_respiration_check,CHECK,"CHECK ((respiration = ANY (ARRAY[0, 1, 2])))",none
+pacu_assessments,OT,pacu_assessments_spo2_score_check,CHECK,"CHECK ((spo2_score = ANY (ARRAY[0, 1, 2])))",none
+pain_audit_records,Other,pain_audit_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+palliative_care_plans,Other,palliative_care_plans_pain_score_current_check,CHECK,CHECK (((pain_score_current >= 0) AND (pain_score_current <= 10))),none
+palliative_care_plans,Other,palliative_care_plans_pain_score_target_check,CHECK,CHECK (((pain_score_target >= 0) AND (pain_score_target <= 10))),none
+palliative_care_plans,Other,palliative_care_plans_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+panchakarma_schedules,Other,panchakarma_schedules_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+partograph_entries,Other,partograph_entries_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+partograph_records,Other,partograph_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+pathology_cases,Other,pathology_cases_case_type_check,CHECK,"CHECK ((case_type = ANY (ARRAY['histopathology'::text, 'cytology'::text])))",status/type enumeration via CHECK
+pathology_cases,Other,pathology_cases_hospital_id_case_number_key,UNIQUE,"UNIQUE (hospital_id, case_number)",tenant-scoped uniqueness
+pathology_cases,Other,pathology_cases_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+pathology_cases,Other,pathology_cases_status_check,CHECK,"CHECK ((status = ANY (ARRAY['registered'::text, 'grossing'::text, 'reporting'::text, 'pending_signoff'::text, 'signed_off'::text, 'amended'::text])))",status/type enumeration via CHECK
+patient_abha_profiles,ABDM,patient_abha_profiles_hospital_id_abha_number_key,UNIQUE,"UNIQUE (hospital_id, abha_number)",tenant-scoped uniqueness
+patient_abha_profiles,ABDM,patient_abha_profiles_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+patient_acquisition,Patient,patient_acquisition_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+patient_ai_context,AI,patient_ai_context_hospital_id_patient_id_key,UNIQUE,"UNIQUE (hospital_id, patient_id)",tenant-scoped uniqueness
+patient_ai_context,AI,patient_ai_context_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+patient_consents,Patient,patient_consents_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+patient_documents,Patient,patient_documents_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+patient_encounter_templates,Patient,patient_encounter_templates_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+patient_feedback,Patient,patient_feedback_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+patient_history_digests,Patient,patient_history_digests_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+patient_history_ingest_jobs,Patient,chk_history_job_status,CHECK,"CHECK ((status = ANY (ARRAY['uploading'::text, 'queued'::text, 'running'::text, 'reducing'::text, 'complete'::text, 'partial'::text, 'failed'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+patient_history_ingest_jobs,Patient,chk_history_job_tier,CHECK,"CHECK ((model_tier = ANY (ARRAY['fast'::text, 'accurate'::text, 'mixed'::text])))",none
+patient_history_ingest_jobs,Patient,patient_history_ingest_jobs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+patient_history_source_chunks,Patient,chk_history_chunk_pages,CHECK,CHECK (((page_to >= page_from) AND (page_from >= 1))),none
+patient_history_source_chunks,Patient,chk_history_chunk_status,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'extracted'::text, 'failed'::text])))",status/type enumeration via CHECK
+patient_history_source_chunks,Patient,patient_history_source_chunks_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+patient_history_sources,Patient,chk_history_source_status,CHECK,"CHECK ((ingest_status = ANY (ARRAY['pending'::text, 'chunked'::text, 'extracted'::text, 'partial'::text, 'failed'::text, 'unsupported'::text])))",status/type enumeration via CHECK
+patient_history_sources,Patient,chk_history_source_tier,CHECK,"CHECK ((model_tier = ANY (ARRAY['fast'::text, 'accurate'::text])))",none
+patient_history_sources,Patient,patient_history_sources_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+patient_portal_sessions,Patient,patient_portal_sessions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+patient_portal_sessions,Patient,patient_portal_sessions_session_token_key,UNIQUE,UNIQUE (session_token),GLOBAL uniqueness on tenant table - verify intent
+patient_rights_acknowledgements,Patient,patient_rights_acknowledgements_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+patient_segments,Patient,patient_segments_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+patient_template_responses,Patient,patient_template_responses_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+patient_voice_sessions,Patient,patient_voice_sessions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+patients,Patient,patients_hospital_id_uhid_key,UNIQUE,"UNIQUE (hospital_id, uhid)",tenant-scoped uniqueness
+patients,Patient,patients_patient_category_check,CHECK,"CHECK ((patient_category = ANY (ARRAY['general'::text, 'bpl'::text, 'cghs'::text, 'echs'::text, 'pmjay'::text, 'esi'::text, 'insurance'::text, 'medicalaid'::text])))",none
+patients,Patient,patients_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+payer_masters,Insurance,payer_masters_payer_type_check,CHECK,"CHECK ((payer_type = ANY (ARRAY['cash'::text, 'credit'::text, 'corporate'::text, 'tpa'::text, 'pmjay'::text, 'cghs'::text, 'esi'::text, 'state_scheme'::text, 'other'::text])))",status/type enumeration via CHECK
+payer_masters,Insurance,payer_masters_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+payment_links,Payments,payment_links_link_token_key,UNIQUE,UNIQUE (link_token),GLOBAL uniqueness on tenant table - verify intent
+payment_links,Payments,payment_links_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+payroll_hooks,Payroll,payroll_hooks_hospital_id_integration_type_key,UNIQUE,"UNIQUE (hospital_id, integration_type)",tenant-scoped uniqueness
+payroll_hooks,Payroll,payroll_hooks_integration_type_check,CHECK,"CHECK ((integration_type = ANY (ARRAY['export_csv'::text, 'tally_payroll'::text, 'third_party_api'::text])))",status/type enumeration via CHECK
+payroll_hooks,Payroll,payroll_hooks_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+payroll_items,Payroll,payroll_items_payment_status_check,CHECK,"CHECK ((payment_status = ANY (ARRAY['pending'::text, 'paid'::text, 'hold'::text])))",status/type enumeration via CHECK
+payroll_items,Payroll,payroll_items_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+payroll_runs,Payroll,payroll_runs_hospital_month_year_key,UNIQUE,"UNIQUE (hospital_id, month, year)",tenant-scoped uniqueness
+payroll_runs,Payroll,payroll_runs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+payroll_runs,Payroll,payroll_runs_status_check,CHECK,"CHECK ((status = ANY (ARRAY['draft'::text, 'processed'::text, 'approved'::text, 'paid'::text])))",status/type enumeration via CHECK
+payslips,Other,payslips_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+payslips,Other,payslips_run_id_staff_id_key,UNIQUE,"UNIQUE (run_id, staff_id)",GLOBAL uniqueness on tenant table - verify intent
+pcpndt_form_f,Other,pcpndt_form_f_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+pcpndt_records,Other,pcpndt_records_indication_category_check,CHECK,"CHECK ((indication_category = ANY (ARRAY['confirm_pregnancy'::text, 'fetal_anomaly_scan'::text, 'placenta_assessment'::text, 'growth_monitoring'::text, 'cervical_assessment'::text, 'doppler'::text, 'amniotic_fluid'::text, 'other_maternal'::text, 'other_fetal'::text])))",none
+pcpndt_records,Other,pcpndt_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+pcpndt_settings,Other,pcpndt_settings_hospital_id_key,UNIQUE,UNIQUE (hospital_id),tenant-scoped uniqueness
+pcpndt_settings,Other,pcpndt_settings_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+performance_appraisals,Other,performance_appraisals_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+periodontal_charts,Other,periodontal_charts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+pharmacy_dispensing,Pharmacy,pharmacy_dispensing_hospital_dispensing_number_key,UNIQUE,"UNIQUE (hospital_id, dispensing_number)",tenant-scoped uniqueness
+pharmacy_dispensing,Pharmacy,pharmacy_dispensing_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+pharmacy_dispensing_items,Pharmacy,pharmacy_dispensing_items_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+pharmacy_dispensing_items,Pharmacy,pharmacy_dispensing_items_return_status_check,CHECK,"CHECK ((return_status = ANY (ARRAY['none'::text, 'pending_confirmation'::text, 'confirmed'::text, 'rejected'::text])))",status/type enumeration via CHECK
+pharmacy_return_audit,Audit/Compliance,pharmacy_return_audit_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+pharmacy_return_audit,Audit/Compliance,pharmacy_return_audit_return_reason_check,CHECK,"CHECK ((return_reason = ANY (ARRAY['unused'::text, 'excess'::text, 'patient_discharged'::text, 'physician_order'::text, 'wrong_drug'::text, 'expired'::text, 'adverse_reaction'::text, 'prescription_changed'::text, 'patient_expired'::text, 'medication_changed'::text, 'patient_refused'::text, 'other'::text])))",none
+pharmacy_return_audit,Audit/Compliance,pharmacy_return_audit_stock_action_check,CHECK,"CHECK ((stock_action = ANY (ARRAY['returned_to_stock'::text, 'quarantined'::text, 'destroyed'::text])))",none
+pharmacy_stock_alerts,Pharmacy,pharmacy_stock_alerts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+pharmacy_supplier_returns,Pharmacy,pharmacy_supplier_returns_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+pharmacy_supplier_returns,Pharmacy,pharmacy_supplier_returns_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'shipped'::text, 'credited'::text])))",status/type enumeration via CHECK
+pharmacy_waste_disposal,Pharmacy,pharmacy_waste_disposal_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+pharmacy_waste_disposal,Pharmacy,pharmacy_waste_disposal_waste_category_check,CHECK,"CHECK ((waste_category = ANY (ARRAY['yellow'::text, 'red'::text, 'blue'::text, 'white'::text, 'black'::text, 'cytotoxic'::text])))",none
+phi_access_audit,Audit/Compliance,phi_access_audit_access_type_check,CHECK,"CHECK ((access_type = ANY (ARRAY['read'::text, 'write'::text, 'export'::text, 'key_rotation'::text])))",status/type enumeration via CHECK
+phi_access_audit,Audit/Compliance,phi_access_audit_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+phi_backfill_log,Audit/Compliance,phi_backfill_log_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+phi_backfill_log,Audit/Compliance,phi_backfill_log_status_check,CHECK,"CHECK ((status = ANY (ARRAY['running'::text, 'done'::text, 'failed'::text])))",status/type enumeration via CHECK
+phi_encryption_keys,Audit/Compliance,phi_encryption_keys_algo_check,CHECK,CHECK ((algorithm = 'aes-256-gcm'::text)),none
+phi_encryption_keys,Audit/Compliance,phi_encryption_keys_one_active_per_hospital,UNIQUE,"UNIQUE NULLS NOT DISTINCT (hospital_id, is_active)",tenant-scoped uniqueness
+phi_encryption_keys,Audit/Compliance,phi_encryption_keys_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+physio_equipment_bookings,Other,physio_equipment_bookings_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+physio_referrals,Other,physio_referrals_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+physio_sessions,Other,physio_sessions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+plan_features,Platform,plan_features_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+plan_features,Platform,plan_features_plan_id_module_key_key,UNIQUE,"UNIQUE (plan_id, module_key)",none
+platform_ai_keys,AI,platform_ai_keys_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+platform_ai_keys,AI,platform_ai_keys_service_key_key,UNIQUE,UNIQUE (service_key),none
+platform_ai_provider_config,AI,platform_ai_provider_config_feature_key_key,UNIQUE,UNIQUE (feature_key),none
+platform_ai_provider_config,AI,platform_ai_provider_config_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+platform_ai_provider_config,AI,platform_ai_provider_config_provider_check,CHECK,"CHECK ((provider = ANY (ARRAY['claude'::text, 'openai'::text, 'azure_openai'::text, 'gemini'::text, 'perplexity'::text, 'openrouter'::text, 'ollama'::text])))",none
+platform_billing_settings,Platform,platform_billing_settings_grace_days_nonneg,CHECK,CHECK (((access_grace_days >= 0) AND (access_grace_days <= 30))),none
+platform_billing_settings,Platform,platform_billing_settings_id_check,CHECK,CHECK ((id = 1)),none
+platform_billing_settings,Platform,platform_billing_settings_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+platform_feature_flag_overrides,Platform,platform_feature_flag_overrides_flag_id_hospital_id_key,UNIQUE,"UNIQUE (flag_id, hospital_id)",tenant-scoped uniqueness
+platform_feature_flag_overrides,Platform,platform_feature_flag_overrides_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+platform_feature_flags,Platform,platform_feature_flags_key_key,UNIQUE,UNIQUE (key),none
+platform_feature_flags,Platform,platform_feature_flags_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+platform_feature_flags,Platform,platform_feature_flags_rollout_percentage_check,CHECK,CHECK (((rollout_percentage >= 0) AND (rollout_percentage <= 100))),none
+platform_incident_updates,Platform,platform_incident_updates_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+platform_incident_updates,Platform,platform_incident_updates_status_check,CHECK,"CHECK ((status = ANY (ARRAY['investigating'::text, 'identified'::text, 'monitoring'::text, 'resolved'::text])))",status/type enumeration via CHECK
+platform_incidents,Platform,platform_incidents_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+platform_incidents,Platform,platform_incidents_severity_check,CHECK,"CHECK ((severity = ANY (ARRAY['minor'::text, 'major'::text, 'critical'::text])))",none
+platform_incidents,Platform,platform_incidents_status_check,CHECK,"CHECK ((status = ANY (ARRAY['investigating'::text, 'identified'::text, 'monitoring'::text, 'resolved'::text])))",status/type enumeration via CHECK
+platform_metrics_registry,Platform,platform_metrics_registry_metric_key_key,UNIQUE,UNIQUE (metric_key),none
+platform_metrics_registry,Platform,platform_metrics_registry_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+platform_onboarding_tours,Platform,platform_onboarding_tours_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+platform_onboarding_tours,Platform,platform_onboarding_tours_tour_key_key,UNIQUE,UNIQUE (tour_key),none
+platform_settings,Platform,platform_settings_id_check,CHECK,CHECK (id),none
+platform_settings,Platform,platform_settings_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+platform_support_tickets,Platform,platform_support_tickets_category_check,CHECK,"CHECK ((category = ANY (ARRAY['billing'::text, 'technical'::text, 'clinical_workflow'::text, 'training'::text, 'other'::text])))",none
+platform_support_tickets,Platform,platform_support_tickets_direction_check,CHECK,"CHECK ((direction = ANY (ARRAY['inbound'::text, 'outbound'::text])))",none
+platform_support_tickets,Platform,platform_support_tickets_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+platform_support_tickets,Platform,platform_support_tickets_priority_check,CHECK,"CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'high'::text, 'urgent'::text])))",none
+platform_support_tickets,Platform,platform_support_tickets_status_check,CHECK,"CHECK ((status = ANY (ARRAY['open'::text, 'in_progress'::text, 'resolved'::text, 'closed'::text])))",status/type enumeration via CHECK
+platform_training_videos,Platform,platform_training_videos_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+pm_schedules,Other,pm_schedules_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+pmjay_claims,PM-JAY,pmjay_claims_care_type_check,CHECK,"CHECK ((care_type = ANY (ARRAY['inpatient'::text, 'day_care'::text])))",status/type enumeration via CHECK
+pmjay_claims,PM-JAY,pmjay_claims_hospital_claim_number_key,UNIQUE,"UNIQUE (hospital_id, claim_number)",tenant-scoped uniqueness
+pmjay_claims,PM-JAY,pmjay_claims_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+pmjay_package_master,PM-JAY,pmjay_package_master_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+pmjay_packages,PM-JAY,pmjay_packages_hospital_id_package_code_key,UNIQUE,"UNIQUE (hospital_id, package_code)",tenant-scoped uniqueness
+pmjay_packages,PM-JAY,pmjay_packages_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+pmjay_preauth_requests,PM-JAY,pmjay_preauth_requests_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+po_approval_rules,Other,po_approval_rules_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+po_items,Other,po_items_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+portal_chat_messages,Patient,portal_chat_messages_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+portal_chat_messages,Patient,portal_chat_messages_role_check,CHECK,"CHECK ((role = ANY (ARRAY['user'::text, 'assistant'::text])))",none
+prakriti_assessments,Other,prakriti_assessments_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+pre_auth_requests,Insurance,pre_auth_requests_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+prescriptions,Pharmacy,prescriptions_one_context,CHECK,CHECK ((((encounter_id IS NOT NULL) AND (admission_id IS NULL)) OR ((encounter_id IS NULL) AND (admission_id IS NOT NULL)))),none
+prescriptions,Pharmacy,prescriptions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+prescriptions,Pharmacy,prescriptions_status_check,CHECK,"CHECK ((status = ANY (ARRAY['draft'::text, 'committed'::text])))",status/type enumeration via CHECK
+preventive_screenings,Other,preventive_screenings_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+preventive_screenings,Other,preventive_screenings_result_flag_check,CHECK,"CHECK ((result_flag = ANY (ARRAY['normal'::text, 'at_risk'::text, 'positive'::text, 'referred'::text])))",none
+preventive_screenings,Other,preventive_screenings_screen_type_check,CHECK,"CHECK ((screen_type = ANY (ARRAY['phq9'::text, 'ncd_diabetes'::text, 'ncd_hypertension'::text, 'ncd_obesity'::text, 'ncd_copd'::text, 'cervical_cancer'::text, 'breast_cancer'::text])))",status/type enumeration via CHECK
+procurement_recommendations,Procurement,procurement_recommendations_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+product_analytics_events,Other,product_analytics_events_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+product_modes,Other,product_modes_hospital_id_key,UNIQUE,UNIQUE (hospital_id),tenant-scoped uniqueness
+product_modes,Other,product_modes_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+prom_prem_surveys,Patient,prom_prem_surveys_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+prom_prem_surveys,Patient,prom_prem_surveys_prem_cleanliness_check,CHECK,CHECK (((prem_cleanliness >= 1) AND (prem_cleanliness <= 5))),none
+prom_prem_surveys,Patient,prom_prem_surveys_prem_communication_check,CHECK,CHECK (((prem_communication >= 1) AND (prem_communication <= 5))),none
+prom_prem_surveys,Patient,prom_prem_surveys_prem_dignity_check,CHECK,CHECK (((prem_dignity >= 1) AND (prem_dignity <= 5))),none
+prom_prem_surveys,Patient,prom_prem_surveys_prem_discharge_info_check,CHECK,CHECK (((prem_discharge_info >= 1) AND (prem_discharge_info <= 5))),none
+prom_prem_surveys,Patient,prom_prem_surveys_prem_overall_check,CHECK,CHECK (((prem_overall >= 1) AND (prem_overall <= 5))),none
+prom_prem_surveys,Patient,prom_prem_surveys_prem_responsiveness_check,CHECK,CHECK (((prem_responsiveness >= 1) AND (prem_responsiveness <= 5))),none
+prom_prem_surveys,Patient,prom_prem_surveys_prom_mobility_check,CHECK,"CHECK ((prom_mobility = ANY (ARRAY['normal'::text, 'limited'::text, 'bed_rest'::text])))",none
+prom_prem_surveys,Patient,prom_prem_surveys_prom_pain_score_check,CHECK,CHECK (((prom_pain_score >= 0) AND (prom_pain_score <= 10))),none
+prom_prem_surveys,Patient,prom_prem_surveys_response_token_key,UNIQUE,UNIQUE (response_token),GLOBAL uniqueness on tenant table - verify intent
+prom_prem_surveys,Patient,prom_prem_surveys_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'sent'::text, 'responded'::text, 'expired'::text])))",status/type enumeration via CHECK
+prom_prem_surveys,Patient,prom_prem_surveys_survey_type_check,CHECK,"CHECK ((survey_type = ANY (ARRAY['prem'::text, 'prom'::text, 'combined'::text])))",status/type enumeration via CHECK
+prompt_registry,AI,prompt_registry_feature_key_key,UNIQUE,UNIQUE (feature_key),none
+prompt_registry,AI,prompt_registry_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+prompt_registry,AI,prompt_registry_samd_class_check,CHECK,"CHECK ((samd_class = ANY (ARRAY['A'::text, 'B'::text, 'C'::text])))",none
+psychometric_assessments,Other,psychometric_assessments_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+purchase_orders,Procurement,purchase_orders_hospital_po_number_key,UNIQUE,"UNIQUE (hospital_id, po_number)",tenant-scoped uniqueness
+purchase_orders,Procurement,purchase_orders_match_status_check,CHECK,"CHECK ((match_status = ANY (ARRAY['pending'::text, 'matched'::text, 'discrepancy'::text, 'override'::text])))",status/type enumeration via CHECK
+purchase_orders,Procurement,purchase_orders_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+purchase_requisitions,Procurement,purchase_requisitions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+purchase_requisitions,Procurement,purchase_requisitions_status_check,CHECK,"CHECK ((status = ANY (ARRAY['open'::text, 'rfq_created'::text, 'closed'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+push_notifications,Notifications,push_notifications_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+push_notifications,Notifications,push_notifications_platform_check,CHECK,"CHECK ((platform = ANY (ARRAY['android'::text, 'ios'::text, 'web'::text, 'all'::text])))",none
+push_notifications,Notifications,push_notifications_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'sent'::text, 'delivered'::text, 'failed'::text])))",status/type enumeration via CHECK
+qi_cycles,Other,qi_cycles_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+qi_projects,Other,qi_projects_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+qi_projects,Other,qi_projects_status_check,CHECK,"CHECK ((status = ANY (ARRAY['active'::text, 'completed'::text, 'abandoned'::text])))",status/type enumeration via CHECK
+quality_indicator_definitions,Quality/NABH,quality_indicator_definitions_category_check,CHECK,"CHECK ((category = ANY (ARRAY['clinical'::text, 'operational'::text, 'patient_safety'::text, 'infection_control'::text, 'financial'::text, 'nabh'::text])))",none
+quality_indicator_definitions,Quality/NABH,quality_indicator_definitions_collection_mode_check,CHECK,"CHECK ((collection_mode = ANY (ARRAY['auto'::text, 'manual'::text, 'hybrid'::text])))",none
+quality_indicator_definitions,Quality/NABH,quality_indicator_definitions_criterion_weight_check,CHECK,CHECK ((criterion_weight > (0)::numeric)),none
+quality_indicator_definitions,Quality/NABH,quality_indicator_definitions_direction_check,CHECK,"CHECK ((direction = ANY (ARRAY['higher_is_better'::text, 'lower_is_better'::text, 'neutral'::text])))",none
+quality_indicator_definitions,Quality/NABH,quality_indicator_definitions_pkey,PRIMARY KEY,PRIMARY KEY (indicator_code),none
+quality_indicator_overrides,Quality/NABH,quality_indicator_overrides_hospital_id_indicator_code_key,UNIQUE,"UNIQUE (hospital_id, indicator_code)",tenant-scoped uniqueness
+quality_indicator_overrides,Quality/NABH,quality_indicator_overrides_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+quality_indicators,Quality/NABH,chk_quality_indicators_direction,CHECK,"CHECK ((direction = ANY (ARRAY['higher_is_better'::text, 'lower_is_better'::text, 'neutral'::text])))",none
+quality_indicators,Quality/NABH,quality_indicators_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+queue_state,OPD,queue_state_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+queue_state,OPD,uq_queue_state_hospital_doctor,UNIQUE,"UNIQUE (hospital_id, doctor_id)",tenant-scoped uniqueness
+quotation_items,Other,quotation_items_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+radiology_modalities,Radiology,radiology_modalities_modality_type_check,CHECK,"CHECK ((modality_type = ANY (ARRAY['xray'::text, 'usg'::text, 'ct'::text, 'mri'::text, 'echo'::text, 'ecg'::text, 'mammography'::text, 'dexa'::text, 'fluoroscopy'::text, 'endoscopy'::text, 'other'::text])))",status/type enumeration via CHECK
+radiology_modalities,Radiology,radiology_modalities_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+radiology_orders,Radiology,radiology_orders_ai_flag_check,CHECK,"CHECK ((ai_flag = ANY (ARRAY['critical'::text, 'abnormal'::text, 'normal'::text])))",none
+radiology_orders,Radiology,radiology_orders_billing_status_check,CHECK,"CHECK ((billing_status = ANY (ARRAY['unbilled'::text, 'billed'::text, 'waived'::text])))",status/type enumeration via CHECK
+radiology_orders,Radiology,radiology_orders_hospital_accession_number_key,UNIQUE,"UNIQUE (hospital_id, accession_number)",tenant-scoped uniqueness
+radiology_orders,Radiology,radiology_orders_payment_status_check,CHECK,"CHECK ((payment_status = ANY (ARRAY['pending_payment'::text, 'paid'::text, 'advance_covered'::text, 'waived'::text, 'insurance_auth'::text])))",status/type enumeration via CHECK
+radiology_orders,Radiology,radiology_orders_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+radiology_orders,Radiology,radiology_orders_pregnancy_status_check,CHECK,"CHECK ((pregnancy_status = ANY (ARRAY['not_pregnant'::text, 'pregnant'::text, 'unknown'::text, 'lmp_provided'::text])))",status/type enumeration via CHECK
+radiology_orders,Radiology,radiology_orders_priority_check,CHECK,"CHECK ((priority = ANY (ARRAY['routine'::text, 'urgent'::text, 'stat'::text])))",none
+radiology_orders,Radiology,radiology_orders_status_check,CHECK,"CHECK ((status = ANY (ARRAY['ordered'::text, 'scheduled'::text, 'patient_arrived'::text, 'in_progress'::text, 'images_acquired'::text, 'reported'::text, 'validated'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+radiology_reports,Radiology,radiology_reports_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+radiology_study_master,Radiology,radiology_study_master_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+razorpay_plan_registry,Payments,razorpay_plan_registry_amount_paise_check,CHECK,CHECK ((amount_paise > 0)),none
+razorpay_plan_registry,Payments,razorpay_plan_registry_billing_cycle_check,CHECK,"CHECK ((billing_cycle = ANY (ARRAY['monthly'::text, 'yearly'::text])))",none
+razorpay_plan_registry,Payments,razorpay_plan_registry_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+razorpay_plan_registry,Payments,razorpay_plan_registry_plan_id_billing_cycle_amount_paise_key,UNIQUE,"UNIQUE (plan_id, billing_cycle, amount_paise)",none
+razorpay_webhook_log,Payments,razorpay_webhook_log_pkey,PRIMARY KEY,PRIMARY KEY (webhook_id),none
+reconciliation_discrepancies,Other,reconciliation_discrepancies_discrepancy_type_check,CHECK,"CHECK ((discrepancy_type = ANY (ARRAY['omitted'::text, 'added'::text, 'dose_changed'::text, 'route_changed'::text, 'frequency_changed'::text, 'duplicate'::text, 'contraindicated'::text])))",status/type enumeration via CHECK
+reconciliation_discrepancies,Other,reconciliation_discrepancies_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+record_access_logs,Other,record_access_logs_access_action_check,CHECK,"CHECK ((access_action = ANY (ARRAY['view'::text, 'download'::text, 'print'::text, 'export'::text, 'share'::text])))",none
+record_access_logs,Other,record_access_logs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+record_requests,Other,record_requests_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+record_retention_policies,Other,record_retention_policies_hospital_id_record_type_key,UNIQUE,"UNIQUE (hospital_id, record_type)",tenant-scoped uniqueness
+record_retention_policies,Other,record_retention_policies_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+referral_codes,Platform,referral_codes_code_key,UNIQUE,UNIQUE (code),GLOBAL uniqueness on tenant table - verify intent
+referral_codes,Platform,referral_codes_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+referral_doctors,Platform,referral_doctors_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+referral_partners,Platform,referral_partners_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+referral_redemptions,Platform,referral_redemptions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+refund_payables,Billing,refund_payables_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+refund_payables,Billing,refund_payables_refund_mode_check,CHECK,"CHECK ((refund_mode = ANY (ARRAY['cash'::text, 'upi'::text, 'bank_transfer'::text, 'cheque'::text])))",none
+refund_payables,Billing,refund_payables_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending_approval'::text, 'approved'::text, 'processed'::text, 'rejected'::text])))",status/type enumeration via CHECK
+report_schedules,Reporting,report_schedules_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+requisition_items,Other,requisition_items_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+research_cohorts,Other,research_cohorts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+restraint_records,Other,restraint_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+restraint_records,Other,restraint_records_restraint_type_check,CHECK,"CHECK ((restraint_type = ANY (ARRAY['physical'::text, 'chemical'::text, 'environmental'::text])))",status/type enumeration via CHECK
+retention_schedules,Other,retention_schedules_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+revenue_alerts,Billing,revenue_alerts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+revenue_leak_actions,Billing,revenue_leak_actions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+revenue_leak_actions,Billing,revenue_leak_actions_status_check,CHECK,"CHECK ((status = ANY (ARRAY['open'::text, 'assigned'::text, 'resolved'::text])))",status/type enumeration via CHECK
+rfq_vendors,Procurement,rfq_vendors_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+rfqs,Procurement,rfqs_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+rfqs,Procurement,rfqs_status_check,CHECK,"CHECK ((status = ANY (ARRAY['open'::text, 'awarded'::text, 'closed'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+role_permissions,Identity,role_permissions_hospital_id_role_name_key,UNIQUE,"UNIQUE (hospital_id, role_name)",tenant-scoped uniqueness
+role_permissions,Identity,role_permissions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+safety_event_capa,Other,safety_event_capa_action_type_check,CHECK,"CHECK ((action_type = ANY (ARRAY['corrective'::text, 'preventive'::text])))",status/type enumeration via CHECK
+safety_event_capa,Other,safety_event_capa_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+safety_event_capa,Other,safety_event_capa_status_check,CHECK,"CHECK ((status = ANY (ARRAY['open'::text, 'in_progress'::text, 'completed'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+safety_event_rca,Other,safety_event_rca_methodology_check,CHECK,"CHECK ((methodology = ANY (ARRAY['5_whys'::text, 'fishbone'::text, 'fmea'::text, 'other'::text])))",none
+safety_event_rca,Other,safety_event_rca_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+safety_event_rca,Other,safety_event_rca_safety_event_id_key,UNIQUE,UNIQUE (safety_event_id),none
+safety_events,Other,safety_events_category_check,CHECK,"CHECK ((category = ANY (ARRAY['fall'::text, 'medication_error'::text, 'surgery'::text, 'lab'::text, 'billing'::text, 'behaviour'::text, 'privacy'::text, 'equipment'::text, 'infection'::text, 'other'::text])))",none
+safety_events,Other,safety_events_event_type_check,CHECK,"CHECK ((event_type = ANY (ARRAY['incident'::text, 'near_miss'::text, 'sentinel'::text, 'complaint'::text, 'grievance'::text, 'legal_notice'::text, 'claim'::text])))",status/type enumeration via CHECK
+safety_events,Other,safety_events_hospital_id_event_number_key,UNIQUE,"UNIQUE (hospital_id, event_number)",tenant-scoped uniqueness
+safety_events,Other,safety_events_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+safety_events,Other,safety_events_severity_check,CHECK,"CHECK ((severity = ANY (ARRAY['no_harm'::text, 'mild'::text, 'moderate'::text, 'severe'::text, 'death'::text])))",none
+safety_events,Other,safety_events_status_check,CHECK,"CHECK ((status = ANY (ARRAY['open'::text, 'under_investigation'::text, 'action_planned'::text, 'closed'::text])))",status/type enumeration via CHECK
+safety_rounds,Other,safety_rounds_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+salary_structures,Payroll,salary_structures_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+scheme_beneficiaries,Other,scheme_beneficiaries_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+second_victim_cases,Other,second_victim_cases_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+second_victim_cases,Other,second_victim_cases_status_check,CHECK,"CHECK ((status = ANY (ARRAY['identified'::text, 'support_initiated'::text, 'counselling_in_progress'::text, 'returned_to_duty'::text, 'closed'::text])))",status/type enumeration via CHECK
+second_victim_sessions,Other,second_victim_sessions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+second_victim_sessions,Other,second_victim_sessions_session_type_check,CHECK,"CHECK ((session_type = ANY (ARRAY['peer_support'::text, 'counselling'::text, 'debriefing'::text, 'follow_up'::text])))",status/type enumeration via CHECK
+sedation_scores,ICU,sedation_scores_bps_score_check,CHECK,CHECK (((bps_score >= 3) AND (bps_score <= 12))),none
+sedation_scores,ICU,sedation_scores_cpot_score_check,CHECK,CHECK (((cpot_score >= 0) AND (cpot_score <= 8))),none
+sedation_scores,ICU,sedation_scores_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+sedation_scores,ICU,sedation_scores_rass_score_check,CHECK,CHECK (((rass_score >= '-5'::integer) AND (rass_score <= 4))),none
+service_charges,Billing,service_charges_billing_status_check,CHECK,"CHECK ((billing_status = ANY (ARRAY['unbilled'::text, 'billed'::text, 'waived'::text, 'included'::text])))",status/type enumeration via CHECK
+service_charges,Billing,service_charges_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+service_master,Billing,service_master_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+service_rates,Billing,service_rates_hospital_code_unique,UNIQUE,"UNIQUE (hospital_id, item_code)",tenant-scoped uniqueness
+service_rates,Billing,service_rates_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+set_issues,Other,set_issues_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+set_issues,Other,set_issues_return_status_check,CHECK,"CHECK ((return_status = ANY (ARRAY['pending'::text, 'complete'::text, 'loss_reported'::text])))",status/type enumeration via CHECK
+settlement_reconciliation_flags,Payments,settlement_reconciliation_flags_discrepancy_type_check,CHECK,"CHECK ((discrepancy_type = ANY (ARRAY['payment_not_found'::text, 'not_captured'::text, 'amount_mismatch'::text, 'refunded'::text])))",status/type enumeration via CHECK
+settlement_reconciliation_flags,Payments,settlement_reconciliation_flags_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+shift_master,HR,shift_master_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+shift_swap_requests,HR,shift_swap_requests_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+signup_otp_verifications,Platform,signup_otp_verifications_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+sms_notifications,Notifications,sms_notifications_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+sms_notifications,Notifications,sms_notifications_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'sent'::text, 'failed'::text])))",status/type enumeration via CHECK
+staff_attendance,HR,staff_attendance_hospital_user_date_unique,UNIQUE,"UNIQUE (hospital_id, user_id, attendance_date)",tenant-scoped uniqueness
+staff_attendance,HR,staff_attendance_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+staff_attendance,HR,staff_attendance_status_check,CHECK,"CHECK ((status = ANY (ARRAY['present'::text, 'absent'::text, 'leave'::text, 'half_day'::text, 'late'::text, 'on_leave'::text, 'holiday'::text])))",status/type enumeration via CHECK
+staff_attendance,HR,staff_attendance_user_id_attendance_date_key,UNIQUE,"UNIQUE (user_id, attendance_date)",GLOBAL uniqueness on tenant table - verify intent
+staff_burnout_scores,HR,staff_burnout_scores_burnout_score_check,CHECK,CHECK (((burnout_score >= 0) AND (burnout_score <= 100))),none
+staff_burnout_scores,HR,staff_burnout_scores_hospital_id_user_id_score_date_key,UNIQUE,"UNIQUE (hospital_id, user_id, score_date)",tenant-scoped uniqueness
+staff_burnout_scores,HR,staff_burnout_scores_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+staff_credentials,HR,staff_credentials_credential_type_check,CHECK,"CHECK ((credential_type = ANY (ARRAY['mci_nmc'::text, 'state_medical_council'::text, 'nursing_council'::text, 'super_specialty'::text, 'skill_competency'::text, 'bls_acls'::text, 'other'::text])))",status/type enumeration via CHECK
+staff_credentials,HR,staff_credentials_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+staff_documents,HR,staff_documents_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+staff_exits,HR,staff_exits_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+staff_grievances,HR,staff_grievances_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+staff_injuries,HR,staff_injuries_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+staff_privileges,HR,staff_privileges_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+staff_profiles,HR,staff_profiles_employee_type_check,CHECK,"CHECK ((employee_type = ANY (ARRAY['salaried'::text, 'consultant'::text, 'visiting'::text, 'intern'::text, 'contract'::text])))",status/type enumeration via CHECK
+staff_profiles,HR,staff_profiles_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+staff_profiles,HR,staff_profiles_user_id_key,UNIQUE,UNIQUE (user_id),GLOBAL uniqueness on tenant table - verify intent
+staff_salary_assignments,HR,staff_salary_assignments_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+staff_salary_assignments,HR,staff_salary_assignments_staff_id_effective_from_key,UNIQUE,"UNIQUE (staff_id, effective_from)",GLOBAL uniqueness on tenant table - verify intent
+staff_training_records,HR,staff_training_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+staffing_alerts,HR,staffing_alerts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+staffing_alerts,HR,staffing_alerts_severity_check,CHECK,"CHECK ((severity = ANY (ARRAY['warning'::text, 'critical'::text])))",none
+sterilization_cycles,Infection Control,sterilization_cycles_bi_result_check,CHECK,"CHECK ((bi_result = ANY (ARRAY['pass'::text, 'fail'::text, 'pending'::text])))",none
+sterilization_cycles,Infection Control,sterilization_cycles_chemical_indicator_result_check,CHECK,"CHECK ((chemical_indicator_result = ANY (ARRAY['pass'::text, 'fail'::text])))",none
+sterilization_cycles,Infection Control,sterilization_cycles_hospital_cycle_number_key,UNIQUE,"UNIQUE (hospital_id, cycle_number)",tenant-scoped uniqueness
+sterilization_cycles,Infection Control,sterilization_cycles_load_type_check,CHECK,"CHECK ((load_type = ANY (ARRAY['routine'::text, 'emergency'::text, 'flash'::text, 'implant'::text])))",status/type enumeration via CHECK
+sterilization_cycles,Infection Control,sterilization_cycles_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+sterilization_cycles,Infection Control,sterilization_cycles_status_check,CHECK,"CHECK ((status = ANY (ARRAY['in_progress'::text, 'completed'::text, 'failed'::text, 'quarantine'::text])))",status/type enumeration via CHECK
+sterilization_cycles,Infection Control,sterilization_cycles_sterilization_method_check,CHECK,"CHECK ((sterilization_method = ANY (ARRAY['steam_autoclave'::text, 'eo_gas'::text, 'plasma'::text, 'dry_heat'::text, 'chemical'::text])))",none
+stimulation_monitoring,Other,stimulation_monitoring_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+stock_count_items,Inventory,stock_count_items_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+stock_counts,Inventory,stock_counts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+stock_counts,Inventory,stock_counts_scope_check,CHECK,"CHECK ((scope = ANY (ARRAY['central'::text, 'store'::text])))",none
+stock_counts,Inventory,stock_counts_status_check,CHECK,"CHECK ((status = ANY (ARRAY['counting'::text, 'posted'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+stock_reorder_triggers,Inventory,stock_reorder_triggers_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+stock_reorder_triggers,Inventory,stock_reorder_triggers_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'ordered'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+stock_reorder_triggers,Inventory,stock_reorder_triggers_trigger_reason_check,CHECK,"CHECK ((trigger_reason = ANY (ARRAY['low_stock'::text, 'expiring_soon'::text, 'manual'::text])))",none
+stock_transactions,Inventory,stock_transactions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+store_indent_items,Inventory,store_indent_items_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+store_indents,Inventory,store_indents_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+store_indents,Inventory,store_indents_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'partially_issued'::text, 'issued'::text, 'received'::text, 'rejected'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+store_locations,Inventory,store_locations_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+store_locations,Inventory,store_locations_type_check,CHECK,"CHECK ((type = ANY (ARRAY['central'::text, 'ward'::text, 'ot'::text, 'icu'::text, 'pharmacy'::text, 'lab'::text])))",status/type enumeration via CHECK
+store_stock,Inventory,store_stock_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+store_stock,Inventory,store_stock_store_id_item_id_batch_number_key,UNIQUE,"UNIQUE (store_id, item_id, batch_number)",GLOBAL uniqueness on tenant table - verify intent
+store_stock_movements,Inventory,store_stock_movements_movement_type_check,CHECK,"CHECK ((movement_type = ANY (ARRAY['issue'::text, 'return'::text, 'adjustment'::text, 'receipt'::text])))",status/type enumeration via CHECK
+store_stock_movements,Inventory,store_stock_movements_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+subscription_events,Platform,subscription_events_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+subscription_invoices,Platform,subscription_invoices_document_format_check,CHECK,"CHECK (((document_format IS NULL) OR (document_format = ANY (ARRAY['pdf'::text, 'html'::text]))))",none
+subscription_invoices,Platform,subscription_invoices_invoice_number_key,UNIQUE,UNIQUE (invoice_number),GLOBAL uniqueness on tenant table - verify intent
+subscription_invoices,Platform,subscription_invoices_invoice_type_check,CHECK,"CHECK ((invoice_type = ANY (ARRAY['tax_invoice'::text, 'payment_attempt'::text, 'credit_note'::text])))",status/type enumeration via CHECK
+subscription_invoices,Platform,subscription_invoices_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+subscription_invoices,Platform,subscription_invoices_status_check,CHECK,"CHECK ((status = ANY (ARRAY['paid'::text, 'failed'::text, 'refunded'::text, 'partially_refunded'::text, 'pending'::text])))",status/type enumeration via CHECK
+subscription_plans,Platform,subscription_plans_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+subscription_plans,Platform,subscription_plans_slug_key,UNIQUE,UNIQUE (slug),none
+system_config,Other,system_config_hospital_id_key_key,UNIQUE,"UNIQUE (hospital_id, key)",tenant-scoped uniqueness
+system_config,Other,system_config_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+tally_export_log,Other,tally_export_log_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+tally_ledger_mapping,Other,tally_ledger_mapping_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+tally_ledger_mapping,Other,uq_tally_hospital_head,UNIQUE,"UNIQUE (hospital_id, aumrti_revenue_head)",tenant-scoped uniqueness
+tds_annual_summary,Payroll,tds_annual_summary_hospital_id_staff_id_financial_year_key,UNIQUE,"UNIQUE (hospital_id, staff_id, financial_year)",tenant-scoped uniqueness
+tds_annual_summary,Payroll,tds_annual_summary_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+tds_sections,Payroll,tds_sections_hospital_id_section_key,UNIQUE,"UNIQUE (hospital_id, section)",tenant-scoped uniqueness
+tds_sections,Payroll,tds_sections_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+teleconsult_sessions,Telemedicine,teleconsult_sessions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+teleconsult_sessions,Telemedicine,teleconsult_sessions_room_id_key,UNIQUE,UNIQUE (room_id),GLOBAL uniqueness on tenant table - verify intent
+teleconsult_sessions,Telemedicine,teleconsult_sessions_status_check,CHECK,"CHECK ((status = ANY (ARRAY['scheduled'::text, 'waiting'::text, 'in_progress'::text, 'completed'::text, 'missed'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+therapy_plans,Other,therapy_plans_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+therapy_plans,Other,therapy_plans_status_check,CHECK,"CHECK ((status = ANY (ARRAY['active'::text, 'completed'::text, 'paused'::text, 'cancelled'::text])))",status/type enumeration via CHECK
+therapy_sessions,Other,therapy_sessions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+toxicity_events,Other,toxicity_events_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+tpa_config,TPA,tpa_config_co_payment_type_check,CHECK,"CHECK ((co_payment_type = ANY (ARRAY['none'::text, 'percentage'::text, 'fixed'::text])))",status/type enumeration via CHECK
+tpa_config,TPA,tpa_config_hospital_id_tpa_code_key,UNIQUE,"UNIQUE (hospital_id, tpa_code)",tenant-scoped uniqueness
+tpa_config,TPA,tpa_config_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+tpa_config,TPA,tpa_config_sla_alert_chk,CHECK,"CHECK ((sla_alert_channel = ANY (ARRAY['in_app'::text, 'whatsapp'::text, 'email'::text, 'sms'::text])))",none
+tpa_dispute_communications,TPA,tpa_dispute_communications_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+tpa_disputes,TPA,tpa_disputes_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+tpa_queries,TPA,tpa_queries_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+tpa_queries,TPA,tpa_queries_priority_check,CHECK,"CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'high'::text, 'urgent'::text])))",none
+tpa_queries,TPA,tpa_queries_status_chk,CHECK,"CHECK ((status = ANY (ARRAY['open'::text, 'responded'::text, 'replied'::text, 'overdue'::text, 'escalated'::text, 'closed'::text])))",status/type enumeration via CHECK
+transfusion_reactions,Blood Bank,transfusion_reactions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+translate_pricing,Other,translate_pricing_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+translate_pricing,Other,translate_pricing_provider_key,UNIQUE,UNIQUE (provider),none
+tv_display_settings,Other,tv_display_settings_hospital_id_key,UNIQUE,UNIQUE (hospital_id),tenant-scoped uniqueness
+tv_display_settings,Other,tv_display_settings_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+user_permission_overrides,Identity,user_permission_overrides_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+user_permission_overrides,Identity,user_permission_overrides_user_id_key,UNIQUE,UNIQUE (user_id),GLOBAL uniqueness on tenant table - verify intent
+user_tour_progress,Identity,user_tour_progress_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+user_tour_progress,Identity,user_tour_progress_user_id_tour_key_key,UNIQUE,"UNIQUE (user_id, tour_key)",none
+user_trusted_devices,Identity,user_trusted_devices_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+user_trusted_devices,Identity,user_trusted_devices_user_id_fingerprint_hash_key,UNIQUE,"UNIQUE (user_id, fingerprint_hash)",none
+users,Identity,users_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+vaccination_due,Vaccination,vaccination_due_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+vaccination_records,Vaccination,vaccination_records_billing_status_check,CHECK,"CHECK ((billing_status = ANY (ARRAY['unbilled'::text, 'billed'::text, 'waived'::text, 'included'::text])))",status/type enumeration via CHECK
+vaccination_records,Vaccination,vaccination_records_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+vaccine_camps,Vaccination,vaccine_camps_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+vaccine_master,Vaccination,uq_vaccine_master_code,UNIQUE,"UNIQUE NULLS NOT DISTINCT (hospital_id, vaccine_code)",tenant-scoped uniqueness
+vaccine_master,Vaccination,vaccine_master_hospital_id_vaccine_code_key,UNIQUE,"UNIQUE (hospital_id, vaccine_code)",tenant-scoped uniqueness
+vaccine_master,Vaccination,vaccine_master_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+vaccine_stock,Vaccination,vaccine_stock_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+vendor_quotations,Procurement,vendor_quotations_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+vendor_quotations,Procurement,vendor_quotations_status_check,CHECK,"CHECK ((status = ANY (ARRAY['received'::text, 'awarded'::text, 'rejected'::text])))",status/type enumeration via CHECK
+vendor_rate_contracts,Procurement,vendor_rate_contracts_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+vendors,Procurement,vendors_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ventilator_params,ICU,ventilator_params_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+vial_wastage,Other,vial_wastage_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+visitor_passes,OPD,visitor_passes_hospital_pass_number_key,UNIQUE,"UNIQUE (hospital_id, pass_number)",tenant-scoped uniqueness
+visitor_passes,OPD,visitor_passes_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ward_acuity_snapshots,IPD,ward_acuity_snapshots_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+ward_round_notes,IPD,ward_round_notes_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+wards,IPD,wards_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+webhook_dlq,Integration,webhook_dlq_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+webhook_dlq,Integration,webhook_dlq_status_check,CHECK,"CHECK ((status = ANY (ARRAY['pending'::text, 'retrying'::text, 'resolved'::text, 'dead'::text])))",status/type enumeration via CHECK
+whatsapp_bot_messages,Notifications,whatsapp_bot_messages_direction_check,CHECK,"CHECK ((direction = ANY (ARRAY['inbound'::text, 'outbound'::text])))",none
+whatsapp_bot_messages,Notifications,whatsapp_bot_messages_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+whatsapp_bot_sessions,Notifications,whatsapp_bot_sessions_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+whatsapp_connectors,Notifications,uq_whatsapp_hospital_provider,UNIQUE,"UNIQUE (hospital_id, provider)",tenant-scoped uniqueness
+whatsapp_connectors,Notifications,whatsapp_connectors_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+whatsapp_notifications,Notifications,whatsapp_notifications_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+whatsapp_templates,Notifications,whatsapp_templates_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+wound_assessments,Nursing,wound_assessments_exudate_amount_check,CHECK,"CHECK ((exudate_amount = ANY (ARRAY['none'::text, 'minimal'::text, 'moderate'::text, 'heavy'::text])))",none
+wound_assessments,Nursing,wound_assessments_exudate_type_check,CHECK,"CHECK ((exudate_type = ANY (ARRAY['serous'::text, 'serosanguineous'::text, 'sanguineous'::text, 'purulent'::text, 'haemoserous'::text])))",status/type enumeration via CHECK
+wound_assessments,Nursing,wound_assessments_pain_score_check,CHECK,CHECK (((pain_score >= 0) AND (pain_score <= 10))),none
+wound_assessments,Nursing,wound_assessments_pkey,PRIMARY KEY,PRIMARY KEY (id),none
+wound_assessments,Nursing,wound_assessments_tissue_type_check,CHECK,"CHECK ((tissue_type = ANY (ARRAY['epithelial'::text, 'granulation'::text, 'slough'::text, 'eschar'::text, 'necrotic'::text, 'mixed'::text])))",status/type enumeration via CHECK
+wound_assessments,Nursing,wound_assessments_wound_type_check,CHECK,"CHECK ((wound_type = ANY (ARRAY['pressure_injury'::text, 'surgical'::text, 'diabetic_foot'::text, 'venous'::text, 'arterial'::text, 'traumatic'::text, 'burn'::text, 'other'::text])))",status/type enumeration via CHECK

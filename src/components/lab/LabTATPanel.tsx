@@ -96,7 +96,7 @@ const LabTATPanel: React.FC<Props> = ({ hospitalId }) => {
           alert_type: "lab_tat_overdue",
           severity: "high",
           alert_message: `Lab TAT overdue: ${p.accession || "order"} for ${p.patient_name} — ${Math.round(p.mins_pending / 60)}h pending (target ${Math.round(p.target_tat / 60)}h)`,
-        }).catch(() => {});
+        }).then(() => {}, () => {});
       });
     } catch (err) {
       console.error("Lab TAT panel error:", err);

@@ -4,6 +4,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { X, ExternalLink } from "lucide-react";
+import { resolveActiveEncounterLink, NO_ENCOUNTER_LINK } from "@/lib/encounterLink";
 
 interface Props {
   open: boolean;
@@ -27,9 +28,32 @@ const ExternalLabReferralModal: React.FC<Props> = ({ open, onClose, hospitalId, 
     if (!labName.trim()) { toast({ title: "Lab name is required", variant: "destructive" }); return; }
     setSaving(true);
     const tests = testsInput.split(",").map(t => t.trim()).filter(Boolean);
+
+    // Attach the referral to the patient's current episode of care and record the referring
+    // clinician. Without these three columns a referred-out test was invisible to the doctor
+    // who asked for it: it appeared under no visit, and when the outside lab's report came
+    // back there was nobody to notify. admission_id did not even exist on this table until
+    // migration 20261018000001, so an inpatient referral had nowhere to attach.
+    const link = patientId
+      ? await resolveActiveEncounterLink(hospitalId, patientId)
+      : NO_ENCOUNTER_LINK;
+
+    let referredBy = link.doctorId;
+    if (!referredBy) {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: me } = await supabase
+          .from("users").select("id").eq("auth_user_id", user.id).maybeSingle();
+        referredBy = me?.id ?? null;
+      }
+    }
+
     const { error } = await (supabase as any).from("external_lab_referrals").insert({
       hospital_id: hospitalId,
       patient_id: patientId || null,
+      encounter_id: link.encounterId,
+      admission_id: link.admissionId,
+      referred_by: referredBy,
       lab_name: labName.trim(),
       lab_phone: labPhone.trim() || null,
       lab_address: labAddress.trim() || null,

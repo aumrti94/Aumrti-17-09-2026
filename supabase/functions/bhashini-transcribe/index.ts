@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   resolveHospitalFromJwt, recordAsrUsage, estimateAudioSeconds, assumedBitrateKbps,
 } from "../_shared/asr-metering.ts";
+import { BHASHINI_LANG_MAP } from "../_shared/asr-languages.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -15,7 +16,31 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // Require an authenticated Supabase session, exactly as sarvam-transcribe does. This
+  // function previously accepted unauthenticated calls outright, so anyone holding the
+  // public anon key could burn the hospital's Bhashini quota. It now carries real fallback
+  // traffic, which makes that gap load-bearing rather than theoretical.
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   try {
+    const authClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+    );
+    const { data: { user }, error: authError } = await authClient.auth.getUser(
+      authHeader.replace("Bearer ", ""),
+    );
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // 1. Prefer env secrets. 2. Fall back to the GLOBAL platform_ai_keys (set at /platform → API Hub).
     let bhashiniApiKey = Deno.env.get("BHASHINI_API_KEY");
     let bhashiniUserId = Deno.env.get("BHASHINI_USER_ID");
@@ -43,7 +68,7 @@ serve(async (req) => {
       );
     }
 
-    const { audio_base64, language_code } = await req.json();
+    const { audio_base64, language_code, audio_format, sampling_rate } = await req.json();
 
     if (!audio_base64 || !language_code) {
       return new Response(
@@ -52,16 +77,39 @@ serve(async (req) => {
       );
     }
 
-    const langMap: Record<string, string> = {
-      "hi-IN": "hi", "te-IN": "te", "ta-IN": "ta", "kn-IN": "kn",
-      "ml-IN": "ml", "mr-IN": "mr", "bn-IN": "bn", "gu-IN": "gu",
-      "or-IN": "or", "pa-IN": "pa", "as-IN": "as", "ur-IN": "ur",
-      "sa-IN": "sa", "ne-IN": "ne", "sd-IN": "sd", "ks-IN": "ks",
-      "doi-IN": "doi", "kok-IN": "kok", "mai-IN": "mai", "mni-IN": "mni",
-      "sat-IN": "sat", "bo-IN": "bo", "en-IN": "en",
-    };
+    // Bhashini ASR has no auto-detect — its pipeline requires an explicit sourceLanguage —
+    // so "auto"/"unknown" cannot be served here and must be resolved by the caller.
+    if (language_code === "auto" || language_code === "unknown") {
+      return new Response(
+        JSON.stringify({
+          error: "Bhashini ASR cannot auto-detect language. Resolve a specific language first.",
+          unsupported_language: true,
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
-    const bhashiniLang = langMap[language_code] || language_code.split("-")[0];
+    // Accepts either the app's canonical Sarvam code or Bhashini's own ISO-639 code, since
+    // the failover chain already translates before calling. Bare codes pass through as-is.
+    const bhashiniLang = BHASHINI_LANG_MAP[language_code]
+      ?? (language_code.includes("-") ? null : language_code);
+
+    if (!bhashiniLang) {
+      return new Response(
+        JSON.stringify({
+          error: `Bhashini has no ASR route for "${language_code}".`,
+          unsupported_language: true,
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // MediaRecorder produces WebM/Opus, which Bhashini does NOT accept — it wants
+    // WAV/FLAC/MP3. This function used to hardcode `audioFormat: "webm"`, so every Bhashini
+    // request failed regardless of language. The client now converts to 16 kHz mono WAV
+    // (src/lib/audioToWav.ts) and declares the real format here.
+    const audioFormat = typeof audio_format === "string" ? audio_format : "wav";
+    const samplingRate = Number.isFinite(sampling_rate) ? Number(sampling_rate) : 16000;
 
     // Step 1: Get ASR pipeline config from ULCA
     const pipelineRes = await fetch(
@@ -81,11 +129,21 @@ serve(async (req) => {
     );
 
     if (!pipelineRes.ok) {
-      const errText = await pipelineRes.text();
+      // Return the reason, not just the number. The client renders this to the doctor, and
+      // "Bhashini pipeline error: 502" told nobody whether the key, the language, or the
+      // service was at fault.
+      const errText = (await pipelineRes.text()).slice(0, 500);
       console.error("Bhashini pipeline error:", pipelineRes.status, errText);
       return new Response(
-        JSON.stringify({ error: `Bhashini pipeline error: ${pipelineRes.status}` }),
-        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({
+          error: `Bhashini pipeline ${pipelineRes.status}: ${errText || "no detail returned"}`,
+          bhashini_status: pipelineRes.status,
+          language_code: bhashiniLang,
+        }),
+        {
+          status: pipelineRes.status >= 400 && pipelineRes.status < 500 ? 400 : 502,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
       );
     }
 
@@ -97,9 +155,15 @@ serve(async (req) => {
     const inferenceApiKey = pipelineData?.pipelineInferenceAPIEndPoint?.inferenceApiKey?.value;
 
     if (!serviceUrl || !inferenceApiKey) {
+      // ULCA answers 200 with an empty pipeline when it has no model for the language, so
+      // this is the "language genuinely unavailable" case rather than a transport failure.
       return new Response(
-        JSON.stringify({ error: "Could not resolve Bhashini ASR endpoint. Language may not be supported." }),
-        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({
+          error: `Bhashini has no ASR model available for "${bhashiniLang}".`,
+          language_code: bhashiniLang,
+          unsupported_language: true,
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
@@ -117,8 +181,8 @@ serve(async (req) => {
           config: {
             language: { sourceLanguage: bhashiniLang },
             serviceId: asrConfig.serviceId,
-            audioFormat: "webm",
-            samplingRate: 16000,
+            audioFormat,
+            samplingRate,
           },
         }],
         inputData: {
@@ -128,11 +192,18 @@ serve(async (req) => {
     });
 
     if (!asrRes.ok) {
-      const errText = await asrRes.text();
+      const errText = (await asrRes.text()).slice(0, 500);
       console.error("Bhashini ASR error:", asrRes.status, errText);
       return new Response(
-        JSON.stringify({ error: `Bhashini ASR error: ${asrRes.status}` }),
-        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({
+          error: `Bhashini ASR ${asrRes.status}: ${errText || "no detail returned"}`,
+          bhashini_status: asrRes.status,
+          language_code: bhashiniLang,
+        }),
+        {
+          status: asrRes.status >= 400 && asrRes.status < 500 ? 400 : 502,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
       );
     }
 
@@ -159,11 +230,23 @@ serve(async (req) => {
         seconds: estimateAudioSeconds(approxBytes, bitrate),
         estimated: true,
         latencyMs: Date.now() - asrStartedAt,
+        languageCode: bhashiniLang,
+        // Bhashini is the fallback leg, so an empty result here is the LAST thing that
+        // happens before a language reports "no speech detected" to the doctor. Recording
+        // it as a success made exactly the failures worth investigating unfindable —
+        // BHASHINI_LANG_MAP claims an ASR route for all 23 languages, but ULCA does not
+        // actually serve every one of them, and this row is how that becomes visible.
+        success: transcript.trim().length > 0,
+        errorMessage: transcript.trim().length > 0
+          ? undefined
+          : `empty transcript (${bhashiniLang})`,
       });
     })();
 
     return new Response(
-      JSON.stringify({ transcript }),
+      // `detected_language_code` mirrors sarvam-transcribe's shape so the client can treat
+      // both engines uniformly. Bhashini does not detect — it echoes what it was told.
+      JSON.stringify({ transcript, detected_language_code: bhashiniLang }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {

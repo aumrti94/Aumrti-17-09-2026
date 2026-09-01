@@ -15,7 +15,7 @@
 | 2 | Settings & Masters | — (50 screens) | every screen in `src/pages/settings/` | each setting → the module it unlocks |
 | 3 | Patient & Records | 12 | patients, kiosk, portal, ABHA/ABDM | → OPD, → MRD |
 | 4 | **OPD Journey** | 24 | OPD workspace + tabs, schedule, telemedicine, Voice Scribe | → Lab, Radiology, Pharmacy, Billing, IPD, Accounts |
-| 5 | Lab & Radiology | 16 | lab, radiology, PCPNDT, PACS | ← OPD/IPD orders, → Billing, → chart |
+| 5 | **Lab & Radiology** | 16 | lab, radiology, PCPNDT, PACS | ← OPD/IPD orders, → Billing, → chart |
 | 6 | Pharmacy | 14 | IP queue, dispensing, retail POS, stock, NDPS, returns | ← prescriptions, → Billing, → Inventory |
 | 7 | **IPD Journey** | 20 | IPD, ICU, nursing, day care, dietetics, physio, dialysis, discharge | ← OPD, → Lab/Rad/Pharmacy, → Billing, → Insurance |
 | 8 | Billing, Payments & Accounts | 20 | billing, day closure, payments, accounts/ERP | ← every clinical module, → GST, → journals |
@@ -164,7 +164,201 @@ sections**, matched 1:1 by **1,056 tests in 25 spec files**.
 > named reason, which records `N/A` in the tracker rather than a false pass. The phase that
 > owns the workflow re-runs the same case against real data.
 
-### Phases 3–15
+### Phase 3 — Patient & Records
+**Goal:** prove the 12 patient-story scenarios in
+[JOURNEY_SCENARIOS.md](JOURNEY_SCENARIOS.md#phase-3--patient--records--12-scenarios) hold —
+registration, de-duplication, emergency/newborn, ABHA/ABDM, kiosk, patient portal, edit +
+audit trail, DPDP soft-delete/erasure, documents, and cross-tenant isolation.
+
+**Cases:** [cases/phase-03-patient-records.csv](cases/phase-03-patient-records.csv) — **100
+cases across 10 sections**.
+**Specs:** [e2e/phase-03-patient-records/](../../e2e/phase-03-patient-records/), run with
+`npm run qa:phase3`.
+
+| Section | Cases | Covers |
+|---|---:|---|
+| 3A Registration | 19 | Full-detail registration, UHID format/sequence, DPDP consent gate, field validation |
+| 3B Duplicate detection | 5 | The missing de-dup check on `/patients` — documented as an expected-FAIL today |
+| 3C Emergency & newborn | 13 | Minimal-data ED registration, Brought Dead → mortuary routing, the phone-search link path, newborn creation |
+| 3D ABHA / ABDM | 10 | Sandbox verify, linking + consent log, unlink, live-Aadhaar/mobile-OTP cases left MANUAL-ONLY |
+| 3E Kiosk | 10 | Self-registration, the separate `K...` UHID series, the missing new-patient dedup |
+| 3F Patient portal | 10 | OTP login (automated via service-role `generateLink`), own-data-only scoping, the third `PAT-...` UHID series |
+| 3G Edit & audit trail | 9 | Phone/address edits via both surfaces, the DB-trigger `audit_log` proof |
+| 3H Soft-delete / erasure | 11 | `is_active` toggle, admission/bill delete guards, the one-way (no reactivate) gap, no per-patient DPDP erasure |
+| 3I Documents | 8 | Upload, tenant-scoped storage path, oversize/type rejection, delete, cross-tenant storage RLS |
+| 3J Cross-tenant | 5 | `/patients/:id/summary`'s missing hospital_id filter relying entirely on RLS |
+| **Total** | **100** | |
+
+> **Six cases are deliberately MANUAL-ONLY** (`TC-P3C-012`, `TC-P3D-005`, `TC-P3D-006`,
+> `TC-P3D-009`, `TC-P3D-010`, `TC-P3I-007`) — each needs something a script cannot produce (a
+> live IPD/OPD encounter context, a real Aadhaar/mobile OTP, a deliberately-broken database
+> insert, or — for `TC-P3D-005`/`006` — a live UI path that turns out not to exist at all, see
+> Finding #6 below). Their `Playwright Spec` column is blank by design, same precedent as
+> Phase 1's hospital-registration OTP cases.
+>
+> **Findings written as tests that currently FAIL, on purpose**, because a feature that only
+> works when used correctly is not tested:
+>
+> | # | Finding | Locked by |
+> |---|---|---|
+> | 1 | No de-dup check on `/patients` registration | `TC-P3B-001` |
+> | 2 | No DPDP consent field on Emergency Registration | `TC-P3C-003` |
+> | 3 | Newborn `mother_patient_id` has no UI to set it | `TC-P3C-012` (code-inspection) |
+> | 4 | Kiosk's separate non-atomic `K...` UHID series, no dedup on new-patient mode | `TC-P3E-003`/`005` |
+> | 5 | No Reactivate control for a soft-deleted patient | `TC-P3H-010` |
+> | 6 | ABHASearchPanel's verify+consent+link UI has **no live entry point anywhere in the app** — `PatientRegistrationModal`'s `editPatient` prop is never passed by any caller (`grep -r "editPatient=" src/` → 0 matches), and `PatientSummaryPage.tsx`'s ABHA tab only mounts the panel once `abha_id` is already set. A fresh ABHA link can never be created through the live UI with a logged consent record. | `TC-P3D-005`/`006` (code-inspection), confirmed live by `TC-P3D-008` |
+> | 7 🔴 | **Patient portal is non-functional for genuine OTP sessions** — an OTP-authenticated Supabase Auth user has no row in `users`, so `get_user_hospital_id()` returns `NULL`, and every `patients` RLS policy silently excludes it, for both reads and writes. Every portal login looks identical to "no matching patient," whether a real match exists or not, and self-service profile creation fails to insert a row at all. First live run: `TC-P3F-001`/`005`/`006`/`010` (expect a real match to succeed) all failed exactly this way; `TC-P3F-007` (expects the "0 matches" branch) passed for every login, including ones that should have matched. Routed to **Meera** (RLS policy owner) per `.agents/agents.md`. | `TC-P3F-001`/`005`/`006`/`008`/`010` |
+>
+> Log each as `BUG-P3-NNN` on first run rather than quarantining the case — Finding #7
+> especially should not be "fixed" by loosening the test; it is the test doing its job.
+>
+> **`03` is not yet in `STRICT_PHASES`** in `scripts/qa-parity-check.mjs` — run
+> `node scripts/qa-parity-check.mjs 03` manually to check 1:1 parity before flipping it on.
+
+### Phase 4 — OPD Journey
+**Goal:** prove the 24 OPD scenarios in
+[JOURNEY_SCENARIOS.md](JOURNEY_SCENARIOS.md#phase-4--opd-journey--24-scenarios) hold — token to
+consultation to prescription to bill, every payer variation, the clinical safety blocks, and
+the five cross-module hops out to Lab, Radiology, Pharmacy, Billing and IPD.
+
+**Cases:** [cases/phase-04-opd-journey.csv](cases/phase-04-opd-journey.csv) — **260 cases across
+12 sections**, matched 1:1 by **260 tests in 12 spec files**.
+**Specs:** [e2e/phase-04-opd-journey/](../../e2e/phase-04-opd-journey/), run with `npm run qa:phase4`.
+
+| Section | Cases | Covers |
+|---|---:|---|
+| 4A Queue & tokens | 26 | `/opd` load, walk-in registration, `generate_token_number`, priority, MLC flag, the four refusals |
+| 4B Fee engine & revisit | 24 | doctor → dept → global → ₹500 precedence, follow-up window at day 5 / **7** / 8 / 12, free follow-up, emergency precedence |
+| 4C Appointments & slots | 18 | slot booking and consumption, double-booking, check-in → token, blocked and full slots |
+| 4D Payer variations | 22 | cash, TPA, PMJAY, corporate, **CGHS with and without a referral** |
+| 4E Consultation workspace | 24 | encounter, six tabs, vitals bands and boundaries, diagnosis + ICD, MRD record and retention |
+| 4F Drug safety & prescribing | 26 | route/frequency masters, quantity maths, NDPS badge, **the allergy block and its override** |
+| 4G Orders — Lab & Radiology | 22 | BILLED & ORDERED, the silently-dropped test, **PCPNDT Form F** |
+| 4H Billing & discounts | 28 | consultation charge + idempotency, partial payment, the discount tiers and their boundaries |
+| 4I Downstream hops | 20 | admit to IPD, physio referral, prescription → pharmacy |
+| 4J Telemedicine & Voice Scribe | 14 | teleconsult shell and billing; 6 dictation/video cases MANUAL-ONLY |
+| 4K Edge cases | 20 | **two tokens one day**, MLC, duplicate caught at OPD, no-show |
+| 4L RBAC & isolation | 16 | role reach, the doctor's own-queue filter, A-vs-B on four OPD tables |
+| **Total** | **260** | |
+
+> **Phase 4 is authored to strict 1:1 parity** — every CSV row has exactly one Playwright test
+> and vice versa. Check it with `node scripts/qa-parity-check.mjs 04 --advisory`. `04` is
+> deliberately **not** yet in `STRICT_PHASES`; add it once the phase has actually been run, the
+> same position `03` is in today.
+
+> **Six cases are MANUAL-ONLY** (`TC-P4J-008`, `TC-P4J-011` … `TC-P4J-014`, plus the live-video
+> half of `TC-P4J-008`) — each needs a human speaking into a microphone or two live video
+> sessions, which a script cannot produce. Following the Phase 2 precedent they still carry a
+> spec: the test asserts everything provable without speech and then `test.skip`s with a named
+> reason, so the tracker records `N/A` rather than a blank cell or a false PASS. **Do not make
+> them green by weakening them** — a transcription error here is a prescribing error.
+
+> **Eight findings, all found by reading the code while authoring the phase rather than by
+> running it. The five P1s were FIXED before the phase was ever run**, so their cases are
+> **regression locks expected to PASS** — a red result means the fix has been reverted, not that
+> the test is stale. Do not quarantine them.
+>
+> | # | Finding | Fix | Locked by | Owner |
+> |---|---|---|---|---|
+> | 1 🔴 | **Brand names defeated the allergy check.** `checkDrugSafety` normalised only the strength (`"Mox 500"` → `"mox"`) then substring-matched `drug_allergy_cross_reactivity`, which is keyed on **generics**. Nothing resolved brand → generic, though `drug_master` stores both. `Amoxicillin` blocked; `Mox 500` — the same drug, the way Indian doctors actually prescribe — passed silently. | ✅ `resolveAliases()` in [drugSafetyCheck.ts](../../src/lib/drugSafetyCheck.ts) resolves every name to its generic constituents (splitting combinations on `+`, `/`, `and`), and duplicates, interactions **and** allergies now all match on those aliases. 10 new Vitest cases, including the false-positive side. | `TC-P4F-022`, `TC-P4F-023` | Priya + Dr. Ramesh |
+> | 2 🔴 | **No PCPNDT Form F on the OPD path.** Form F existed in one call site only; `syncRadiologyOrders` — what a consultation actually calls — created neither the `pcpndt_form_f` row nor the `is_pcpndt` flag. Statutory, not cosmetic. | ✅ New [src/lib/pcpndt.ts](../../src/lib/pcpndt.ts) holds the single determination, called by **both** paths; `syncRadiologyOrders` now writes the flag and the Form F and logs NABH evidence, and a failed Form F insert is surfaced loudly. | `TC-P4G-016`, `TC-P4G-017` | Priya + Suresh |
+> | 3 🔴 | **The Form F trigger was a substring match** on `"obstetric"` in a free-text study name, so a clinically obstetric `"USG Pregnancy Profile"` was missed even on the path that had one. | ✅ Migration `20261013000019` adds `radiology_study_master.requires_form_f` with a backfill; the flag is authoritative and a broadened keyword list (pregnancy, antenatal, TIFFA, anomaly scan, nuchal…) covers legacy catalogues. | `TC-P4G-018` | Suresh |
+> | 4 🔴 | **The allergy override was in nobody's record.** The modal promises "logged in the patient record", but `handleSafetyOverride` left `patient_id` NULL and no column named the prescriber at all. | ✅ Migration `20261013000017` adds `clinical_alerts.created_by`; `ConsultationWorkspace` now passes `patientId` and `userId` into `RxOrdersTab`, and a failed insert raises a destructive toast instead of failing silently. | `TC-P4F-020`, `TC-P4F-021` | Priya |
+> | 5 🔴 | **The CGHS referral lookup could never run.** `handleFinalize` filters on `cghs_echs_beneficiaries.patient_id`, added by a guarded `ALTER` in `20260521000005` that only fires *if the table exists* — but the table is created in `20260901000010`, which sorts **later**. On a fresh database the column was never added, the lookup errored, and the block fired for **every** CGHS patient including those holding a valid referral. | ✅ Migration `20261013000018` re-applies the columns unconditionally and idempotently, plus the indexes and the service-role policy that sat inside the same skipped guard. | `TC-P4D-009`, `TC-P4D-012` | Meera |
+> | 6 | `doctor_slots.booked_count` is incremented by a non-atomic read-then-write inside a `try/catch` that only warns. The `appointments_unique_slot` constraint is what actually prevents double-booking; `booked_count` is a display counter that can under-report. | ⏳ open — the DB constraint makes this cosmetic, so it is scoped rather than hot-fixed | `TC-P4C-013`, `TC-P4C-014` | Meera |
+> | 7 | **Cancelling an appointment never releases the slot** — nothing decrements `booked_count`, so cancelled capacity can never be resold. | ⏳ open — needs a product decision on whether a cancellation reopens the slot | `TC-P4C-017` | Nikhil (scope) |
+> | 8 | **The two order-sync functions disagree.** An unmatched *lab* test is silently dropped; an unmatched *radiology* study is created anyway against a fallback modality. Same failure, opposite handling, so no single mental model is correct. | ⏳ open — which of the two behaviours is correct is a clinical call, not a test's to make | `TC-P4G-009`, `TC-P4G-020` | Arjun |
+>
+> **A ninth defect surfaced while fixing #4 and was fixed with it:** `encounterId` was declared
+> in `RxOrdersTab`'s props and used to fetch the placed orders, but **was never passed by
+> `ConsultationWorkspace`** — so the "BILLED & ORDERED" confirmation chip could never appear at
+> all, on any order. `TC-P4G-007` locks it.
+>
+> **`TC-P4K-005` is a REGRESSION LOCK, not an expected failure.** The encounter-to-bill backfill
+> takes "the most recent unlinked OPD bill today", guarded by `.is("encounter_id", null)`. That
+> guard is present, so the two-tokens-one-day scenario should PASS — a red result means the guard
+> has been removed and every second same-day consultation is charging the wrong visit.
+>
+> Two behaviours are documented as **current**, not as defects, because the right answer is a
+> product decision rather than a test's to make: OPD orders and vitals do not carry into an
+> admission (`TC-P4I-005`/`006`, per P4-S15), and a consultation can be completed with an empty
+> chief complaint (`TC-P4E-008`).
+
+### Phase 5 — Lab & Radiology
+**Goal:** prove the 16 scenarios in
+[JOURNEY_SCENARIOS.md](JOURNEY_SCENARIOS.md#phase-5--lab--radiology--16-scenarios) hold —
+order to sample to result to release, the critical value and the delta check, auto-verification
+and dual validation, the radiology worklist and report, and the statutory PCPNDT Form F.
+
+**Cases:** [cases/phase-05-lab-radiology.csv](cases/phase-05-lab-radiology.csv) — **146 cases
+across 12 sections**, matched 1:1 by **146 tests in 12 spec files**.
+**Specs:** [e2e/phase-05-lab-radiology/](../../e2e/phase-05-lab-radiology/), run with `npm run qa:phase5`.
+
+> **Phase 5 changes the shape of a test case.** Phases 1–4 are atomic — one row per field, per
+> option value, per permission. Every Phase 5 case is instead a **complete workflow**: 8–15
+> numbered steps that walk a real journey end to end (order → bill → collect → barcode → result →
+> critical alert → acknowledge → release → chart), with several assertions along the way.
+> Negatives and boundaries are their own complete workflows, not field pokes. 146 cases therefore
+> cover more ground than Phase 4's 260, and each one fails in a way that describes something a
+> hospital would actually notice. 1:1 CSV↔spec parity is unchanged.
+
+| Section | Cases | Covers |
+|---|---:|---|
+| 5A Lab order intake & billing | 16 | OPD pay-then-test, IPD post-paid accrual, accession numbering, STAT alerting, **the Fever Panel group price** |
+| 5B Collection, barcoding & rejection | 12 | collect → receive → process, accession vs sample barcode, haemolysed rejection → recollection with **no second charge** |
+| 5C Results, critical values & delta | 14 | potassium 7.2 → `CH` → alert → acknowledge → release; both boundary pairs; **creatinine 0.9 → 4.5** |
+| 5D Verification, dual validation & amendment | 14 | auto-verify and its seven refusal reasons, the two-person control, amendment after release |
+| 5E External / referred-out | 8 | the send-out register and the four gaps that make it a dead end |
+| 5F Radiology order, worklist & report | 16 | the real status ladder, sign-off, critical findings, CT dose, **the report shell that never gets created** |
+| 5G PCPNDT Form F | 14 | obstetric USG → Form F → register → both gates; the non-obstetric false-positive side |
+| 5H AI radiology impression | 10 | AI Suggest → attestation → **the radiologist's edited text is what is saved**; the governance gaps |
+| 5I Billing & payment gates | 12 | the seven-rule ancillary gate, STAT bypass, override audit, the double-bill probe |
+| 5J Downstream & compliance | 10 | result → chart, charge → bill, NABH evidence, ABDM care context |
+| 5K RBAC & tenant isolation | 12 | role reach, and A-vs-B on eight lab/radiology/PCPNDT tables through a real session |
+| 5L Prerequisites & Phase 6 gate | 8 | every SETTINGS_PREREQ_MATRIX Lab/Radiology row, re-proven |
+| **Total** | **146** | |
+
+> **Run 5L first, then again last.** It re-proves every "symptom if missing" in
+> `SETTINGS_PREREQ_MATRIX.md`, so anything failing elsewhere is a real defect rather than a
+> configuration gap. `TC-P5L-002` alone is worth the section: migration `20261009000171`
+> deactivates every lab test, and on a tenant migrated after seeding that single state turns into
+> roughly forty red cases across 5A–5D with no common cause visible from any of them.
+
+> **`05` is deliberately NOT in `STRICT_PHASES`** in `scripts/qa-parity-check.mjs` — the same
+> position `03` and `04` hold. Check it with `node scripts/qa-parity-check.mjs 05 --advisory`, and
+> flip it on once the phase has actually been run.
+
+> **Sixteen findings, all found by reading the code while authoring the phase rather than by
+> running it.** Unlike Phase 4, **none have been fixed yet** — Phase 5 was authored to the
+> instruction "write the failures separately, fix, then retest", so the cases that lock them are
+> **expected to FAIL on the first run**. Do not quarantine them and do not weaken them to green.
+> Full triage detail, with the fix→retest ledger, is in
+> [results/PHASE_05_FAILURE_REPORT.md](results/PHASE_05_FAILURE_REPORT.md).
+>
+> | # | Finding | Severity | Locked by | Owner |
+> |---|---|---|---|---|
+> | L1 🔴 | **A delta result never saves at all.** `lab_order_items.delta_flag` is `boolean`, but a >50% swing writes the **string** `"delta"`; PostgREST returns `22P02` and the handler swallows it with a bare `console.error; return`. The entire result is discarded — no value, no flag, no critical alert, no toast — for precisely the results that moved most. | P1 | `TC-P5C-010`/`011`/`012` | Meera + Priya |
+> | L2 🔴 | **A panel bills ₹0 per line.** Group rates are keyed by `group_id`; the bill-line loop looks them up by `test_id`. Every group-covered test writes `unit_rate: 0` and `"Lab: Test"` while the header still carries ₹1,100. On the IPD path the panel is never charged at all. | P1 | `TC-P5A-013`/`014` | Ravi |
+> | L3 🔴 | **No critical ranges were ever seeded**, and `CH`/`CL` derives from them alone — so potassium 7.2 flagged `H` and no alert fired. Fixed in the seeder; `TC-P5C-001` and `TC-P5L-003` are now regression locks. | P1 | `TC-P5C-001`, `TC-P5L-003` | Meera |
+> | L4 🔴 | **A pathologist can release an unacknowledged critical value.** `handlePathologistValidate` checks neither the critical gate nor the credential gate that `handleValidateAll` applies. | P1 | `TC-P5D-005`/`006` | Priya |
+> | L5 🔴 | **No second-validator identity enforcement.** The submit step records nobody, so nothing can compare submitter against validator. Histopathology gets this right; lab orders do not. | P1 | `TC-P5D-009`/`010` | Priya |
+> | L6 🔴 | **No result-amendment path exists at all** — no column, no table, no control. Yet a signed-off antibiogram can be silently overwritten. | P1 | `TC-P5D-011`/`012`/`013` | Priya + Meera |
+> | L7 | `autoverify_eligible` and `lab_dual_validation_config` were never seeded and the latter has **no settings screen anywhere** — both paths unreachable. Seeder fixed. | P2 | `TC-P5D-001`/`007` | Meera + Kiran |
+> | L8 | **External referrals are a disconnected register** — `patient_id` is always null, no order link, no result capture, no cost. | P2 | `TC-P5E-004`…`007` | Arjun |
+> | L9 | A never-drawn sample can be **rejected**, queueing a recollection for a draw that did not happen; and neither rejection nor critical notification writes NABH evidence. | P2 | `TC-P5B-010`/`012`, `TC-P5J-005` | Priya |
+> | L10 | The result workspace's "Mark Collected" is not payment-gate aware — silent no-op on a pre-paid tenant. | P2 | `TC-P5I-008` | Priya |
+> | L11 | Gender-specific reference ranges are configurable but never applied; the "Ready" queue filter maps to a status nothing writes. | P3 | — (documented) | Kiran |
+> | L12 | The barcode label fetches JsBarcode from a **CDN at print time** — a lab with no outbound internet prints a blank label. | P2 | `TC-P5B-006` | Kiran |
+> | R1 🔴 | **An OPD-raised study can never be reported.** `syncRadiologyOrders` creates no `radiology_reports` shell; `saveDraft` and `validateAndSign` both return silently on its absence while the button stays enabled. The radiologist clicks Sign and *nothing happens*. | P1 | `TC-P5F-013`/`014`/`015` | Priya |
+> | R2 🔴 | **`pcpndt_form_f` and `pcpndt_records` are two disconnected tables.** The auto-created statutory record appears in neither the register nor either gate, so every PCPNDT study is blocked until a human re-keys the whole form. | P1 | `TC-P5G-005`/`006` | Meera + Suresh |
+> | R3 | The order modal's PCPNDT banner still uses the **pre-fix substring test**, so "USG Pregnancy Profile" creates a Form F with no warning shown. | P2 | `TC-P5G-013` | Priya |
+> | R4 | `radiology_study_master.requires_form_f` is **not settable from any UI**, despite the migration comment claiming otherwise. | P2 | `TC-P5G-003` | Kiran + Suresh |
+> | R6 | `scheduled` and `patient_arrived` are unreachable statuses with live worklist filters; `scheduled_time` is dead. | P3 | `TC-P5F-004` | Arjun |
+> | R7 🔴 | On signing, `autoBillOpdInvestigation` runs for every non-admitted order **including one already paid at order time** — a double-bill candidate. | P1 | `TC-P5I-010` | Ravi |
+> | R8 | The worklist is scoped to one `order_date` and hides `unbilled`, so an order whose charge failed is **invisible forever** with no view anywhere. | P2 | `TC-P5F-002`/`003` | Arjun |
+> | R13/R14 | The DICOM viewer's AI impression is never persisted or attested while metering the same feature key; and `ai_impression_suggestion` is persisted **before** human review. | P2 | `TC-P5H-008`/`009` | Dr. Nalini |
+
+### Phases 6–15
 Scenario lists and section breakdowns are in [JOURNEY_SCENARIOS.md](JOURNEY_SCENARIOS.md).
 Detailed cases are written phase by phase, when you reach each one — deliberately, so they
 account for what earlier phases uncovered.
@@ -179,7 +373,10 @@ Tracked live in the tracker's **Summary** sheet. This table is a manual snapshot
 |---|---|---|---|---|---|
 | 1 | ✅ 177 | — | — | — | 🔴 not started |
 | 2 | ✅ 1,056 (all 12 sections, 1:1 parity green) | — | — | — | 🔴 not run |
-| 3–15 | ⏳ written on arrival | — | — | — | ⏳ |
+| 3 | ✅ 100 (10 sections, 94 automated + 6 MANUAL-ONLY) | — | — | — | 🔴 not run |
+| 4 | ✅ 260 (12 sections, 1:1 parity green; 8 findings — 5 P1s fixed pre-run) | — | — | — | 🔴 not run |
+| 5 | ✅ 146 (12 sections, 1:1 parity green; **workflow-shaped cases**; 19 findings — 8 P1s open, expected-FAIL on first run) | — | — | — | 🔴 not run |
+| 6–15 | ⏳ written on arrival | — | — | — | ⏳ |
 
 > **Five defects found while authoring Phase 2 — all FIXED, and their cases are now
 > regression locks rather than expected failures.** Four screens showed a success toast and

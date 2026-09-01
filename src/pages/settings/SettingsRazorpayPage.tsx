@@ -64,6 +64,35 @@ const SettingsRazorpayPage: React.FC = () => {
 
   const handleSave = async () => {
     if (!hospitalId) return;
+
+    // Razorpay stamps the environment into the key itself. A test key saved under Live Mode
+    // fails every payment link in production silently — the counter only finds out when a
+    // patient's payment never arrives — so the mismatch is refused rather than warned about.
+    const key = config.keyId.trim();
+    if (key) {
+      const expected = config.mode === "live" ? "rzp_live_" : "rzp_test_";
+      if (!key.startsWith(expected)) {
+        toast({
+          title: `${config.mode === "live" ? "Live" : "Test"} Mode needs a ${expected}… key`,
+          description: `This key is for the other environment. Payment links created with it will not settle.`,
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
+    // A UPI ID with no handle produces a QR code no payment app can resolve. That is
+    // discovered at the billing counter with a patient waiting, not here, unless we check.
+    const upi = config.upiId.trim();
+    if (upi && !/^[\w.\-]{2,}@[a-zA-Z]{2,}$/.test(upi)) {
+      toast({
+        title: "UPI ID must look like name@bank",
+        description: "Without a valid handle the generated QR code cannot be scanned by any payment app.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setSaving(true);
     const { error } = await (supabase as any)
       .from("api_configurations")
@@ -74,9 +103,9 @@ const SettingsRazorpayPage: React.FC = () => {
         is_active: true,
         config: {
           mode: config.mode,
-          key_id: config.keyId,
+          key_id: key,
           key_secret: config.keySecret,
-          upi_id: config.upiId,
+          upi_id: upi,
           part_payments: config.partPayments,
           auto_receipt: config.autoReceipt,
         },

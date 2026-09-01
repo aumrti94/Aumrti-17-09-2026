@@ -16,13 +16,24 @@ import { test, expect, MOCK } from '../fixtures/auth.fixture';
 import { db, hospitalIdFor, expectRow, expectNoRow, countRows } from '../utils/db-verify';
 import {
   fillField, readField, selectByValue, save, openCreate, awaitSaveAck, reloadAndSettle, heading,
+  openTab, optionValues,
 } from './settings-locators';
+
+/** HL7 has its own header, so it does not render SettingsPageWrapper's "Save Changes". */
+const HL7_SAVE = /save configuration/i;
 
 const INTEGRATIONS = '/settings/integrations';
 const HL7 = '/settings/hl7';
 const ABDM = '/settings/abdm';
 const HMIS = '/settings/hmis-portal';
-const API_KEYS = '/settings/api-keys';
+/**
+ * Key management used to live on its own screen at /settings/api-keys. That screen and the API
+ * Portal both issued credentials into api_keys, in two different formats, and disagreed about
+ * whether key_hash held a digest or the secret itself. They are now one screen; /settings/api-keys
+ * redirects here. The key-lifecycle tests below are kept — they assert behaviour the consolidated
+ * page still owns.
+ */
+const API_KEYS = '/settings/api-portal';
 const API_PORTAL = '/settings/api-portal';
 const API_HUB = '/settings/api-hub';
 const DB_ON = () => process.env.QA_DB_AVAILABLE === 'true';
@@ -32,7 +43,9 @@ const CONN = E[INTEGRATIONS] as { connector: string; endpoint: string };
 const HL7E = E[HL7] as { endpoint: string; port: string };
 const ABDME = E[ABDM] as { hipId: string; hipName: string };
 const HMISE = E[HMIS] as { facilityCode: string };
-const KEYE = E[API_KEYS] as { keyName: string };
+// Keyed by the historical route, not by API_KEYS — that constant now points at the portal, whose
+// mock-data entry carries an endpoint rather than a keyName.
+const KEYE = E['/settings/api-keys'] as { keyName: string };
 const PORTALE = E[API_PORTAL] as { endpoint: string };
 const HUBE = E[API_HUB] as { label: string };
 const INSECURE = MOCK.phase2.invalid.webhookInsecure as string;
@@ -43,7 +56,9 @@ async function purge(): Promise<void> {
   if (!DB_ON()) return;
   const hid = await hospitalIdFor('A');
   await db().from('lab_device_connectors').delete().eq('hospital_id', hid).eq('name', CONN.connector);
-  await db().from('api_keys').delete().eq('hospital_id', hid).in('name', [KEYE.keyName, 'QA Portal Key']);
+  // Column is key_name. Filtering on `name` — which api_keys does not have — made this a silent
+  // no-op, so QA keys accumulated across runs and the row-count assertions drifted.
+  await db().from('api_keys').delete().eq('hospital_id', hid).in('key_name', [KEYE.keyName, 'QA Portal Key']);
   await db().from('webhook_endpoints').delete().eq('hospital_id', hid).eq('url', PORTALE.endpoint);
 }
 
@@ -74,15 +89,38 @@ async function gatewayCase(page: import('@playwright/test').Page, value: string,
   ).toBeTruthy();
 }
 
+/**
+ * Open the Vitals Devices tab and enable the bedside feed, which is what mounts the vendor
+ * selector — it renders only when `vitals_feed_enabled` is on (a deliberate conditional, and
+ * the subject of TC-P2I-034). Returns the vendor labels the dropdown actually offers.
+ *
+ * The previous version of this read `<select>` options, but the control is a Radix Select
+ * whose options live in a portal and only exist while the menu is open. It found nothing, then
+ * fell back to a substring check against the page body — which is why "GE Healthcare" alone
+ * appeared to pass ("ge" matches "Settings" and "message") while four vendors that are present
+ * in the product were reported missing. `optionValues` handles the Radix case properly.
+ */
+async function vitalsVendorOptions(page: import('@playwright/test').Page): Promise<string[]> {
+  await openTab(page, /vitals devices/i);
+
+  const toggle = page.locator('[role="switch"]').first();
+  if (await toggle.count()) {
+    if ((await toggle.getAttribute('aria-checked')) !== 'true') {
+      await toggle.click();
+      await page.waitForTimeout(600);
+    }
+  }
+
+  return optionValues(page, 'Device Manufacturer', HL7);
+}
+
 async function vitalsVendorCase(page: import('@playwright/test').Page, value: string, label: string) {
-  const body = (await page.locator('body').innerText()).toLowerCase();
-  const options = await page.locator('select').evaluateAll(
-    els => els.flatMap(s => [...(s as HTMLSelectElement).options].map(o => o.value)),
-  ).catch(() => [] as string[]);
+  const options = await vitalsVendorOptions(page);
 
   expect(
-    options.includes(value) || body.includes(label.toLowerCase().split(' ')[0]),
-    `Vitals monitor vendor "${label}" (${value}) is not offered. Each vendor speaks a different ` +
+    options.some(o => o.toLowerCase().includes(label.toLowerCase())),
+    `Vitals monitor vendor "${label}" (${value}) is not offered — the dropdown lists: ` +
+    `${options.join(', ') || '(nothing)'}. Each vendor speaks a different ` +
     `dialect of HL7 for vitals — a missing one means the ICU flowsheet is populated with the ` +
     `wrong parameters or nothing at all, while the nurse believes charting is automatic.`,
   ).toBeTruthy();
@@ -357,7 +395,7 @@ test.describe('P2I — HL7 / FHIR', () => {
     test.skip(!DB_ON(), 'Database access not enabled');
     await fillField(page, 'Mirth Host / IP', HL7E.endpoint, HL7);
     await fillField(page, 'Port', HL7E.port, HL7);
-    await save(page);
+    await save(page, HL7_SAVE);
     await awaitSaveAck(page);
     await reloadAndSettle(page);
 
@@ -372,7 +410,7 @@ test.describe('P2I — HL7 / FHIR', () => {
   test('TC-P2I-023 A non-numeric HL7 port is refused', async ({ page }) => {
     test.skip(!DB_ON(), 'Database access not enabled');
     await fillField(page, 'Port', MOCK.phase2.invalid.feeNonNumeric as string, HL7).catch(() => {});
-    await save(page);
+    await save(page, HL7_SAVE);
     await awaitSaveAck(page);
     await reloadAndSettle(page);
 
@@ -387,7 +425,7 @@ test.describe('P2I — HL7 / FHIR', () => {
   test('TC-P2I-024 An HL7 port outside the valid range is refused', async ({ page }) => {
     test.skip(!DB_ON(), 'Database access not enabled');
     await fillField(page, 'Port', 70000, HL7).catch(() => {});
-    await save(page);
+    await save(page, HL7_SAVE);
     await awaitSaveAck(page);
     await reloadAndSettle(page);
 
@@ -403,7 +441,7 @@ test.describe('P2I — HL7 / FHIR', () => {
     test.skip(!DB_ON(), 'Database access not enabled');
     await fillField(page, 'Sending Facility', 'QA_AUMRTI', HL7).catch(() => {});
     await fillField(page, 'Receiving Facility', 'QA_LIS', HL7).catch(() => {});
-    await save(page);
+    await save(page, HL7_SAVE);
     await awaitSaveAck(page);
     await reloadAndSettle(page);
 
@@ -418,7 +456,7 @@ test.describe('P2I — HL7 / FHIR', () => {
   test('TC-P2I-026 The Mirth channel ID saves', async ({ page }) => {
     test.skip(!DB_ON(), 'Database access not enabled');
     await fillField(page, 'Channel ID (optional)', 'qa-channel-0001', HL7).catch(() => {});
-    await save(page);
+    await save(page, HL7_SAVE);
     await awaitSaveAck(page);
     await reloadAndSettle(page);
 
@@ -477,6 +515,7 @@ test.describe('P2I — HL7 / FHIR', () => {
   });
 
   test('TC-P2I-034 The vitals vendor selector appears only once bedside monitoring is enabled', async ({ page }) => {
+    await openTab(page, /vitals devices/i);
     const before = (await page.locator('body').innerText()).includes('Device Manufacturer');
     const toggle = page.locator('[role="switch"]').first();
     test.skip(!(await toggle.count()), 'No bedside monitoring toggle rendered');
@@ -497,7 +536,7 @@ test.describe('P2I — HL7 / FHIR', () => {
     test.skip(!DB_ON(), 'Database access not enabled');
     await fillField(page, 'Mirth Host / IP', HL7E.endpoint, HL7);
     await fillField(page, 'Port', HL7E.port, HL7);
-    await save(page);
+    await save(page, HL7_SAVE);
     await awaitSaveAck(page);
     await reloadAndSettle(page);
 
@@ -790,7 +829,7 @@ test.describe('P2I — API Keys', () => {
   });
 
   test('TC-P2I-055 API Keys screen loads', async ({ page, consoleErrors }) => {
-    await expect(heading(page, 'API Keys').or(page.getByRole('heading', { name: /api key/i }).first())).toBeVisible();
+    await expect(heading(page, 'API Portal').or(page.getByRole('heading', { name: /api portal|api key/i }).first())).toBeVisible();
     const real = consoleErrors.filter(e => !/favicon|ResizeObserver/i.test(e));
     expect(
       real,
@@ -807,7 +846,7 @@ test.describe('P2I — API Keys', () => {
     await awaitSaveAck(page);
 
     await expectRow(
-      'api_keys', { hospital_id: hid, name: KEYE.keyName },
+      'api_keys', { hospital_id: hid, key_name: KEYE.keyName },
       'The name is how a key is identified for revocation later. An unnamed key cannot be safely ' +
       'revoked because nobody knows what would break.',
     );
@@ -874,7 +913,7 @@ test.describe('P2I — API Keys', () => {
     test.skip(!DB_ON(), 'Database access not enabled');
     const hid = await hospitalIdFor('A');
     const { data, error } = await db().from('api_keys')
-      .select('name, is_active, revoked_at').eq('hospital_id', hid).limit(10);
+      .select('key_name, is_active, revoked_at').eq('hospital_id', hid).limit(10);
 
     test.skip(!!error, `api_keys is not readable: ${error?.message}`);
     expect(
@@ -918,7 +957,7 @@ test.describe('P2I — API Keys', () => {
     await loginAs('receptionist', { hospital: 'A' });
     expect(
       await isRouteBlocked(page, API_KEYS),
-      'A receptionist reached /settings/api-keys. Generating a key creates a credential with ' +
+      'A receptionist reached the API Portal. Generating a key creates a credential with ' +
       'programmatic access to patient data that outlives the session and is not tied to a login.',
     ).toBeTruthy();
   });

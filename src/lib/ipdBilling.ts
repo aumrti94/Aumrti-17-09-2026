@@ -7,6 +7,7 @@ import { checkBillWritable } from "@/lib/lockedDay";
 import { getRate, SERVICE_RATE_CODES } from "@/lib/serviceRates";
 import { bundlesNursingIntoRoom } from "@/lib/payerTypes";
 import { getWardNursingRate } from "@/lib/wardNursingRate";
+import { computeBedSegments, formatSegmentDateRange, type BedTransferRecord } from "@/lib/ipdBedSegments";
 
 /** Bed categories priced as critical care — they take the ICU default rate. */
 const ICU_BED_CATEGORIES = new Set(["icu", "sicu", "picu", "nicu", "micu", "ccu", "iccu"]);
@@ -101,6 +102,95 @@ export function resolveRoomRateFallback(
   return IPD_FALLBACK_BED_RATES[bedCategory || "general"] ?? 600;
 }
 
+export interface SegmentRoomPricing {
+  ratePerDay: number;
+  gstPercent: number;
+  usedFallbackRate: boolean;
+  wardName: string;
+  bedNumber: string;
+  bedCategory: string;
+}
+
+/**
+ * Resolves the room rate + GST for ONE ward/bed. Extracted from what used to be a single
+ * per-admission lookup so autoPullAdmissionCharges can call it once per stay SEGMENT after
+ * a mid-stay transfer, instead of once for the whole stay at the current ward.
+ *
+ * Replicates the pre-existing priority chain's REAL runtime order exactly — which is
+ * ward.rate_per_day first, ahead of service_rates/service_master, despite what the
+ * "Priority 1 / 2 / 3" comments on the original block claimed. That mismatch predates this
+ * extraction and is left uncorrected: fixing it here would silently change billed amounts
+ * for every admission, transferred or not.
+ */
+export async function resolveSegmentRoomPricing(
+  hospitalId: string,
+  wardRow: { name?: string | null; type?: string | null; rate_per_day?: number | null; gst_applicable?: boolean | null; gst_percent?: number | null } | undefined,
+  bedRow: { bed_number?: string | null; bed_category?: string | null } | undefined,
+): Promise<SegmentRoomPricing> {
+  const wardName = wardRow?.name || "Ward";
+  const wardType = wardRow?.type || "general";
+  const bedNum = bedRow?.bed_number || "";
+  // bed_category (e.g. "icu", "private") takes precedence over ward type for rate lookup
+  const bedCategory: string = bedRow?.bed_category || wardType;
+
+  const { data: categoryRateRaw } = await (supabase as any)
+    .from("service_rates")
+    .select("default_rate, gst_rate")
+    .eq("hospital_id", hospitalId)
+    .eq("bed_category", bedCategory)
+    .eq("is_active", true)
+    .ilike("item_type", "%room%")
+    .limit(1)
+    .maybeSingle();
+
+  const categoryRate = categoryRateRaw ? {
+    rate: categoryRateRaw.default_rate,
+    gst_percent: categoryRateRaw.gst_rate,
+    gst_applicable: !!categoryRateRaw.gst_rate
+  } : null;
+
+  const { data: roomRate } = categoryRate ? { data: null } : await supabase
+    .from("service_master")
+    .select("fee, gst_percent, gst_applicable")
+    .eq("hospital_id", hospitalId)
+    .ilike("name", `%${bedCategory}%`)
+    .ilike("item_type", "%room%")
+    .eq("is_active", true)
+    .limit(1)
+    .maybeSingle();
+
+  const wardDbRate = Number(wardRow?.rate_per_day) || 0;
+
+  const needsCodeRate = wardDbRate <= 0 && !categoryRate?.rate && !roomRate?.fee;
+  const codeRate = needsCodeRate
+    ? await getRate(
+        hospitalId,
+        ICU_BED_CATEGORIES.has((bedCategory || "").toLowerCase())
+          ? SERVICE_RATE_CODES.ICU_PER_DAY
+          : SERVICE_RATE_CODES.WARD_PER_DAY,
+        0
+      )
+    : 0;
+
+  const ratePerDay =
+    wardDbRate > 0
+      ? wardDbRate
+      : categoryRate?.rate
+      ? Number(categoryRate.rate)
+      : roomRate?.fee
+      ? Number(roomRate.fee)
+      : codeRate > 0
+      ? codeRate
+      : resolveRoomRateFallback(0, bedCategory);
+  const usedFallbackRate = needsCodeRate && codeRate <= 0;
+
+  const wardGstApplicable = !!wardRow?.gst_applicable;
+  const wardGstPercent = Number(wardRow?.gst_percent) || 0;
+  const gstPercent = wardGstApplicable ? wardGstPercent : getRoomChargeGSTRate(bedCategory, ratePerDay);
+
+  return { ratePerDay, gstPercent, usedFallbackRate, wardName, bedNumber: bedNum, bedCategory };
+}
+
 /**
  * Room charges apply only to an admission that actually occupies a bed.
  *
@@ -171,17 +261,23 @@ export async function autoPullAdmissionCharges(
   // off the bill with nothing to restore them. Collected as row ids (not dedupe
   // keys) so the delete cannot also take out the rows we just inserted, which
   // share the same key.
-  const pendingDeleteIds: string[] = [];
+  //
+  // A Set, not an array: addOrReplaceItem needs to REMOVE an id that was queued
+  // unconditionally before we knew the line would be re-priced in place instead.
+  const pendingDeleteIds = new Set<string>();
   const nursingProcedureIdsToMark: string[] = [];
   const implantIdsToMark: string[] = [];
   const otServiceChargeItems: any[] = [];
   let usedFallbackRate = false;
 
   // ----- Existing items for dedupe (scoped to this bill only) -----
+  // Ordered so that when a key somehow carries more than one row, "the first one"
+  // is deterministically the oldest — the one addOrReplaceItem keeps.
   const { data: scopedExisting } = await (supabase as any)
     .from("bill_line_items")
     .select("id, description, item_type, source_module, source_record_id, source_dedupe_key")
-    .eq("bill_id", billId);
+    .eq("bill_id", billId)
+    .order("created_at", { ascending: true });
 
   const buildKey = buildDedupeKey;
 
@@ -192,18 +288,18 @@ export async function autoPullAdmissionCharges(
   /** Queue the existing rows carrying `dedupeKey` for deletion after the insert lands. */
   const queueDeleteByDedupeKey = (dedupeKey: string) => {
     (scopedExisting || []).forEach((row: any) => {
-      if (row.source_dedupe_key === dedupeKey && row.id) pendingDeleteIds.push(row.id);
+      if (row.source_dedupe_key === dedupeKey && row.id) pendingDeleteIds.add(row.id);
     });
   };
 
   /** Retire the superseded rows. Only ever called once the replacements are in. */
   const flushPendingDeletes = async () => {
-    if (pendingDeleteIds.length === 0) return;
+    if (pendingDeleteIds.size === 0) return;
     await (supabase as any)
       .from("bill_line_items")
       .delete()
       .eq("bill_id", billId)
-      .in("id", pendingDeleteIds);
+      .in("id", [...pendingDeleteIds]);
   };
 
   const addUniqueItem = (item: any, nursingProcedureId?: string) => {
@@ -213,6 +309,74 @@ export async function autoPullAdmissionCharges(
     items.push(item);
     if (nursingProcedureId) nursingProcedureIdsToMark.push(nursingProcedureId);
     return true;
+  };
+
+  /**
+   * ----- Lines that are RE-PRICED on every pull, not merely added once -----
+   *
+   * Three lines recompute themselves from the length of stay: the room charge,
+   * the daily nursing charge, and the ward-round consultation. They used to be
+   * handled as "queue the old row for deletion → insert a fresh one → delete
+   * afterwards".
+   *
+   * THE BUG THAT PATTERN CAUSED. Migration 20261016000013 added
+   * `bill_line_items_dedupe_uq`, a UNIQUE index on (bill_id, source_dedupe_key).
+   * Because the delete is deliberately DEFERRED until the insert lands, the
+   * fresh `ipd:room:{admission}` row was inserted while the row it replaced was
+   * still present — a straight unique violation. All the sweep's rows go in as
+   * ONE multi-row insert, so that single conflict aborted the entire batch and
+   * the function returned before flushPendingDeletes ever ran. Net effect: from
+   * the second pull onwards the sweep changed nothing whatsoever. An IPD bill
+   * froze at its day-1 figures — "Room … (1 days)" on day 3 — and every other
+   * charge riding that same insert (labs, pharmacy, OT) stopped posting too.
+   *
+   * WHY UPDATE-IN-PLACE IS THE RIGHT ANSWER, not just the working one. The
+   * unique index says a dedupe key names ONE row per bill; re-pricing is an
+   * update to that row, so say so. It is also strictly safer than delete+insert:
+   * there is no window in which the charge is absent, a failed update leaves the
+   * previous line intact, and created_at stays pinned to when the charge first
+   * appeared (the date the IPD ledger shows against the line).
+   */
+  const pendingUpdates: { id: string; patch: Record<string, any>; dedupeKey: string }[] = [];
+
+  const addOrReplaceItem = (item: any): boolean => {
+    const rows = (scopedExisting || []).filter(
+      (r: any) => r.id && r.source_dedupe_key && r.source_dedupe_key === item.source_dedupe_key
+    );
+    if (rows.length === 0) return addUniqueItem(item);
+
+    const [keep, ...dupes] = rows;
+    // Legacy duplicates (only possible on data predating the unique index) still
+    // get retired; the row we are re-pricing must NOT be, so un-queue it.
+    dupes.forEach((d: any) => pendingDeleteIds.add(d.id));
+    pendingDeleteIds.delete(keep.id);
+
+    // hospital_id / bill_id / source_dedupe_key identify the row — never rewritten.
+    const patch: Record<string, any> = { ...item };
+    delete patch.hospital_id;
+    delete patch.bill_id;
+    delete patch.source_dedupe_key;
+    pendingUpdates.push({ id: keep.id, patch, dedupeKey: item.source_dedupe_key });
+    // Re-assert the key so a later addUniqueItem can't insert a colliding twin.
+    existingKeys.add(buildKey(item));
+    return false;
+  };
+
+  /**
+   * Apply the re-priced lines. Runs whether or not there is anything new to
+   * insert — a stay that has accrued no new charges today still needs its room
+   * and nursing lines moved on by a day.
+   */
+  const flushPendingUpdates = async (): Promise<string | null> => {
+    for (const { id, patch } of pendingUpdates) {
+      const { error } = await (supabase as any)
+        .from("bill_line_items")
+        .update(patch)
+        .eq("id", id)
+        .eq("bill_id", billId);
+      if (error) return error.message;
+    }
+    return null;
   };
 
   // ----- Existing lab/radiology/pharmacy charges ANYWHERE on this admission -----
@@ -584,16 +748,10 @@ export async function autoPullAdmissionCharges(
       const totalGst = calcGST(totalFee, gstPct);
       const visitDedupeKey = `ipd_visit:${doctorId}:${date}`;
       
-      // Queue removal of the old lines for this doctor so the newly pulled one
-      // replaces them without duplicating. Deferred until after the insert
-      // succeeds — see pendingDeleteIds.
-      queueDeleteByDedupeKey(visitDedupeKey);
-
-      existingKeys.delete(
-        buildKey({ source_module: "ipd_visit", source_dedupe_key: visitDedupeKey, item_type: "consultation" })
-      );
-      
-      addUniqueItem({
+      // Re-priced in place when the line already exists, so a doctor's second
+      // round on the same date re-prices the same row instead of colliding with
+      // it on the (bill_id, source_dedupe_key) unique index — see addOrReplaceItem.
+      addOrReplaceItem({
         hospital_id: hospitalId,
         bill_id: billId,
         item_type: "consultation",
@@ -638,193 +796,148 @@ export async function autoPullAdmissionCharges(
     }
   }
 
-  // ----- Room charges (always recompute on re-pull) -----
+  // ----- Room + nursing charges, split by ward/bed SEGMENT (always recompute on re-pull) -----
+  //
+  // A stay is priced as one block per bed_transfers-delimited segment, not one block for the
+  // whole admission, so a patient who spent 3 days in ICU before moving to a Private room is
+  // billed 3 ICU-days + N Private-days rather than the whole stay at whichever ward they end
+  // up in. See lib/ipdBedSegments.ts for the day-boundary math (old ward keeps the transfer
+  // day; new ward starts the next calendar day). With zero transfers this produces exactly
+  // the one segment the old single-block code always did, at the same rate.
   const { data: admission } = await supabase
     .from("admissions")
-    .select(
-      "admitted_at, discharged_at, admission_type, ward_id, bed_id, payer_type, wards(name, type, rate_per_day, gst_applicable, gst_percent), beds(bed_number, bed_category)"
-    )
+    .select("admitted_at, discharged_at, admission_type, ward_id, bed_id, payer_type")
     .eq("id", admissionId)
     .maybeSingle();
 
   if (admission) {
-    // Queue unconditionally, before deciding whether to re-add: this keeps the day-count
-    // current for inpatients AND retro-cleans a phantom room charge previously written onto
-    // a bed-less (day care) bill, which would otherwise survive every re-pull.
-    // Deferred until after the insert succeeds — see pendingDeleteIds.
-    const roomDedupeKey = `ipd:room:${admissionId}`;
-    queueDeleteByDedupeKey(roomDedupeKey);
+    // Retire every existing per-segment line for this admission unconditionally, before
+    // deciding the current segment set — same "queue-then-un-queue" pattern the single-line
+    // case always used. addOrReplaceItem below un-queues whichever indices the CURRENT
+    // segments still call for; this is also what prunes a stale higher-index segment if a
+    // corrected transfer record shrinks the segment count, and what retro-cleans a phantom
+    // room charge on a bed-less (day care) bill, which would otherwise survive every re-pull.
+    const segmentKeyPattern = new RegExp(`^ipd:(room|nursing):${admissionId}:\\d+$`);
+    (scopedExisting || []).forEach((row: any) => {
+      if (row.source_dedupe_key && row.id && segmentKeyPattern.test(row.source_dedupe_key)) {
+        pendingDeleteIds.add(row.id);
+      }
+    });
+    // One-time migration away from the old pre-segment (non-indexed) keys — they cannot
+    // coexist with the new indexed scheme and nothing will ever re-add them.
+    queueDeleteByDedupeKey(`ipd:room:${admissionId}`);
+    queueDeleteByDedupeKey(`ipd:nursing:${admissionId}`);
     existingKeys.delete(
-      buildKey({
-        source_module: "ipd",
-        source_dedupe_key: roomDedupeKey,
-        item_type: "room_charge",
-      })
+      buildKey({ source_module: "ipd", source_dedupe_key: `ipd:room:${admissionId}`, item_type: "room_charge" })
     );
-
-    // Same unconditional queue for the daily nursing line. Doing it here rather than
-    // inside the "should we charge nursing" branch is what lets the line DISAPPEAR when
-    // a ward's nursing rate is cleared, or when the patient is switched to a payer that
-    // bundles nursing into room rent mid-stay.
-    const nursingDedupeKey = `ipd:nursing:${admissionId}`;
-    queueDeleteByDedupeKey(nursingDedupeKey);
     existingKeys.delete(
-      buildKey({
-        source_module: "ipd_nursing",
-        source_dedupe_key: nursingDedupeKey,
-        item_type: "nursing",
-      })
+      buildKey({ source_module: "ipd_nursing", source_dedupe_key: `ipd:nursing:${admissionId}`, item_type: "nursing" })
     );
   }
 
   if (admission && shouldChargeRoom((admission as any).admission_type, (admission as any).bed_id)) {
-    const roomDedupeKey = `ipd:room:${admissionId}`;
-    const admitDate = new Date(admission.admitted_at || Date.now());
-    const dischDate = admission.discharged_at
-      ? new Date(admission.discharged_at)
-      : new Date();
-    const days = Math.max(
-      1,
-      Math.ceil((dischDate.getTime() - admitDate.getTime()) / 86400000)
-    );
-    const wardName = (admission as any).wards?.name || "Ward";
-    const wardType = (admission as any).wards?.type || "general";
-    const bedNum = (admission as any).beds?.bed_number || "";
-    // bed_category (e.g. "icu", "private") takes precedence over ward type for rate lookup
-    const bedCategory: string = (admission as any).beds?.bed_category || wardType;
+    const { data: transferRows, error: transferErr } = await (supabase as any)
+      .from("bed_transfers")
+      .select("from_ward_id, from_bed_id, to_ward_id, to_bed_id, transferred_at")
+      .eq("admission_id", admissionId)
+      .order("transferred_at", { ascending: true });
+    if (transferErr) {
+      // Degrading to "no transfers" here silently bills the WHOLE stay at the ward the
+      // patient currently occupies — the exact defect segmentation exists to fix — so say
+      // so loudly rather than letting a wrong figure look computed. The usual cause is a
+      // database that has not had migration 20261106000001 applied.
+      console.error(
+        "IPD auto-pull: bed_transfers unreadable — room/nursing will be billed as ONE segment at the current ward:",
+        transferErr.message
+      );
+    }
 
-    // Priority 1: service_rates table with bed_category match (most specific)
-    const { data: categoryRateRaw } = await (supabase as any)
-      .from("service_rates")
-      .select("default_rate, gst_rate")
-      .eq("hospital_id", hospitalId)
-      .eq("bed_category", bedCategory)
-      .eq("is_active", true)
-      .ilike("item_type", "%room%")
-      .limit(1)
-      .maybeSingle();
-      
-    const categoryRate = categoryRateRaw ? {
-      rate: categoryRateRaw.default_rate,
-      gst_percent: categoryRateRaw.gst_rate,
-      gst_applicable: !!categoryRateRaw.gst_rate
-    } : null;
-
-    // Priority 2: service_master by ward name / ward type
-    const { data: roomRate } = categoryRate ? { data: null } : await supabase
-      .from("service_master")
-      .select("fee, gst_percent, gst_applicable")
-      .eq("hospital_id", hospitalId)
-      .ilike("name", `%${bedCategory}%`)
-      .ilike("item_type", "%room%")
-      .eq("is_active", true)
-      .limit(1)
-      .maybeSingle();
-
-    const wardDbRate = Number((admission as any).wards?.rate_per_day) || 0;
-
-    // Priority 3: the hospital's configured Default Rate for this class of bed
-    // (Settings → Services & Fees → Default Rates). Only queried when nothing more
-    // specific matched, so the common path costs no extra round trip. This exists
-    // because the chain used to end at a literal 500 — a number no one configured
-    // and no one could find, which silently became the room rate whenever a ward
-    // had no rate_per_day set.
-    const needsCodeRate = wardDbRate <= 0 && !categoryRate?.rate && !roomRate?.fee;
-    const codeRate = needsCodeRate
-      ? await getRate(
-          hospitalId,
-          ICU_BED_CATEGORIES.has((bedCategory || "").toLowerCase())
-            ? SERVICE_RATE_CODES.ICU_PER_DAY
-            : SERVICE_RATE_CODES.WARD_PER_DAY,
-          0
-        )
-      : 0;
-
-    // Priority: ward.rate_per_day (configured in Settings) → payer-specific service_rates
-    // → service_master → service_rates default code → per-category fallback.
-    // The last step shares resolveRoomRateFallback with the pre-bill ledger estimate, so
-    // an admission can no longer show ₹600/day as an estimate and ₹500/day once billed.
-    const ratePerDay =
-      wardDbRate > 0
-        ? wardDbRate
-        : categoryRate?.rate
-        ? Number(categoryRate.rate)
-        : roomRate?.fee
-        ? Number(roomRate.fee)
-        : codeRate > 0
-        ? codeRate
-        : resolveRoomRateFallback(0, bedCategory);
-    if (needsCodeRate && codeRate <= 0) usedFallbackRate = true;
-    // GST on room charges defaults to the statutory rule (ICU-exempt; >₹5000/day
-    // non-ICU = 5%), deterministic from bed category + rate, independent of whether
-    // a matching service_rates/service_master row happens to exist. A hospital may
-    // explicitly override this per ward (Settings → Wards & Beds → GST applicable)
-    // for a documented compliance reason — that configured rate takes precedence.
-    const wardGstApplicable = !!(admission as any).wards?.gst_applicable;
-    const wardGstPercent = Number((admission as any).wards?.gst_percent) || 0;
-    const roomGstPct = wardGstApplicable ? wardGstPercent : getRoomChargeGSTRate(bedCategory, ratePerDay);
-    const roomTotal = ratePerDay * days;
-    const roomGst = calcGST(roomTotal, roomGstPct);
-
-    addUniqueItem({
-      hospital_id: hospitalId,
-      bill_id: billId,
-      item_type: "room_charge",
-      description: `Room: ${wardName} - Bed ${bedNum} (${days} days)`,
-      quantity: days,
-      unit_rate: ratePerDay,
-      taxable_amount: roomTotal,
-      gst_percent: roomGstPct,
-      gst_amount: roomGst,
-      total_amount: roomTotal + roomGst,
-      hsn_code: "999272",
-      source_module: "ipd",
-      source_record_id: admissionId, // real UUID
-      source_dedupe_key: roomDedupeKey,
+    const segments = computeBedSegments({
+      admittedAt: admission.admitted_at,
+      dischargedAt: admission.discharged_at,
+      currentWardId: (admission as any).ward_id,
+      currentBedId: (admission as any).bed_id,
+      transfers: (transferRows || []) as BedTransferRecord[],
     });
 
-    // ----- Daily nursing charge -----
-    //
-    // Priced per ward (Settings → Wards & Beds → Nursing Charge Per Day), because that is
-    // how every real Indian tariff prices it: an ICU bed-day and a general-ward bed-day
-    // carry different nursing rates. 0 = off, which is the default, so a hospital that
-    // bundles nursing into the room rate bills nothing extra.
-    //
-    // Suppressed entirely for scheme/TPA payers: CGHS 2025 Annexure-III bundles nursing
-    // into the ward charge ("not payable separately or billable to the patient") and
-    // IRDAI's non-payable list treats a separate nursing charge as part of room rent, so
-    // such a line is deducted by the TPA rather than collected. See lib/payerTypes.ts.
-    //
-    // It rides the room block deliberately — same `days`, same ward, one line keyed to the
-    // admission — so it re-prices itself on every re-pull as the stay lengthens instead of
-    // depending on someone remembering to add it each day.
-    // Read in its own request rather than joined into the admission select above: naming
-    // the column there would sink the entire admission query — and with it the room charge
-    // and every charge after it — on a database predating migration 20261011000091.
-    const nursingRatePerDay = await getWardNursingRate((admission as any).ward_id);
     const payerBundlesNursing = bundlesNursingIntoRoom((admission as any).payer_type);
 
-    if (nursingRatePerDay > 0 && !payerBundlesNursing) {
-      const nursingTotal = nursingRatePerDay * days;
-      // gstRules puts nursing at 0% — healthcare services by a clinical establishment
-      // are GST-exempt. Kept explicit so the line never inherits the room's 5% slab.
-      const nursingGstPct = 0;
-      addUniqueItem({
+    // Batch-fetch every distinct ward/bed touched by any segment — one query each, not one
+    // per segment.
+    const wardIds = [...new Set(segments.map((s) => s.wardId))];
+    const bedIds = [...new Set(segments.map((s) => s.bedId))];
+    const [{ data: wardRows }, { data: bedRows }] = await Promise.all([
+      supabase.from("wards").select("id, name, type, rate_per_day, gst_applicable, gst_percent").in("id", wardIds),
+      supabase.from("beds").select("id, bed_number, bed_category").in("id", bedIds),
+    ]);
+    const wardById = new Map((wardRows || []).map((w: any) => [w.id, w]));
+    const bedById = new Map((bedRows || []).map((b: any) => [b.id, b]));
+
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i];
+      const pricing = await resolveSegmentRoomPricing(hospitalId, wardById.get(seg.wardId), bedById.get(seg.bedId));
+      if (pricing.usedFallbackRate) usedFallbackRate = true;
+
+      const roomTotal = pricing.ratePerDay * seg.days;
+      const roomGst = calcGST(roomTotal, pricing.gstPercent);
+      const dateRange = formatSegmentDateRange(seg.startDate, seg.endDate);
+      const dayWord = seg.days !== 1 ? "days" : "day";
+
+      addOrReplaceItem({
         hospital_id: hospitalId,
         bill_id: billId,
-        item_type: "nursing",
-        description: `Nursing Charge: ${wardName} (${days} days)`,
-        quantity: days,
-        unit_rate: nursingRatePerDay,
-        taxable_amount: nursingTotal,
-        gst_percent: nursingGstPct,
-        gst_amount: 0,
-        total_amount: nursingTotal,
-        hsn_code: "999312",
-        source_module: "ipd_nursing",
+        item_type: "room_charge",
+        description: `Room: ${pricing.wardName} - Bed ${pricing.bedNumber} (${dateRange}, ${seg.days} ${dayWord})`,
+        quantity: seg.days,
+        unit_rate: pricing.ratePerDay,
+        taxable_amount: roomTotal,
+        gst_percent: pricing.gstPercent,
+        gst_amount: roomGst,
+        total_amount: roomTotal + roomGst,
+        hsn_code: "999272",
+        source_module: "ipd",
         source_record_id: admissionId, // real UUID
-        source_dedupe_key: `ipd:nursing:${admissionId}`,
+        source_dedupe_key: `ipd:room:${admissionId}:${i}`,
       });
+
+      // ----- Daily nursing charge for this segment -----
+      //
+      // Priced per ward (Settings → Wards & Beds → Nursing Charge Per Day), because that is
+      // how every real Indian tariff prices it: an ICU bed-day and a general-ward bed-day
+      // carry different nursing rates. 0 = off, which is the default, so a hospital that
+      // bundles nursing into the room rate bills nothing extra.
+      //
+      // Suppressed entirely for scheme/TPA payers: CGHS 2025 Annexure-III bundles nursing
+      // into the ward charge ("not payable separately or billable to the patient") and
+      // IRDAI's non-payable list treats a separate nursing charge as part of room rent, so
+      // such a line is deducted by the TPA rather than collected. See lib/payerTypes.ts.
+      // payer_type lives on the admission, not the segment, so this suppression is constant
+      // across every segment — only the rate varies by ward.
+      const nursingRatePerDay = await getWardNursingRate(seg.wardId);
+      if (nursingRatePerDay > 0 && !payerBundlesNursing) {
+        const nursingTotal = nursingRatePerDay * seg.days;
+        addOrReplaceItem({
+          hospital_id: hospitalId,
+          bill_id: billId,
+          item_type: "nursing",
+          description: `Nursing Charge: ${pricing.wardName} (${dateRange}, ${seg.days} ${dayWord})`,
+          quantity: seg.days,
+          unit_rate: nursingRatePerDay,
+          taxable_amount: nursingTotal,
+          // gstRules puts nursing at 0% — healthcare services by a clinical establishment
+          // are GST-exempt. Kept explicit so the line never inherits the room's 5% slab.
+          gst_percent: 0,
+          gst_amount: 0,
+          total_amount: nursingTotal,
+          hsn_code: "999312",
+          source_module: "ipd_nursing",
+          source_record_id: admissionId, // real UUID
+          source_dedupe_key: `ipd:nursing:${admissionId}:${i}`,
+        });
+      }
+      // else: no nursing line for this segment (bundled payer, or ward's nursing rate is 0).
+      // A previous pull may have written one before the rate/payer changed; it is already
+      // queued for delete above and this branch simply does not re-add/un-queue it.
     }
   }
 
@@ -908,7 +1021,18 @@ export async function autoPullAdmissionCharges(
     });
   }
 
-  // ----- Insert + recalc -----
+  // ----- Re-price + insert + recalc -----
+  //
+  // Re-pricing goes first and independently of `items`: on most days of a stay
+  // there is nothing new to bill, and the room and nursing lines still have to
+  // move on by a day. It is idempotent, so a later insert failure leaving these
+  // applied is harmless.
+  const updateError = await flushPendingUpdates();
+  if (updateError) {
+    console.error("IPD auto-pull re-price failed:", updateError);
+    return { ok: false, insertedCount: 0, usedFallbackRate, error: updateError };
+  }
+
   let insertedCount = 0;
   if (items.length > 0) {
     // Probe the bills row before writing anything. The pre-flight above models
@@ -972,12 +1096,18 @@ export async function autoPullAdmissionCharges(
     const otItemsSet = new Set(otServiceChargeItems);
     for (const item of items) {
       if (otItemsSet.has(item)) continue;
+      // Room/nursing mirrors are keyed by their own per-segment dedupe key
+      // (`ipd:room:{admissionId}:{i}`), not the bare admissionId: several segments can be
+      // newly inserted in the same pull (e.g. an admission's first-ever transfer, which
+      // splits one previously-existing segment into two), and a shared key would let one
+      // segment's delete-then-record in the mirror-refresh loop below wipe out another's.
+      const isSegmentAdmissionCharge = item.item_type === "room_charge" || item.item_type === "nursing";
       recordServiceCharge({
         hospitalId,
         patientId: admPatientId || "",
         admissionId,
         serviceModule: SWEEP_SERVICE_MODULE_MAP[item.item_type] || item.item_type,
-        serviceRefId: item.source_record_id ?? null,
+        serviceRefId: isSegmentAdmissionCharge ? item.source_dedupe_key : (item.source_record_id ?? null),
         serviceName: item.description,
         quantity: item.quantity,
         unitRate: item.unit_rate,
@@ -993,6 +1123,52 @@ export async function autoPullAdmissionCharges(
     // cleanup (e.g. a phantom room charge on a bed-less day care bill, which is
     // deleted with no replacement). Safe to run — there is no insert to protect.
     await flushPendingDeletes();
+  }
+
+  // Keep the service_charges mirror in step with the re-priced lines. Without this
+  // the leakage/revenue dashboards keep reporting the day-1 room and nursing
+  // figures for a stay that is still running, because the loop above only mirrors
+  // NEWLY INSERTED items and a re-priced line is an update, not an insert.
+  //
+  // Restricted to room/nursing patches and keyed by their own per-segment dedupeKey
+  // (`ipd:room:{admissionId}:{i}`), which makes (bill_id, service_module, service_ref_id)
+  // an unambiguous handle for exactly one mirror row — a stay with 2+ segments re-prices
+  // 2+ patches on the same pull, and a shared admissionId key would let segment i+1's
+  // delete-then-record wipe out segment i's mirror written earlier in this same loop. The
+  // consultation mirror is keyed by DOCTOR and spans several dates, so the same
+  // delete-then-record would destroy the other days' rows — it is deliberately left alone.
+  //
+  // Delete-then-record rather than update: it also clears the duplicate mirrors
+  // earlier pulls left behind (recordServiceCharge is a plain insert). Failures
+  // are swallowed — a reporting mirror must never break the billing it follows.
+  for (const { patch, dedupeKey } of pendingUpdates) {
+    if (patch.item_type !== "room_charge" && patch.item_type !== "nursing") continue;
+    if (patch.source_record_id !== admissionId) continue;
+    const serviceModule = SWEEP_SERVICE_MODULE_MAP[patch.item_type] || patch.item_type;
+    const { error: mirrorDeleteError } = await (supabase as any)
+      .from("service_charges")
+      .delete()
+      .eq("bill_id", billId)
+      .eq("service_module", serviceModule)
+      .eq("service_ref_id", dedupeKey);
+    // Only re-record once the stale rows are definitely gone, so a refused delete
+    // cannot turn the mirror into a duplicate.
+    if (mirrorDeleteError) continue;
+    recordServiceCharge({
+      hospitalId,
+      patientId: admPatientId || "",
+      admissionId,
+      serviceModule,
+      serviceRefId: dedupeKey,
+      serviceName: patch.description,
+      quantity: patch.quantity,
+      unitRate: patch.unit_rate,
+      gstPercent: patch.gst_percent,
+      gstAmount: patch.gst_amount,
+      totalAmount: patch.total_amount,
+      billId,
+      performedBy: patch.ordered_by ?? null,
+    });
   }
 
   const result = await recalculateBillTotalsSafe(billId);

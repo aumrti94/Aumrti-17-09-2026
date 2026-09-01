@@ -5,6 +5,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   resolveHospitalFromJwt, recordAsrUsage, estimateAudioSeconds, assumedBitrateKbps,
 } from "../_shared/asr-metering.ts";
+import { isSarvamAsrCode, explainBadSarvamCode } from "../_shared/asr-languages.ts";
+import { loadHospitalLexicon, topHotwords } from "../_shared/medical-lexicon.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -16,11 +18,18 @@ const corsHeaders = {
 //   transcribe (Sarvam's default) — native script, NO translation
 //   translate                     — Indic speech straight to English, same call, same cost
 //   verbatim | translit | codemix — see docs
-// We default to "translate": the structuring LLM wants English, and letting Saaras
-// do the translation here is both free (it is the same request) and 3-6x cheaper in
+// The caller chooses. `translate` is right for Indic audio — the structuring LLM wants
+// English, and letting Saaras translate here is free (same request) and 3-6x cheaper in
 // downstream LLM tokens than shipping native Indic script into the prompt.
+//
+// It is WRONG as a blanket default, which is what it used to be. `translate` runs a
+// generative speech-TRANSLATION decoder: it renders meaning rather than words, so pointed
+// at English it paraphrases — dropping clauses and substituting near-miss clinical terms
+// ("neck pain" transcribed as "headache"). The fallback is now Sarvam's own default,
+// `transcribe`, which stays anchored to the acoustics. Callers that want translation ask
+// for it; see buildChain in src/lib/asrEngineChain.ts.
 const VALID_MODES = ["transcribe", "translate", "verbatim", "translit", "codemix"];
-const DEFAULT_MODE = "translate";
+const DEFAULT_MODE = "transcribe";
 
 // Sarvam's model page advertises hotword biasing for Saaras, but the REST reference
 // does not document the field. So it is sent optimistically and, the first time the
@@ -94,7 +103,7 @@ serve(async (req) => {
       );
     }
 
-    const { audio_base64, language_code, model, mode, hotwords } = await req.json();
+    const { audio_base64, language_code, model, mode, hotwords: clientHotwords } = await req.json();
 
     if (!audio_base64 || !language_code) {
       return new Response(
@@ -106,6 +115,52 @@ serve(async (req) => {
     const resolvedModel = model || "saaras:v3";
     const resolvedMode = VALID_MODES.includes(mode) ? mode : DEFAULT_MODE;
 
+    // The app's "auto" is Sarvam's `unknown` auto-detect sentinel.
+    const resolvedLanguage = language_code === "auto" ? "unknown" : language_code;
+
+    // Validate BEFORE spending a round trip on audio Sarvam will refuse. An unsupported code
+    // used to be forwarded verbatim and came back as an opaque upstream 400 that the client
+    // reported as "no speech" — which is how `or-IN` (Odia) and `bo-IN` (Bodo) sat in the
+    // dropdown for languages that could never transcribe. 400, not 502: this is the caller's
+    // bug, and the distinction is what lets the client tell it apart from a provider outage.
+    if (!isSarvamAsrCode(resolvedLanguage)) {
+      return new Response(
+        JSON.stringify({
+          error: explainBadSarvamCode(resolvedLanguage),
+          language_code: resolvedLanguage,
+          unsupported_language: true,
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    /**
+     * Bias the recogniser toward this hospital's own vocabulary.
+     *
+     * The plumbing for this has existed since hotword support was added — `buildForm`
+     * forwards the list, and the rejection guard below makes it safe — but NO CALLER EVER
+     * POPULATED IT. Every dictation was transcribed with zero vocabulary bias while the
+     * hospital's drug, test and complaint catalogue sat unused a function call away.
+     *
+     * Built here rather than shipped from the browser: the lexicon is already cached per
+     * hospital for 10 minutes, so a warm instance pays nothing, and 100 terms do not ride
+     * up alongside the audio on every 25-second segment.
+     *
+     * Best-effort throughout. A hospital that cannot be resolved, or a catalogue that
+     * cannot be read, simply gets today's un-biased transcription.
+     */
+    const hospitalIdForLexicon = await resolveHospitalFromJwt(req, supabaseAdmin).catch(() => null);
+    let hotwords: string[] = Array.isArray(clientHotwords) ? clientHotwords : [];
+    if (hotwords.length === 0 && hospitalIdForLexicon) {
+      try {
+        const lexicon = await loadHospitalLexicon(supabaseAdmin, hospitalIdForLexicon);
+        hotwords = topHotwords(lexicon);
+      } catch (lexErr) {
+        console.warn("hotword lexicon unavailable (non-fatal):",
+          lexErr instanceof Error ? lexErr.message : String(lexErr));
+      }
+    }
+
     // Decode base64 to binary
     const audioBytes = decode(audio_base64);
     // Browser MediaRecorder always produces audio/webm (not WAV) — use correct MIME type
@@ -116,7 +171,7 @@ serve(async (req) => {
       const formData = new FormData();
       formData.append("file", audioFile);
       formData.append("model", resolvedModel);
-      formData.append("language_code", language_code === "auto" ? "unknown" : language_code);
+      formData.append("language_code", resolvedLanguage);
       // `mode` is only honoured by saaras:v3; sending it for saarika is harmless but pointless.
       if (resolvedModel.startsWith("saaras")) {
         formData.append("mode", resolvedMode);
@@ -131,6 +186,37 @@ serve(async (req) => {
     };
 
     const wantsHotwords = hotwordsSupported && Array.isArray(hotwords) && hotwords.length > 0;
+
+    /**
+     * Report an upstream failure so the client can act on it.
+     *
+     * Sarvam's own message is returned in `error`, not buried in a `details` blob nobody
+     * reads. A 4xx is passed through as 400 (we sent something wrong — a bad key, an
+     * unsupported language, an exhausted quota) and everything else becomes 502 (Sarvam is
+     * unwell). The failover chain retries on either, but only the operator can act on the
+     * difference, so it has to survive the trip.
+     */
+    const upstreamError = (status: number, body: string): Response => {
+      let message = body;
+      try {
+        const parsed = JSON.parse(body);
+        message = parsed?.error?.message ?? parsed?.message ?? parsed?.error ?? body;
+      } catch { /* not JSON — the raw text is the best message available */ }
+      // Bounded: an upstream error body can echo the request, and this lands in logs.
+      console.error("Sarvam API error:", status, body.slice(0, 500));
+      return new Response(
+        JSON.stringify({
+          error: `Sarvam ${status}: ${String(message).slice(0, 400)}`,
+          sarvam_status: status,
+          sarvam_message: String(message).slice(0, 400),
+          language_code: resolvedLanguage,
+        }),
+        {
+          status: status >= 400 && status < 500 ? 400 : 502,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    };
 
     const asrStartedAt = Date.now();
     let response = await fetch("https://api.sarvam.ai/speech-to-text", {
@@ -152,21 +238,12 @@ serve(async (req) => {
           body: buildForm(false),
         });
       } else {
-        console.error("Sarvam API error:", response.status, probeErr);
-        return new Response(
-          JSON.stringify({ error: `Sarvam API error: ${response.status}`, details: probeErr }),
-          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return upstreamError(response.status, probeErr);
       }
     }
 
     if (!response.ok) {
-      const errText = await response.text();
-      console.error("Sarvam API error:", response.status, errText);
-      return new Response(
-        JSON.stringify({ error: `Sarvam API error: ${response.status}`, details: errText }),
-        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return upstreamError(response.status, await response.text());
     }
 
     const result = await response.json();
@@ -175,8 +252,13 @@ serve(async (req) => {
     // invisible to ai_usage_logs before this — which meant the cost of a
     // dictated encounter only ever counted its LLM half. Fire-and-forget: a
     // metering failure must never cost the clinician their transcript.
+    const transcript = result.transcript || "";
+
     void (async () => {
-      const hospitalId = await resolveHospitalFromJwt(req, supabaseAdmin);
+      // Reuse the hospital resolved for the hotword lookup — it is the same JWT and the
+      // same answer, and resolving it twice would add a second users-table round trip to
+      // every 25-second segment of every dictation.
+      const hospitalId = hospitalIdForLexicon;
       // Sarvam does not return a duration, so it is inferred from byte length
       // at the bitrate configured in asr_pricing.
       const bitrate = await assumedBitrateKbps(supabaseAdmin, "sarvam");
@@ -187,6 +269,17 @@ serve(async (req) => {
         seconds: estimateAudioSeconds(audioBytes.length, bitrate),
         estimated: true,
         latencyMs: Date.now() - asrStartedAt,
+        languageCode: result.language_code ?? resolvedLanguage,
+        mode: resolvedModel.startsWith("saaras") ? resolvedMode : null,
+        // A 200 carrying no words is NOT a success. Logging it as one is why the
+        // languages that never transcribe were invisible: every failed dictation in
+        // Santali or Bodo looked, in the usage table, exactly like a good one in Hindi.
+        // The row is still written (the audio was sent, and Sarvam bills for it) — it is
+        // just written honestly.
+        success: transcript.trim().length > 0,
+        errorMessage: transcript.trim().length > 0
+          ? undefined
+          : `empty transcript (${resolvedLanguage}, mode=${resolvedMode})`,
       });
     })();
 
@@ -197,7 +290,7 @@ serve(async (req) => {
     // nothing but the structuring LLM's guess about itself.
     return new Response(
       JSON.stringify({
-        transcript: result.transcript || "",
+        transcript,
         detected_language_code: result.language_code ?? null,
         language_probability: typeof result.language_probability === "number"
           ? result.language_probability

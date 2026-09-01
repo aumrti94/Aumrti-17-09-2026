@@ -16,7 +16,7 @@
 import { test, expect, MOCK } from '../fixtures/auth.fixture';
 import { db, hospitalIdFor, expectRow, expectNoRow, countRows } from '../utils/db-verify';
 import {
-  fillField, readField, save, openCreate, awaitSaveAck, reloadAndSettle, heading,
+  fillField, readField, save, openCreate, awaitSaveAck, reloadAndSettle, heading, openTab,
 } from './settings-locators';
 
 const ICD = '/settings/icd-codes';
@@ -73,7 +73,17 @@ test.describe('P2G — ICD-10 Code Master', () => {
     await loginAs('hospital_admin', { hospital: 'A' });
     await page.goto(ICD, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(1800);
+    // The screen opens on "Code Sets"; every control these cases touch — the search box,
+    // Add Code, and the Billable only switch — is on "Browse Codes", and Radix unmounts the
+    // inactive panel. Without this the whole section fails against features that exist.
+    await openTab(page, /browse codes/i);
   });
+
+  /** A reload drops back to the default tab, so re-open Browse before asserting on it. */
+  async function reloadToBrowse(page: import('@playwright/test').Page): Promise<void> {
+    await reloadAndSettle(page);
+    await openTab(page, /browse codes/i);
+  }
 
   test('TC-P2G-093 ICD-10 Code Master loads', async ({ page, consoleErrors }) => {
     await expect(heading(page, 'ICD').or(page.getByRole('heading', { name: /icd/i }).first())).toBeVisible();
@@ -90,7 +100,7 @@ test.describe('P2G — ICD-10 Code Master', () => {
     await fillField(page, 'Description', ICD_ENTRY.description, ICD);
     await save(page, /save|add/i);
     await awaitSaveAck(page);
-    await reloadAndSettle(page);
+    await reloadToBrowse(page);
 
     const body = await page.locator('body').innerText();
     expect(
@@ -106,7 +116,7 @@ test.describe('P2G — ICD-10 Code Master', () => {
     await fillField(page, 'Description', 'QA No Code Description', ICD);
     await save(page, /save|add/i).catch(() => {});
     await awaitSaveAck(page);
-    await reloadAndSettle(page);
+    await reloadToBrowse(page);
 
     const body = await page.locator('body').innerText();
     expect(
@@ -140,7 +150,7 @@ test.describe('P2G — ICD-10 Code Master', () => {
       await fillField(page, 'Description', ICD_ENTRY.description, ICD);
       await save(page, /save|add/i).catch(() => {});
       await awaitSaveAck(page);
-      await reloadAndSettle(page);
+      await reloadToBrowse(page);
     }
 
     const occurrences = (await page.locator('body').innerText()).split(ICD_ENTRY.code).length - 1;
@@ -188,7 +198,7 @@ test.describe('P2G — ICD-10 Code Master', () => {
     await fillField(page, 'Description', ICD_ENTRY.description, ICD);
     await save(page, /save|add/i);
     await awaitSaveAck(page);
-    await reloadAndSettle(page);
+    await reloadToBrowse(page);
 
     await page.getByPlaceholder(/search code or description/i).fill(ICD_ENTRY.code);
     await page.waitForTimeout(800);

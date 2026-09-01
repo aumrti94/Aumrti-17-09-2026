@@ -49,6 +49,15 @@ export const DEFAULT_RADIOLOGY_TEMPLATES: string[] = [
   "MRI Brain", "CT Chest", "X-Ray KUB",
 ];
 
+// A doctor's personal drag-to-reorder priority for tests/studies within one
+// lab category, lab panel, or radiology modality picker (keyed by that
+// group's display label/name). One row in doctor_quick_picks holds all of
+// them, each entry keyed by groupKey.
+export interface TestGroupOrderEntry {
+  groupKey: string;
+  order: string[];
+}
+
 export const QUICK_PICK_DEFAULTS: Record<string, unknown[]> = {
   complaints: DEFAULT_COMPLAINTS,
   exam_findings: DEFAULT_EXAM_FINDINGS,
@@ -56,4 +65,5 @@ export const QUICK_PICK_DEFAULTS: Record<string, unknown[]> = {
   rx_templates: DEFAULT_RX_TEMPLATES,
   lab_templates: DEFAULT_LAB_TEMPLATES,
   radiology_templates: DEFAULT_RADIOLOGY_TEMPLATES,
+  test_group_order: [],
 };

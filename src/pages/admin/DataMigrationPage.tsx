@@ -97,7 +97,8 @@ const TEMPLATES: Record<string, { headers: string[]; examples: string[][]; notes
   lab_tests: {
     headers: ["test_name", "test_code", "department", "sample_type", "normal_range", "unit", "rate"],
     examples: [
-      ["Complete Blood Count", "CBC", "Haematology", "blood", "See individual params", "", "350"],
+      // Not CBC: that is a test GROUP now, not a lab_test_master row.
+      ["Peripheral Smear Examination", "PS", "Haematology", "blood", "See report", "", "250"],
       ["Fasting Blood Sugar", "FBS", "Biochemistry", "blood", "70-100", "mg/dL", "150"],
       ["Urine Routine", "URE", "Clinical Pathology", "urine", "See report", "", "200"],
     ],

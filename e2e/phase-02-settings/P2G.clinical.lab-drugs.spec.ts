@@ -51,17 +51,17 @@ async function purge(): Promise<void> {
   if (!DB_ON()) return;
   const hid = await hospitalIdFor('A');
   const { data: groups } = await db().from('lab_test_groups')
-    .select('id').eq('hospital_id', hid).eq('name', GROUP.name);
+    .select('id').eq('hospital_id', hid).eq('group_name', GROUP.name);
   for (const g of groups ?? []) await db().from('lab_test_group_items').delete().eq('group_id', g.id);
-  await db().from('lab_test_groups').delete().eq('hospital_id', hid).eq('name', GROUP.name);
-  await db().from('lab_test_master').delete().eq('hospital_id', hid).in('code', LAB_CODES);
+  await db().from('lab_test_groups').delete().eq('hospital_id', hid).eq('group_name', GROUP.name);
+  await db().from('lab_test_master').delete().eq('hospital_id', hid).in('test_code', LAB_CODES);
   await db().from('drug_master').delete().eq('hospital_id', hid).in('brand', DRUG_BRANDS);
 }
 
 async function addTest(
   page: import('@playwright/test').Page,
   o: Partial<{
-    name: string; code: string; sample: string; unit: string;
+    name: string; code: string; sample: string; category: string; unit: string;
     min: number | string; max: number | string; fee: number | string;
     tat: number; method: string; criticalHigh: number;
   }>,
@@ -72,7 +72,16 @@ async function addTest(
   };
   await put('Test Name', o.name);
   await put('Code', o.code);
-  await put('Sample Type', o.sample);
+  // Sample Type is a config-backed Select, not a free-text input. It was free text
+  // until the catalogue fix, which is how 'blood' / 'Blood' / 'EDTA Blood' / 'Serum'
+  // all ended up in the same column — and specimens are grouped into tubes by an
+  // exact match on this value, so two spellings print two barcodes for one draw.
+  if (o.sample !== undefined) {
+    await selectByValue(page, 'Sample Type', o.sample, { route: LAB }).catch(() => {});
+  }
+  if (o.category !== undefined) {
+    await selectByValue(page, 'Category', o.category, { route: LAB }).catch(() => {});
+  }
   await put('Unit', o.unit);
   await put('Normal Min (default)', o.min);
   await put('Normal Max (default)', o.max);
@@ -181,7 +190,7 @@ test.describe('P2G — Lab Test Master', () => {
     });
 
     const { data } = await db().from('lab_test_master')
-      .select('normal_min, normal_max').eq('hospital_id', hid).eq('code', NO_RANGE.code).maybeSingle();
+      .select('normal_min, normal_max').eq('hospital_id', hid).eq('test_code', NO_RANGE.code).maybeSingle();
     test.skip(!data, 'The no-range test was not created');
 
     if (data!.normal_min === null && data!.normal_max === null) {
@@ -204,7 +213,7 @@ test.describe('P2G — Lab Test Master', () => {
     });
 
     const { data } = await db().from('lab_test_master')
-      .select('normal_min, normal_max').eq('hospital_id', hid).eq('code', 'QA-INV').maybeSingle();
+      .select('normal_min, normal_max').eq('hospital_id', hid).eq('test_code', 'QA-INV').maybeSingle();
     if (data && data.normal_min !== null && data.normal_max !== null) {
       expect(
         Number(data.normal_min) <= Number(data.normal_max),
@@ -219,7 +228,7 @@ test.describe('P2G — Lab Test Master', () => {
     test.skip(!DB_ON(), 'Database access not enabled');
     const hid = await hospitalIdFor('A');
     const { data, error } = await db().from('lab_test_master')
-      .select('*').eq('hospital_id', hid).eq('code', 'K').maybeSingle();
+      .select('*').eq('hospital_id', hid).eq('test_code', 'K').maybeSingle();
     test.skip(!!error || !data, 'Serum Potassium is not seeded — run npm run qa:seed');
 
     const keys = Object.keys(data!);
@@ -235,7 +244,7 @@ test.describe('P2G — Lab Test Master', () => {
     test.skip(!DB_ON(), 'Database access not enabled');
     const hid = await hospitalIdFor('A');
     const { data } = await db().from('lab_test_master')
-      .select('normal_min, normal_max').eq('hospital_id', hid).eq('code', 'K').maybeSingle();
+      .select('normal_min, normal_max').eq('hospital_id', hid).eq('test_code', 'K').maybeSingle();
     test.skip(!data, 'Serum Potassium is not seeded — run npm run qa:seed');
 
     const critical = MOCK.commonValues.criticalPotassium;
@@ -253,7 +262,7 @@ test.describe('P2G — Lab Test Master', () => {
     test.skip(!DB_ON(), 'Database access not enabled');
     const hid = await hospitalIdFor('A');
     const { data } = await db().from('lab_test_master')
-      .select('*').eq('hospital_id', hid).eq('code', 'HB').maybeSingle();
+      .select('*').eq('hospital_id', hid).eq('test_code', 'HB').maybeSingle();
     test.skip(!data, 'Haemoglobin is not seeded — run npm run qa:seed');
 
     const keys = Object.keys(data!);
@@ -296,7 +305,7 @@ test.describe('P2G — Lab Test Master', () => {
     await addTest(page, { name: 'QA No Fee Test', code: 'QA-NOFEE', sample: 'Serum', unit: 'mg/dL' });
 
     const { data } = await db().from('lab_test_master')
-      .select('fee').eq('hospital_id', hid).eq('code', 'QA-NOFEE').maybeSingle();
+      .select('fee').eq('hospital_id', hid).eq('test_code', 'QA-NOFEE').maybeSingle();
     if (data) {
       expect(
         data.fee,
@@ -323,13 +332,16 @@ test.describe('P2G — Lab Test Master', () => {
   test('TC-P2G-012 A duplicate test name is rejected because the OPD handoff matches on name', async ({ page }) => {
     test.skip(!DB_ON(), 'Database access not enabled');
     const hid = await hospitalIdFor('A');
-    const existing = await countRows('lab_test_master', { hospital_id: hid, test_name: 'Complete Blood Count' });
-    test.skip(existing !== 1, 'Complete Blood Count is not seeded — run npm run qa:seed');
+    // Uses Haemoglobin, not 'Complete Blood Count'. CBC is no longer a lab_test_master
+    // row at all — it is a GROUP that expands into its ten analytes — so the skip guard
+    // below would have quietly disabled this case instead of failing it.
+    const existing = await countRows('lab_test_master', { hospital_id: hid, test_name: 'Haemoglobin' });
+    test.skip(existing !== 1, 'Haemoglobin is not seeded — run npm run qa:seed');
 
-    await addTest(page, { name: 'Complete Blood Count', code: 'QA-DUP', sample: 'EDTA Blood', fee: 350 });
+    await addTest(page, { name: 'Haemoglobin', code: 'QA-DUP', sample: 'EDTA Blood', fee: 120 });
 
     expect(
-      await countRows('lab_test_master', { hospital_id: hid, test_name: 'Complete Blood Count' }),
+      await countRows('lab_test_master', { hospital_id: hid, test_name: 'Haemoglobin' }),
       'Two rows share a test name. The OPD→Lab handoff is an exact match on test_name, so the ' +
       'order attaches to whichever the query returns first — with a different fee and a different ' +
       'reference range.',
@@ -340,10 +352,10 @@ test.describe('P2G — Lab Test Master', () => {
     test.skip(!DB_ON(), 'Database access not enabled');
     const hid = await hospitalIdFor('A');
     const { data } = await db().from('lab_test_master')
-      .select('code, sample_type').eq('hospital_id', hid).limit(20);
+      .select('test_code, sample_type').eq('hospital_id', hid).limit(20);
     test.skip(!data?.length, 'No lab tests seeded — run npm run qa:seed');
 
-    const blank = (data ?? []).filter(t => !t.sample_type).map(t => t.code);
+    const blank = (data ?? []).filter(t => !t.sample_type).map(t => t.test_code);
     expect(
       blank,
       `Test(s) with no sample type: ${blank.join(', ')}. Without matching sample types, sample ` +
@@ -377,7 +389,7 @@ test.describe('P2G — Lab Test Master', () => {
     });
 
     const { data } = await db().from('lab_test_master')
-      .select('*').eq('hospital_id', hid).eq('code', NEW_TEST.code).maybeSingle();
+      .select('*').eq('hospital_id', hid).eq('test_code', NEW_TEST.code).maybeSingle();
     test.skip(!data, 'The test was not created');
     expect(
       Object.keys(data!).some(k => /method/i.test(k)),

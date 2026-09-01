@@ -115,19 +115,60 @@ Return ONLY JSON array:
   const createIndents = async () => {
     setCreating(true);
     const selected = recs.filter((r) => r.selected);
-    let created = 0;
-    for (const rec of selected) {
-      const { error } = await (supabase as any).from("purchase_indents").insert({
+
+    // This used to insert one row per item into "purchase_indents", a table that has never
+    // existed — so every indent silently failed while the toast still reported a count. The
+    // schema models indents as header + lines: department_indents holds the request and
+    // indent_items holds the items (indent_items.item_id already FKs to inventory_items). One
+    // header is raised for the whole review batch, which is also how a storekeeper reads it.
+    //
+    // `priority` and `reason` have no columns in this model; rather than invent them they are
+    // folded into the notes/remarks text that does exist.
+    if (selected.length === 0) {
+      toast({ title: "Nothing selected" });
+      setCreating(false);
+      return;
+    }
+
+    const indentNumber = `AI-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${Date.now().toString().slice(-5)}`;
+    const { data: header, error: headerError } = await (supabase as any)
+      .from("department_indents")
+      .insert({
         hospital_id: hospitalId,
+        indent_number: indentNumber,
+        status: "pending",
+        notes: `AI Demand Review — ${selected.length} item(s)`,
+      })
+      .select("id")
+      .maybeSingle();
+
+    if (headerError || !header?.id) {
+      toast({
+        title: "Could not create indent",
+        description: headerError?.message ?? "No indent header was returned",
+        variant: "destructive",
+      });
+      setCreating(false);
+      return;
+    }
+
+    const { error: itemsError } = await (supabase as any).from("indent_items").insert(
+      selected.map((rec) => ({
+        hospital_id: hospitalId,
+        indent_id: header.id,
         item_id: rec.itemId,
         quantity_requested: rec.forecastQty,
-        priority: rec.priority,
-        reason: `AI Demand Review: ${rec.reasoning}`,
-        status: "pending",
-      });
-      if (!error) created++;
+        remarks: `[${rec.priority}] AI Demand Review: ${rec.reasoning}`,
+      })),
+    );
+
+    if (itemsError) {
+      toast({ title: "Indent created but items failed", description: itemsError.message, variant: "destructive" });
+      setCreating(false);
+      return;
     }
-    toast({ title: `${created} purchase indents created` });
+
+    toast({ title: `Indent ${indentNumber} created with ${selected.length} item(s)` });
     setCreating(false);
     onClose();
   };

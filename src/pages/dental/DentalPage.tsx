@@ -231,7 +231,7 @@ const DentalPage: React.FC = () => {
                   >
                     <div className="w-7 h-7 rounded-full bg-muted flex items-center justify-center shrink-0">
                       <span className="text-[10px] font-bold text-muted-foreground">
-                        {t.token_prefix}{t.token_number}
+                        {t.token_number}
                       </span>
                     </div>
                     <div className="min-w-0 flex-1">
@@ -278,7 +278,7 @@ const DentalPage: React.FC = () => {
                   </p>
                 </div>
                 <Badge variant="outline" className="text-[10px] ml-auto">
-                  {selectedToken.token_prefix}{selectedToken.token_number}
+                  {selectedToken.token_number}
                 </Badge>
                 {chartId && <Badge variant="secondary" className="text-[10px]">Existing Chart</Badge>}
               </div>

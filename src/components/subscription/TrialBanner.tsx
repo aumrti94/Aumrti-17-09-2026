@@ -2,6 +2,7 @@ import { Clock, AlertTriangle, XCircle, X } from "lucide-react";
 import { useState } from "react";
 import { useSubscriptionConfig } from "@/hooks/useSubscriptionConfig";
 import { useNavigate, useLocation } from "react-router-dom";
+import { SUPPORT_EMAIL } from "@/lib/brand";
 
 const DISMISS_KEY = "trialBannerDismissedOn";
 
@@ -122,37 +123,55 @@ export default function TrialBanner() {
 
   const handleCta = () => {
     if (ctaLabel === "Contact Support") {
-      window.open("mailto:support@aumrti.in?subject=Subscription query");
+      window.open(`mailto:${SUPPORT_EMAIL}?subject=Subscription query`);
     } else {
       navigate("/settings/plan");
     }
   };
 
+  // POINTER EVENTS: the wrapper must not intercept clicks.
+  //
+  // This bar is `fixed top-14`, i.e. y = 56-88px, and <main> in AppShell is only offset by
+  // `mt-14` (56px) — it clears the HEADER, not this banner. So the first row of every module's
+  // content renders underneath it. On /lab that is the module tab bar (y = 56-96px), whose
+  // buttons centre at roughly y = 76 — squarely inside this element. An opaque, hit-testable
+  // wrapper therefore swallows the click on every tab, and the user simply cannot switch tabs.
+  // Playwright reports it as "subtree intercepts pointer events"; a real user reports it as
+  // "the Collection tab does nothing".
+  //
+  // The fix is the pattern CredentialExpiryBanner.tsx:66 already uses at the identical position
+  // and z-index, and AppShell.tsx:33 uses for the toast region: a `pointer-events-none` wrapper
+  // with `pointer-events-auto` restored on the actual content. Clicks pass through the dead
+  // space either side of the text, while the message and its buttons stay fully interactive.
   return (
-    <div className={`fixed top-14 left-0 right-0 z-40 ${BG[variant]} text-white text-xs flex items-center gap-3 px-5 py-2`}>
-      {icon}
-      <span className="font-semibold">{message}</span>
-      {sub && <span className="text-white/80 hidden sm:inline">{sub}</span>}
-      <button
-        onClick={handleCta}
-        className="ml-auto underline underline-offset-2 font-semibold whitespace-nowrap hover:no-underline transition-all"
+    <div className="fixed top-14 left-0 right-0 z-40 pointer-events-none">
+      <div
+        className={`pointer-events-auto ${BG[variant]} text-white text-xs flex items-center gap-3 px-5 py-2`}
       >
-        {ctaLabel}
-      </button>
-      {/* A read-only account must never be dismissable — staff would hide the reason
-          their next save fails. */}
-      {!accessBlocked && (
+        {icon}
+        <span className="font-semibold">{message}</span>
+        {sub && <span className="text-white/80 hidden sm:inline">{sub}</span>}
         <button
-          onClick={() => {
-            localStorage.setItem(DISMISS_KEY, todayKey());
-            setDismissed(true);
-          }}
-          className="text-white/70 hover:text-white transition-colors ml-1"
-          aria-label="Dismiss"
+          onClick={handleCta}
+          className="ml-auto underline underline-offset-2 font-semibold whitespace-nowrap hover:no-underline transition-all"
         >
-          <X size={13} />
+          {ctaLabel}
         </button>
-      )}
+        {/* A read-only account must never be dismissable — staff would hide the reason
+            their next save fails. */}
+        {!accessBlocked && (
+          <button
+            onClick={() => {
+              localStorage.setItem(DISMISS_KEY, todayKey());
+              setDismissed(true);
+            }}
+            className="text-white/70 hover:text-white transition-colors ml-1"
+            aria-label="Dismiss"
+          >
+            <X size={13} />
+          </button>
+        )}
+      </div>
     </div>
   );
 }

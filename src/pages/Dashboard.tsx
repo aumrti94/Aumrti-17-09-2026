@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import RevenueChart from "@/components/dashboard/RevenueChart";
 import BedOccupancy from "@/components/dashboard/BedOccupancy";
 import AlertsPanel from "@/components/dashboard/AlertsPanel";
+import ResultsReadyPanel from "@/components/dashboard/ResultsReadyPanel";
 import DrillDownDrawer, { DrillDownConfig, KPIType } from "@/components/dashboard/DrillDownDrawer";
 import RevenueDrillDown from "@/components/dashboard/drilldowns/RevenueDrillDown";
 import BedsDrillDown from "@/components/dashboard/drilldowns/BedsDrillDown";
@@ -466,11 +467,15 @@ const Dashboard: React.FC = () => {
             )}
           </div>
 
-      {/* ROW 2 — Three panels */}
+      {/* ROW 2 — Panels */}
       <div className="grid grid-cols-1 lg:grid-cols-[3fr_3fr_2fr] gap-3 flex-1 min-h-0">
         {panelVisible("panel_revenue") && revenueAllowed && <RevenueChart />}
         {panelVisible("panel_beds") && <BedOccupancy />}
-        {panelVisible("panel_alerts") && <AlertsPanel kpis={kpis} />}
+        <div className="flex flex-col gap-3 min-h-0">
+          {panelVisible("panel_alerts") && <AlertsPanel kpis={kpis} />}
+          {/* The doctor's own queue of released reports they have not read yet. */}
+          {panelVisible("panel_results_ready") && <ResultsReadyPanel hospitalId={hospitalId} />}
+        </div>
       </div>
 
       {/* Drill-Down Drawer */}

@@ -10,6 +10,7 @@ import { printDocument, printHeader } from "@/lib/printUtils";
 import { logRecordAccess } from "@/lib/ims";
 import { draftHistopathImpression } from "@/lib/labReportNarrative";
 import { useCredentialGate } from "@/components/hr/useCredentialGate";
+import { notifyOrderingDoctorPathology } from "@/lib/resultNotifications";
 
 // Pathology case detail / structured report / dual sign-off (lab plan Phase 7).
 
@@ -162,6 +163,12 @@ const PathologyCaseWorkspace: React.FC<Props> = ({ caseId, hospitalId, onChanged
       final_signed_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }).eq("id", pcase.id);
+
+    // Tell the clinician who ordered the biopsy. A signed-out histopathology report is the
+    // one result a doctor is most likely to be actively waiting on, and until now sign-off
+    // notified nobody outside the lab.
+    notifyOrderingDoctorPathology(pcase.id, currentUserId).catch(() => {});
+
     setSaving(false);
     toast({ title: "✓ Report signed off" });
     load(); onChanged();

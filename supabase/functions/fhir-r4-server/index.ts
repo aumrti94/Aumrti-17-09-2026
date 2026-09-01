@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { APP_DOMAIN } from "../_shared/brand.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -15,7 +16,7 @@ const sb = () => createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 );
 
-const BASE_URL = Deno.env.get("FHIR_BASE_URL") || "https://api.aumrti.in/fhir";
+const BASE_URL = Deno.env.get("FHIR_BASE_URL") || `https://api.${APP_DOMAIN}/fhir`;
 
 // ── Resource Builders ────────────────────────────────────────────────────────
 

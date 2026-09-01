@@ -104,12 +104,18 @@ const SettingsProfilePage: React.FC = () => {
   const save = useMutation({
     mutationFn: async () => {
       if (!hospital) return;
+      // The hospital's legal name. Every tenant-scoped query in the product (and every QA
+      // fixture) resolves the tenant by this column — an empty name doesn't just look wrong
+      // on screen, it makes the hospital unresolvable everywhere else.
+      if (!form.name.trim()) {
+        throw new Error("Hospital name cannot be empty.");
+      }
       // Validate GSTIN format: 15-character alphanumeric (Indian standard)
       if (form.gstin && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(form.gstin.trim().toUpperCase())) {
         throw new Error("Invalid GSTIN format. Expected format: 22AAAAA0000A1Z5");
       }
       const { error } = await supabase.from("hospitals").update({
-        name: form.name,
+        name: form.name.trim(),
         address: form.address || null,
         state: form.state || null,
         pincode: form.pincode || null,

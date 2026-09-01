@@ -19,6 +19,8 @@ export interface OpdToken {
   visit_date: string;
   visit_mode?: string | null;
   visit_type?: string | null;
+  /** Which consultation rate actually billed — see src/lib/consultationFee.ts. */
+  charged_tier?: string | null;
   is_mlc?: boolean | null;
   payer_type?: string | null;
   payer_id?: string | null;

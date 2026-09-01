@@ -9,21 +9,23 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Loader2, Languages, Mic, Tv2, FileText, ClipboardList, Globe } from "lucide-react";
+import { SUPPORTED_LANGUAGES } from "@/lib/voiceScribeLanguages";
 
 // ─── Language catalog ─────────────────────────────────────────────────────────
 
-const LANGUAGES = [
-  { code: "en", label: "English",    script: "English" },
-  { code: "hi", label: "Hindi",      script: "हिन्दी" },
-  { code: "te", label: "Telugu",     script: "తెలుగు" },
-  { code: "ta", label: "Tamil",      script: "தமிழ்" },
-  { code: "ml", label: "Malayalam",  script: "മലയാളം" },
-  { code: "kn", label: "Kannada",    script: "ಕನ್ನಡ" },
-  { code: "mr", label: "Marathi",    script: "मराठी" },
-  { code: "bn", label: "Bengali",    script: "বাংলা" },
-  { code: "gu", label: "Gujarati",   script: "ગુજરાતી" },
-  { code: "pa", label: "Punjabi",    script: "ਪੰਜਾਬੀ" },
-];
+/**
+ * DERIVED from the scribe catalogue, not hand-maintained.
+ *
+ * This page used to carry its own 10-language literal, so a hospital simply could not select
+ * the other 12 languages the scribe supports — and if a row already held one of them,
+ * useVoiceScribeLanguages silently resolved it to English. One catalogue, one behaviour.
+ *
+ * `ai_language_settings.language_code` stores the short ISO-639 form, so codes are truncated
+ * here and expanded back by SETTINGS_TO_IETF in useVoiceScribeLanguages.
+ */
+const LANGUAGES = SUPPORTED_LANGUAGES
+  .filter(l => l.code !== "auto") // a per-feature OUTPUT language cannot be "detect it"
+  .map(l => ({ code: l.code.split("-")[0], label: l.label, script: l.native }));
 
 // ─── Feature definitions ──────────────────────────────────────────────────────
 
@@ -169,6 +171,16 @@ const SettingsAILanguagePage: React.FC = () => {
     );
   }
 
+  // Resolved the same way the rows below are, so an unsaved feature (absent from `settings`)
+  // counts as the enabled default rather than being silently omitted from the total.
+  const resolved = FEATURES.map(
+    f => settings[f.key] ?? { feature_key: f.key, language_code: "en", enabled: true },
+  );
+  const enabledCount = resolved.filter(s => s.enabled).length;
+  const enabledLanguageCount = new Set(
+    resolved.filter(s => s.enabled).map(s => s.language_code),
+  ).size;
+
   return (
     <div className="h-[calc(100vh-56px)] flex flex-col overflow-hidden bg-background">
       {/* Header */}
@@ -193,9 +205,20 @@ const SettingsAILanguagePage: React.FC = () => {
 
         {/* ── Per-Feature Language Pack ── */}
         <Section title="Feature Language Packs" icon="🌐">
-          <p className="text-xs text-muted-foreground mb-5">
+          <p className="text-xs text-muted-foreground mb-3">
             Each AI feature can output in a different language. Enable the pack and choose the
             language — English AI prompts are translated into the target language automatically.
+          </p>
+
+          {/* Every enabled pack carries a per-call cost and a clinical validation obligation.
+              Without a running total there is no way to notice that ten of them are quietly on. */}
+          <p className="text-xs font-medium text-foreground mb-5">
+            {enabledCount} of {FEATURES.length} language packs enabled
+            {enabledLanguageCount > 0 && (
+              <span className="text-muted-foreground font-normal">
+                {" "}· {enabledLanguageCount} language{enabledLanguageCount === 1 ? "" : "s"} in use
+              </span>
+            )}
           </p>
 
           <div className="space-y-3">

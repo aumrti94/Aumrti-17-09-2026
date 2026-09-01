@@ -302,7 +302,17 @@ const TelemedicinePage: React.FC = () => {
   const patient = activeSession?.patients;
 
   return (
-    <div className="flex h-[calc(100vh-56px)] overflow-hidden">
+    <div className="flex flex-col h-[calc(100vh-56px)] overflow-hidden">
+      {/* Telemedicine Practice Guidelines 2020 consent notice — a doctor-initiated remote
+          consult needs recorded patient consent; this surfaces the requirement to staff
+          before every session. Not a consent-capture system (no persistence here) — that is
+          a separate, larger feature. */}
+      <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-800 flex-shrink-0">
+        Remote consultations follow the Telemedicine Practice Guidelines 2020. Patient consent
+        for a doctor-initiated video/audio consult must be obtained and recorded before the
+        session begins.
+      </div>
+      <div className="flex flex-1 overflow-hidden">
       {/* LEFT — Queue */}
       <div className="w-[300px] shrink-0 bg-background border-r border-border flex flex-col">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
@@ -485,6 +495,7 @@ const TelemedicinePage: React.FC = () => {
             </div>
           </>
         )}
+      </div>
       </div>
 
       <ScheduleTeleconsultModal open={showSchedule} onOpenChange={setShowSchedule} onCreated={fetchSessions} />

@@ -1,0 +1,937 @@
+table,domain,rls_enabled,policy,cmd,roles,permissive,using_expr,with_check_expr,flags,notes,severity
+abdm_audit_log,ABDM,YES,audit_log_select_admin,SELECT,{authenticated},PERMISSIVE,"((hospital_id = get_user_hospital_id()) AND (( SELECT users.role FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1) = ANY (ARRAY['super_admin'::text, 'hospital_admin'::text])))",,INITPLAN auth.*() per-row,,LOW
+abdm_care_contexts,ABDM,YES,care_contexts_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+abdm_care_contexts,ABDM,YES,care_contexts_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+abdm_consent_logs,ABDM,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+abdm_consents,ABDM,YES,abdm_consents_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+abdm_consents,ABDM,YES,abdm_consents_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+abdm_gateway_logs,ABDM,YES,gateway_logs_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+abdm_gateway_logs,ABDM,YES,gateway_logs_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+abdm_rate_limits,ABDM,YES,(none),,,,,,"RLS enabled, ZERO policies",service_role/postgres only (both BYPASSRLS),INFO
+accounting_posting_failures,Other,YES,hospital staff insert own posting failures,INSERT,{public},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+accounting_posting_failures,Other,YES,hospital staff read own posting failures,SELECT,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+accounting_posting_failures,Other,YES,hospital staff update own posting failures,UPDATE,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+addon_skus,Platform,YES,addon_skus_admin_write,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+addon_skus,Platform,YES,addon_skus_anon_read,SELECT,{anon},PERMISSIVE,(is_active = true),,ANON-REACHABLE,,HIGH
+addon_skus,Platform,YES,addon_skus_read_all,SELECT,{authenticated},PERMISSIVE,true,,OPEN-READ USING(true),,CRITICAL
+admin_audit_log,Other,YES,admin_audit_log_admin_insert,INSERT,{authenticated},PERMISSIVE,,is_aumrti_admin(),none,,OK
+admin_audit_log,Other,YES,admin_audit_log_admin_read,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,none,,OK
+admission_day_care_procedures,IPD,YES,admission_day_care_procedures_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+admission_day_care_procedures,IPD,YES,admission_day_care_procedures_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+admission_estimates,IPD,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+admission_sequences,IPD,YES,admission_sequences_select,SELECT,{authenticated},PERMISSIVE,true,,OPEN-READ USING(true),,CRITICAL
+admissions,IPD,YES,Users can manage own hospital admissions,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+admissions,IPD,YES,Users can view own hospital admissions,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+admissions,IPD,YES,aumrti_admin_read_all_admissions,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,MULTIPLE PERMISSIVE (2),,MEDIUM
+adult_immunization_schedule,Other,YES,adult_immunization_schedule_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+advance_receipts,Other,YES,Users can manage own hospital advance_receipts,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+advance_receipts,Other,YES,Users can view own hospital advance_receipts,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ai_attestations,AI,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ai_cost_daily,AI,YES,ai_cost_daily_select_own,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ai_cost_daily,AI,YES,ai_cost_daily_upsert_service,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+ai_digests,AI,YES,Users can manage own hospital digests,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ai_digests,AI,YES,Users can view own hospital digests,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ai_feature_classes,AI,YES,ai_feature_classes_admin_write,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+ai_feature_classes,AI,YES,ai_feature_classes_read,SELECT,{authenticated},PERMISSIVE,true,,OPEN-READ USING(true),,CRITICAL
+ai_feature_logs,AI,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ai_language_settings,AI,YES,Anyone can read ai_language_settings,SELECT,{public},PERMISSIVE,true,,OPEN-READ USING(true),,CRITICAL
+ai_language_settings,AI,YES,Hospital staff manage ai_language_settings,ALL,{authenticated},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+ai_provider_config,AI,YES,ai_provider_config_delete,DELETE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ai_provider_config,AI,YES,ai_provider_config_insert,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+ai_provider_config,AI,YES,ai_provider_config_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ai_provider_config,AI,YES,ai_provider_config_update,UPDATE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ai_safety_flags,AI,YES,ai_safety_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+ai_safety_flags,AI,YES,ai_safety_service_role,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+ai_suggestions_audit,AI,YES,ai_audit_hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+ai_suggestions_audit,AI,YES,ai_audit_service_role,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+ai_usage_logs,AI,YES,ai_usage_logs_insert_service,INSERT,{service_role},PERMISSIVE,,true,none,,OK
+ai_usage_logs,AI,YES,ai_usage_logs_select_own,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ai_wallet_transactions,AI,YES,ai_wallet_txn_select,SELECT,{authenticated},PERMISSIVE,((hospital_id = get_user_hospital_id()) OR is_aumrti_admin()),,none,,OK
+ai_wallet_transactions,AI,YES,ai_wallet_txn_service,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+alert_escalation_log,Other,YES,alert_escalation_log_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+alert_escalation_rules,Other,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+alert_escalation_rules,Other,YES,alert_escalation_rules_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ambulance_dispatches,Emergency,YES,ambulance_dispatches_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ambulance_equipment_checks,Emergency,YES,ambulance_equipment_checks_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ambulance_transit_treatment,Emergency,YES,ambulance_transit_treatment_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ambulance_vehicles,Emergency,YES,ambulance_vehicles_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+amc_contracts,Other,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT get_user_hospital_id() AS get_user_hospital_id)),,none,,OK
+anaesthesia_records,Other,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+andrology_reports,IVF/ART,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+andrology_reports,IVF/ART,YES,tenant_isolation_andrology_reports,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (2),,MEDIUM
+antibiotic_justifications,Other,YES,antibiotic_justifications_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+antibiotic_restricted_list,Other,YES,restricted_list_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+api_configurations,Integration,YES,api_configurations_delete,DELETE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+api_configurations,Integration,YES,api_configurations_insert,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+api_configurations,Integration,YES,api_configurations_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+api_configurations,Integration,YES,api_configurations_update,UPDATE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+api_keys,Integration,YES,api_keys_admin_manage,ALL,{authenticated},PERMISSIVE,"((hospital_id = get_user_hospital_id()) AND has_role(auth.uid(), 'super_admin'::app_role))","((hospital_id = get_user_hospital_id()) AND has_role(auth.uid(), 'super_admin'::app_role))",INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (2),,MEDIUM
+api_keys,Integration,YES,api_keys_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+api_keys,Integration,YES,api_keys_staff_read,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+appointments,OPD,YES,Hospital isolation - delete,DELETE,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+appointments,OPD,YES,Hospital isolation - insert,INSERT,{public},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+appointments,OPD,YES,Hospital isolation - select,SELECT,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+appointments,OPD,YES,Hospital isolation - update,UPDATE,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,UPDATE no WITH CHECK (PG reuses USING - OK),,OK
+arogyasri_enrollments,PM-JAY,YES,arogyasri_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+arogyasri_enrollments,PM-JAY,YES,arogyasri_service_role,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+art_couples,IVF/ART,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+art_couples,IVF/ART,YES,tenant_isolation_art_couples,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (2),,MEDIUM
+asr_pricing,Other,YES,Service role manages ASR pricing,ALL,{public},PERMISSIVE,"((((current_setting('request.jwt.claims'::text, true))::jsonb ->> 'role'::text) = 'service_role'::text) OR (auth.role() = 'service_role'::text))",,INITPLAN auth.*() per-row,,LOW
+attendance_regularization_requests,HR,YES,attendance_regularization_requests_hospital,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+audit_log,Audit/Compliance,YES,Hospital members can view their audit log,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+audit_log,Audit/Compliance,YES,audit_log_insert,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+audit_records,Audit/Compliance,YES,audit_records_insert,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+audit_records,Audit/Compliance,YES,audit_records_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+audit_records,Audit/Compliance,YES,audit_records_update,UPDATE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+aumrti_admins,Identity,YES,aumrti_admins_self_read,SELECT,{authenticated},PERMISSIVE,((auth_user_id = auth.uid()) OR is_aumrti_admin()),,INITPLAN auth.*() per-row,,LOW
+aumrti_admins,Identity,YES,aumrti_admins_write,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+auto_posting_rules,Other,YES,auto_posting_rules_hospital_rls,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ayush_drug_master,Other,YES,Hospital or system drugs,ALL,{public},PERMISSIVE,((hospital_id IS NULL) OR (hospital_id = get_user_hospital_id())),,none,,OK
+ayush_encounters,Other,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+bank_accounts,Other,YES,bank_accounts_hospital_rls,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+bank_transactions,Other,YES,bank_transactions_hospital_rls,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+bed_demand_forecasts,IPD,YES,hospital_isolation_bed_demand,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (2),,MEDIUM
+bed_demand_forecasts,IPD,YES,hospital_staff_bed_forecasts,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (2),,MEDIUM
+bed_reservations,IPD,YES,hospital_staff_rw,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+beds,IPD,YES,Admins can manage beds,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+beds,IPD,YES,Users can view own hospital beds,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+bill_amendments,Billing,YES,bill_amendments_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+bill_discount_approvals,Billing,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+bill_line_items,Billing,YES,Users can manage own hospital bill_line_items,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+bill_line_items,Billing,YES,Users can view own hospital bill_line_items,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+bill_payments,Billing,YES,Users can manage own hospital bill_payments,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+bill_payments,Billing,YES,Users can view own hospital bill_payments,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+bill_sequences,Billing,YES,Users can manage own hospital sequences,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+bills,Billing,YES,Users can manage own hospital bills,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+bills,Billing,YES,Users can view own hospital bills,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+bills,Billing,YES,aumrti_admin_read_all_bills,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,MULTIPLE PERMISSIVE (2),,MEDIUM
+blood_antibody_screening,Blood Bank,YES,blood_antibody_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+blood_issues,Blood Bank,YES,blood_issues_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+blood_requests,Blood Bank,YES,blood_requests_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+blood_unit_tti_tests,Blood Bank,YES,blood_tti_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+blood_units,Blood Bank,YES,blood_units_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+bmw_manifests,Biomedical Waste,YES,hospital_isolation_bmw_manifests,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+bmw_records,Biomedical Waste,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT get_user_hospital_id() AS get_user_hospital_id)),,none,,OK
+body_releases,Other,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+bpmh_records,Other,YES,bpmh_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+braden_scale_assessments,Other,YES,braden_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+branches,Tenant,YES,Admins can manage branches,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+branches,Tenant,YES,Users can view own hospital branches,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+branches,Tenant,YES,aumrti_admin_read_all_branches,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,MULTIPLE PERMISSIVE (2),,MEDIUM
+breakdown_logs,Other,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT get_user_hospital_id() AS get_user_hospital_id)),,none,,OK
+budget_lines,Other,YES,budget_lines_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+calibration_records,Other,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT get_user_hospital_id() AS get_user_hospital_id)),,none,,OK
+capa_records,Other,YES,Users can manage own hospital capa_records,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+capa_records,Other,YES,Users can view own hospital capa_records,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+care_bundle_checks,Other,YES,care_bundles_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+care_plan_tasks,Nursing,YES,care_plan_tasks_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+care_plan_tasks,Nursing,YES,care_plan_tasks_service_role,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+care_plans,Nursing,YES,care_plans_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+care_plans,Nursing,YES,care_plans_service_role,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+case_sheet_templates,Other,YES,cst_delete,DELETE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+case_sheet_templates,Other,YES,cst_insert,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+case_sheet_templates,Other,YES,cst_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+case_sheet_templates,Other,YES,cst_update,UPDATE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+cghs_echs_beneficiaries,PM-JAY,YES,cghs_echs_service_role,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+cghs_echs_beneficiaries,PM-JAY,YES,hospital_isolation_cghs_echs,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+chain_memberships,Tenant,YES,chain_memberships_platform_only,ALL,{authenticated},PERMISSIVE,true,true,OPEN-READ USING(true); OPEN-WRITE WITH CHECK(true),,CRITICAL
+chart_of_accounts,Other,YES,chart_of_accounts_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+chart_of_accounts,Other,YES,chart_of_accounts_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+chemo_order_drugs,IPD,YES,chemo_order_drugs_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+chemo_orders,IPD,YES,chemo_orders_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+chemo_protocols,IPD,YES,chemo_protocols_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+chronic_disease_programs,Other,YES,Users can insert chronic programs for their hospital,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+chronic_disease_programs,Other,YES,Users can update chronic programs for their hospital,UPDATE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,UPDATE no WITH CHECK (PG reuses USING - OK),,OK
+chronic_disease_programs,Other,YES,Users can view chronic programs for their hospital,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+churn_remediation_actions,Platform,YES,churn_remediation_actions_admin_read,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,none,,OK
+cleaning_schedules,Other,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT get_user_hospital_id() AS get_user_hospital_id)),,none,,OK
+clinical_alerts,Other,YES,clinical_alerts_insert,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+clinical_alerts,Other,YES,clinical_alerts_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+clinical_alerts,Other,YES,clinical_alerts_update,UPDATE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+clinical_audit_samples,Quality/NABH,YES,hospital_isolation_audit_samples,ALL,{public},PERMISSIVE,(audit_id IN ( SELECT clinical_audits.id FROM clinical_audits WHERE (clinical_audits.hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))))),(audit_id IN ( SELECT clinical_audits.id FROM clinical_audits WHERE (clinical_audits.hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))))),INITPLAN auth.*() per-row,,LOW
+clinical_audits,Quality/NABH,YES,hospital_isolation_clinical_audits,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+clinical_guidelines,Other,YES,guidelines_read,SELECT,{public},PERMISSIVE,((hospital_id IS NULL) OR (hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid())))),,INITPLAN auth.*() per-row,,LOW
+clinical_guidelines,Other,YES,guidelines_service_role,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+clinical_guidelines,Other,YES,guidelines_write,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+clinical_note_templates,Other,YES,cnt_delete,DELETE,{authenticated},PERMISSIVE,((created_by = ( SELECT users.id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1)) AND (hospital_id = get_user_hospital_id())),,INITPLAN auth.*() per-row,,LOW
+clinical_note_templates,Other,YES,cnt_insert,INSERT,{authenticated},PERMISSIVE,,((created_by = ( SELECT users.id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1)) AND (hospital_id = get_user_hospital_id())),INITPLAN auth.*() per-row,,LOW
+clinical_note_templates,Other,YES,cnt_select,SELECT,{authenticated},PERMISSIVE,((hospital_id = get_user_hospital_id()) AND ((is_shared = true) OR (created_by = ( SELECT users.id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1)))),,INITPLAN auth.*() per-row,,LOW
+clinical_note_templates,Other,YES,cnt_update,UPDATE,{authenticated},PERMISSIVE,((created_by = ( SELECT users.id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1)) AND (hospital_id = get_user_hospital_id())),((created_by = ( SELECT users.id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1)) AND (hospital_id = get_user_hospital_id())),INITPLAN auth.*() per-row,,LOW
+clinical_protocols,Other,YES,clinical_protocols_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+clinical_reference_sources,Other,YES,clinical_ref_sources_read,SELECT,{public},PERMISSIVE,((hospital_id IS NULL) OR (hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid())))),,INITPLAN auth.*() per-row,,LOW
+clinical_reference_sources,Other,YES,clinical_ref_sources_service_role,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+clinical_reference_sources,Other,YES,clinical_ref_sources_write,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+code_blue_audits,Other,YES,code_blue_audits_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+code_blue_events,Other,YES,code_blue_events_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+coding_audits,Other,YES,hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+cold_chain_log,Vaccination,YES,cold_chain_log_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+cold_chain_log,Vaccination,YES,tenant_isolation_cold_chain_log,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (2),,MEDIUM
+cold_storage_log,Other,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+collection_campaigns,Other,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+committee_action_items,Quality/NABH,YES,hospital_isolation_committee_actions,ALL,{public},PERMISSIVE,(meeting_id IN ( SELECT cm.id FROM (committee_meetings cm JOIN hospital_committees hc ON ((hc.id = cm.committee_id))) WHERE (hc.hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))))),(meeting_id IN ( SELECT cm.id FROM (committee_meetings cm JOIN hospital_committees hc ON ((hc.id = cm.committee_id))) WHERE (hc.hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))))),INITPLAN auth.*() per-row,,LOW
+committee_meetings,Quality/NABH,YES,hospital_isolation_committee_meetings,ALL,{public},PERMISSIVE,(committee_id IN ( SELECT hospital_committees.id FROM hospital_committees WHERE (hospital_committees.hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))))),(committee_id IN ( SELECT hospital_committees.id FROM hospital_committees WHERE (hospital_committees.hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))))),INITPLAN auth.*() per-row,,LOW
+committee_members,Quality/NABH,YES,hospital_isolation_committee_members,ALL,{public},PERMISSIVE,(committee_id IN ( SELECT hospital_committees.id FROM hospital_committees WHERE (hospital_committees.hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))))),(committee_id IN ( SELECT hospital_committees.id FROM hospital_committees WHERE (hospital_committees.hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))))),INITPLAN auth.*() per-row,,LOW
+config_change_logs,Other,YES,hospital_isolation_config_change_logs,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+consent_form_templates,Audit/Compliance,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+consent_templates,Audit/Compliance,YES,consent_templates_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+corporate_accounts,Insurance,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+corporate_accounts,Insurance,YES,corporate_accounts_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+corporate_accounts,Insurance,YES,corporate_accounts_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+credential_override_log,Other,YES,credential_override_log_hospital,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+credit_note_items,Billing,YES,credit_note_items_insert,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+credit_note_items,Billing,YES,credit_note_items_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+credit_notes,Billing,YES,credit_notes_insert,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+credit_notes,Billing,YES,credit_notes_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+credit_notes,Billing,YES,credit_notes_update,UPDATE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+cross_match_records,Other,YES,cross_match_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+cycle_instruments,Other,YES,cycle_instruments_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+daily_cash_closure,Other,YES,daily_cash_closure_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+daily_cash_closure,Other,YES,daily_cash_closure_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+daily_census_snapshots,Other,YES,hospital_users_own_census,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+data_erasure_requests,Other,YES,data_erasure_requests_admin_all,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+data_erasure_requests,Other,YES,data_erasure_requests_hospital_insert,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+data_erasure_requests,Other,YES,data_erasure_requests_hospital_read,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+day_care_procedures,Other,YES,day_care_procedures_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+day_care_procedures,Other,YES,day_care_procedures_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+daycare_chairs,Other,YES,daycare_chairs_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+death_certificates,Other,YES,hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+demand_forecasts,Other,YES,Isolation policy for demand_forecasts,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+demand_forecasts,Other,YES,demand_forecasts_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+demand_forecasts,Other,YES,demand_forecasts_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+denial_logs,Other,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+dental_charts,Dental,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+dental_charts,Dental,YES,tenant_isolation_dental_charts,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (2),,MEDIUM
+dental_lab_orders,Dental,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+dental_lab_orders,Dental,YES,tenant_isolation_dental_lab_orders,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (2),,MEDIUM
+dental_treatment_plans,Dental,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+dental_treatment_plans,Dental,YES,tenant_isolation_dental_treatment_plans,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (2),,MEDIUM
+department_indents,Tenant,YES,Users can manage own hospital department_indents,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+department_indents,Tenant,YES,Users can view own hospital department_indents,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+department_indents,Tenant,YES,department_indents_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+department_indents,Tenant,YES,department_indents_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+departments,Tenant,YES,Admins can manage departments,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+departments,Tenant,YES,Users can view own hospital departments,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+depreciation_postings,Other,YES,depreciation_postings_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+dialysis_machines,IPD,YES,Hospital isolation for dialysis_machines,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+dialysis_machines,IPD,YES,Users can insert dialysis machines in their hospital,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+dialysis_machines,IPD,YES,Users can update dialysis machines in their hospital,UPDATE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,UPDATE no WITH CHECK (PG reuses USING - OK),,OK
+dialysis_machines,IPD,YES,Users can view dialysis machines in their hospital,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+dialysis_patients,IPD,YES,Hospital isolation for dialysis_patients,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+dialysis_patients,IPD,YES,Users can insert dialysis patients in their hospital,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+dialysis_patients,IPD,YES,Users can update dialysis patients in their hospital,UPDATE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,UPDATE no WITH CHECK (PG reuses USING - OK),,OK
+dialysis_patients,IPD,YES,Users can view dialysis patients in their hospital,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+dialysis_sessions,IPD,YES,Hospital isolation for dialysis_sessions,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+dialysis_sessions,IPD,YES,Users can insert dialysis sessions in their hospital,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+dialysis_sessions,IPD,YES,Users can update dialysis sessions in their hospital,UPDATE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,UPDATE no WITH CHECK (PG reuses USING - OK),,OK
+dialysis_sessions,IPD,YES,Users can view dialysis sessions in their hospital,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+dialyzer_reuse,Other,YES,Users can insert dialyzer reuse in their hospital,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+dialyzer_reuse,Other,YES,Users can update dialyzer reuse in their hospital,UPDATE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,UPDATE no WITH CHECK (PG reuses USING - OK),,OK
+dialyzer_reuse,Other,YES,Users can view dialyzer reuse in their hospital,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+dialyzer_reuse,Other,YES,dialyzer_reuse_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+dialyzer_reuse,Other,YES,dialyzer_reuse_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+dicom_files,Radiology,YES,dicom_files_hospital_rls,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+diet_orders,Dietetics,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+diet_plans,Dietetics,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+diet_plans,Dietetics,YES,hospital_isolation_diet_plans,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+dietitian_notes,Dietetics,YES,dietitian_notes_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+disaster_drills,Emergency,YES,disaster_drills_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+disciplinary_actions,Other,YES,disciplinary_actions_hospital,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+discount_approvals,Billing,YES,Users can manage own hospital discount_approvals,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+discount_approvals,Billing,YES,Users can view own hospital discount_approvals,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+discount_codes,Billing,YES,discount_codes_aumrti_write,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+discount_codes,Billing,YES,discount_codes_public_read,SELECT,{authenticated},PERMISSIVE,true,,OPEN-READ USING(true),,CRITICAL
+doctor_quick_picks,OPD,YES,dqp_delete,DELETE,{authenticated},PERMISSIVE,((doctor_id = ( SELECT users.id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1)) AND (hospital_id = get_user_hospital_id())),,INITPLAN auth.*() per-row,,LOW
+doctor_quick_picks,OPD,YES,dqp_insert,INSERT,{authenticated},PERMISSIVE,,((doctor_id = ( SELECT users.id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1)) AND (hospital_id = get_user_hospital_id())),INITPLAN auth.*() per-row,,LOW
+doctor_quick_picks,OPD,YES,dqp_select,SELECT,{authenticated},PERMISSIVE,((doctor_id = ( SELECT users.id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1)) AND (hospital_id = get_user_hospital_id())),,INITPLAN auth.*() per-row,,LOW
+doctor_quick_picks,OPD,YES,dqp_update,UPDATE,{authenticated},PERMISSIVE,((doctor_id = ( SELECT users.id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1)) AND (hospital_id = get_user_hospital_id())),((doctor_id = ( SELECT users.id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1)) AND (hospital_id = get_user_hospital_id())),INITPLAN auth.*() per-row,,LOW
+doctor_schedules,OPD,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+doctor_slots,OPD,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+donor_campaigns,Blood Bank,YES,hospital_isolation_donor_campaigns,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+donors,Blood Bank,YES,donors_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+drug_allergy_cross_reactivity,Pharmacy,YES,Anyone can read drug_allergy_cross_reactivity,SELECT,{authenticated},PERMISSIVE,true,,OPEN-READ USING(true),,CRITICAL
+drug_batches,Pharmacy,YES,Hospital isolation for drug_batches,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+drug_batches,Pharmacy,YES,Users can manage own hospital drug_batches,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+drug_batches,Pharmacy,YES,Users can view own hospital drug_batches,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+drug_interactions,Pharmacy,YES,Anyone can read drug_interactions,SELECT,{authenticated},PERMISSIVE,true,,OPEN-READ USING(true),,CRITICAL
+drug_master,Pharmacy,YES,Users can manage own hospital drugs,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+drug_master,Pharmacy,YES,Users can view own hospital drugs,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+dunning_attempts,Other,YES,Hospital isolation on dunning_attempts,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+dunning_cadence_rules,Other,YES,dunning_cadence_rules_admin_all,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+duty_roster,HR,YES,Users can manage own hospital duty_roster,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+duty_roster,HR,YES,Users can view own hospital duty_roster,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+duty_roster,HR,YES,duty_roster_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+duty_roster,HR,YES,duty_roster_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+ed_charge_items,Emergency,YES,Users can manage own hospital ed_charge_items,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ed_charge_items,Emergency,YES,Users can view own hospital ed_charge_items,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ed_handover_notes,Emergency,YES,Users can manage own hospital ed_handover_notes,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ed_handover_notes,Emergency,YES,Users can view own hospital ed_handover_notes,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ed_medications,Emergency,YES,Users can manage own hospital ed_medications,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ed_medications,Emergency,YES,Users can view own hospital ed_medications,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ed_visits,Emergency,YES,Users can manage own hospital ed_visits,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ed_visits,Emergency,YES,Users can view own hospital ed_visits,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+ed_visits,Emergency,YES,aumrti_admin_read_all_ed_visits,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,MULTIPLE PERMISSIVE (2),,MEDIUM
+electrical_safety_logs,Other,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+email_notifications,Notifications,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+embryo_bank,IVF/ART,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+embryo_bank,IVF/ART,YES,tenant_isolation_embryo_bank,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (2),,MEDIUM
+embryology_records,IVF/ART,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+embryology_records,IVF/ART,YES,tenant_isolation_embryology_records,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (2),,MEDIUM
+emi_installments,Billing,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+emi_installments,Billing,YES,hospital_isolation_emi_installments,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+emi_plans,Billing,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+emi_plans,Billing,YES,hospital_isolation_emi_plans,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+emr_template_definitions,Other,YES,Isolation policy for emr_template_definitions,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+emr_template_definitions,Other,YES,emr_template_definitions_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+emr_template_definitions,Other,YES,emr_template_definitions_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+enterprise_leads,Other,YES,anon_leads_insert,INSERT,{anon},PERMISSIVE,,true,OPEN-WRITE WITH CHECK(true); ANON-REACHABLE,,CRITICAL
+enterprise_leads,Other,YES,aumrti_admin_leads_all,ALL,{public},PERMISSIVE,is_aumrti_admin(),,none,,OK
+enterprise_leads,Other,YES,authenticated_leads_insert,INSERT,{authenticated},PERMISSIVE,,true,OPEN-WRITE WITH CHECK(true),,CRITICAL
+enterprise_leads,Other,YES,service_role_leads_all,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+entitlement_fail_open_events,Platform,YES,entitlement_fail_open_admin_read,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,none,,OK
+entitlement_fail_open_events,Platform,YES,entitlement_fail_open_insert,INSERT,{authenticated},PERMISSIVE,,true,OPEN-WRITE WITH CHECK(true),,CRITICAL
+epidemic_protocols,Other,YES,epidemic_protocols_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+equipment_master,Inventory,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT get_user_hospital_id() AS get_user_hospital_id)),,none,,OK
+esg_monthly_metrics,Other,YES,esg_monthly_metrics_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+esi_beneficiaries,PM-JAY,YES,esi_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+esi_beneficiaries,PM-JAY,YES,esi_service_role,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+expense_records,Other,YES,expense_records_hospital_rls,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+external_lab_referrals,Other,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+facility_assets,Tenant,YES,hospital_isolation_facility_assets,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+facility_maintenance_logs,Tenant,YES,hospital_isolation_maintenance_logs,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+fall_risk_assessments,Nursing,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+fcm_tokens,Other,YES,aumrti_admin_read_all_fcm_tokens,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,none,,OK
+fcm_tokens,Other,YES,fcm_tokens_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+feedback_records,Patient,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+fire_safety_drills,Other,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+fixed_assets,Other,YES,fixed_assets_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+full_final_settlements,Other,YES,full_final_settlements_hospital,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+govt_scheme_claims,PM-JAY,YES,govt_claims_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+govt_scheme_claims,PM-JAY,YES,govt_scheme_claims_service_role,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+govt_schemes,PM-JAY,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+grievances,HR,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+grn_ai_log,AI,YES,Users can insert own hospital grn_ai_log,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+grn_ai_log,AI,YES,Users can read own hospital grn_ai_log,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+grn_ai_log,AI,YES,grn_ai_log_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+grn_ai_log,AI,YES,grn_ai_log_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+grn_items,Procurement,YES,Users can manage own hospital grn_items,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+grn_items,Procurement,YES,Users can view own hospital grn_items,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+grn_items,Procurement,YES,grn_items_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+grn_items,Procurement,YES,grn_items_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+grn_records,Procurement,YES,Hospital isolation for grn_records,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+grn_records,Procurement,YES,Users can manage own hospital grn_records,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+grn_records,Procurement,YES,Users can view own hospital grn_records,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+guideline_adherence_log,Other,YES,guideline_log_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+guideline_adherence_log,Other,YES,guideline_log_service_role,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+hand_hygiene_audits,Infection Control,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+hcx_submissions,Other,YES,hcx_submissions_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+hcx_submissions,Other,YES,hcx_submissions_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+health_coach_sessions,Other,YES,patient_own_coach_sessions,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+health_packages,Other,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (3),,MEDIUM
+health_packages,Other,YES,health_packages_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (3),,MEDIUM
+health_packages,Other,YES,health_packages_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+health_packages,Other,YES,tenant_isolation_health_packages,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (3),,MEDIUM
+hep_plans,Other,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+high_alert_double_checks,Other,YES,high_alert_checks_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+hmis_reports,Integration,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+hmis_reports,Integration,YES,tenant_isolation_hmis_reports,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (2),,MEDIUM
+home_care_plans,Other,YES,home_care_plans_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+home_care_visits,Other,YES,home_care_visits_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+home_tele_monitoring,Other,YES,home_tele_monitoring_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+hospital_abdm_config,Tenant,YES,abdm_config_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+hospital_abdm_config,Tenant,YES,abdm_config_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+hospital_addons,Tenant,YES,hospital_addons_read,SELECT,{authenticated},PERMISSIVE,((hospital_id = get_user_hospital_id()) OR is_aumrti_admin()),,none,,OK
+hospital_addons,Tenant,YES,hospital_addons_tenant_write,ALL,{authenticated},PERMISSIVE,"(is_aumrti_admin() OR ((hospital_id = get_user_hospital_id()) AND has_role(auth.uid(), 'super_admin'::app_role)))","(is_aumrti_admin() OR ((hospital_id = get_user_hospital_id()) AND has_role(auth.uid(), 'super_admin'::app_role)))",INITPLAN auth.*() per-row,,LOW
+hospital_ai_wallet,AI,YES,ai_wallet_select,SELECT,{authenticated},PERMISSIVE,((hospital_id = get_user_hospital_id()) OR is_aumrti_admin()),,none,,OK
+hospital_ai_wallet,AI,YES,ai_wallet_service,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+hospital_chains,Tenant,YES,hospital_chains_platform_only,ALL,{authenticated},PERMISSIVE,true,true,OPEN-READ USING(true); OPEN-WRITE WITH CHECK(true),,CRITICAL
+hospital_committees,Tenant,YES,hospital_isolation_committees,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+hospital_config_values,Tenant,YES,hcv_delete,DELETE,{public},PERMISSIVE,((is_system = false) AND (hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1))),,INITPLAN auth.*() per-row,,LOW
+hospital_config_values,Tenant,YES,hcv_insert,INSERT,{public},PERMISSIVE,,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1)),INITPLAN auth.*() per-row,,LOW
+hospital_config_values,Tenant,YES,hcv_select,SELECT,{public},PERMISSIVE,((hospital_id IS NULL) OR (hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1))),,INITPLAN auth.*() per-row,,LOW
+hospital_config_values,Tenant,YES,hcv_update,UPDATE,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1)),,INITPLAN auth.*() per-row; UPDATE no WITH CHECK (PG reuses USING - OK),,LOW
+hospital_feature_overrides,Tenant,YES,feature_override_aumrti_all,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+hospital_feature_overrides,Tenant,YES,feature_override_own_read,SELECT,{authenticated},PERMISSIVE,((hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1)) OR is_aumrti_admin()),,INITPLAN auth.*() per-row,,LOW
+hospital_icd_settings,Tenant,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+hospital_insurance_settings,Tenant,YES,his_hospital_insert,INSERT,{public},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+hospital_insurance_settings,Tenant,YES,his_hospital_select,SELECT,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+hospital_insurance_settings,Tenant,YES,his_hospital_update,UPDATE,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+hospital_module_entitlements,Tenant,YES,module_entitlement_aumrti_all,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+hospital_module_entitlements,Tenant,YES,module_entitlement_own_read,SELECT,{authenticated},PERMISSIVE,((hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1)) OR is_aumrti_admin()),,INITPLAN auth.*() per-row,,LOW
+hospital_packages,Tenant,YES,hospital_packages_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+hospital_packages,Tenant,YES,hospital_packages_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+hospital_pacs_config,Tenant,YES,pacs_config_hospital_rls,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+hospital_pricing_overrides,Tenant,YES,pricing_override_aumrti_all,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+hospital_pricing_overrides,Tenant,YES,pricing_override_own_read,SELECT,{authenticated},PERMISSIVE,((hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1)) OR is_aumrti_admin()),,INITPLAN auth.*() per-row,,LOW
+hospital_sequences,Tenant,YES,Hospital sequences — service role only,ALL,{public},PERMISSIVE,false,false,none,,OK
+hospital_settings,Tenant,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+hospital_signup_consents,Tenant,YES,aumrti_admin_read_all_signup_consents,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,none,,OK
+hospital_subscriptions,Tenant,YES,hospital_sub_aumrti_all,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+hospital_subscriptions,Tenant,YES,hospital_sub_own_read,SELECT,{authenticated},PERMISSIVE,((hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1)) OR is_aumrti_admin()),,INITPLAN auth.*() per-row,,LOW
+hospitals,Tenant,YES,Anyone can read hospital branding,SELECT,{anon},PERMISSIVE,(is_active = true),,ANON-REACHABLE,,HIGH
+hospitals,Tenant,YES,Hospital admins can update own hospital,UPDATE,{authenticated},PERMISSIVE,(id = get_user_hospital_id()),(id = get_user_hospital_id()),none,,OK
+hospitals,Tenant,YES,Users can view own hospital,SELECT,{authenticated},PERMISSIVE,(id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+hospitals,Tenant,YES,aumrti_admin_delete_hospital,DELETE,{authenticated},PERMISSIVE,is_aumrti_admin(),,none,,OK
+hospitals,Tenant,YES,aumrti_admin_read_all_hospitals,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,MULTIPLE PERMISSIVE (2),,MEDIUM
+housekeeping_tasks,Housekeeping,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT get_user_hospital_id() AS get_user_hospital_id)),,none,,OK
+icd10_code_sets,Other,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+icd10_codes,Other,YES,Delete own codes,DELETE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+icd10_codes,Other,YES,Manage own codes,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+icd10_codes,Other,YES,Read global or own codes,SELECT,{authenticated},PERMISSIVE,((hospital_id IS NULL) OR (hospital_id = get_user_hospital_id())),,none,,OK
+icd10_codes,Other,YES,Update own codes,UPDATE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+icd_codings,Other,YES,hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+icu_daily_goals,ICU,YES,icu_daily_goals_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+icu_flowsheet_entries,ICU,YES,icu_flowsheet_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+idsp_alerts,Public Health,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+idsp_alerts,Public Health,YES,tenant_isolation_idsp_alerts,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (2),,MEDIUM
+idsp_submissions,Public Health,YES,hospital_staff_idsp,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+inbox_messages,Other,YES,Users can manage own hospital inbox,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+inbox_messages,Other,YES,Users can view own hospital inbox,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+incident_reports,Quality/NABH,YES,Users can manage own hospital incident_reports,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+incident_reports,Quality/NABH,YES,Users can view own hospital incident_reports,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+indent_items,Procurement,YES,Users can manage own hospital indent_items,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+indent_items,Procurement,YES,Users can view own hospital indent_items,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+indent_items,Procurement,YES,indent_items_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+indent_items,Procurement,YES,indent_items_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+instrument_sets,OT,YES,instrument_sets_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+instruments,OT,YES,instruments_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+insurance_automation_config,Insurance,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+insurance_automation_log,Insurance,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+insurance_claims,Insurance,YES,Hospital isolation for insurance_claims,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+insurance_claims,Insurance,YES,Users can manage own hospital insurance_claims,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+insurance_claims,Insurance,YES,Users can view own hospital insurance_claims,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+insurance_claims,Insurance,YES,aumrti_admin_read_all_insurance_claims,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,MULTIPLE PERMISSIVE (2),,MEDIUM
+insurance_enhancement_requests,Insurance,YES,enhancement_requests_insert,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+insurance_enhancement_requests,Insurance,YES,enhancement_requests_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+insurance_enhancement_requests,Insurance,YES,enhancement_requests_update,UPDATE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+insurance_intimations,Insurance,YES,intimations_insert,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+insurance_intimations,Insurance,YES,intimations_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+insurance_intimations,Insurance,YES,intimations_update,UPDATE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+insurance_payment_reconciliation,Insurance,YES,ipr_hospital_delete,DELETE,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+insurance_payment_reconciliation,Insurance,YES,ipr_hospital_insert,INSERT,{public},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+insurance_payment_reconciliation,Insurance,YES,ipr_hospital_select,SELECT,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+insurance_payment_reconciliation,Insurance,YES,ipr_hospital_update,UPDATE,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+insurance_pre_auth,Insurance,YES,Users can manage own hospital insurance_pre_auth,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+insurance_pre_auth,Insurance,YES,Users can view own hospital insurance_pre_auth,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+insurance_pre_auth,Insurance,YES,insurance_pre_auth_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+insurance_pre_auth,Insurance,YES,insurance_pre_auth_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+insurance_sla_log,Insurance,YES,isla_hospital_insert,INSERT,{public},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+insurance_sla_log,Insurance,YES,isla_hospital_select,SELECT,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+inventory_anomalies,Inventory,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+inventory_items,Inventory,YES,Hospital isolation for inventory_items,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+inventory_items,Inventory,YES,Users can manage own hospital inventory_items,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+inventory_items,Inventory,YES,Users can view own hospital inventory_items,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+inventory_stock,Inventory,YES,Users can manage own hospital inventory_stock,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+inventory_stock,Inventory,YES,Users can view own hospital inventory_stock,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+inventory_stock,Inventory,YES,inventory_stock_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+inventory_stock,Inventory,YES,inventory_stock_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+io_balance_records,Other,YES,io_balance_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ipc_bundle_checklists,Other,YES,hospital_isolation_ipc_bundle,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+ipc_device_usage,Other,YES,hospital_isolation_ipc_device,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+ipc_infection_events,Other,YES,hospital_isolation_ipc_events,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+ipd_advances,IPD,YES,hospital_isolation_ipd_advances,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ipd_medications,IPD,YES,Users can manage own hospital ipd_medications,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ipd_medications,IPD,YES,Users can view own hospital ipd_medications,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ipd_nursing_notes,IPD,YES,inn_delete,DELETE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ipd_nursing_notes,IPD,YES,inn_insert,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+ipd_nursing_notes,IPD,YES,inn_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ipd_nursing_notes,IPD,YES,inn_update,UPDATE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ipd_vitals,IPD,YES,Users can manage own hospital ipd_vitals,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ipd_vitals,IPD,YES,Users can view own hospital ipd_vitals,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+item_consumption_daily,Inventory,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+iv_fluids,Other,YES,hospital_staff_iv_fluids,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+ivf_cycles,IVF/ART,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+ivf_cycles,IVF/ART,YES,tenant_isolation_ivf_cycles,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (2),,MEDIUM
+jci_evidence_items,Other,YES,jci_evidence_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+job_applicants,Other,YES,job_applicants_hospital,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+job_openings,Other,YES,job_openings_hospital,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+journal_entries,Billing,YES,journal_entries_hospital_rls,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+journal_line_items,Billing,YES,journal_line_items_hospital_rls,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+lab_analyzer_messages,Laboratory,YES,lab_analyzer_messages_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+lab_analyzer_test_mappings,Laboratory,YES,lab_analyzer_test_mappings_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+lab_calibration_records,Laboratory,YES,hospital_isolation_lab_calibration,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+lab_device_connectors,Laboratory,YES,lab_device_connectors_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+lab_device_connectors,Laboratory,YES,lab_device_connectors_hospital_policy,ALL,{authenticated},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+lab_dual_validation_config,Laboratory,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+lab_order_items,Laboratory,YES,Users can manage own hospital lab_order_items,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+lab_order_items,Laboratory,YES,Users can view own hospital lab_order_items,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+lab_orders,Laboratory,YES,aumrti_admin_read_all_lab_orders,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,MULTIPLE PERMISSIVE (2),,MEDIUM
+lab_orders,Laboratory,YES,lab_orders_insert,INSERT,{authenticated},PERMISSIVE,,((hospital_id = get_user_hospital_id()) AND (ordered_by = ( SELECT users.id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1))),INITPLAN auth.*() per-row,,LOW
+lab_orders,Laboratory,YES,lab_orders_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+lab_orders,Laboratory,YES,lab_orders_update,UPDATE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+lab_qc_entries,Laboratory,YES,lab_qc_entries_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+lab_qc_entries,Laboratory,YES,lab_qc_entries_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+lab_results,Laboratory,YES,hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+lab_samples,Laboratory,YES,Users can manage own hospital lab_samples,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+lab_samples,Laboratory,YES,Users can view own hospital lab_samples,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+lab_test_group_items,Laboratory,YES,lab_test_group_items_via_group,ALL,{public},PERMISSIVE,(group_id IN ( SELECT lab_test_groups.id FROM lab_test_groups WHERE (lab_test_groups.hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))))),,INITPLAN auth.*() per-row,,LOW
+lab_test_groups,Laboratory,YES,lab_test_groups_hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+lab_test_master,Laboratory,YES,Users can manage own hospital lab_test_master,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+lab_test_master,Laboratory,YES,Users can view own hospital lab_test_master,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+leakage_reports,Other,YES,leakage_reports_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+leakage_reports,Other,YES,leakage_reports_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+leave_balance,HR,YES,Users can manage own hospital leave_balance,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+leave_balance,HR,YES,Users can view own hospital leave_balance,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+leave_balance,HR,YES,leave_balance_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+leave_balance,HR,YES,leave_balance_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+leave_requests,HR,YES,Users can manage own hospital leave_requests,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+leave_requests,HR,YES,Users can view own hospital leave_requests,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+leave_requests,HR,YES,leave_requests_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+leave_requests,HR,YES,leave_requests_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+lifecycle_nudge_actions,Other,YES,lifecycle_nudge_actions_admin_read,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,none,,OK
+linen_records,Housekeeping,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT get_user_hospital_id() AS get_user_hospital_id)),,none,,OK
+lms_certificates,LMS,YES,Certificates hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+lms_courses,LMS,YES,Courses visible to hospital or system,SELECT,{authenticated},PERMISSIVE,((hospital_id IS NULL) OR (hospital_id = get_user_hospital_id())),,none,,OK
+lms_courses,LMS,YES,Hospital can manage own courses,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+lms_enrollments,LMS,YES,Enrollments hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+lms_quiz_attempts,LMS,YES,Quiz attempts via enrollment,ALL,{authenticated},PERMISSIVE,(EXISTS ( SELECT 1 FROM lms_enrollments e WHERE ((e.id = lms_quiz_attempts.enrollment_id) AND (e.hospital_id = get_user_hospital_id())))),(EXISTS ( SELECT 1 FROM lms_enrollments e WHERE ((e.id = lms_quiz_attempts.enrollment_id) AND (e.hospital_id = get_user_hospital_id())))),none,,OK
+lms_quiz_questions,LMS,YES,Hospital can manage quiz questions,ALL,{authenticated},PERMISSIVE,(EXISTS ( SELECT 1 FROM lms_courses c WHERE ((c.id = lms_quiz_questions.course_id) AND (c.hospital_id = get_user_hospital_id())))),(EXISTS ( SELECT 1 FROM lms_courses c WHERE ((c.id = lms_quiz_questions.course_id) AND (c.hospital_id = get_user_hospital_id())))),none,,OK
+lms_quiz_questions,LMS,YES,Quiz questions follow course access,SELECT,{authenticated},PERMISSIVE,(EXISTS ( SELECT 1 FROM lms_courses c WHERE ((c.id = lms_quiz_questions.course_id) AND ((c.hospital_id IS NULL) OR (c.hospital_id = get_user_hospital_id()))))),,none,,OK
+mar_double_checks,Other,YES,mar_double_checks_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+mar_records,Other,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+marketing_campaigns,Other,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+mccd_certificates,Other,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+mci_events,Emergency,YES,mci_events_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+mci_triage_patients,Emergency,YES,mci_triage_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+meal_deliveries,Dietetics,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+med_admin_records,Other,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+med_reconciliation_events,Other,YES,reconciliation_events_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+medical_gas_logs,Other,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+medical_records,Other,YES,hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+medication_adherence,Other,YES,medication_adherence_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+medication_adherence,Other,YES,medication_adherence_service_role,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+mental_health_encounters,Other,YES,mh_encounters_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+mental_health_encounters,Other,YES,mh_encounters_service_role,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+metrics_registry,Reporting,YES,metrics_registry_admin_write,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+metrics_registry,Reporting,YES,metrics_registry_read_all,SELECT,{authenticated},PERMISSIVE,(is_active = true),,none,,OK
+migration_jobs,Other,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+migration_logs,Other,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+mlc_cases,Other,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+mlc_records,Other,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+mortuary_admissions,Emergency,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+mrr_snapshots,Platform,YES,mrr_snapshots_admin_read,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,none,,OK
+nabh_chapter_names,Quality/NABH,YES,Authenticated can read nabh chapter names,SELECT,{authenticated},PERMISSIVE,true,,OPEN-READ USING(true),,CRITICAL
+nabh_criteria,Quality/NABH,YES,Users can manage own hospital nabh_criteria,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+nabh_criteria,Quality/NABH,YES,Users can view own hospital nabh_criteria,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+nabh_evidence_items,Quality/NABH,YES,hospital_isolation_nabh_evidence,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+nabh_evidence_log,Quality/NABH,YES,Users append own hospital nabh evidence,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+nabh_evidence_log,Quality/NABH,YES,Users view own hospital nabh evidence,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+nabh_hospital_compliance,Quality/NABH,YES,aumrti_admin_read_all_nabh_compliance,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,none,,OK
+nabh_hospital_compliance,Quality/NABH,YES,hospital_isolation_nabh_compliance,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+nabh_standards,Quality/NABH,YES,read_nabh_standards,SELECT,{public},PERMISSIVE,(auth.uid() IS NOT NULL),,INITPLAN auth.*() per-row,,LOW
+ndps_pending_dispenses,Pharmacy,YES,ndps_pending_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ndps_pending_dispenses,Pharmacy,YES,ndps_pending_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ndps_register,Pharmacy,YES,Hospital isolation for ndps_register,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ndps_register,Pharmacy,YES,Users can view own hospital ndps_register,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+ndps_register,Pharmacy,YES,ndps_insert_only,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+ndps_register,Pharmacy,YES,ndps_select_only,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+ndps_register,Pharmacy,YES,no_delete_ndps,DELETE,{public},PERMISSIVE,false,,none,,OK
+ndps_register,Pharmacy,YES,no_update_ndps,UPDATE,{public},PERMISSIVE,false,,UPDATE no WITH CHECK (PG reuses USING - OK),,OK
+neonatal_records,Other,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+no_show_predictions,Other,YES,no_show_predictions_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+notification_log,Notifications,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+notification_log,Notifications,YES,notif_log_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+notification_preferences,Notifications,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+notification_preferences,Notifications,YES,notif_prefs_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+notification_queue,Notifications,YES,Hospital isolation on notification_queue,ALL,{authenticated},PERMISSIVE,((hospital_id IS NULL) OR (hospital_id = get_user_hospital_id())),((hospital_id IS NULL) OR (hospital_id = get_user_hospital_id())),none,,OK
+nps_responses,Other,YES,nps_responses_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+nps_surveys,Other,YES,nps_surveys_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+nursing_care_plans,Nursing,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+nursing_fluid_outputs,Nursing,YES,hospital_staff_rw,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+nursing_handovers,Nursing,YES,Users can manage own hospital nursing_handovers,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+nursing_handovers,Nursing,YES,Users can view own hospital nursing_handovers,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+nursing_mar,Nursing,YES,Users can manage own hospital nursing_mar,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+nursing_mar,Nursing,YES,Users can view own hospital nursing_mar,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+nursing_procedure_consumables,Nursing,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+nursing_procedures,Nursing,YES,Users can manage own hospital nursing procedures,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+nursing_vitals,Nursing,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+nutrition_screenings,Dietetics,YES,nutrition_screenings_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+nutritional_screenings,Dietetics,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+oauth_provider_settings,Identity,YES,oauth_provider_settings_admin_all,ALL,{public},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+obstetric_records,Other,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+obstetric_records,Other,YES,obstetric_records_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+obstetric_records,Other,YES,obstetric_records_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+occupational_health_records,Other,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+onboarding_tasks,HR,YES,onboarding_tasks_hospital,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+oncology_patients,IPD,YES,oncology_patients_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+online_reviews,Other,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+opd_diagnoses,OPD,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+opd_encounters,OPD,YES,Users can manage own hospital opd_encounters,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+opd_encounters,OPD,YES,Users can view own hospital opd_encounters,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+opd_token_sequences,OPD,YES,opd_token_sequences_select,SELECT,{authenticated},PERMISSIVE,true,,OPEN-READ USING(true),,CRITICAL
+opd_tokens,OPD,YES,Users can manage own hospital opd_tokens,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+opd_tokens,OPD,YES,Users can view own hospital opd_tokens,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+opd_tokens,OPD,YES,aumrti_admin_read_all_opd_tokens,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,MULTIPLE PERMISSIVE (2),,MEDIUM
+opd_visits,OPD,YES,Users can manage own hospital opd_visits,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+opd_visits,OPD,YES,Users can view own hospital opd_visits,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ophthalmology_records,Other,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+organ_donations,Other,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ot_checklist_custom_items,OT,YES,Users can manage own hospital ot_checklist_custom_items,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ot_checklist_custom_items,OT,YES,Users can view own hospital ot_checklist_custom_items,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ot_checklists,OT,YES,Users can manage own hospital ot_checklists,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ot_checklists,OT,YES,Users can view own hospital ot_checklists,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ot_consumables,OT,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ot_equipment_checklist,OT,YES,Users can manage own hospital ot_equipment_checklist,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ot_equipment_checklist,OT,YES,Users can view own hospital ot_equipment_checklist,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ot_implants,OT,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ot_instrument_counts,OT,YES,Users can manage own hospital ot_instrument_counts,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ot_instrument_counts,OT,YES,Users can view own hospital ot_instrument_counts,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ot_rooms,OT,YES,Admins can manage ot_rooms,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ot_rooms,OT,YES,Users can view own hospital ot_rooms,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ot_schedules,OT,YES,Users can manage own hospital ot_schedules,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ot_schedules,OT,YES,Users can view own hospital ot_schedules,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+ot_schedules,OT,YES,aumrti_admin_read_all_ot_schedules,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,MULTIPLE PERMISSIVE (2),,MEDIUM
+ot_team_members,OT,YES,ot_team_members_all,ALL,{authenticated},PERMISSIVE,(ot_schedule_id IN ( SELECT ot_schedules.id FROM ot_schedules WHERE (ot_schedules.hospital_id = get_user_hospital_id()))),(ot_schedule_id IN ( SELECT ot_schedules.id FROM ot_schedules WHERE (ot_schedules.hospital_id = get_user_hospital_id()))),none,,OK
+ot_team_members,OT,YES,ot_team_members_select,SELECT,{authenticated},PERMISSIVE,(ot_schedule_id IN ( SELECT ot_schedules.id FROM ot_schedules WHERE (ot_schedules.hospital_id = get_user_hospital_id()))),,none,,OK
+outcome_scores,Other,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+overtime_requests,Other,YES,overtime_requests_hospital,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+package_bookings,Billing,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (3),,MEDIUM
+package_bookings,Billing,YES,package_bookings_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (3),,MEDIUM
+package_bookings,Billing,YES,package_bookings_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+package_bookings,Billing,YES,tenant_isolation_package_bookings,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (3),,MEDIUM
+package_extras,Billing,YES,pkg_extras_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+package_extras,Billing,YES,pkg_extras_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+package_inclusions,Billing,YES,pkg_inclusions_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+package_inclusions,Billing,YES,pkg_inclusions_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+package_station_logs,Billing,YES,tenant_isolation_package_station_logs,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+pacs_connectors,Radiology,YES,pacs_connectors_hospital_policy,ALL,{authenticated},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+pacu_assessments,OT,YES,Hospital members can delete PACU assessments,DELETE,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+pacu_assessments,OT,YES,Hospital members can insert PACU assessments,INSERT,{public},PERMISSIVE,,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+pacu_assessments,OT,YES,Hospital members can update PACU assessments,UPDATE,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row; UPDATE no WITH CHECK (PG reuses USING - OK),,LOW
+pacu_assessments,OT,YES,Hospital members can view PACU assessments,SELECT,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+pain_audit_records,Other,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+palliative_care_plans,Other,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+panchakarma_schedules,Other,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+partograph_entries,Other,YES,hospital_isolation_partograph,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+partograph_records,Other,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+pathology_cases,Other,YES,Users can manage own hospital pathology cases,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+pathology_cases,Other,YES,Users can view own hospital pathology cases,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+patient_abha_profiles,ABDM,YES,abha_profiles_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+patient_abha_profiles,ABDM,YES,abha_profiles_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+patient_acquisition,Patient,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+patient_ai_context,AI,YES,patient_ai_context_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+patient_ai_context,AI,YES,patient_ai_context_service_role,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+patient_consents,Patient,YES,hospital_isolation_patient_consents,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+patient_consents,Patient,YES,no_delete_patient_consents,DELETE,{public},PERMISSIVE,false,,none,,OK
+patient_consents,Patient,YES,no_update_patient_consents,UPDATE,{public},PERMISSIVE,false,,UPDATE no WITH CHECK (PG reuses USING - OK),,OK
+patient_documents,Patient,YES,Users can delete patient documents for their hospital,DELETE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+patient_documents,Patient,YES,Users can insert patient documents for their hospital,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+patient_documents,Patient,YES,Users can view patient documents for their hospital,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+patient_encounter_templates,Patient,YES,Isolation policy for patient_encounter_templates,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+patient_encounter_templates,Patient,YES,patient_encounter_templates_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+patient_encounter_templates,Patient,YES,patient_encounter_templates_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+patient_feedback,Patient,YES,Auth users manage own hospital feedback,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+patient_feedback,Patient,YES,Auth users view own hospital feedback,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+patient_feedback,Patient,YES,patient_feedback_anon_insert,INSERT,{anon},PERMISSIVE,,(hospital_id IS NOT NULL),ANON-REACHABLE,,HIGH
+patient_history_digests,Patient,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+patient_history_ingest_jobs,Patient,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+patient_history_source_chunks,Patient,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+patient_history_sources,Patient,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+patient_portal_sessions,Patient,YES,Auth users manage own hospital portal sessions,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+patient_portal_sessions,Patient,YES,anon_select_active_sessions,SELECT,{anon},PERMISSIVE,(last_active > (now() - '24:00:00'::interval)),,ANON-REACHABLE; MULTIPLE PERMISSIVE (2),,HIGH
+patient_portal_sessions,Patient,YES,anon_update_active_sessions,UPDATE,{anon},PERMISSIVE,(last_active > (now() - '24:00:00'::interval)),true,OPEN-WRITE WITH CHECK(true); ANON-REACHABLE; MULTIPLE PERMISSIVE (2),,CRITICAL
+patient_portal_sessions,Patient,YES,portal_sessions_anon_insert,INSERT,{anon},PERMISSIVE,,((otp_verified = false) OR (otp_verified IS NULL)),ANON-REACHABLE,,HIGH
+patient_portal_sessions,Patient,YES,portal_sessions_anon_select,SELECT,{anon},PERMISSIVE,((otp_verified = true) AND (session_token IS NOT NULL)),,ANON-REACHABLE; MULTIPLE PERMISSIVE (2),,HIGH
+patient_portal_sessions,Patient,YES,portal_sessions_anon_update,UPDATE,{anon},PERMISSIVE,((otp_verified = false) OR (otp_verified IS NULL)),true,OPEN-WRITE WITH CHECK(true); ANON-REACHABLE; MULTIPLE PERMISSIVE (2),,CRITICAL
+patient_rights_acknowledgements,Patient,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+patient_segments,Patient,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+patient_template_responses,Patient,YES,Isolation policy for patient_template_responses,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+patient_template_responses,Patient,YES,patient_template_responses_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+patient_template_responses,Patient,YES,patient_template_responses_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+patient_voice_sessions,Patient,YES,patient_voice_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+patient_voice_sessions,Patient,YES,patient_voice_service_role,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+patients,Patient,YES,Users can manage own hospital patients,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+patients,Patient,YES,Users can view own hospital patients,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+payer_masters,Insurance,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+payment_links,Payments,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+payment_links,Payments,YES,hospital_isolation_payment_links,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+payment_links,Payments,YES,public_read_payment_links,SELECT,{public},PERMISSIVE,((status = 'active'::text) AND (expires_at > now())),,none,,OK
+payroll_hooks,Payroll,YES,payroll_hooks_hospital_scoped,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+payroll_items,Payroll,YES,Users can manage own hospital payroll_items,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+payroll_items,Payroll,YES,Users can view own hospital payroll_items,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+payroll_runs,Payroll,YES,Users can manage own hospital payroll_runs,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+payroll_runs,Payroll,YES,Users can view own hospital payroll_runs,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+payroll_runs,Payroll,YES,payroll_runs_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+payslips,Other,YES,payslips_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+pcpndt_form_f,Other,YES,Users can manage own hospital pcpndt_form_f,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+pcpndt_form_f,Other,YES,Users can view own hospital pcpndt_form_f,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+pcpndt_form_f,Other,YES,no_delete_pcpndt,DELETE,{public},PERMISSIVE,false,,none,,OK
+pcpndt_records,Other,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+pcpndt_settings,Other,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+performance_appraisals,Other,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+periodontal_charts,Other,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+periodontal_charts,Other,YES,tenant_isolation_periodontal_charts,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (2),,MEDIUM
+pharmacy_dispensing,Pharmacy,YES,Hospital isolation for pharmacy_dispensing,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+pharmacy_dispensing,Pharmacy,YES,Users can manage own hospital pharmacy_dispensing,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+pharmacy_dispensing,Pharmacy,YES,Users can view own hospital pharmacy_dispensing,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+pharmacy_dispensing,Pharmacy,YES,aumrti_admin_read_all_pharmacy_dispensing,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,MULTIPLE PERMISSIVE (2),,MEDIUM
+pharmacy_dispensing_items,Pharmacy,YES,Hospital isolation for pharmacy_dispensing_items,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+pharmacy_dispensing_items,Pharmacy,YES,Users can manage own hospital pharmacy_dispensing_items,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+pharmacy_dispensing_items,Pharmacy,YES,Users can view own hospital pharmacy_dispensing_items,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+pharmacy_return_audit,Audit/Compliance,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+pharmacy_stock_alerts,Pharmacy,YES,Users can manage own hospital pharmacy_stock_alerts,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+pharmacy_stock_alerts,Pharmacy,YES,Users can view own hospital pharmacy_stock_alerts,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+pharmacy_stock_alerts,Pharmacy,YES,pharmacy_stock_alerts_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+pharmacy_stock_alerts,Pharmacy,YES,pharmacy_stock_alerts_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+pharmacy_supplier_returns,Pharmacy,YES,hospital staff insert own supplier returns,INSERT,{public},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+pharmacy_supplier_returns,Pharmacy,YES,hospital staff read own supplier returns,SELECT,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+pharmacy_supplier_returns,Pharmacy,YES,hospital staff update own supplier returns,UPDATE,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,UPDATE no WITH CHECK (PG reuses USING - OK),,OK
+pharmacy_waste_disposal,Pharmacy,YES,hospital staff insert own waste disposal records,INSERT,{public},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+pharmacy_waste_disposal,Pharmacy,YES,hospital staff read own waste disposal records,SELECT,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+phi_access_audit,Audit/Compliance,YES,phi_access_audit_admin_read,SELECT,{authenticated},PERMISSIVE,"(EXISTS ( SELECT 1 FROM users u WHERE ((u.auth_user_id = auth.uid()) AND (u.hospital_id = phi_access_audit.hospital_id) AND (u.role = ANY (ARRAY['hospital_admin'::text, 'super_admin'::text])))))",,INITPLAN auth.*() per-row,,LOW
+phi_access_audit,Audit/Compliance,YES,phi_access_audit_deny_auth_insert,INSERT,"{anon,authenticated}",PERMISSIVE,,false,ANON-REACHABLE,,HIGH
+phi_access_audit,Audit/Compliance,YES,phi_access_audit_deny_delete,DELETE,"{anon,authenticated}",PERMISSIVE,false,,ANON-REACHABLE,,HIGH
+phi_access_audit,Audit/Compliance,YES,phi_access_audit_deny_update,UPDATE,"{anon,authenticated}",PERMISSIVE,false,,ANON-REACHABLE; UPDATE no WITH CHECK (PG reuses USING - OK),,HIGH
+phi_backfill_log,Audit/Compliance,YES,phi_backfill_log_hospital_admin_read,SELECT,{authenticated},PERMISSIVE,"(EXISTS ( SELECT 1 FROM users u WHERE ((u.auth_user_id = auth.uid()) AND (u.hospital_id = phi_backfill_log.hospital_id) AND (u.role = ANY (ARRAY['hospital_admin'::text, 'super_admin'::text])))))",,INITPLAN auth.*() per-row,,LOW
+phi_backfill_log,Audit/Compliance,YES,phi_backfill_log_service_write,INSERT,"{anon,authenticated}",PERMISSIVE,,false,ANON-REACHABLE,,HIGH
+phi_encryption_keys,Audit/Compliance,YES,phi_encryption_keys_block_auth_users,ALL,"{anon,authenticated}",PERMISSIVE,false,false,ANON-REACHABLE,,HIGH
+physio_equipment_bookings,Other,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+physio_referrals,Other,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+physio_sessions,Other,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+plan_features,Platform,YES,plan_features_anon_read,SELECT,{anon},PERMISSIVE,true,,OPEN-READ USING(true); ANON-REACHABLE,,CRITICAL
+plan_features,Platform,YES,plan_features_aumrti_write,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+plan_features,Platform,YES,plan_features_public_read,SELECT,{authenticated},PERMISSIVE,true,,OPEN-READ USING(true),,CRITICAL
+platform_ai_keys,AI,YES,platform_ai_keys_admin_all,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+platform_ai_keys,AI,YES,platform_ai_keys_voice_engine_read,SELECT,{authenticated},PERMISSIVE,(service_key = 'voice_asr_engine'::text),,none,,OK
+platform_ai_provider_config,AI,YES,platform_ai_provider_config_admin_all,ALL,{public},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+platform_ai_provider_config,AI,YES,platform_ai_provider_config_delete,DELETE,{authenticated},PERMISSIVE,is_aumrti_admin(),,none,,OK
+platform_ai_provider_config,AI,YES,platform_ai_provider_config_insert,INSERT,{authenticated},PERMISSIVE,,is_aumrti_admin(),none,,OK
+platform_ai_provider_config,AI,YES,platform_ai_provider_config_read,SELECT,{authenticated},PERMISSIVE,true,,OPEN-READ USING(true),,CRITICAL
+platform_ai_provider_config,AI,YES,platform_ai_provider_config_update,UPDATE,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+platform_billing_settings,Platform,YES,admin_manage_billing_settings,ALL,{public},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+platform_billing_settings,Platform,YES,service_role_billing_settings_all,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+platform_feature_flag_overrides,Platform,YES,platform_feature_flag_overrides_admin_write,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+platform_feature_flag_overrides,Platform,YES,platform_feature_flag_overrides_read,SELECT,{authenticated},PERMISSIVE,((hospital_id = get_user_hospital_id()) OR is_aumrti_admin()),,none,,OK
+platform_feature_flags,Platform,YES,platform_feature_flags_admin_write,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+platform_feature_flags,Platform,YES,platform_feature_flags_read_all,SELECT,{authenticated},PERMISSIVE,true,,OPEN-READ USING(true),,CRITICAL
+platform_incident_updates,Platform,YES,platform_incident_updates_admin_write,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+platform_incident_updates,Platform,YES,platform_incident_updates_public_read,SELECT,{public},PERMISSIVE,true,,OPEN-READ USING(true),,CRITICAL
+platform_incidents,Platform,YES,platform_incidents_admin_write,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+platform_incidents,Platform,YES,platform_incidents_public_read,SELECT,{public},PERMISSIVE,true,,OPEN-READ USING(true),,CRITICAL
+platform_metrics_registry,Platform,YES,platform_metrics_registry_admin_write,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+platform_metrics_registry,Platform,YES,platform_metrics_registry_read_all,SELECT,{authenticated},PERMISSIVE,(is_active = true),,none,,OK
+platform_onboarding_tours,Platform,YES,platform_onboarding_tours_admin_write,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+platform_onboarding_tours,Platform,YES,platform_onboarding_tours_read_all,SELECT,{authenticated},PERMISSIVE,(is_active = true),,none,,OK
+platform_settings,Platform,YES,platform_settings_admin_all,ALL,{public},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+platform_support_tickets,Platform,YES,platform_support_tickets_own_hospital,ALL,{authenticated},PERMISSIVE,((hospital_id = get_user_hospital_id()) OR is_aumrti_admin()),((hospital_id = get_user_hospital_id()) OR is_aumrti_admin()),none,,OK
+platform_training_videos,Platform,YES,platform_training_videos_admin_write,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+platform_training_videos,Platform,YES,platform_training_videos_read_all,SELECT,{authenticated},PERMISSIVE,(is_active = true),,none,,OK
+pm_schedules,Other,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT get_user_hospital_id() AS get_user_hospital_id)),,none,,OK
+pmjay_claims,PM-JAY,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+pmjay_package_master,PM-JAY,YES,pmjay_packages_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+pmjay_packages,PM-JAY,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+pmjay_packages,PM-JAY,YES,pmjay_packages_select_system,SELECT,{authenticated},PERMISSIVE,((hospital_id IS NULL) OR (hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1))),,INITPLAN auth.*() per-row,,LOW
+pmjay_packages,PM-JAY,YES,tenant_isolation_pmjay_packages,ALL,{authenticated},PERMISSIVE,((hospital_id IS NULL) OR (hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid())))),((hospital_id IS NULL) OR (hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid())))),INITPLAN auth.*() per-row,,LOW
+pmjay_preauth_requests,PM-JAY,YES,tenant_isolation_pmjay_preauth,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+po_approval_rules,Other,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+po_items,Other,YES,Users can manage own hospital po_items,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+po_items,Other,YES,Users can view own hospital po_items,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+po_items,Other,YES,po_items_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+po_items,Other,YES,po_items_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+portal_chat_messages,Patient,YES,patient_own_chat_messages,ALL,{public},PERMISSIVE,(patient_id IN ( SELECT patients.id FROM patients WHERE (patients.id = portal_chat_messages.patient_id) LIMIT 1)),,none,,OK
+prakriti_assessments,Other,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+pre_auth_requests,Insurance,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+prescriptions,Pharmacy,YES,Users can manage own hospital prescriptions,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+prescriptions,Pharmacy,YES,Users can view own hospital prescriptions,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+preventive_screenings,Other,YES,preventive_screenings_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+procurement_recommendations,Procurement,YES,Isolation policy for procurement_recommendations,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+procurement_recommendations,Procurement,YES,procurement_recommendations_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+procurement_recommendations,Procurement,YES,procurement_recommendations_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+product_analytics_events,Other,YES,product_analytics_events_admin_read,SELECT,{authenticated},PERMISSIVE,(is_aumrti_admin() OR (hospital_id = get_user_hospital_id())),,none,,OK
+product_analytics_events,Other,YES,product_analytics_events_insert_own_hospital,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+product_modes,Other,YES,product_modes_hospital_policy,ALL,{authenticated},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+prom_prem_surveys,Patient,YES,prom_prem_surveys_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+prom_prem_surveys,Patient,YES,prom_prem_surveys_public_response_select,SELECT,{anon},PERMISSIVE,(response_token IS NOT NULL),,ANON-REACHABLE,,HIGH
+prom_prem_surveys,Patient,YES,prom_prem_surveys_public_response_update,UPDATE,{anon},PERMISSIVE,((response_token IS NOT NULL) AND (status = 'sent'::text)),(response_token IS NOT NULL),ANON-REACHABLE,,HIGH
+prompt_registry,AI,YES,Admins can manage prompts,ALL,{authenticated},PERMISSIVE,"(is_aumrti_admin() OR (EXISTS ( SELECT 1 FROM users WHERE ((users.auth_user_id = auth.uid()) AND (users.role = ANY (ARRAY['super_admin'::text, 'hospital_admin'::text]))))))","(is_aumrti_admin() OR (EXISTS ( SELECT 1 FROM users WHERE ((users.auth_user_id = auth.uid()) AND (users.role = ANY (ARRAY['super_admin'::text, 'hospital_admin'::text]))))))",INITPLAN auth.*() per-row,,LOW
+prompt_registry,AI,YES,Authenticated users can read active prompts,SELECT,{authenticated},PERMISSIVE,(is_active = true),,none,,OK
+psychometric_assessments,Other,YES,psychometric_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+psychometric_assessments,Other,YES,psychometric_service_role,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+purchase_orders,Procurement,YES,Hospital isolation for purchase_orders,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+purchase_orders,Procurement,YES,Users can manage own hospital purchase_orders,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+purchase_orders,Procurement,YES,Users can view own hospital purchase_orders,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+purchase_requisitions,Procurement,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+push_notifications,Notifications,YES,aumrti_admin_read_all_push_notifications,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,none,,OK
+push_notifications,Notifications,YES,push_notifications_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+qi_cycles,Other,YES,hospital_isolation_qi_cycles,ALL,{public},PERMISSIVE,(qi_project_id IN ( SELECT qi_projects.id FROM qi_projects WHERE (qi_projects.hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))))),(qi_project_id IN ( SELECT qi_projects.id FROM qi_projects WHERE (qi_projects.hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))))),INITPLAN auth.*() per-row,,LOW
+qi_projects,Other,YES,hospital_isolation_qi_projects,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+quality_indicator_definitions,Quality/NABH,YES,Aumrti admins manage indicator definitions,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+quality_indicator_definitions,Quality/NABH,YES,Authenticated can read indicator definitions,SELECT,{authenticated},PERMISSIVE,true,,OPEN-READ USING(true),,CRITICAL
+quality_indicator_overrides,Quality/NABH,YES,Users manage own hospital indicator overrides,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+quality_indicator_overrides,Quality/NABH,YES,Users view own hospital indicator overrides,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+quality_indicators,Quality/NABH,YES,Users can manage own hospital quality_indicators,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+quality_indicators,Quality/NABH,YES,Users can view own hospital quality_indicators,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+queue_state,OPD,YES,Anyone can read queue_state,SELECT,{public},PERMISSIVE,true,,OPEN-READ USING(true),,CRITICAL
+queue_state,OPD,YES,Hospital staff manage queue_state,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+quotation_items,Other,YES,quotation_items_isolation,ALL,{public},PERMISSIVE,(EXISTS ( SELECT 1 FROM vendor_quotations q WHERE ((q.id = quotation_items.quotation_id) AND (q.hospital_id = get_user_hospital_id())))),(EXISTS ( SELECT 1 FROM vendor_quotations q WHERE ((q.id = quotation_items.quotation_id) AND (q.hospital_id = get_user_hospital_id())))),none,,OK
+radiology_modalities,Radiology,YES,Users can manage own hospital radiology_modalities,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+radiology_modalities,Radiology,YES,Users can view own hospital radiology_modalities,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+radiology_orders,Radiology,YES,aumrti_admin_read_all_radiology_orders,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,MULTIPLE PERMISSIVE (2),,MEDIUM
+radiology_orders,Radiology,YES,radiology_orders_insert,INSERT,{authenticated},PERMISSIVE,,((hospital_id = get_user_hospital_id()) AND (ordered_by = ( SELECT users.id FROM users WHERE (users.auth_user_id = auth.uid()) LIMIT 1))),INITPLAN auth.*() per-row,,LOW
+radiology_orders,Radiology,YES,radiology_orders_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+radiology_orders,Radiology,YES,radiology_orders_update,UPDATE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+radiology_reports,Radiology,YES,Users can manage own hospital radiology_reports,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+radiology_reports,Radiology,YES,Users can view own hospital radiology_reports,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+radiology_study_master,Radiology,YES,Users can manage own hospital radiology_study_master,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+razorpay_plan_registry,Payments,YES,admin_read_plan_registry,SELECT,{public},PERMISSIVE,is_aumrti_admin(),,none,,OK
+razorpay_plan_registry,Payments,YES,service_role_plan_registry_all,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+razorpay_webhook_log,Payments,YES,(none),,,,,,"RLS enabled, ZERO policies",service_role/postgres only (both BYPASSRLS),INFO
+reconciliation_discrepancies,Other,YES,discrepancies_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+record_access_logs,Other,YES,hospital_isolation_record_access_logs,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+record_requests,Other,YES,hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+record_retention_policies,Other,YES,hospital_isolation_retention_policies,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+referral_codes,Platform,YES,referral_codes_aumrti_all,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+referral_codes,Platform,YES,referral_codes_own_read,SELECT,{authenticated},PERMISSIVE,((owner_type = 'hospital'::text) AND (hospital_id = get_user_hospital_id())),,none,,OK
+referral_doctors,Platform,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+referral_partners,Platform,YES,referral_partners_aumrti_all,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+referral_redemptions,Platform,YES,referral_redemptions_aumrti_all,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+referral_redemptions,Platform,YES,referral_redemptions_own_read,SELECT,{authenticated},PERMISSIVE,(EXISTS ( SELECT 1 FROM referral_codes rc WHERE ((rc.id = referral_redemptions.code_id) AND (rc.owner_type = 'hospital'::text) AND (rc.hospital_id = get_user_hospital_id())))),,none,,OK
+refund_payables,Billing,YES,refund_payables_insert,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+refund_payables,Billing,YES,refund_payables_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+refund_payables,Billing,YES,refund_payables_update,UPDATE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+report_schedules,Reporting,YES,Hospital isolation report_schedules,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+requisition_items,Other,YES,req_items_isolation,ALL,{public},PERMISSIVE,(EXISTS ( SELECT 1 FROM purchase_requisitions r WHERE ((r.id = requisition_items.requisition_id) AND (r.hospital_id = get_user_hospital_id())))),(EXISTS ( SELECT 1 FROM purchase_requisitions r WHERE ((r.id = requisition_items.requisition_id) AND (r.hospital_id = get_user_hospital_id())))),none,,OK
+research_cohorts,Other,YES,research_cohorts_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+restraint_records,Other,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+retention_schedules,Other,YES,hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+revenue_alerts,Billing,YES,Hospital isolation for revenue_alerts,ALL,{authenticated},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+revenue_leak_actions,Billing,YES,revenue_leak_actions_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+rfq_vendors,Procurement,YES,rfq_vendors_isolation,ALL,{public},PERMISSIVE,(EXISTS ( SELECT 1 FROM rfqs r WHERE ((r.id = rfq_vendors.rfq_id) AND (r.hospital_id = get_user_hospital_id())))),(EXISTS ( SELECT 1 FROM rfqs r WHERE ((r.id = rfq_vendors.rfq_id) AND (r.hospital_id = get_user_hospital_id())))),none,,OK
+rfqs,Procurement,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+role_permissions,Identity,YES,Users can manage own hospital role_permissions,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+role_permissions,Identity,YES,Users can view own hospital role_permissions,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+safety_event_capa,Other,YES,hospital_isolation_safety_capa,ALL,{public},PERMISSIVE,(safety_event_id IN ( SELECT safety_events.id FROM safety_events WHERE (safety_events.hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))))),(safety_event_id IN ( SELECT safety_events.id FROM safety_events WHERE (safety_events.hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))))),INITPLAN auth.*() per-row,,LOW
+safety_event_rca,Other,YES,hospital_isolation_safety_rca,ALL,{public},PERMISSIVE,(safety_event_id IN ( SELECT safety_events.id FROM safety_events WHERE (safety_events.hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))))),(safety_event_id IN ( SELECT safety_events.id FROM safety_events WHERE (safety_events.hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))))),INITPLAN auth.*() per-row,,LOW
+safety_events,Other,YES,hospital_isolation_safety_events,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+safety_rounds,Other,YES,hospital_isolation_safety_rounds,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+salary_structures,Payroll,YES,salary_structures_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+scheme_beneficiaries,Other,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+second_victim_cases,Other,YES,second_victim_cases_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+second_victim_sessions,Other,YES,second_victim_sessions_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+sedation_scores,ICU,YES,sedation_scores_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+service_charges,Billing,YES,service_charges_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+service_master,Billing,YES,Admins can manage services,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+service_master,Billing,YES,Users can view own hospital services,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+service_rates,Billing,YES,Hospital members manage their service rates,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+set_issues,Other,YES,set_issues_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+settlement_reconciliation_flags,Payments,YES,settlement_flags_admin_read,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,none,,OK
+settlement_reconciliation_flags,Payments,YES,settlement_flags_admin_update,UPDATE,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+shift_master,HR,YES,Users can manage own hospital shift_master,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+shift_master,HR,YES,Users can view own hospital shift_master,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+shift_master,HR,YES,shift_master_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+shift_master,HR,YES,shift_master_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+shift_swap_requests,HR,YES,shift_swap_requests_hospital,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+signup_otp_verifications,Platform,YES,(none),,,,,,"RLS enabled, ZERO policies",service_role/postgres only (both BYPASSRLS),INFO
+sms_notifications,Notifications,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+staff_attendance,HR,YES,Users can manage own hospital attendance,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+staff_attendance,HR,YES,Users can view own hospital attendance,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+staff_attendance,HR,YES,aumrti_admin_read_all_staff_attendance,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,MULTIPLE PERMISSIVE (2),,MEDIUM
+staff_burnout_scores,HR,YES,staff_burnout_scores_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+staff_credentials,HR,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+staff_documents,HR,YES,staff_documents_hospital,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+staff_exits,HR,YES,staff_exits_hospital,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+staff_grievances,HR,YES,staff_grievances_hospital,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+staff_injuries,HR,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+staff_privileges,HR,YES,hospital_isolation_privileges,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+staff_profiles,HR,YES,Users can manage own hospital staff_profiles,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+staff_profiles,HR,YES,Users can view own hospital staff_profiles,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+staff_salary_assignments,HR,YES,staff_salary_assignments_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+staff_training_records,HR,YES,hospital_isolation_training,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+staffing_alerts,HR,YES,staffing_alerts_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+sterilization_cycles,Infection Control,YES,sterilization_cycles_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+stimulation_monitoring,Other,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+stimulation_monitoring,Other,YES,tenant_isolation_stimulation_monitoring,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (2),,MEDIUM
+stock_count_items,Inventory,YES,hospital_isolation,ALL,{public},PERMISSIVE,(EXISTS ( SELECT 1 FROM stock_counts sc WHERE ((sc.id = stock_count_items.count_id) AND (sc.hospital_id = get_user_hospital_id())))),(EXISTS ( SELECT 1 FROM stock_counts sc WHERE ((sc.id = stock_count_items.count_id) AND (sc.hospital_id = get_user_hospital_id())))),none,,OK
+stock_counts,Inventory,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+stock_reorder_triggers,Inventory,YES,reorder_triggers_hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+stock_reorder_triggers,Inventory,YES,reorder_triggers_service_role,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+stock_transactions,Inventory,YES,Users can manage own hospital stock_transactions,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+stock_transactions,Inventory,YES,Users can view own hospital stock_transactions,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+stock_transactions,Inventory,YES,stock_transactions_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+stock_transactions,Inventory,YES,stock_transactions_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+store_indent_items,Inventory,YES,hospital_isolation,ALL,{public},PERMISSIVE,(EXISTS ( SELECT 1 FROM store_indents si WHERE ((si.id = store_indent_items.indent_id) AND (si.hospital_id = get_user_hospital_id())))),(EXISTS ( SELECT 1 FROM store_indents si WHERE ((si.id = store_indent_items.indent_id) AND (si.hospital_id = get_user_hospital_id())))),none,,OK
+store_indents,Inventory,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+store_locations,Inventory,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+store_stock,Inventory,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+store_stock_movements,Inventory,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+subscription_events,Platform,YES,hospital_own_events_select,SELECT,{public},PERMISSIVE,((hospital_id = get_user_hospital_id()) OR is_aumrti_admin()),,none,,OK
+subscription_events,Platform,YES,service_role_events_all,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+subscription_invoices,Platform,YES,aumrti_admin_invoices_select,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,none,,OK
+subscription_invoices,Platform,YES,hospital_own_invoices_select,SELECT,{public},PERMISSIVE,((hospital_id = get_user_hospital_id()) OR is_aumrti_admin()),,none,,OK
+subscription_invoices,Platform,YES,service_role_invoices_all,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+subscription_plans,Platform,YES,plans_anon_read,SELECT,{anon},PERMISSIVE,(is_active = true),,ANON-REACHABLE,,HIGH
+subscription_plans,Platform,YES,plans_aumrti_write,ALL,{authenticated},PERMISSIVE,is_aumrti_admin(),is_aumrti_admin(),none,,OK
+subscription_plans,Platform,YES,plans_public_read,SELECT,{authenticated},PERMISSIVE,true,,OPEN-READ USING(true),,CRITICAL
+system_config,Other,YES,system_config_admin_insert,INSERT,{authenticated},PERMISSIVE,,"((hospital_id = get_user_hospital_id()) AND has_role(auth.uid(), 'super_admin'::app_role))",INITPLAN auth.*() per-row,,LOW
+system_config,Other,YES,system_config_admin_update,UPDATE,{authenticated},PERMISSIVE,"((hospital_id = get_user_hospital_id()) AND has_role(auth.uid(), 'super_admin'::app_role))","((hospital_id = get_user_hospital_id()) AND has_role(auth.uid(), 'super_admin'::app_role))",INITPLAN auth.*() per-row,,LOW
+system_config,Other,YES,system_config_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+tally_export_log,Other,YES,Hospital isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+tally_ledger_mapping,Other,YES,tally_ledger_mapping_hospital_policy,ALL,{authenticated},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+tds_annual_summary,Payroll,YES,tds_annual_summary_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+tds_sections,Payroll,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+teleconsult_sessions,Telemedicine,YES,Users can manage own hospital teleconsult_sessions,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+teleconsult_sessions,Telemedicine,YES,Users can view own hospital teleconsult_sessions,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+therapy_plans,Other,YES,therapy_plans_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+therapy_plans,Other,YES,therapy_plans_service_role,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+therapy_sessions,Other,YES,therapy_sessions_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),INITPLAN auth.*() per-row,,LOW
+therapy_sessions,Other,YES,therapy_sessions_service_role,ALL,{service_role},PERMISSIVE,true,true,none,,OK
+toxicity_events,Other,YES,toxicity_events_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+tpa_config,TPA,YES,Users can manage own hospital tpa_config,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+tpa_config,TPA,YES,Users can view own hospital tpa_config,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+tpa_config,TPA,YES,tpa_config_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+tpa_config,TPA,YES,tpa_config_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+tpa_dispute_communications,TPA,YES,tpa_dispute_comms_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+tpa_disputes,TPA,YES,tpa_disputes_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+tpa_queries,TPA,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+transfusion_reactions,Blood Bank,YES,transfusion_reactions_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+translate_pricing,Other,YES,Service role manages translate pricing,ALL,{public},PERMISSIVE,"((((current_setting('request.jwt.claims'::text, true))::jsonb ->> 'role'::text) = 'service_role'::text) OR (auth.role() = 'service_role'::text))",,INITPLAN auth.*() per-row,,LOW
+tv_display_settings,Other,YES,Anyone can read tv_display_settings,SELECT,{public},PERMISSIVE,true,,OPEN-READ USING(true),,CRITICAL
+tv_display_settings,Other,YES,Hospital admins manage tv_display_settings,ALL,{public},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+user_permission_overrides,Identity,YES,Users can manage own hospital user_permission_overrides,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+user_permission_overrides,Identity,YES,Users can view own hospital user_permission_overrides,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+user_tour_progress,Identity,YES,user_tour_progress_own_or_admin_read,SELECT,{authenticated},PERMISSIVE,((user_id = auth.uid()) OR is_aumrti_admin()),,INITPLAN auth.*() per-row,,LOW
+user_tour_progress,Identity,YES,user_tour_progress_own_update,UPDATE,{authenticated},PERMISSIVE,(user_id = auth.uid()),(user_id = auth.uid()),INITPLAN auth.*() per-row,,LOW
+user_tour_progress,Identity,YES,user_tour_progress_own_write,INSERT,{authenticated},PERMISSIVE,,(user_id = auth.uid()),INITPLAN auth.*() per-row,,LOW
+user_trusted_devices,Identity,YES,trusted_devices_delete_own,DELETE,{authenticated},PERMISSIVE,(user_id = auth.uid()),,INITPLAN auth.*() per-row,,LOW
+user_trusted_devices,Identity,YES,trusted_devices_insert_own,INSERT,{authenticated},PERMISSIVE,,(user_id = auth.uid()),INITPLAN auth.*() per-row,,LOW
+user_trusted_devices,Identity,YES,trusted_devices_select_own,SELECT,{authenticated},PERMISSIVE,(user_id = auth.uid()),,INITPLAN auth.*() per-row,,LOW
+users,Identity,YES,Admins can manage users,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+users,Identity,YES,Users can update own profile,UPDATE,{authenticated},PERMISSIVE,(id = auth.uid()),(id = auth.uid()),INITPLAN auth.*() per-row,,LOW
+users,Identity,YES,Users can view own hospital users,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+users,Identity,YES,aumrti_admin_read_all_users,SELECT,{authenticated},PERMISSIVE,is_aumrti_admin(),,MULTIPLE PERMISSIVE (2),,MEDIUM
+vaccination_due,Vaccination,YES,tenant_isolation_vaccination_due,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (2),,MEDIUM
+vaccination_due,Vaccination,YES,vaccination_due_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+vaccination_records,Vaccination,YES,tenant_isolation_vaccination_records,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (2),,MEDIUM
+vaccination_records,Vaccination,YES,vaccination_records_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+vaccine_camps,Vaccination,YES,tenant_isolation_vaccine_camps,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (2),,MEDIUM
+vaccine_camps,Vaccination,YES,vaccine_camps_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+vaccine_master,Vaccination,YES,tenant_isolation_vaccine_master,ALL,{authenticated},PERMISSIVE,((hospital_id IS NULL) OR (hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid())))),((hospital_id IS NULL) OR (hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid())))),INITPLAN auth.*() per-row,,LOW
+vaccine_master,Vaccination,YES,vaccine_master_delete,DELETE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+vaccine_master,Vaccination,YES,vaccine_master_read,SELECT,{authenticated},PERMISSIVE,((hospital_id IS NULL) OR (hospital_id = get_user_hospital_id())),,none,,OK
+vaccine_master,Vaccination,YES,vaccine_master_update,UPDATE,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+vaccine_master,Vaccination,YES,vaccine_master_write,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+vaccine_stock,Vaccination,YES,tenant_isolation_vaccine_stock,ALL,{authenticated},PERMISSIVE,(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),(hospital_id = ( SELECT users.hospital_id FROM users WHERE (users.id = auth.uid()))),INITPLAN auth.*() per-row; MULTIPLE PERMISSIVE (2),,MEDIUM
+vaccine_stock,Vaccination,YES,vaccine_stock_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+vendor_quotations,Procurement,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+vendor_rate_contracts,Procurement,YES,hospital_isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+vendors,Procurement,YES,Users can manage own hospital vendors,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+vendors,Procurement,YES,Users can view own hospital vendors,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+vendors,Procurement,YES,vendors_all,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),MULTIPLE PERMISSIVE (2),,MEDIUM
+vendors,Procurement,YES,vendors_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,MULTIPLE PERMISSIVE (2),,MEDIUM
+ventilator_params,ICU,YES,vent_params_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+vial_wastage,Other,YES,vial_wastage_hospital,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+visitor_passes,OPD,YES,Hospital isolation,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ward_acuity_snapshots,IPD,YES,ward_acuity_snapshots_hospital_isolation,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+ward_round_notes,IPD,YES,Users can manage own hospital ward_round_notes,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+ward_round_notes,IPD,YES,Users can view own hospital ward_round_notes,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+wards,IPD,YES,Admins can manage wards,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+wards,IPD,YES,Users can view own hospital wards,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+webhook_dlq,Integration,YES,(none),,,,,,"RLS enabled, ZERO policies",service_role/postgres only (both BYPASSRLS),INFO
+whatsapp_bot_messages,Notifications,YES,hospital_isolation_wbm,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+whatsapp_bot_sessions,Notifications,YES,hospital_isolation_wbs,ALL,{public},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+whatsapp_connectors,Notifications,YES,whatsapp_connectors_hospital_policy,ALL,{authenticated},PERMISSIVE,(hospital_id IN ( SELECT users.hospital_id FROM users WHERE (users.auth_user_id = auth.uid()))),,INITPLAN auth.*() per-row,,LOW
+whatsapp_notifications,Notifications,YES,Auth users manage own hospital notifications,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+whatsapp_notifications,Notifications,YES,whatsapp_notifications_insert,INSERT,{authenticated},PERMISSIVE,,(hospital_id = get_user_hospital_id()),none,,OK
+whatsapp_notifications,Notifications,YES,whatsapp_notifications_select,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+whatsapp_templates,Notifications,YES,Users can manage own hospital templates,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK
+whatsapp_templates,Notifications,YES,Users can view own hospital templates,SELECT,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),,none,,OK
+wound_assessments,Nursing,YES,wound_assessments_hospital_iso,ALL,{authenticated},PERMISSIVE,(hospital_id = get_user_hospital_id()),(hospital_id = get_user_hospital_id()),none,,OK

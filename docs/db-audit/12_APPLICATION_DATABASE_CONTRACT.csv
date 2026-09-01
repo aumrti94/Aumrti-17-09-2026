@@ -1,0 +1,581 @@
+object,exists_live,app_ops,app_file_count,app_files_sample,probable_intended_target,finding,severity
+abdm_audit_log,TABLE,INSERT,1,supabase/functions/_shared/abdm-audit.ts,,ok,OK
+abdm_care_contexts,TABLE,READ|INSERT|UPDATE,11,src/components/abdm/ABDMCareContextsPanel.tsx ; src/components/abdm/ConsentStatusBanner.tsx ; src/components/dashboard/ABDMComplianceCard.tsx ; src/pages/ABDMComplianceDashboard.tsx,,ok,OK
+abdm_consent_logs,TABLE,READ|INSERT|DELETE,2,src/components/patients/ABHASearchPanel.tsx ; e2e/phase-03-patient-records/purge-helpers.ts,,ok,OK
+abdm_consents,TABLE,READ|UPDATE|INSERT,5,src/components/abdm/ConsentStatusBanner.tsx ; src/components/layout/AppSidebar.tsx ; src/pages/ABDMComplianceDashboard.tsx ; src/pages/ABDMConsentPage.tsx,,ok,OK
+abdm_gateway_logs,TABLE,READ|INSERT,8,src/pages/ABDMConsentPage.tsx ; supabase/functions/abdm-abha-create/index.ts ; supabase/functions/abdm-gateway-token/index.ts ; supabase/functions/abdm-hfr-register/index.ts,,ok,OK
+accounting_posting_failures,TABLE,READ|UPDATE|INSERT,2,src/components/accounts/PostingFailuresCard.tsx ; src/lib/accounting.ts,,ok,OK
+addon_entitlement_drift,VIEW,READ,2,src/pages/platform/HospitalDetailPage.tsx ; src/pages/platform/PlansManagerPage.tsx,,ok,OK
+addon_skus,TABLE,INSERT|READ,6,src/components/platform/AddonSkuEditor.tsx ; src/pages/platform/HospitalDetailPage.tsx ; src/pages/platform/PlansManagerPage.tsx ; src/pages/PricingPage.tsx,,ok,OK
+admin_audit_log,TABLE,INSERT|READ,5,src/lib/adminAudit.ts ; src/lib/impersonation.ts ; src/pages/platform/AuditLogPage.tsx ; src/pages/platform/ComplianceCenterPage.tsx,,ok,OK
+admission_day_care_procedures,TABLE,READ|INSERT,1,src/lib/dayCareProcedures.ts,,ok,OK
+admission_estimates,TABLE,READ|INSERT,5,src/components/billing/BillEditor.tsx ; src/components/ipd/AdmitPatientModal.tsx ; src/components/ipd/DayCareFinancialPanel.tsx ; src/components/ipd/IPDWorkspace.tsx,,ok,OK
+admissions,TABLE,READ|UPDATE|INSERT|DELETE,110,src/components/analytics/CustomReportBuilder.tsx ; src/components/analytics/DailyCensusSection.tsx ; src/components/analytics/DepartmentDetailModal.tsx ; src/components/analytics/PROMAnalyticsTab.tsx,,ok,OK
+adult_immunization_schedule,TABLE,READ|UPDATE|INSERT,1,src/components/vaccination/AdultImmunizationTab.tsx,,ok,OK
+advance_receipts,TABLE,INSERT|READ,6,src/components/billing/AdvanceReceiptModal.tsx ; src/components/billing/tabs/AdvanceApplicationTab.tsx ; src/components/ipd/IPDWorkspace.tsx ; src/components/ipd/tabs/IPDFinancialTab.tsx,,ok,OK
+ai_attestations,TABLE,INSERT|READ,3,src/components/ai/AIAttestationModal.tsx ; src/components/nabh/EvidenceGapsModal.tsx ; e2e/phase-05-lab-radiology/P5H.ai-radiology-impression.spec.ts,,ok,OK
+ai_cost_daily,TABLE,READ,2,src/pages/platform/AIPerformancePage.tsx ; src/pages/settings/SettingsPlanPage.tsx,,ok,OK
+ai_digests,TABLE,READ|INSERT|UPDATE,2,src/components/analytics/AIDigestTab.tsx ; src/pages/hod/CEOBoardPage.tsx,,ok,OK
+ai_feature_logs,TABLE,INSERT,22,src/components/analytics/RevenueForecastCard.tsx ; src/components/billing/RevenueIntelligencePanel.tsx ; src/components/crm/ReviewSentimentAnalyser.tsx ; src/components/emergency/EmergencyRegistrationModal.tsx,,ok,OK
+ai_language_settings,TABLE,READ|INSERT,4,src/hooks/useVoiceScribeLanguages.ts ; src/pages/settings/SettingsAILanguagePage.tsx ; src/pages/tv/AdvancedQueueDisplayPage.tsx ; e2e/phase-02-settings/P2I.data-audit.spec.ts,,ok,OK
+ai_safety_flags,TABLE,UPDATE|INSERT,2,src/components/ai/SafetyFlagBanner.tsx ; supabase/functions/_shared/safety-guard.ts,,ok,OK
+ai_suggestions_audit,TABLE,READ|INSERT,4,src/components/ai/AIAuditLogDrawer.tsx ; src/components/analytics/AIPerformanceDashboard.tsx ; src/hooks/useAIAudit.ts ; e2e/phase-05-lab-radiology/P5H.ai-radiology-impression.spec.ts,,ok,OK
+ai_usage_logs,TABLE,READ|INSERT,7,src/pages/platform/PlatformAIConfigPage.tsx ; supabase/functions/ai-clinical-voice/index.ts ; supabase/functions/ai-history-digest/index.ts ; supabase/functions/ai-proxy/index.ts,,ok,OK
+ai_wallet_transactions,TABLE,READ,1,src/components/subscription/AiCreditsCard.tsx,,ok,OK
+alert_escalation_log,TABLE,READ|INSERT,1,supabase/functions/alert-escalation/index.ts,,ok,OK
+alert_escalation_rules,TABLE,READ|INSERT|UPDATE,2,src/components/dashboard/AlertsPanel.tsx ; supabase/functions/alert-escalation/index.ts,,ok,OK
+allergy_records,MISSING,READ,1,supabase/functions/update-patient-ai-context/index.ts,patients.allergies (column),CONTRACT VIOLATION - runtime error/silent failure,HIGH
+ambulance_dispatches,TABLE,READ|INSERT|UPDATE,3,src/components/ambulance/DispatchTab.tsx ; src/components/ambulance/TransitLogTab.tsx ; src/pages/ambulance/AmbulancePage.tsx,,ok,OK
+ambulance_equipment_checks,TABLE,READ|INSERT,2,src/components/ambulance/EquipmentCheckTab.tsx ; src/pages/ambulance/AmbulancePage.tsx,,ok,OK
+ambulance_transit_treatment,TABLE,READ|INSERT,1,src/components/ambulance/TransitLogTab.tsx,,ok,OK
+ambulance_vehicles,TABLE,READ|INSERT|UPDATE,4,src/components/ambulance/DispatchTab.tsx ; src/components/ambulance/EquipmentCheckTab.tsx ; src/components/ambulance/FleetTab.tsx ; src/pages/ambulance/AmbulancePage.tsx,,ok,OK
+amc_contracts,TABLE,READ,2,src/components/biomedical/AlertsTab.tsx ; src/pages/biomedical/BiomedicalPage.tsx,,ok,OK
+anaesthesia_records,TABLE,READ|INSERT|UPDATE,2,src/components/ot/EndCaseModal.tsx ; src/components/specialty/AnaesthesiaSheet.tsx,,ok,OK
+andrology_reports,TABLE,READ|INSERT,1,src/components/ivf/AndrologyTab.tsx,,ok,OK
+antibiotic_justifications,TABLE,INSERT|READ|UPDATE,2,src/components/quality/AntibioticJustificationModal.tsx ; src/pages/quality/ASPDashboardPage.tsx,,ok,OK
+antibiotic_restricted_list,TABLE,READ|INSERT,1,src/pages/quality/ASPDashboardPage.tsx,,ok,OK
+api_configurations,TABLE,READ|UPDATE|INSERT,10,src/pages/billing/PaymentsPage.tsx ; src/pages/settings/APIConfigHubPage.tsx ; src/pages/settings/SettingsHMISPage.tsx ; src/pages/settings/SettingsRazorpayPage.tsx,,ok,OK
+api_keys,TABLE,READ|INSERT|UPDATE|DELETE,3,src/pages/settings/SettingsAPIKeysPage.tsx ; src/pages/settings/SettingsAPIPortalPage.tsx ; e2e/phase-02-settings/P2I.integrations.spec.ts,,ok,OK
+appointments,TABLE,READ|INSERT|UPDATE,8,src/components/opd/WalkInModal.tsx ; src/components/schedule/NoShowRiskPanel.tsx ; src/hooks/useChronicFollowups.ts ; src/pages/portal/PortalChatPage.tsx,,ok,OK
+arogyasri_enrollments,TABLE,READ|INSERT,1,src/components/insurance/ArogyasriTab.tsx,,ok,OK
+art_couples,TABLE,READ|INSERT,2,src/components/ivf/CouplesTab.tsx ; src/components/ivf/CyclesTab.tsx,,ok,OK
+asr_pricing,TABLE,READ,1,supabase/functions/_shared/asr-metering.ts,,ok,OK
+attendance_regularization_requests,TABLE,READ|INSERT|UPDATE,2,src/components/hr/AttendanceApprovalsPanel.tsx ; src/pages/hr/MyHRPage.tsx,,ok,OK
+audit_log,TABLE,INSERT|READ,8,src/contexts/HospitalContext.tsx ; src/lib/auditLog.ts ; src/pages/quality/QualityPage.tsx ; src/pages/settings/SettingsBackupPage.tsx,,ok,OK
+audit_records,TABLE,READ|UPDATE|INSERT,3,src/components/quality/AuditCalendarTab.tsx ; src/components/quality/NABHDashboard.tsx ; src/components/quality/ScheduleAuditModal.tsx,,ok,OK
+audit_samples,MISSING,READ,1,supabase/functions/ai-nabh-assistant/index.ts,clinical_audit_samples,CONTRACT VIOLATION - runtime error/silent failure,HIGH
+aumrti_admins,TABLE,READ|INSERT|UPDATE,11,src/hooks/useAumrtiAdmin.ts ; src/lib/adminAudit.ts ; src/lib/impersonation.ts ; src/lib/postAuthRoute.ts,,ok,OK
+auto_posting_rules,TABLE,READ,3,src/components/accounts/AccountsDashboardTab.tsx ; src/lib/accounting.ts ; supabase/functions/reconcile-journal-postings/index.ts,,ok,OK
+ayush_drug_master,TABLE,READ,1,src/components/ayush/ConsultationTab.tsx,,ok,OK
+ayush_encounters,TABLE,READ|INSERT,3,src/components/ayush/ConsultationTab.tsx ; src/components/ayush/PrescriptionsTab.tsx ; src/pages/ayush/AyushPage.tsx,,ok,OK
+bank_accounts,TABLE,READ|INSERT|UPDATE|DELETE,3,src/components/accounts/BankTab.tsx ; src/pages/settings/SettingsBankAccountsPage.tsx ; e2e/phase-02-settings/P2D.structure.bank-accounts.spec.ts,,ok,OK
+bank_transactions,TABLE,READ|INSERT|UPDATE,1,src/components/accounts/BankTab.tsx,,ok,OK
+bed_demand_forecasts,TABLE,INSERT,1,src/components/ipd/BedDemandForecastPanel.tsx,,ok,OK
+bed_reservations,TABLE,INSERT|READ|UPDATE,3,src/components/ipd/BedReservationModal.tsx ; src/components/ipd/WardStats.tsx ; src/pages/ipd/IPDPage.tsx,,ok,OK
+beds,TABLE,READ|UPDATE|INSERT|DELETE,28,src/components/analytics/AIDigestTab.tsx ; src/components/analytics/DailyCensusSection.tsx ; src/components/analytics/DepartmentDetailModal.tsx ; src/components/dashboard/BedOccupancy.tsx,,ok,OK
+bill_amendments,TABLE,INSERT|READ,1,src/lib/billAmendmentLogger.ts,,ok,OK
+bill_discount_approvals,TABLE,READ|UPDATE|INSERT,5,src/components/billing/BillEditor.tsx ; src/components/billing/DiscountApprovalsInbox.tsx ; src/components/billing/tabs/DiscountTab.tsx ; src/pages/billing/BillingPage.tsx,,ok,OK
+bill_items,MISSING,INSERT|UPDATE|READ,3,src/components/ot/tabs/OTImplantsConsumablesTab.tsx ; supabase/functions/hcx-claim-submit/index.ts ; e2e/phase-02-settings/P2F.money.services-payers.spec.ts,bill_line_items,CONTRACT VIOLATION - runtime error/silent failure,CRITICAL
+bill_line_items,TABLE,READ|INSERT|DELETE|UPDATE,51,src/components/accounts/ReportsTab.tsx ; src/components/ayush/PanchakarmaTab.tsx ; src/components/billing/BillEditor.tsx ; src/components/billing/LeakageScanner.tsx,,ok,OK
+bill_payments,TABLE,READ|INSERT,22,src/components/accounts/ReportsTab.tsx ; src/components/billing/BillEditor.tsx ; src/components/billing/tabs/AdvanceApplicationTab.tsx ; src/components/dashboard/drilldowns/RevenueDrillDown.tsx,,ok,OK
+bill_sequences,TABLE,READ,1,e2e/phase-01-foundation/P1H.tenant-isolation.spec.ts,,ok,OK
+bills,TABLE,READ|INSERT|UPDATE,112,src/components/accounts/ReportsTab.tsx ; src/components/analytics/AIDigestTab.tsx ; src/components/analytics/CustomReportBuilder.tsx ; src/components/analytics/DepartmentDetailModal.tsx,,ok,OK
+blood_issues,TABLE,READ|UPDATE|INSERT,3,src/components/blood-bank/IssueLogTab.tsx ; src/components/blood-bank/ReportsTab.tsx ; src/components/blood-bank/RequestsTab.tsx,,ok,OK
+blood_requests,TABLE,READ|UPDATE|INSERT,4,src/components/blood-bank/RequestsTab.tsx ; src/components/ipd/BloodRequestModal.tsx ; src/components/ipd/IPDWorkspace.tsx ; src/components/ot/BookOTModal.tsx,,ok,OK
+blood_unit_tti_tests,TABLE,READ|INSERT|UPDATE,1,src/components/blood-bank/TTITestingTab.tsx,,ok,OK
+blood_units,TABLE,READ|UPDATE|INSERT,11,src/components/blood-bank/BloodDemandForecastPanel.tsx ; src/components/blood-bank/CrossMatchTab.tsx ; src/components/blood-bank/DonorsTab.tsx ; src/components/blood-bank/InventoryTab.tsx,,ok,OK
+bmw_manifests,TABLE,READ|INSERT|DELETE,1,src/pages/fms/FMSDashboardPage.tsx,,ok,OK
+bmw_records,TABLE,INSERT|READ,3,src/components/housekeeping/BMWEntryModal.tsx ; src/components/housekeeping/BMWLogTab.tsx ; src/components/housekeeping/ReportsTab.tsx,,ok,OK
+body_releases,TABLE,READ|INSERT,1,src/pages/mortuary/MortuaryPage.tsx,,ok,OK
+bpmh_records,TABLE,READ|INSERT,1,src/components/ipd/MedReconciliationPanel.tsx,,ok,OK
+braden_scale_assessments,TABLE,READ|INSERT,1,src/components/ipd/tabs/WoundCareTab.tsx,,ok,OK
+breakdown_logs,TABLE,READ|UPDATE|INSERT,5,src/components/biomedical/BreakdownTab.tsx ; src/components/biomedical/EquipmentTab.tsx ; src/components/biomedical/PredictiveMaintenanceSection.tsx ; src/components/biomedical/ReportBreakdownModal.tsx,,ok,OK
+budget_lines,TABLE,READ|INSERT|UPDATE,1,src/pages/accounts/BudgetManagementPage.tsx,,ok,OK
+calibration_records,TABLE,READ|INSERT,3,src/components/biomedical/AlertsTab.tsx ; src/components/biomedical/CalibrationTab.tsx ; src/components/biomedical/EquipmentTab.tsx,,ok,OK
+capa_records,TABLE,READ|UPDATE|INSERT,3,src/components/analytics/QualityTab.tsx ; src/components/quality/CAPATrackerTab.tsx ; src/components/quality/NABHDashboard.tsx,,ok,OK
+care_bundle_checks,TABLE,READ|INSERT,1,src/pages/ipd/ICUWorkspacePage.tsx,,ok,OK
+care_plan_tasks,TABLE,READ|INSERT|UPDATE,1,src/pages/chronic-disease/ChronicDiseasePage.tsx,,ok,OK
+care_plans,TABLE,READ|INSERT,2,src/pages/chronic-disease/ChronicDiseasePage.tsx ; supabase/functions/update-patient-ai-context/index.ts,,ok,OK
+case_sheet_templates,TABLE,READ,1,src/components/ipd/tabs/IPDWardRoundTab.tsx,,ok,OK
+cghs_echs_beneficiaries,TABLE,READ|INSERT|UPDATE|DELETE,5,src/components/billing/BillEditor.tsx ; src/components/insurance/CGHSECHSTab.tsx ; supabase/functions/cghs-eligibility/index.ts ; e2e/phase-02-settings/P2J.downstream.spec.ts,,ok,OK
+chart_of_accounts,TABLE,READ|UPDATE,8,src/components/accounts/JournalTab.tsx ; src/components/accounts/LedgerTab.tsx ; src/components/accounts/ReportsTab.tsx ; src/lib/accounting.ts,,ok,OK
+chemo_order_drugs,TABLE,INSERT,1,src/components/oncology/DaycareBoardTab.tsx,,ok,OK
+chemo_orders,TABLE,READ|INSERT|UPDATE,4,src/components/oncology/ChemoOrdersTab.tsx ; src/components/oncology/DaycareBoardTab.tsx ; src/components/oncology/OncologyReportsTab.tsx ; src/pages/oncology/OncologyPage.tsx,,ok,OK
+chemo_protocols,TABLE,READ,4,src/components/oncology/DaycareBoardTab.tsx ; src/components/oncology/OncologyPatientsTab.tsx ; src/components/oncology/ProtocolsTab.tsx ; src/pages/oncology/OncologyPage.tsx,,ok,OK
+chronic_disease_programs,TABLE,READ|INSERT,3,src/components/clinical/ChronicDiseaseSection.tsx ; src/components/clinical/OverdueFollowupBanner.tsx ; src/hooks/useChronicFollowups.ts,,ok,OK
+churn_remediation_actions,TABLE,READ|INSERT,2,src/pages/platform/ChurnRadarPage.tsx ; supabase/functions/churn-remediation-scan/index.ts,,ok,OK
+cleaning_schedules,TABLE,READ|UPDATE|INSERT,1,src/components/housekeeping/SchedulesTab.tsx,,ok,OK
+clinical_alerts,TABLE,READ|INSERT|UPDATE,60,src/components/analytics/AIDigestTab.tsx ; src/components/biomedical/CalibrationTab.tsx ; src/components/biomedical/ReportBreakdownModal.tsx ; src/components/cssd/IssueReturnTab.tsx,,ok,OK
+clinical_audit_samples,TABLE,READ|INSERT|UPDATE|DELETE,1,src/pages/quality/ClinicalAuditPage.tsx,,ok,OK
+clinical_audits,TABLE,READ|INSERT|UPDATE,2,src/pages/quality/ClinicalAuditPage.tsx ; supabase/functions/ai-nabh-assistant/index.ts,,ok,OK
+clinical_guidelines,TABLE,READ,1,supabase/functions/ai-clinical-guidelines/index.ts,,ok,OK
+clinical_note_templates,TABLE,READ|INSERT|DELETE,1,src/hooks/useNoteTemplates.ts,,ok,OK
+clinical_protocols,TABLE,READ|INSERT|UPDATE|DELETE,2,src/pages/settings/SettingsProtocolsPage.tsx ; e2e/phase-02-settings/P2G.clinical.masters.spec.ts,,ok,OK
+code_blue_audits,TABLE,INSERT,1,src/components/quality/CodeBlueAuditTab.tsx,,ok,OK
+code_blue_events,TABLE,READ|INSERT,1,src/components/quality/CodeBlueAuditTab.tsx,,ok,OK
+cold_chain_log,TABLE,READ|INSERT,2,src/components/vaccination/ColdChainTab.tsx ; src/pages/vaccination/VaccinationPage.tsx,,ok,OK
+collection_campaigns,TABLE,INSERT|UPDATE,1,src/components/billing/CollectionCampaignModal.tsx,,ok,OK
+committee_action_items,TABLE,READ|INSERT|UPDATE|DELETE,1,src/pages/quality/CommitteesPage.tsx,,ok,OK
+committee_actions,MISSING,READ,1,supabase/functions/ai-nabh-assistant/index.ts,committee_action_items,CONTRACT VIOLATION - runtime error/silent failure,HIGH
+committee_meetings,TABLE,READ|INSERT|UPDATE,2,src/pages/quality/CommitteesPage.tsx ; supabase/functions/ai-nabh-assistant/index.ts,,ok,OK
+committee_members,TABLE,READ|INSERT|DELETE,1,src/pages/quality/CommitteesPage.tsx,,ok,OK
+config_change_logs,TABLE,INSERT|READ,6,src/components/dashboard/NABHQIAlertCard.tsx ; src/lib/ims.ts ; src/pages/settings/ConfigChangeLogPage.tsx ; e2e/phase-02-settings/P2E.people-access.roles.spec.ts,,ok,OK
+consent_form_templates,TABLE,READ|UPDATE|INSERT|DELETE,3,src/components/consent/ConsentSignatureModal.tsx ; src/pages/settings/SettingsConsentFormsPage.tsx ; e2e/phase-02-settings/P2G.clinical.masters.spec.ts,,ok,OK
+consent_templates,TABLE,READ,1,src/pages/admin/GoLiveChecklistPage.tsx,,ok,OK
+corporate_accounts,TABLE,READ|INSERT,1,src/components/packages/CorporateTab.tsx,,ok,OK
+credential_override_log,TABLE,INSERT,1,src/components/hr/useCredentialGate.tsx,,ok,OK
+credit_note_items,TABLE,INSERT,1,src/lib/pharmacyReturns.ts,,ok,OK
+credit_notes,TABLE,INSERT,1,src/lib/pharmacyReturns.ts,,ok,OK
+credit_packs,MISSING,READ,1,src/pages/settings/SettingsPlanPage.tsx,(none),CONTRACT VIOLATION - runtime error/silent failure,HIGH
+cross_match_records,TABLE,READ|INSERT,3,src/components/blood-bank/CrossMatchTab.tsx ; src/components/blood-bank/ReportsTab.tsx ; src/components/blood-bank/RequestsTab.tsx,,ok,OK
+cycle_instruments,TABLE,INSERT|UPDATE|READ,1,src/components/cssd/SterilizeTab.tsx,,ok,OK
+daily_cash_closure,TABLE,READ|INSERT|UPDATE,3,src/lib/lockedDay.ts ; src/pages/billing/BillingPage.tsx ; src/pages/billing/DailyCashClosurePage.tsx,,ok,OK
+daily_census_snapshots,TABLE,INSERT,1,supabase/functions/generate-daily-census/index.ts,,ok,OK
+data_erasure_requests,TABLE,READ|UPDATE|INSERT|DELETE,5,src/pages/platform/ComplianceCenterPage.tsx ; src/pages/platform/PlatformSettingsPage.tsx ; src/pages/settings/SettingsBackupPage.tsx ; e2e/phase-02-settings/P2I.data-audit.spec.ts,,ok,OK
+day_care_procedures,TABLE,READ|INSERT|UPDATE|DELETE,4,src/components/ipd/DayCareAdmissionModal.tsx ; src/pages/settings/SettingsDayCareProceduresPage.tsx ; src/pages/settings/SettingsServicesPage.tsx ; e2e/phase-02-settings/P2G.clinical.masters.spec.ts,,ok,OK
+daycare_chairs,TABLE,READ|UPDATE,2,src/components/oncology/DaycareBoardTab.tsx ; src/pages/oncology/OncologyPage.tsx,,ok,OK
+death_certificates,TABLE,READ|INSERT,1,src/components/mrd/DeathCertificatesTab.tsx,,ok,OK
+denial_logs,TABLE,READ|INSERT,3,src/components/insurance/ClaimsStatus.tsx ; src/components/insurance/DenialAnalyticsDashboard.tsx ; src/components/pmjay/PmjayAnalyticsTab.tsx,,ok,OK
+dental_charts,TABLE,INSERT|UPDATE|READ,2,src/components/dental/ToothChartTab.tsx ; src/pages/dental/DentalPage.tsx,,ok,OK
+dental_lab_orders,TABLE,READ|INSERT|UPDATE,1,src/components/dental/LabOrdersTab.tsx,,ok,OK
+dental_treatment_plans,TABLE,READ|INSERT|UPDATE,1,src/components/dental/TreatmentPlanTab.tsx,,ok,OK
+department_indents,TABLE,INSERT|READ|UPDATE,3,src/components/inventory/DrugForecastPanel.tsx ; src/components/inventory/IndentsPanel.tsx ; src/pages/inventory/InventoryPage.tsx,,ok,OK
+departments,TABLE,READ|DELETE|UPDATE|INSERT,52,src/components/accounts/ExpensesTab.tsx ; src/components/accounts/RecordExpenseModal.tsx ; src/components/accounts/ReportsTab.tsx ; src/components/analytics/ExportModal.tsx,,ok,OK
+dialysis_machines,TABLE,READ|UPDATE|INSERT,3,src/components/dialysis/DialysisReportsTab.tsx ; src/components/dialysis/DialysisScheduleTab.tsx ; src/components/dialysis/MachineBoardTab.tsx,,ok,OK
+dialysis_patients,TABLE,READ|INSERT,5,src/components/dialysis/DialysisPatientsTab.tsx ; src/components/dialysis/DialysisReportsTab.tsx ; src/components/dialysis/DialysisScheduleTab.tsx ; src/components/dialysis/MachineBoardTab.tsx,,ok,OK
+dialysis_sessions,TABLE,READ|INSERT|UPDATE,6,src/components/dialysis/DialysisPatientsTab.tsx ; src/components/dialysis/DialysisReportsTab.tsx ; src/components/dialysis/DialysisScheduleTab.tsx ; src/components/dialysis/DialysisSessionsTab.tsx,,ok,OK
+dicom,MISSING,DELETE,1,src/components/radiology/DicomViewerPanel.tsx,dicom_files,CONTRACT VIOLATION - runtime error/silent failure,CRITICAL
+dicom_files,TABLE,READ|INSERT|DELETE,2,src/components/radiology/DicomViewerPanel.tsx ; supabase/functions/fhir-export/index.ts,,ok,OK
+diet_orders,TABLE,INSERT|READ,3,src/components/ipd/AdmitPatientModal.tsx ; src/components/ipd/tabs/NutritionDieteticsTab.tsx ; src/pages/dietetics/DietPage.tsx,,ok,OK
+diet_plans,TABLE,INSERT,1,src/pages/dietetics/DietPage.tsx,,ok,OK
+dietitian_notes,TABLE,READ|INSERT,1,src/components/ipd/tabs/NutritionDieteticsTab.tsx,,ok,OK
+disaster_drills,TABLE,READ|INSERT|UPDATE,1,src/components/quality/DisasterManagementTab.tsx,,ok,OK
+disciplinary_actions,TABLE,READ|INSERT|UPDATE,1,src/components/hr/DisciplinaryGrievanceTab.tsx,,ok,OK
+discount_codes,TABLE,READ|INSERT|UPDATE,5,src/components/subscription/SubscribeButton.tsx ; src/pages/platform/DiscountsPage.tsx ; supabase/functions/change-subscription-plan/index.ts ; supabase/functions/create-razorpay-subscription/index.ts,,ok,OK
+doctor_quick_picks,TABLE,READ|INSERT|DELETE,1,src/hooks/useDoctorQuickPicks.ts,,ok,OK
+doctor_schedules,TABLE,READ|DELETE|INSERT,3,src/pages/settings/SettingsDoctorSchedulesPage.tsx ; src/pages/setup/steps/Step5cSchedules.tsx ; e2e/phase-02-settings/P2E.people-access.schedules.spec.ts,,ok,OK
+doctor_slots,TABLE,READ|UPDATE|INSERT|DELETE,7,src/components/opd/WalkInModal.tsx ; src/pages/booking/PublicAppointmentPage.tsx ; src/pages/schedule/SchedulingPage.tsx ; src/pages/settings/SettingsDoctorSchedulesPage.tsx,,ok,OK
+donor_campaigns,TABLE,INSERT,1,supabase/functions/donor-reengagement/index.ts,,ok,OK
+donors,TABLE,READ|INSERT,2,src/components/blood-bank/DonorsTab.tsx ; supabase/functions/donor-reengagement/index.ts,,ok,OK
+drug_allergy_cross_reactivity,TABLE,READ,2,src/lib/drugSafetyCheck.ts ; e2e/phase-04-opd-journey/P4F.drug-safety.spec.ts,,ok,OK
+drug_batches,TABLE,READ|UPDATE|INSERT,20,src/components/accounts/ReportsTab.tsx ; src/components/inventory/ConsolidatedStockPanel.tsx ; src/components/pharmacy/ExpiryControlTab.tsx ; src/components/pharmacy/ip/DispensingWorkspace.tsx,,ok,OK
+drug_interactions,TABLE,READ,1,src/lib/drugSafetyCheck.ts,,ok,OK
+drug_master,TABLE,READ|INSERT|UPDATE|DELETE,20,src/components/ipd/tabs/IPDMedicationsTab.tsx ; src/components/migration/ImportWizard.tsx ; src/components/opd/DrugMasterSearchInput.tsx ; src/components/pharmacy/ip/DispensingWorkspace.tsx,,ok,OK
+dunning_attempts,TABLE,READ|INSERT,1,supabase/functions/dunning-processor/index.ts,,ok,OK
+dunning_cadence_rules,TABLE,READ|INSERT|UPDATE|DELETE,2,src/pages/platform/AutomationRulesPage.tsx ; supabase/functions/dunning-processor/index.ts,,ok,OK
+duty_roster,TABLE,READ|INSERT|DELETE|UPDATE,5,src/components/hr/AttendanceTab.tsx ; src/components/hr/RosterOptimizerPanel.tsx ; src/components/hr/RosterTab.tsx ; src/components/hr/ShiftSwapPanel.tsx,,ok,OK
+ed_charge_items,TABLE,READ|INSERT,3,src/components/emergency/EDChargesPanel.tsx ; src/components/emergency/EDMedicationPanel.tsx ; src/components/emergency/EmergencyWorkspace.tsx,,ok,OK
+ed_handover_notes,TABLE,READ|INSERT,1,src/components/emergency/EDHandoverNotePanel.tsx,,ok,OK
+ed_medications,TABLE,READ|INSERT,1,src/components/emergency/EDMedicationPanel.tsx,,ok,OK
+ed_visits,TABLE,READ|UPDATE|INSERT|DELETE,9,src/components/emergency/EDAnalyticsModal.tsx ; src/components/emergency/EDDischargeSummaryModal.tsx ; src/components/emergency/EmergencyRegistrationModal.tsx ; src/components/emergency/EmergencyWorkspace.tsx,,ok,OK
+electrical_safety_logs,TABLE,READ|INSERT|DELETE,1,src/components/fms/ElectricalSafetyTab.tsx,,ok,OK
+email_notifications,TABLE,INSERT,1,supabase/functions/send-email/index.ts,,ok,OK
+embryo_bank,TABLE,READ,2,src/components/ivf/EmbryoBankTab.tsx ; src/pages/ivf/IVFPage.tsx,,ok,OK
+emi_installments,TABLE,READ|UPDATE|INSERT,1,src/components/billing/tabs/CollectionsTab.tsx,,ok,OK
+emi_plans,TABLE,READ|INSERT,1,src/components/billing/tabs/CollectionsTab.tsx,,ok,OK
+emr_template_definitions,TABLE,READ|INSERT|DELETE,2,src/pages/settings/SpecialtyTemplateBuilderPage.tsx ; e2e/phase-02-settings/P2G.clinical.masters.spec.ts,,ok,OK
+enterprise_leads,TABLE,READ|UPDATE|INSERT,2,src/pages/platform/PlansManagerPage.tsx ; src/pages/register/Step4ChoosePlan.tsx,,ok,OK
+entitlement_fail_open_events,TABLE,INSERT|READ,3,src/hooks/useSubscriptionConfig.ts ; src/pages/platform/ComplianceCenterPage.tsx ; e2e/phase-01-foundation/P1G.plan-gating.spec.ts,,ok,OK
+epidemic_protocols,TABLE,READ|INSERT|UPDATE,2,src/components/quality/DisasterManagementTab.tsx ; src/lib/disaster-mode.ts,,ok,OK
+equipment_master,TABLE,READ|INSERT|UPDATE,10,src/components/biomedical/AddEquipmentModal.tsx ; src/components/biomedical/AlertsTab.tsx ; src/components/biomedical/BreakdownTab.tsx ; src/components/biomedical/CalibrationTab.tsx,,ok,OK
+esg_monthly_metrics,TABLE,READ|INSERT,1,src/components/analytics/ESGTab.tsx,,ok,OK
+esi_beneficiaries,TABLE,READ,1,supabase/functions/esi-claim-submit/index.ts,,ok,OK
+expense_records,TABLE,READ|INSERT|UPDATE,3,src/components/accounts/ExpensesTab.tsx ; src/components/accounts/RecordExpenseModal.tsx ; src/components/accounts/ReportsTab.tsx,,ok,OK
+external_lab_referrals,TABLE,INSERT|READ|UPDATE|DELETE,3,src/components/lab/ExternalLabReferralModal.tsx ; src/components/lab/ExternalReferralsTab.tsx ; e2e/phase-05-lab-radiology/P5E.external-referrals.spec.ts,,ok,OK
+facility_assets,TABLE,READ|INSERT|UPDATE,1,src/pages/fms/FMSDashboardPage.tsx,,ok,OK
+facility_maintenance_logs,TABLE,READ|INSERT|UPDATE|DELETE,1,src/pages/fms/FMSDashboardPage.tsx,,ok,OK
+fall_risk_assessments,TABLE,INSERT,1,src/components/nursing/FallRiskAssessmentForm.tsx,,ok,OK
+fcm_tokens,TABLE,READ|INSERT|UPDATE,2,src/pages/platform/MobileAppPage.tsx ; supabase/functions/send-push-notification/index.ts,,ok,OK
+feedback_records,TABLE,READ,1,src/pages/pro/PROPage.tsx,,ok,OK
+financial_anomalies,MISSING,INSERT,1,supabase/functions/financial-anomaly-check/index.ts,(none - inventory_anomalies is unrelated),CONTRACT VIOLATION - runtime error/silent failure,CRITICAL
+fire_safety_drills,TABLE,READ|INSERT|DELETE,1,src/components/fms/FireSafetyTab.tsx,,ok,OK
+fixed_assets,TABLE,READ|UPDATE|INSERT,3,src/components/accounts/fixed-assets/DisposalTab.tsx ; src/components/accounts/fixed-assets/InsuranceTab.tsx ; src/pages/accounts/FixedAssetsPage.tsx,,ok,OK
+full_final_settlements,TABLE,INSERT,1,src/components/hr/OffboardingTab.tsx,,ok,OK
+govt_scheme_claims,TABLE,READ|INSERT,3,src/components/insurance/ArogyasriTab.tsx ; supabase/functions/esi-claim-submit/index.ts ; supabase/functions/pmjay-claim-submit/index.ts,,ok,OK
+govt_schemes,TABLE,READ|INSERT,5,src/components/insurance/UnifiedAgeingView.tsx ; src/components/ipd/AdmitPatientModal.tsx ; src/components/pmjay/PmjayAnalyticsTab.tsx ; src/components/pmjay/PmjayBeneficiariesTab.tsx,,ok,OK
+grievances,TABLE,INSERT|READ|UPDATE,2,src/components/crm/ReviewSentimentAnalyser.tsx ; src/pages/pro/PROPage.tsx,,ok,OK
+grn_ai_log,TABLE,INSERT,1,src/components/inventory/GRNPanel.tsx,,ok,OK
+grn_items,TABLE,READ|INSERT,1,src/components/inventory/GRNPanel.tsx,,ok,OK
+grn_records,TABLE,READ|INSERT|UPDATE,4,src/components/inventory/ConsolidatedStockPanel.tsx ; src/components/inventory/GRNPanel.tsx ; src/components/inventory/PurchaseOrdersPanel.tsx ; src/components/inventory/VendorsPanel.tsx,,ok,OK
+guideline_adherence_log,TABLE,INSERT,1,supabase/functions/ai-clinical-guidelines/index.ts,,ok,OK
+hand_hygiene_audits,TABLE,READ|DELETE|INSERT,2,src/components/ipc/HandHygieneTab.tsx ; src/components/quality/InfectionControlTab.tsx,,ok,OK
+hcx_submissions,TABLE,READ|INSERT,3,src/pages/ABDMComplianceDashboard.tsx ; supabase/functions/hcx-claim-submit/index.ts ; supabase/functions/pmjay-eligibility/index.ts,,ok,OK
+health_coach_sessions,TABLE,READ|INSERT,1,src/pages/portal/PortalHealthCoachPage.tsx,,ok,OK
+health_packages,TABLE,READ|INSERT,8,src/components/ipd/AdmitPatientModal.tsx ; src/components/packages/BookPackageModal.tsx ; src/components/packages/CorporateTab.tsx ; src/components/packages/CreatePackageModal.tsx,,ok,OK
+hep_plans,TABLE,READ|INSERT|UPDATE,1,src/pages/physio/PhysioPage.tsx,,ok,OK
+high_alert_double_checks,TABLE,READ|INSERT|UPDATE,1,src/components/ipd/MedReconciliationPanel.tsx,,ok,OK
+hmis_reports,TABLE,INSERT|READ|UPDATE,3,src/components/ivf/ICMRComplianceTab.tsx ; src/pages/hmis/HMISPage.tsx ; supabase/functions/hmis-portal-submit/index.ts,,ok,OK
+home_care_plans,TABLE,READ|INSERT,3,src/components/home-care/HomeCareActivePlansTab.tsx ; src/components/home-care/HomeTeleMonitoringTab.tsx ; src/pages/home-care/HomeCarePage.tsx,,ok,OK
+home_care_visits,TABLE,INSERT|READ|UPDATE,3,src/components/home-care/HomeCareActivePlansTab.tsx ; src/components/home-care/HomeCareVisitTab.tsx ; src/pages/home-care/HomeCarePage.tsx,,ok,OK
+home_tele_monitoring,TABLE,READ|INSERT,2,src/components/home-care/HomeTeleMonitoringTab.tsx ; src/pages/home-care/HomeCarePage.tsx,,ok,OK
+hospital_abdm_config,TABLE,READ|INSERT|UPDATE,19,src/components/dashboard/ABDMComplianceCard.tsx ; src/components/insurance/HCXClaimsTab.tsx ; src/pages/ABDMComplianceDashboard.tsx ; src/pages/ABDMConsentPage.tsx,,ok,OK
+hospital_addons,TABLE,READ|INSERT|UPDATE,7,src/contexts/HospitalContext.tsx ; src/hooks/useSubscriptionConfig.ts ; src/pages/platform/HospitalDetailPage.tsx ; src/pages/settings/SettingsPlanPage.tsx,,ok,OK
+hospital_ai_budget_status,VIEW,READ,4,src/pages/platform/AIPerformancePage.tsx ; src/pages/platform/HospitalDetailPage.tsx ; src/pages/settings/SettingsPlanPage.tsx ; e2e/phase-02-settings/P2J.downstream.spec.ts,,ok,OK
+hospital_ai_wallet,TABLE,READ,2,src/components/subscription/AiCreditsCard.tsx ; src/components/subscription/AiWalletsPanel.tsx,,ok,OK
+hospital_committees,TABLE,READ|INSERT,1,src/pages/quality/CommitteesPage.tsx,,ok,OK
+hospital_config_values,TABLE,READ|INSERT|UPDATE|DELETE,5,src/hooks/useConfigValues.ts ; src/pages/settings/SettingsConfigValuesPage.tsx ; e2e/phase-02-settings/P2D.structure.config-values.spec.ts ; e2e/phase-02-settings/P2D.structure.departments.spec.ts,,ok,OK
+hospital_encounter_usage,MISSING,READ,4,src/pages/platform/AIPerformancePage.tsx ; src/pages/platform/HospitalDetailPage.tsx ; src/pages/settings/SettingsPlanPage.tsx ; e2e/phase-02-settings/P2C.plan-entitlement.spec.ts,(none),CONTRACT VIOLATION - runtime error/silent failure,HIGH
+hospital_feature_overrides,TABLE,READ|INSERT|DELETE,3,src/hooks/useSubscriptionConfig.ts ; src/pages/platform/HospitalDetailPage.tsx ; supabase/functions/_shared/ai-entitlement.ts,,ok,OK
+hospital_icd_settings,TABLE,READ|INSERT|UPDATE,3,src/components/mrd/ICDCodingTab.tsx ; src/pages/settings/SettingsICDCodesPage.tsx ; e2e/phase-02-settings/P2G.clinical.masters.spec.ts,,ok,OK
+hospital_insurance_settings,TABLE,READ|INSERT|UPDATE,10,src/components/insurance/ActiveAdmissions.tsx ; src/components/insurance/ClaimsStatus.tsx ; src/components/insurance/ClaimsToSubmit.tsx ; src/components/insurance/PaymentReconciliation.tsx,,ok,OK
+hospital_module_entitlements,TABLE,READ|INSERT|DELETE,3,src/contexts/HospitalContext.tsx ; src/pages/platform/HospitalDetailPage.tsx ; supabase/functions/_shared/ai-entitlement.ts,,ok,OK
+hospital_packages,TABLE,READ,1,src/lib/packageGuard.ts,,ok,OK
+hospital_pacs_config,TABLE,READ|INSERT|UPDATE,4,src/components/radiology/DicomViewerPanel.tsx ; src/pages/settings/SettingsRadiologyPage.tsx ; e2e/phase-02-settings/P2G.clinical.alerts-radiology.spec.ts ; e2e/phase-02-settings/P2J.downstream.spec.ts,,ok,OK
+hospital_pricing_overrides,TABLE,READ|INSERT,5,src/hooks/useSubscriptionConfig.ts ; src/pages/platform/HospitalDetailPage.tsx ; supabase/functions/change-subscription-plan/index.ts ; supabase/functions/create-razorpay-subscription/index.ts,,ok,OK
+hospital_settings,TABLE,READ|INSERT|UPDATE|DELETE,28,src/components/billing/tabs/DiscountTab.tsx ; src/components/ipd/tabs/NursingKardexTab.tsx ; src/lib/consultationFee.ts ; src/lib/dayCareGate.ts,,ok,OK
+hospital_signup_consents,TABLE,READ|INSERT,2,src/pages/platform/ComplianceCenterPage.tsx ; supabase/functions/register-hospital/index.ts,,ok,OK
+hospital_subscriptions,TABLE,READ|INSERT|UPDATE,20,src/contexts/HospitalContext.tsx ; src/hooks/useSubscriptionConfig.ts ; src/pages/platform/ChurnRadarPage.tsx ; src/pages/platform/HospitalDetailPage.tsx,,ok,OK
+hospitals,TABLE,READ|INSERT|UPDATE|DELETE,121,src/components/accounts/ReportsTab.tsx ; src/components/analytics/AIDigestTab.tsx ; src/components/analytics/PROMAnalyticsTab.tsx ; src/components/billing/AdvanceReceiptModal.tsx,,ok,OK
+housekeeping_tasks,TABLE,INSERT|READ|UPDATE,5,src/components/housekeeping/NewTaskModal.tsx ; src/components/housekeeping/ReportsTab.tsx ; src/components/housekeeping/TasksTab.tsx ; src/components/ipd/DischargeSummaryGenerator.tsx,,ok,OK
+icd10_code_sets,TABLE,READ|INSERT|DELETE,1,src/pages/settings/SettingsICDCodesPage.tsx,,ok,OK
+icd10_codes,TABLE,READ|INSERT|DELETE,3,src/components/mrd/ICDCodingTab.tsx ; src/components/opd/DiagnosisPanel.tsx ; src/pages/settings/SettingsICDCodesPage.tsx,,ok,OK
+icd_codings,TABLE,INSERT|READ|UPDATE,10,src/components/ipd/AdmitPatientModal.tsx ; src/components/ipd/DischargeSummaryGenerator.tsx ; src/components/mrd/CaseBundleModal.tsx ; src/components/mrd/CodingAccuracyAuditPanel.tsx,,ok,OK
+icu_daily_goals,TABLE,READ|INSERT,1,src/pages/ipd/ICUWorkspacePage.tsx,,ok,OK
+icu_flowsheet_entries,TABLE,READ|INSERT,1,src/pages/ipd/ICUWorkspacePage.tsx,,ok,OK
+idsp_alerts,TABLE,READ|INSERT,1,src/pages/hmis/HMISPage.tsx,,ok,OK
+idsp_submissions,TABLE,INSERT,1,supabase/functions/idsp-alert-submit/index.ts,,ok,OK
+inbox_messages,TABLE,READ|UPDATE|INSERT,1,src/pages/inbox/InboxPage.tsx,,ok,OK
+incident_reports,TABLE,READ|INSERT|UPDATE,7,src/components/analytics/QualityTab.tsx ; src/components/hr/BurnoutRiskTab.tsx ; src/components/quality/AIRootCauseAnalysis.tsx ; src/components/quality/FileIncidentModal.tsx,,ok,OK
+indent_items,TABLE,READ|UPDATE|INSERT,1,src/components/inventory/IndentsPanel.tsx,,ok,OK
+instrument_sets,TABLE,READ|UPDATE|INSERT,4,src/components/cssd/IssueReturnTab.tsx ; src/components/cssd/SetsInstrumentsTab.tsx ; src/components/cssd/SterilizeTab.tsx ; src/pages/cssd/CSSDPage.tsx,,ok,OK
+instruments,TABLE,READ|INSERT,1,src/components/cssd/SetsInstrumentsTab.tsx,,ok,OK
+insurance_automation_config,TABLE,READ|INSERT|UPDATE,3,src/components/insurance/InsuranceAutomationSettings.tsx ; supabase/functions/insurance-automation/index.ts ; e2e/phase-02-settings/P2J.downstream.spec.ts,,ok,OK
+insurance_automation_log,TABLE,INSERT,3,src/components/insurance/ActiveAdmissions.tsx ; supabase/functions/insurance-automation/index.ts ; supabase/functions/submit-pre-auth-hcx/index.ts,,ok,OK
+insurance_claims,TABLE,READ|INSERT|UPDATE,21,src/components/billing/tabs/InsuranceTab.tsx ; src/components/insurance/AppealLetterModal.tsx ; src/components/insurance/AutomationStatusPipeline.tsx ; src/components/insurance/ClaimBundleGenerator.tsx,,ok,OK
+insurance_enhancement_requests,TABLE,INSERT|READ|UPDATE,2,src/components/billing/EnhancementRequestModal.tsx ; src/components/insurance/EnhancementQueue.tsx,,ok,OK
+insurance_intimations,TABLE,UPDATE|READ,5,src/components/insurance/ActiveAdmissions.tsx ; src/components/insurance/IntimationsTab.tsx ; src/components/insurance/PreAuthQualityGate.tsx ; src/lib/dayCareCancel.ts,,ok,OK
+insurance_payment_reconciliation,TABLE,READ|INSERT|UPDATE,1,src/components/insurance/PaymentReconciliation.tsx,,ok,OK
+insurance_pre_auth,TABLE,READ|UPDATE|INSERT|DELETE,24,src/components/billing/tabs/InsuranceTab.tsx ; src/components/insurance/ActiveAdmissions.tsx ; src/components/insurance/AppealLetterModal.tsx ; src/components/insurance/AutomationStatusPipeline.tsx,,ok,OK
+insurance_sla_log,TABLE,INSERT,3,src/components/insurance/SLATimer.tsx ; src/lib/insuranceAlerts.ts ; supabase/functions/insurance-daily-alerts/index.ts,,ok,OK
+inventory_anomalies,TABLE,READ|UPDATE,1,src/components/inventory/AnomaliesPanel.tsx,,ok,OK
+inventory_items,TABLE,READ|UPDATE,16,src/components/inventory/GRNPanel.tsx ; src/components/inventory/IndentsPanel.tsx ; src/components/inventory/InventoryDemandReview.tsx ; src/components/inventory/InventoryMISPanel.tsx,,ok,OK
+inventory_stock,TABLE,READ|UPDATE|INSERT,14,src/components/inventory/ConsolidatedStockPanel.tsx ; src/components/inventory/GRNPanel.tsx ; src/components/inventory/IndentsPanel.tsx ; src/components/inventory/InventoryDemandReview.tsx,,ok,OK
+inventory_value_by_hospital,VIEW,READ,1,src/hooks/useAnalyticsData.ts,,ok,OK
+io_balance_records,TABLE,READ|INSERT,1,src/pages/ipd/ICUWorkspacePage.tsx,,ok,OK
+ipc_bundle_checklists,TABLE,INSERT|READ,5,src/components/ipc/BundleChecklistModal.tsx ; src/components/ipd/tabs/IPDDeviceTab.tsx ; src/components/ipd/tabs/NursingKardexTab.tsx ; src/pages/ipc/IPCDashboardPage.tsx,,ok,OK
+ipc_device_usage,TABLE,INSERT|UPDATE|READ,5,src/components/ipc/LogDeviceModal.tsx ; src/components/ipc/RemoveDeviceDialog.tsx ; src/components/ipd/tabs/IPDDeviceTab.tsx ; src/components/ipd/tabs/NursingKardexTab.tsx,,ok,OK
+ipc_infection_events,TABLE,READ|INSERT,3,src/components/quality/InfectionControlTab.tsx ; src/pages/ipc/IPCDashboardPage.tsx ; supabase/functions/ai-nabh-assistant/index.ts,,ok,OK
+ipd_admissions,MISSING,READ,1,e2e/phase-02-settings/P2D.structure.wards.spec.ts,admissions,CONTRACT VIOLATION - runtime error/silent failure,HIGH
+ipd_advance_balances,VIEW,READ,11,src/components/billing/tabs/AdvanceApplicationTab.tsx ; src/components/ipd/DayCareCancelModal.tsx ; src/components/ipd/DayCareFinancialPanel.tsx ; src/components/ipd/DayCareRescheduleModal.tsx,,ok,OK
+ipd_advances,TABLE,INSERT|READ,9,src/components/billing/AdvanceReceiptModal.tsx ; src/components/billing/RefundApprovalsInbox.tsx ; src/components/billing/tabs/AdvanceApplicationTab.tsx ; src/components/ipd/tabs/IPDFinancialTab.tsx,,ok,OK
+ipd_charges,MISSING,READ,2,e2e/phase-02-settings/P2D.structure.wards.spec.ts ; e2e/phase-02-settings/P2J.downstream.spec.ts,service_charges,CONTRACT VIOLATION - runtime error/silent failure,HIGH
+ipd_medications,TABLE,READ|INSERT|UPDATE|DELETE,19,src/components/ipd/ADRDetectorPanel.tsx ; src/components/ipd/DischargeSummaryGenerator.tsx ; src/components/ipd/IPDWorkspace.tsx ; src/components/ipd/MedReconciliationPanel.tsx,,ok,OK
+ipd_nursing_notes,TABLE,READ|INSERT,1,src/components/ipd/tabs/IPDNotesTab.tsx,,ok,OK
+ipd_vitals,TABLE,READ,6,src/components/ipd/ADRDetectorPanel.tsx ; src/components/ipd/IPDWorkspace.tsx ; src/components/ipd/tabs/IPDOverviewTab.tsx ; src/components/nursing/IOChartTab.tsx,,ok,OK
+iv_fluids,TABLE,READ|INSERT|UPDATE,2,src/components/nursing/IOChartTab.tsx ; src/pages/tv/WardNursingBoard.tsx,,ok,OK
+ivf_cycles,TABLE,READ|INSERT|UPDATE,4,src/components/ivf/CyclesTab.tsx ; src/components/ivf/ICMRComplianceTab.tsx ; src/components/ivf/StimulationTab.tsx ; src/pages/ivf/IVFPage.tsx,,ok,OK
+jci_evidence_items,TABLE,READ|INSERT,1,src/pages/quality/JCIAccreditationPage.tsx,,ok,OK
+job_applicants,TABLE,READ|INSERT|UPDATE,2,src/components/hr/RecruitmentTab.tsx ; src/pages/settings/SettingsStaffPage.tsx,,ok,OK
+job_openings,TABLE,READ|INSERT,1,src/components/hr/RecruitmentTab.tsx,,ok,OK
+journal_entries,TABLE,READ|INSERT,10,src/components/accounts/AccountsDashboardTab.tsx ; src/components/accounts/JournalTab.tsx ; src/components/accounts/ReportsTab.tsx ; src/components/hr/OffboardingTab.tsx,,ok,OK
+journal_entry_lines,MISSING,READ|INSERT,2,src/components/hr/OffboardingTab.tsx ; src/components/hr/PayrollTab.tsx,journal_line_items,CONTRACT VIOLATION - runtime error/silent failure,CRITICAL
+journal_line_items,TABLE,READ|INSERT|UPDATE,12,src/components/accounts/AccountsDashboardTab.tsx ; src/components/accounts/BankTab.tsx ; src/components/accounts/JournalTab.tsx ; src/components/accounts/LedgerTab.tsx,,ok,OK
+lab_analyzer_messages,TABLE,READ|UPDATE|INSERT,2,src/components/lab/LabAnalyzerTab.tsx ; supabase/functions/lab-analyzer-ingest/index.ts,,ok,OK
+lab_analyzer_test_mappings,TABLE,READ|INSERT|DELETE,2,src/components/lab/LabAnalyzerTab.tsx ; supabase/functions/lab-analyzer-ingest/index.ts,,ok,OK
+lab_calibration_records,TABLE,READ|INSERT,1,src/components/lab/LabCalibrationTab.tsx,,ok,OK
+lab_device_connectors,TABLE,READ|INSERT|UPDATE|DELETE,4,src/components/lab/LabAnalyzerTab.tsx ; src/pages/settings/IntegrationsHubPage.tsx ; supabase/functions/lab-analyzer-ingest/index.ts ; e2e/phase-02-settings/P2I.integrations.spec.ts,,ok,OK
+lab_dual_validation_config,TABLE,READ|INSERT,3,src/components/lab/LabResultWorkspace.tsx ; e2e/phase-05-lab-radiology/P5D.verification-dual-amendment.spec.ts ; scripts/qa-seed.mjs,,ok,OK
+lab_order_items,TABLE,READ|UPDATE|INSERT,29,src/components/analytics/AIDigestTab.tsx ; src/components/analytics/CustomReportBuilder.tsx ; src/components/billing/LeakageScanner.tsx ; src/components/billing/RevenueIntelligencePanel.tsx,,ok,OK
+lab_orders,TABLE,READ|UPDATE|INSERT|DELETE,54,src/components/billing/UnbilledServicesModal.tsx ; src/components/emergency/EmergencyWorkspace.tsx ; src/components/insurance/ClaimBundleGenerator.tsx ; src/components/insurance/ClaimsPackWizard.tsx,,ok,OK
+lab_qc_entries,TABLE,READ|INSERT,2,src/components/lab/LabQCDashboard.tsx ; src/lib/labQc.ts,,ok,OK
+lab_reports,MISSING,READ,1,supabase/functions/abdm-auto-link-care-context/index.ts,lab_results,CONTRACT VIOLATION - runtime error/silent failure,HIGH
+lab_results,TABLE,READ|INSERT|UPDATE,1,src/components/lab/LabResultWorkspace.tsx,,ok,OK
+lab_samples,TABLE,READ|INSERT|UPDATE,9,src/components/lab/CollectionWorkstation.tsx ; src/components/lab/LabResultWorkspace.tsx ; src/components/lab/NewLabOrderModal.tsx ; src/lib/labSamples.ts,,ok,OK
+lab_test_group_items,TABLE,INSERT|DELETE|READ,4,src/pages/settings/SettingsLabTestsPage.tsx ; e2e/phase-02-settings/P2G.clinical.lab-drugs.spec.ts ; e2e/phase-05-lab-radiology/lab-rad-helpers.ts ; scripts/qa-seed.mjs,,ok,OK
+lab_test_groups,TABLE,READ|UPDATE|INSERT|DELETE,9,src/components/lab/NewLabOrderModal.tsx ; src/components/opd/tabs/RxOrdersTab.tsx ; src/lib/orderCatalogue.ts ; src/pages/settings/SettingsLabTestsPage.tsx,,ok,OK
+lab_test_master,TABLE,READ|INSERT|UPDATE|DELETE,26,src/components/billing/UnbilledServicesModal.tsx ; src/components/lab/LabAnalyzerTab.tsx ; src/components/lab/NewLabOrderModal.tsx ; src/components/migration/ImportWizard.tsx,,ok,OK
+leakage_reports,TABLE,READ|INSERT|UPDATE,4,src/components/billing/RevenueLeak/LeakageDashboard.tsx ; src/pages/hod/CEOBoardPage.tsx ; supabase/functions/ai-revenue-leak-detector/index.ts ; supabase/functions/daily-leakage-scan/index.ts,,ok,OK
+leave_balance,TABLE,READ|UPDATE,3,src/components/hr/LeaveManagementTab.tsx ; src/components/hr/OffboardingTab.tsx ; src/pages/hr/MyHRPage.tsx,,ok,OK
+leave_requests,TABLE,READ|UPDATE|INSERT,4,src/components/hr/HRReportsTab.tsx ; src/components/hr/LeaveManagementTab.tsx ; src/components/hr/RosterOptimizerPanel.tsx ; src/pages/hr/MyHRPage.tsx,,ok,OK
+lifecycle_nudge_actions,TABLE,READ|INSERT,1,supabase/functions/lifecycle-nudge-scan/index.ts,,ok,OK
+linen_records,TABLE,READ|INSERT,1,src/components/housekeeping/LinenTab.tsx,,ok,OK
+lms_certificates,TABLE,READ|INSERT,1,src/pages/lms/LMSPage.tsx,,ok,OK
+lms_courses,TABLE,READ|INSERT,1,src/pages/lms/LMSPage.tsx,,ok,OK
+lms_enrollments,TABLE,READ|UPDATE|INSERT,1,src/pages/lms/LMSPage.tsx,,ok,OK
+lms_quiz_attempts,TABLE,INSERT,1,src/pages/lms/LMSPage.tsx,,ok,OK
+lms_quiz_questions,TABLE,READ|INSERT,1,src/pages/lms/LMSPage.tsx,,ok,OK
+mar_double_checks,TABLE,INSERT,1,src/components/nursing/NursingMedicationTask.tsx,,ok,OK
+marketing_campaigns,TABLE,INSERT|READ|UPDATE,1,src/pages/crm/CRMPage.tsx,,ok,OK
+mccd_certificates,TABLE,READ|INSERT,1,src/pages/mortuary/MortuaryPage.tsx,,ok,OK
+mci_events,TABLE,READ|INSERT|UPDATE,1,src/pages/emergency/MCIActivationPage.tsx,,ok,OK
+mci_triage_patients,TABLE,READ|INSERT,1,src/pages/emergency/MCIActivationPage.tsx,,ok,OK
+meal_deliveries,TABLE,READ|INSERT|UPDATE,1,src/pages/dietetics/DietPage.tsx,,ok,OK
+med_reconciliation_events,TABLE,READ|INSERT,1,src/components/ipd/MedReconciliationPanel.tsx,,ok,OK
+medical_gas_logs,TABLE,READ|INSERT|DELETE,1,src/components/fms/MedicalGasTab.tsx,,ok,OK
+medical_records,TABLE,INSERT|READ,4,src/components/ipd/AdmitPatientModal.tsx ; src/components/mrd/RecordsIndexTab.tsx ; src/components/opd/ConsultationWorkspace.tsx ; src/pages/mrd/MRDPage.tsx,,ok,OK
+mental_health_encounters,TABLE,READ|INSERT,2,src/components/mental-health/MHConsultationTab.tsx ; src/pages/mental-health/MentalHealthPage.tsx,,ok,OK
+migration_jobs,TABLE,INSERT|UPDATE|READ,2,src/components/migration/ImportWizard.tsx ; src/pages/admin/DataMigrationPage.tsx,,ok,OK
+migration_logs,TABLE,INSERT|UPDATE|READ,2,src/components/migration/ImportWizard.tsx ; src/pages/admin/DataMigrationPage.tsx,,ok,OK
+mlc_cases,TABLE,READ|INSERT,3,src/components/emergency/MLCDetailsModal.tsx ; src/components/ipd/IPDWorkspace.tsx ; src/components/mrd/MLCRegisterTab.tsx,,ok,OK
+mlc_records,TABLE,INSERT|READ|UPDATE,2,src/lib/edMortuary.ts ; src/pages/mortuary/MortuaryPage.tsx,,ok,OK
+modalities,MISSING,READ,1,src/components/billing/UnbilledServicesModal.tsx,radiology_modalities,CONTRACT VIOLATION - runtime error/silent failure,HIGH
+mortuary_admissions,TABLE,INSERT|READ|UPDATE,3,src/lib/edMortuary.ts ; src/pages/mortuary/MortuaryPage.tsx ; e2e/phase-03-patient-records/P3C.emergency-newborn.spec.ts,,ok,OK
+mrr_snapshots,TABLE,INSERT,1,supabase/functions/mrr-snapshot-job/index.ts,,ok,OK
+nabh_chapter_names,TABLE,READ,1,src/components/quality/QualityIndicatorsTab.tsx,,ok,OK
+nabh_criteria,TABLE,READ,2,src/components/analytics/QualityTab.tsx ; src/components/quality/NABHDashboard.tsx,,ok,OK
+nabh_evidence_items,TABLE,READ|INSERT|DELETE,6,src/components/nabh/EvidenceGapsModal.tsx ; src/components/nabh/EvidenceManager.tsx ; src/components/nabh/NABHAssistantPanel.tsx ; src/components/nabh/WeeklyDigestModal.tsx,,ok,OK
+nabh_evidence_log,TABLE,INSERT|READ,7,src/lib/nabh-evidence.ts ; src/pages/quality/QualityPage.tsx ; src/tests/security/quality-indicators-rls.test.ts ; supabase/functions/ai-history-digest/index.ts,,ok,OK
+nabh_hospital_compliance,TABLE,READ|INSERT,7,src/components/dashboard/NABHReadinessCard.tsx ; src/components/nabh/EvidenceGapsModal.tsx ; src/components/safety/ReportEventModal.tsx ; src/pages/nabh/NABHMatrixPage.tsx,,ok,OK
+nabh_standards,TABLE,READ|INSERT,4,src/components/safety/ReportEventModal.tsx ; src/pages/nabh/NABHMatrixPage.tsx ; src/pages/quality/CommitteesPage.tsx ; src/pages/quality/SafetyEventsPage.tsx,,ok,OK
+ndps_pending_dispenses,TABLE,READ|INSERT|UPDATE,1,src/components/pharmacy/ip/NDPSDualSignoffModal.tsx,,ok,OK
+ndps_register,TABLE,READ|INSERT,5,src/components/pharmacy/ip/DispensingWorkspace.tsx ; src/components/pharmacy/PharmacyNDPSTab.tsx ; src/components/pharmacy/PharmacyReportsTab.tsx ; src/components/pharmacy/retail/RetailPayment.tsx,,ok,OK
+neonatal_records,TABLE,READ|INSERT|UPDATE,2,src/components/specialty/NeonatalSheet.tsx ; src/pages/hmis/HMISPage.tsx,,ok,OK
+no_show_predictions,TABLE,UPDATE|INSERT|READ,3,src/components/opd/TokenQueue.tsx ; src/components/schedule/NoShowRiskPanel.tsx ; src/lib/clinicalPredictions.ts,,ok,OK
+notification_log,TABLE,READ|INSERT,2,src/pages/notifications/NotificationsPage.tsx ; supabase/functions/alert-escalation/index.ts,,ok,OK
+notification_preferences,TABLE,INSERT,1,src/pages/notifications/NotificationsPage.tsx,,ok,OK
+notification_queue,TABLE,READ|UPDATE,1,supabase/functions/notification-dispatcher/index.ts,,ok,OK
+nps_responses,TABLE,READ|INSERT,2,src/pages/platform/CustomerSuccessPage.tsx ; supabase/functions/nps-survey-respond/index.ts,,ok,OK
+nps_surveys,TABLE,READ|INSERT|DELETE|UPDATE,2,supabase/functions/nps-survey-dispatch/index.ts ; supabase/functions/nps-survey-respond/index.ts,,ok,OK
+nursing_care_plans,TABLE,INSERT|READ|UPDATE,2,src/components/nursing/CarePlanModal.tsx ; src/components/nursing/CarePlansTab.tsx,,ok,OK
+nursing_fluid_outputs,TABLE,READ|INSERT,1,src/components/nursing/IOChartTab.tsx,,ok,OK
+nursing_handovers,TABLE,INSERT,1,src/components/nursing/NursingHandoverTask.tsx,,ok,OK
+nursing_mar,TABLE,READ|UPDATE|INSERT,8,src/components/ipd/DischargeSummaryGenerator.tsx ; src/components/ipd/tabs/NursingKardexTab.tsx ; src/components/nursing/NursingMedicationTask.tsx ; src/components/oncology/VialSharingCard.tsx,,ok,OK
+nursing_procedure_consumables,TABLE,INSERT,1,src/components/nursing/NursingProcedureModal.tsx,,ok,OK
+nursing_procedures,TABLE,INSERT|READ|UPDATE,2,src/components/nursing/NursingProcedureModal.tsx ; src/lib/ipdBilling.ts,,ok,OK
+nursing_vitals,TABLE,READ|INSERT,11,src/components/ipd/DischargeSummaryGenerator.tsx ; src/components/ipd/IPDWorkspace.tsx ; src/components/ipd/ReadmissionRiskPanel.tsx ; src/components/ipd/SepsisWarningBanner.tsx,,ok,OK
+nutrition_screenings,TABLE,READ|INSERT,1,src/components/ipd/tabs/NutritionDieteticsTab.tsx,,ok,OK
+nutritional_screenings,TABLE,READ|INSERT,1,src/pages/dietetics/DietPage.tsx,,ok,OK
+oauth_provider_settings,TABLE,READ|INSERT,2,src/pages/platform/PlatformSettingsPage.tsx ; supabase/functions/update-oauth-providers/index.ts,,ok,OK
+obstetric_records,TABLE,READ|INSERT|UPDATE,5,src/components/mrd/MaternityRegisterTab.tsx ; src/components/specialty/ObstetricSheet.tsx ; src/pages/hmis/HMISPage.tsx ; src/pages/hod/HODDashboardPage.tsx,,ok,OK
+occupational_health_records,TABLE,READ|INSERT|DELETE,1,src/components/hr/OccupationalHealthTab.tsx,,ok,OK
+onboarding_tasks,TABLE,READ|INSERT|UPDATE,1,src/components/hr/RecruitmentTab.tsx,,ok,OK
+oncology_patients,TABLE,READ|INSERT,3,src/components/oncology/DaycareBoardTab.tsx ; src/components/oncology/OncologyPatientsTab.tsx ; src/pages/oncology/OncologyPage.tsx,,ok,OK
+online_reviews,TABLE,INSERT|UPDATE|READ,2,src/components/crm/ReviewSentimentAnalyser.tsx ; src/pages/crm/CRMPage.tsx,,ok,OK
+opd_diagnoses,TABLE,READ|INSERT|UPDATE|DELETE,3,src/components/opd/DiagnosisPanel.tsx ; src/pages/patients/PatientSummaryPage.tsx ; supabase/functions/fhir-export/index.ts,,ok,OK
+opd_encounters,TABLE,READ|INSERT|UPDATE,34,src/components/analytics/AIDigestTab.tsx ; src/components/analytics/CustomReportBuilder.tsx ; src/components/analytics/DepartmentDetailModal.tsx ; src/components/analytics/ExportModal.tsx,,ok,OK
+opd_tokens,TABLE,READ|UPDATE|INSERT|DELETE,30,src/components/analytics/DepartmentDetailModal.tsx ; src/components/ayush/ConsultationTab.tsx ; src/components/clinical/OverdueFollowupBanner.tsx ; src/components/opd/ConsultationWorkspace.tsx,,ok,OK
+opd_visits,TABLE,READ|INSERT,3,src/components/dashboard/drilldowns/OPDDrillDown.tsx ; src/hooks/useDashboardData.ts ; supabase/functions/seed-dashboard/index.ts,,ok,OK
+ophthalmology_records,TABLE,READ|INSERT|UPDATE,1,src/components/specialty/OphthalmologySheet.tsx,,ok,OK
+organ_donations,TABLE,READ|INSERT,1,src/pages/mortuary/MortuaryPage.tsx,,ok,OK
+ot_cases,MISSING,READ,2,src/components/ipd/PreDischargeLeakageBanner.tsx ; src/pages/portal/PortalHealthStoryPage.tsx,ot_schedules,CONTRACT VIOLATION - runtime error/silent failure,HIGH
+ot_checklist_custom_items,TABLE,READ|INSERT|DELETE,2,src/pages/settings/SettingsOTChecklistPage.tsx ; e2e/phase-02-settings/P2G.clinical.masters.spec.ts,,ok,OK
+ot_checklists,TABLE,INSERT|READ|UPDATE,3,src/components/ot/BookOTModal.tsx ; src/components/ot/EndCaseModal.tsx ; src/components/ot/tabs/WHOChecklistTab.tsx,,ok,OK
+ot_consumables,TABLE,READ|INSERT|DELETE|UPDATE,1,src/components/ot/tabs/OTImplantsConsumablesTab.tsx,,ok,OK
+ot_equipment_checklist,TABLE,READ|INSERT|UPDATE,1,src/components/ot/tabs/OTTeamTab.tsx,,ok,OK
+ot_implants,TABLE,READ|INSERT|DELETE|UPDATE,5,src/components/ot/EndCaseModal.tsx ; src/components/ot/tabs/OTBillingTab.tsx ; src/components/ot/tabs/OTImplantsConsumablesTab.tsx ; src/lib/ipdBilling.ts,,ok,OK
+ot_instrument_counts,TABLE,READ|INSERT|UPDATE,1,src/components/ot/tabs/WHOChecklistTab.tsx,,ok,OK
+ot_rooms,TABLE,READ|INSERT,3,src/components/emergency/EmergencyWorkspace.tsx ; src/components/ot/OTOptimizerPanel.tsx ; src/pages/ot/OTPage.tsx,,ok,OK
+ot_schedules,TABLE,READ|INSERT|UPDATE,29,src/components/billing/LeakageScanner.tsx ; src/components/billing/RevenueIntelligencePanel.tsx ; src/components/blood-bank/BloodDemandForecastPanel.tsx ; src/components/blood-bank/ReportsTab.tsx,,ok,OK
+ot_team_members,TABLE,READ|INSERT|UPDATE,1,src/components/ot/tabs/OTTeamTab.tsx,,ok,OK
+outcome_scores,TABLE,READ|INSERT,1,src/pages/physio/PhysioPage.tsx,,ok,OK
+overtime_requests,TABLE,READ|UPDATE|INSERT,2,src/components/hr/AttendanceApprovalsPanel.tsx ; src/pages/hr/MyHRPage.tsx,,ok,OK
+package_bookings,TABLE,INSERT|UPDATE|READ,8,src/components/packages/BookPackageModal.tsx ; src/components/packages/CorporateTab.tsx ; src/components/packages/PackageAnalyticsTab.tsx ; src/components/packages/ProgressTrackerTab.tsx,,ok,OK
+package_extras,TABLE,READ,1,src/lib/packageGuard.ts,,ok,OK
+package_inclusions,TABLE,READ,1,src/lib/packageGuard.ts,,ok,OK
+pacs_connectors,TABLE,READ|INSERT|UPDATE,2,src/pages/settings/IntegrationsHubPage.tsx ; e2e/phase-02-settings/P2I.integrations.spec.ts,,ok,OK
+pacu_assessments,TABLE,READ|INSERT,2,src/components/ot/tabs/PACUTab.tsx ; src/components/specialty/AnaesthesiaSheet.tsx,,ok,OK
+pain_audit_records,TABLE,READ|INSERT|DELETE,1,src/components/quality/PainManagementTab.tsx,,ok,OK
+palliative_care_plans,TABLE,READ|INSERT|UPDATE,1,src/components/ipd/tabs/PalliativeCareTab.tsx,,ok,OK
+panchakarma_schedules,TABLE,READ|INSERT|UPDATE,2,src/components/ayush/PanchakarmaTab.tsx ; src/pages/ayush/AyushPage.tsx,,ok,OK
+partograph_entries,TABLE,READ|INSERT,1,src/components/specialty/Partograph.tsx,,ok,OK
+pathology_cases,TABLE,READ|INSERT|UPDATE,2,src/components/lab/PathologyCaseList.tsx ; src/components/lab/PathologyCaseWorkspace.tsx,,ok,OK
+patient_abha_profiles,TABLE,READ|INSERT,10,src/components/abdm/ConsentStatusBanner.tsx ; src/components/dashboard/ABDMComplianceCard.tsx ; src/pages/ABDMComplianceDashboard.tsx ; supabase/functions/abdm-abha-create/index.ts,,ok,OK
+patient_acquisition,TABLE,READ|INSERT,4,src/components/crm/ReferralPatternAnalyser.tsx ; src/components/opd/WalkInModal.tsx ; src/components/patients/PatientRegistrationModal.tsx ; src/pages/crm/CRMPage.tsx,,ok,OK
+patient_ai_context,TABLE,READ|INSERT,4,src/hooks/usePatientAIContext.ts ; src/pages/patients/PatientSummaryPage.tsx ; supabase/functions/ai-clinical-voice/index.ts ; supabase/functions/update-patient-ai-context/index.ts,,ok,OK
+patient_consents,TABLE,INSERT|READ|DELETE,8,src/components/consent/ConsentSignatureModal.tsx ; src/components/insurance/ClaimBundleGenerator.tsx ; src/components/ipd/IPDWorkspace.tsx ; src/components/opd/WalkInModal.tsx,,ok,OK
+patient_documents,TABLE,READ|INSERT|DELETE,4,src/components/clinical/PatientDocuments.tsx ; src/components/insurance/PreAuthQualityGate.tsx ; e2e/phase-03-patient-records/P3I.documents.spec.ts ; e2e/phase-03-patient-records/purge-helpers.ts,,ok,OK
+patient_feedback,TABLE,INSERT,1,src/pages/portal/PortalFeedback.tsx,,ok,OK
+patient_history_digests,TABLE,UPDATE|READ|INSERT,3,src/components/clinical/PatientHistoryTimeline.tsx ; src/lib/historyDigest.ts ; supabase/functions/ai-history-digest/index.ts,,ok,OK
+patient_history_ingest_jobs,TABLE,READ|INSERT|UPDATE,3,src/components/clinical/PatientHistoryUploadPanel.tsx ; supabase/functions/ai-history-digest/index.ts ; supabase/functions/ai-history-ingest/index.ts,,ok,OK
+patient_history_source_chunks,TABLE,READ|UPDATE|INSERT,2,supabase/functions/ai-history-digest/index.ts ; supabase/functions/ai-history-ingest/index.ts,,ok,OK
+patient_history_sources,TABLE,READ|INSERT|UPDATE,3,src/components/clinical/PatientHistoryUploadPanel.tsx ; supabase/functions/ai-history-digest/index.ts ; supabase/functions/ai-history-ingest/index.ts,,ok,OK
+patient_portal_sessions,TABLE,READ|INSERT|UPDATE,1,src/pages/portal/PortalLogin.tsx,,ok,OK
+patient_rights_acknowledgements,TABLE,READ|INSERT,1,src/pages/pro/PROPage.tsx,,ok,OK
+patient_segments,TABLE,READ|INSERT,1,src/pages/crm/CRMPage.tsx,,ok,OK
+patient_vitals,MISSING,READ,1,src/pages/portal/PortalHealthCoachPage.tsx,ipd_vitals / nursing_vitals,CONTRACT VIOLATION - runtime error/silent failure,HIGH
+patient_voice_sessions,TABLE,INSERT,1,supabase/functions/bhashini-patient-transcribe/index.ts,,ok,OK
+patients,TABLE,READ|INSERT|UPDATE|DELETE,127,src/components/ayush/PanchakarmaTab.tsx ; src/components/ayush/PrakritiTab.tsx ; src/components/billing/AdvanceReceiptModal.tsx ; src/components/billing/BillEditor.tsx,,ok,OK
+payer_masters,TABLE,READ|UPDATE|INSERT|DELETE,7,src/components/ipd/AdmitPatientModal.tsx ; src/components/opd/WalkInModal.tsx ; src/lib/creditLimitCheck.ts ; src/pages/settings/SettingsPayerMastersPage.tsx,,ok,OK
+payment_links,TABLE,INSERT|READ|UPDATE,5,src/components/billing/CollectionCampaignModal.tsx ; src/components/billing/tabs/CollectionsTab.tsx ; src/lib/paymentLinks.ts ; src/pages/billing/PaymentsPage.tsx,,ok,OK
+payroll_hooks,TABLE,READ|INSERT,1,src/components/hr/PayrollIntegrationsTab.tsx,,ok,OK
+payroll_items,TABLE,INSERT|READ|UPDATE,3,src/components/hr/PayrollTab.tsx ; src/lib/payrollExports.ts ; src/pages/hr/MyHRPage.tsx,,ok,OK
+payroll_runs,TABLE,READ|INSERT|UPDATE,5,src/components/hr/HRReportsTab.tsx ; src/components/hr/PayrollIntegrationsTab.tsx ; src/components/hr/PayrollRunTab.tsx ; src/components/hr/PayrollTab.tsx,,ok,OK
+payslips,TABLE,READ|INSERT,4,src/components/hr/PayrollIntegrationsTab.tsx ; src/components/hr/PayrollRunTab.tsx ; src/lib/payrollExports.ts ; src/pages/hr/MyHRPage.tsx,,ok,OK
+pcpndt_form_f,TABLE,INSERT|UPDATE|READ,7,src/components/radiology/NewRadiologyOrderModal.tsx ; src/components/radiology/RadiologyReportingWorkspace.tsx ; src/lib/investigationSync.ts ; src/pages/hmis/HMISPage.tsx,,ok,OK
+pcpndt_records,TABLE,READ|INSERT|UPDATE,4,src/components/radiology/PCPNDTFormModal.tsx ; src/components/radiology/RadiologyReportingWorkspace.tsx ; src/pages/radiology/PCPNDTRegisterPage.tsx ; e2e/phase-05-lab-radiology/lab-rad-helpers.ts,,ok,OK
+pcpndt_settings,TABLE,READ|INSERT|UPDATE,6,src/pages/settings/SettingsRadiologyPage.tsx ; e2e/phase-02-settings/P2G.clinical.alerts-radiology.spec.ts ; e2e/phase-02-settings/P2J.downstream.spec.ts ; e2e/phase-05-lab-radiology/P5G.pcpndt-form-f.spec.ts,,ok,OK
+performance_appraisals,TABLE,READ|INSERT,1,src/components/hr/PerformanceAppraisalTab.tsx,,ok,OK
+periodontal_charts,TABLE,INSERT,1,src/components/dental/PeriodontalTab.tsx,,ok,OK
+pharmacy_dispenses,MISSING,READ,1,src/pages/platform/HospitalDetailPage.tsx,pharmacy_dispensing,CONTRACT VIOLATION - runtime error/silent failure,HIGH
+pharmacy_dispensing,TABLE,READ|UPDATE|INSERT,18,src/components/billing/LeakageScanner.tsx ; src/components/billing/RevenueIntelligencePanel.tsx ; src/components/billing/UnbilledServicesModal.tsx ; src/components/emergency/EmergencyWorkspace.tsx,,ok,OK
+pharmacy_dispensing_items,TABLE,READ|INSERT|UPDATE,13,src/components/billing/UnbilledServicesModal.tsx ; src/components/inventory/DrugForecastPanel.tsx ; src/components/patients/PatientTimelineDrawer.tsx ; src/components/pharmacy/ip/DispensingWorkspace.tsx,,ok,OK
+pharmacy_return_audit,TABLE,INSERT,1,src/lib/pharmacyReturns.ts,,ok,OK
+pharmacy_stock_alerts,TABLE,READ|UPDATE|INSERT,3,src/components/pharmacy/StockAlertsDrawer.tsx ; src/pages/pharmacy/PharmacyPage.tsx ; supabase/functions/seed-pharmacy/index.ts,,ok,OK
+pharmacy_supplier_returns,TABLE,INSERT,1,src/components/pharmacy/ExpiryControlTab.tsx,,ok,OK
+pharmacy_waste_disposal,TABLE,INSERT,1,src/components/pharmacy/ExpiryControlTab.tsx,,ok,OK
+phi_access_audit,TABLE,INSERT,1,supabase/functions/upsert-patient-phi/index.ts,,ok,OK
+phi_backfill_log,TABLE,READ|INSERT|UPDATE,2,src/lib/key-rotation.ts ; supabase/functions/phi-backfill-encrypt/index.ts,,ok,OK
+phi_encryption_keys,TABLE,READ|INSERT,2,src/lib/key-rotation.ts ; supabase/functions/_shared/phi-crypto.ts,,ok,OK
+physio_equipment_bookings,TABLE,READ|UPDATE|INSERT,1,src/pages/physio/PhysioPage.tsx,,ok,OK
+physio_referrals,TABLE,INSERT|READ|UPDATE,3,src/components/ipd/IPDWorkspace.tsx ; src/components/opd/ConsultationWorkspace.tsx ; src/pages/physio/PhysioPage.tsx,,ok,OK
+physio_sessions,TABLE,READ|INSERT|UPDATE,1,src/pages/physio/PhysioPage.tsx,,ok,OK
+plan_features,TABLE,READ|INSERT,6,src/contexts/HospitalContext.tsx ; src/hooks/useSubscriptionConfig.ts ; src/pages/platform/HospitalDetailPage.tsx ; src/pages/platform/PlansManagerPage.tsx,,ok,OK
+platform_ai_keys,TABLE,READ|INSERT|UPDATE,8,src/components/voice/VoiceDictationButton.tsx ; src/pages/platform/PlatformAIConfigPage.tsx ; supabase/functions/ai-clinical-voice/index.ts ; supabase/functions/ai-proxy/index.ts,,ok,OK
+platform_ai_provider_config,TABLE,READ|UPDATE|INSERT,3,src/lib/aiProvider.ts ; src/pages/platform/PlatformAIConfigPage.tsx ; supabase/functions/_shared/ai-config.ts,,ok,OK
+platform_billing_settings,TABLE,INSERT|READ,4,src/pages/platform/PlatformSettingsPage.tsx ; supabase/functions/generate-invoice/index.ts ; supabase/functions/trial-lifecycle-cron/index.ts ; supabase/functions/_shared/platform-razorpay-config.ts,,ok,OK
+platform_feature_flag_overrides,TABLE,READ|INSERT|DELETE,1,src/pages/platform/FeatureFlagsPage.tsx,,ok,OK
+platform_feature_flags,TABLE,READ|INSERT|UPDATE|DELETE,1,src/pages/platform/FeatureFlagsPage.tsx,,ok,OK
+platform_incident_updates,TABLE,READ|INSERT|UPDATE,2,src/pages/platform/IncidentsPage.tsx ; src/pages/public/PublicStatusPage.tsx,,ok,OK
+platform_incidents,TABLE,READ|INSERT|UPDATE,2,src/pages/platform/IncidentsPage.tsx ; src/pages/public/PublicStatusPage.tsx,,ok,OK
+platform_metrics_registry,TABLE,READ,1,src/components/platform/MetricInfoIcon.tsx,,ok,OK
+platform_onboarding_tours,TABLE,READ,2,src/components/onboarding/OnboardingTour.tsx ; src/pages/platform/CustomerSuccessPage.tsx,,ok,OK
+platform_payment_config_status,VIEW,READ,1,src/pages/platform/PlatformSettingsPage.tsx,,ok,OK
+platform_settings,TABLE,READ|INSERT,4,src/pages/platform/PlatformSettingsPage.tsx ; supabase/functions/register-hospital/index.ts ; supabase/functions/send-signup-otp/index.ts ; supabase/functions/_shared/platform-rate.ts,,ok,OK
+platform_support_tickets,TABLE,READ|INSERT|UPDATE|DELETE,3,src/pages/platform/SupportConsolePage.tsx ; src/pages/settings/SettingsSupportPage.tsx ; e2e/phase-02-settings/P2B.identity.brand-support.spec.ts,,ok,OK
+platform_training_videos,TABLE,READ|INSERT|UPDATE,3,src/pages/platform/CustomerSuccessPage.tsx ; src/pages/settings/SettingsTrainingPage.tsx ; e2e/phase-02-settings/P2B.identity.brand-support.spec.ts,,ok,OK
+pm_schedules,TABLE,READ|UPDATE|INSERT,5,src/components/biomedical/AlertsTab.tsx ; src/components/biomedical/EquipmentTab.tsx ; src/components/biomedical/MaintenanceTab.tsx ; src/components/biomedical/PredictiveMaintenanceSection.tsx,,ok,OK
+pmjay_claims,TABLE,READ|UPDATE|INSERT,6,src/components/insurance/UnifiedAgeingView.tsx ; src/components/pharmacy/ip/DrugReturnModal.tsx ; src/components/pmjay/PmjayAnalyticsTab.tsx ; src/components/pmjay/PmjayClaimsTab.tsx,,ok,OK
+pmjay_package_master,TABLE,READ,1,supabase/functions/pmjay-claim-submit/index.ts,,ok,OK
+pmjay_packages,TABLE,READ|INSERT,3,src/components/mrd/ICDCodingTab.tsx ; src/components/pmjay/PmjayPackagesTab.tsx ; src/components/pmjay/PmjayPreAuthTab.tsx,,ok,OK
+po_approval_rules,TABLE,READ|INSERT|DELETE,1,src/components/inventory/PurchaseOrdersPanel.tsx,,ok,OK
+po_items,TABLE,READ|UPDATE|INSERT,4,src/components/inventory/GRNPanel.tsx ; src/components/inventory/PurchaseOrdersPanel.tsx ; src/components/inventory/RfqPanel.tsx ; src/pages/inventory/ProcurementRecommendationsPage.tsx,,ok,OK
+portal_chat_messages,TABLE,READ|INSERT|DELETE,1,src/pages/portal/PortalChatPage.tsx,,ok,OK
+prakriti_assessments,TABLE,READ|INSERT,1,src/components/ayush/PrakritiTab.tsx,,ok,OK
+pre_auth_requests,TABLE,INSERT|READ|UPDATE,3,src/components/ipd/AdmitPatientModal.tsx ; src/components/pmjay/PmjayAnalyticsTab.tsx ; src/components/pmjay/PmjayPreAuthTab.tsx,,ok,OK
+prescription_history,MISSING,READ|INSERT,1,src/components/opd/ConsultationWorkspace.tsx,prescriptions,CONTRACT VIOLATION - runtime error/silent failure,CRITICAL
+prescriptions,TABLE,INSERT|UPDATE|READ,23,src/components/ipd/IPDWorkspace.tsx ; src/components/opd/ConsultationWorkspace.tsx ; src/components/opd/PatientSummary.tsx ; src/components/patients/PatientPrintHubModal.tsx,,ok,OK
+preventive_screenings,TABLE,READ|INSERT,1,src/components/opd/tabs/ScreeningsTab.tsx,,ok,OK
+procurement_recommendations,TABLE,READ|UPDATE|INSERT,2,src/pages/hod/HODDashboardPage.tsx ; src/pages/inventory/ProcurementRecommendationsPage.tsx,,ok,OK
+product_analytics_events,TABLE,INSERT,1,src/lib/trackEvent.ts,,ok,OK
+product_modes,TABLE,READ|UPDATE|INSERT,3,src/contexts/ProductModeContext.tsx ; src/pages/setup/steps/Step7bModules.tsx ; supabase/functions/register-hospital/index.ts,,ok,OK
+prom_prem_surveys,TABLE,READ|INSERT|UPDATE,3,src/components/analytics/PROMAnalyticsTab.tsx ; src/hooks/useAnalyticsData.ts ; src/pages/portal/PROMAResponsePage.tsx,,ok,OK
+prompt_registry,TABLE,READ,8,src/pages/portal/PortalChatPage.tsx ; src/pages/portal/PortalHealthCoachPage.tsx ; src/pages/portal/PortalHealthStoryPage.tsx ; supabase/functions/ai-clarifying-questions/index.ts,,ok,OK
+psychometric_assessments,TABLE,READ|INSERT,1,src/components/mental-health/MHPsychometricTab.tsx,,ok,OK
+purchase_indents,MISSING,INSERT,1,src/components/inventory/InventoryDemandReview.tsx,store_indents / purchase_requisitions,CONTRACT VIOLATION - runtime error/silent failure,CRITICAL
+purchase_orders,TABLE,READ|UPDATE|INSERT,5,src/components/inventory/GRNPanel.tsx ; src/components/inventory/PurchaseOrdersPanel.tsx ; src/components/inventory/RfqPanel.tsx ; src/components/inventory/VendorsPanel.tsx,,ok,OK
+purchase_requisitions,TABLE,UPDATE|READ|INSERT,1,src/components/inventory/RfqPanel.tsx,,ok,OK
+push_notifications,TABLE,READ|INSERT,2,src/pages/platform/MobileAppPage.tsx ; supabase/functions/send-push-notification/index.ts,,ok,OK
+qi_cycles,TABLE,READ|UPDATE|INSERT,1,src/pages/quality/QIProjectsPage.tsx,,ok,OK
+qi_projects,TABLE,INSERT|READ|UPDATE,2,src/pages/quality/ClinicalAuditPage.tsx ; src/pages/quality/QIProjectsPage.tsx,,ok,OK
+quality_indicator_definitions,TABLE,READ|INSERT,2,src/components/quality/QualityIndicatorsTab.tsx ; src/tests/security/quality-indicators-rls.test.ts,,ok,OK
+quality_indicator_overrides,TABLE,READ,1,src/tests/security/quality-indicators-rls.test.ts,,ok,OK
+quality_indicators,TABLE,READ|INSERT,4,src/components/quality/QualityIndicatorsTab.tsx ; src/pages/quality/QualityPage.tsx ; src/tests/security/quality-indicators-rls.test.ts ; supabase/functions/ai-nabh-indicator-alert/index.ts,,ok,OK
+quality_indicators_current,VIEW,READ,8,src/components/analytics/CustomReportBuilder.tsx ; src/components/analytics/ExportModal.tsx ; src/components/analytics/NationalBenchmarkTab.tsx ; src/components/analytics/QualityTab.tsx,,ok,OK
+queue_state,TABLE,INSERT,1,src/components/opd/TokenQueue.tsx,,ok,OK
+quotation_items,TABLE,INSERT,1,src/components/inventory/RfqPanel.tsx,,ok,OK
+radiology_modalities,TABLE,READ|INSERT|UPDATE|DELETE,9,src/components/emergency/EmergencyWorkspace.tsx ; src/components/radiology/NewRadiologyOrderModal.tsx ; src/lib/investigationSync.ts ; src/pages/radiology/RadiologyPage.tsx,,ok,OK
+radiology_orders,TABLE,READ|UPDATE|DELETE|INSERT,38,src/components/billing/LeakageScanner.tsx ; src/components/billing/RevenueIntelligencePanel.tsx ; src/components/billing/UnbilledServicesModal.tsx ; src/components/emergency/EmergencyWorkspace.tsx,,ok,OK
+radiology_reports,TABLE,READ|INSERT|UPDATE,8,src/components/ot/PreOpLabsBanner.tsx ; src/components/radiology/NewRadiologyOrderModal.tsx ; src/components/radiology/RadiologyReportingWorkspace.tsx ; src/pages/portal/PatientPortalReportsPage.tsx,,ok,OK
+radiology_study_master,TABLE,READ|INSERT|UPDATE|DELETE,15,src/components/opd/ConsultationWorkspace.tsx ; src/components/opd/tabs/RxOrdersTab.tsx ; src/components/packages/CreatePackageModal.tsx ; src/components/radiology/NewRadiologyOrderModal.tsx,,ok,OK
+razorpay_webhook_log,TABLE,INSERT,2,supabase/functions/razorpay-subscription-webhook/index.ts ; supabase/functions/razorpay-webhook/index.ts,,ok,OK
+reconciliation_discrepancies,TABLE,INSERT,1,src/components/ipd/MedReconciliationPanel.tsx,,ok,OK
+record_access_logs,TABLE,INSERT|READ,2,src/lib/ims.ts ; src/pages/ims/IMSAccessLogsPage.tsx,,ok,OK
+record_requests,TABLE,READ|INSERT|UPDATE,2,src/components/mrd/RecordRequestsTab.tsx ; src/pages/mrd/MRDPage.tsx,,ok,OK
+record_retention_policies,TABLE,READ|INSERT,2,src/pages/settings/SettingsRecordRetentionPage.tsx ; e2e/phase-02-settings/P2I.data-audit.spec.ts,,ok,OK
+referral_codes,TABLE,READ|INSERT|UPDATE,2,src/pages/platform/ReferralsPage.tsx ; supabase/functions/register-hospital/index.ts,,ok,OK
+referral_doctors,TABLE,READ|UPDATE|INSERT,5,src/components/crm/ReferralPatternAnalyser.tsx ; src/components/opd/WalkInModal.tsx ; src/components/patients/PatientRegistrationModal.tsx ; src/components/shared/AddReferralDoctorModal.tsx,,ok,OK
+referral_partners,TABLE,READ|INSERT|UPDATE,1,src/pages/platform/ReferralsPage.tsx,,ok,OK
+referral_redemptions,TABLE,READ|INSERT,2,src/pages/platform/ReferralsPage.tsx ; supabase/functions/register-hospital/index.ts,,ok,OK
+refund_payables,TABLE,READ|INSERT,7,src/components/billing/RefundApprovalsInbox.tsx ; src/components/billing/RefundModal.tsx ; src/lib/pharmacyReturns.ts ; src/lib/refundRequests.ts,,ok,OK
+report_schedules,TABLE,INSERT|READ|UPDATE|DELETE,3,src/components/analytics/ScheduleReportModal.tsx ; src/pages/settings/SettingsReportSchedulesPage.tsx ; e2e/phase-02-settings/P2H.communications.spec.ts,,ok,OK
+requisition_items,TABLE,READ|INSERT,1,src/components/inventory/RfqPanel.tsx,,ok,OK
+research_cohorts,TABLE,READ|INSERT,1,src/pages/research/ResearchPlatformPage.tsx,,ok,OK
+restraint_records,TABLE,READ|INSERT|UPDATE,1,src/components/nursing/RestraintRecordsTab.tsx,,ok,OK
+retention_schedules,TABLE,READ|UPDATE,2,src/components/mrd/RetentionTab.tsx ; src/pages/mrd/MRDPage.tsx,,ok,OK
+revenue_alerts,TABLE,READ|INSERT|UPDATE,2,src/components/billing/RevenueIntelligencePanel.tsx ; src/components/billing/tabs/LineItemsTab.tsx,,ok,OK
+revenue_leak_actions,TABLE,UPDATE|INSERT|READ,2,src/components/analytics/RevenueLeakDetector.tsx ; supabase/functions/ai-revenue-leak-detector/index.ts,,ok,OK
+rfq_vendors,TABLE,READ|INSERT,1,src/components/inventory/RfqPanel.tsx,,ok,OK
+rfqs,TABLE,READ|UPDATE|INSERT,1,src/components/inventory/RfqPanel.tsx,,ok,OK
+role_permissions,TABLE,READ|UPDATE|INSERT|DELETE,5,src/components/settings/StaffAccessPanel.tsx ; src/contexts/HospitalContext.tsx ; src/pages/settings/SettingsRolesPage.tsx ; src/pages/settings/SettingsStaffPage.tsx,,ok,OK
+safety_event_capa,TABLE,READ|INSERT|UPDATE,2,src/components/safety/OverdueCAPABanner.tsx ; src/pages/quality/SafetyEventsPage.tsx,,ok,OK
+safety_event_rca,TABLE,READ|INSERT|UPDATE,1,src/pages/quality/SafetyEventsPage.tsx,,ok,OK
+safety_events,TABLE,READ|INSERT|UPDATE,5,src/components/safety/OverdueCAPABanner.tsx ; src/components/safety/QuickEventModal.tsx ; src/components/safety/ReportEventModal.tsx ; src/pages/quality/SafetyEventsPage.tsx,,ok,OK
+safety_rounds,TABLE,READ|INSERT|DELETE,1,src/pages/fms/FMSDashboardPage.tsx,,ok,OK
+salary_structures,TABLE,READ|INSERT,1,src/components/hr/SalaryStructureSetup.tsx,,ok,OK
+scheme_beneficiaries,TABLE,READ|INSERT|UPDATE,2,src/components/pmjay/PmjayBeneficiariesTab.tsx ; src/components/pmjay/PmjayPreAuthTab.tsx,,ok,OK
+second_victim_cases,TABLE,READ|INSERT|UPDATE,1,src/components/hr/SecondVictimTab.tsx,,ok,OK
+second_victim_sessions,TABLE,READ|INSERT,1,src/components/hr/SecondVictimTab.tsx,,ok,OK
+sedation_scores,TABLE,READ|INSERT,1,src/pages/ipd/ICUWorkspacePage.tsx,,ok,OK
+sepsis_alerts,MISSING,READ|UPDATE|INSERT,2,src/components/ipd/tabs/IPDVitalsTab.tsx ; src/lib/clinicalPredictions.ts,(none - clinical_alerts is the closest),CONTRACT VIOLATION - runtime error/silent failure,CRITICAL
+service_charges,TABLE,READ|UPDATE|INSERT,3,src/components/billing/RevenueLeak/LeakageDashboard.tsx ; src/components/oncology/DaycareBoardTab.tsx ; src/lib/serviceBilling.ts,,ok,OK
+service_master,TABLE,READ|INSERT|UPDATE|DELETE,47,src/components/ayush/PanchakarmaTab.tsx ; src/components/billing/LeakageScanner.tsx ; src/components/billing/tabs/LineItemsTab.tsx ; src/components/blood-bank/RequestsTab.tsx,,ok,OK
+service_rates,TABLE,READ|INSERT|UPDATE,5,src/lib/ipdBilling.ts ; src/lib/serviceRates.ts ; src/pages/settings/SettingsServicesPage.tsx ; e2e/phase-02-settings/P2D.structure.wards.spec.ts,,ok,OK
+set_issues,TABLE,READ|INSERT|UPDATE,2,src/components/cssd/CSSDLogsTab.tsx ; src/components/cssd/IssueReturnTab.tsx,,ok,OK
+settlement_reconciliation_flags,TABLE,READ|INSERT|UPDATE,2,src/pages/platform/RevenueDashboardPage.tsx ; supabase/functions/razorpay-settlement-reconcile/index.ts,,ok,OK
+shift_master,TABLE,READ|INSERT|UPDATE|DELETE,5,src/components/hr/RosterTab.tsx ; src/pages/admin/GoLiveChecklistPage.tsx ; src/pages/settings/SettingsShiftsPage.tsx ; src/pages/setup/steps/Step4bShifts.tsx,,ok,OK
+shift_swap_requests,TABLE,READ|INSERT|UPDATE,2,src/components/hr/ShiftSwapPanel.tsx ; src/pages/hr/MyHRPage.tsx,,ok,OK
+signup_otp_verifications,TABLE,READ|UPDATE|INSERT,3,supabase/functions/register-hospital/index.ts ; supabase/functions/send-signup-otp/index.ts ; supabase/functions/verify-signup-otp/index.ts,,ok,OK
+sms_notifications,TABLE,INSERT,1,supabase/functions/send-sms/index.ts,,ok,OK
+staff_attendance,TABLE,READ|INSERT|UPDATE|DELETE,14,src/components/dashboard/drilldowns/DoctorsDrillDown.tsx ; src/components/hr/AttendanceApprovalsPanel.tsx ; src/components/hr/AttendanceCalendarView.tsx ; src/components/hr/AttendanceTab.tsx,,ok,OK
+staff_burnout_scores,TABLE,READ|INSERT,1,src/components/hr/BurnoutRiskTab.tsx,,ok,OK
+staff_credentials,TABLE,READ|INSERT|UPDATE|DELETE,7,src/components/hr/CredentialingTab.tsx ; src/components/hr/ExpiringCredentialsTab.tsx ; src/components/hr/HRReportsTab.tsx ; src/components/layout/CredentialExpiryBanner.tsx,,ok,OK
+staff_documents,TABLE,READ|INSERT|UPDATE|DELETE,3,src/components/hr/StaffDocumentsTab.tsx ; src/contexts/CredentialAlertContext.tsx ; src/pages/hr/MyHRPage.tsx,,ok,OK
+staff_exits,TABLE,READ|INSERT|UPDATE,1,src/components/hr/OffboardingTab.tsx,,ok,OK
+staff_grievances,TABLE,READ|INSERT|UPDATE,1,src/components/hr/DisciplinaryGrievanceTab.tsx,,ok,OK
+staff_injuries,TABLE,READ|INSERT|UPDATE,2,src/components/hr/HRReportsTab.tsx ; src/components/hr/StaffInjuriesTab.tsx,,ok,OK
+staff_privileges,TABLE,READ|INSERT|UPDATE|DELETE,4,src/components/hr/PrivilegesTab.tsx ; src/components/hr/StaffPrivilegesPanel.tsx ; src/components/ot/OTCaseWorkspace.tsx ; src/pages/hr/HRPage.tsx,,ok,OK
+staff_profiles,TABLE,READ|INSERT|DELETE|UPDATE,11,src/components/hr/LeaveManagementTab.tsx ; src/components/hr/OffboardingTab.tsx ; src/components/hr/PayrollTab.tsx ; src/components/hr/SalaryStructureSetup.tsx,,ok,OK
+staff_salary_assignments,TABLE,READ|INSERT|UPDATE,2,src/components/hr/PayrollRunTab.tsx ; src/components/hr/SalaryStructureSetup.tsx,,ok,OK
+staff_training_records,TABLE,READ|INSERT|DELETE,5,src/components/hr/BurnoutRiskTab.tsx ; src/components/hr/HRReportsTab.tsx ; src/components/hr/TrainingCMETab.tsx ; src/components/hr/TrainingComplianceTab.tsx,,ok,OK
+staffing_alerts,TABLE,READ|UPDATE|INSERT,2,src/components/nursing/AcuityDashboard.tsx ; src/lib/acuityStaffing.ts,,ok,OK
+sterilization_cycles,TABLE,READ|INSERT|UPDATE,3,src/components/cssd/CSSDLogsTab.tsx ; src/components/cssd/SterilizeTab.tsx ; src/pages/cssd/CSSDPage.tsx,,ok,OK
+stimulation_monitoring,TABLE,READ|INSERT,2,src/components/ivf/StimulationTab.tsx ; src/pages/ivf/IVFPage.tsx,,ok,OK
+stock_count_items,TABLE,READ|INSERT|UPDATE,1,src/components/inventory/StockCountPanel.tsx,,ok,OK
+stock_counts,TABLE,READ|INSERT|UPDATE,1,src/components/inventory/StockCountPanel.tsx,,ok,OK
+stock_reorder_triggers,TABLE,READ|UPDATE|INSERT,1,src/components/pharmacy/ReorderDashboard.tsx,,ok,OK
+stock_transactions,TABLE,INSERT|READ,6,src/components/inventory/GRNPanel.tsx ; src/components/inventory/ReportsPanel.tsx ; src/components/inventory/StockAdjustmentModal.tsx ; src/components/inventory/StockCountPanel.tsx,,ok,OK
+store_indent_items,TABLE,INSERT|READ|UPDATE,3,src/components/inventory/RaiseIndentModal.tsx ; src/components/inventory/StoreIndentDetailModal.tsx ; src/components/inventory/StoreStockView.tsx,,ok,OK
+store_indents,TABLE,READ|INSERT|UPDATE,4,src/components/inventory/RaiseIndentModal.tsx ; src/components/inventory/StoreIndentDetailModal.tsx ; src/components/inventory/StoreStockView.tsx ; src/components/inventory/WardStorePanel.tsx,,ok,OK
+store_locations,TABLE,READ|INSERT|UPDATE|DELETE,7,src/components/inventory/RaiseIndentModal.tsx ; src/components/inventory/StockCountPanel.tsx ; src/components/inventory/StoreLocationsSettings.tsx ; src/components/inventory/WardStorePanel.tsx,,ok,OK
+store_stock,TABLE,READ|INSERT|UPDATE,4,src/components/inventory/ConsolidatedStockPanel.tsx ; src/components/inventory/StockCountPanel.tsx ; src/components/inventory/StoreStockView.tsx ; src/lib/storeStock.ts,,ok,OK
+store_stock_movements,TABLE,READ|INSERT,4,src/components/inventory/InventoryMISPanel.tsx ; src/components/inventory/StockCountPanel.tsx ; src/components/inventory/StoreIndentDetailModal.tsx ; src/components/pharmacy/StoreTransferModal.tsx,,ok,OK
+subscription_events,TABLE,INSERT|READ|UPDATE,5,supabase/functions/change-subscription-plan/index.ts ; supabase/functions/generate-invoice/index.ts ; supabase/functions/razorpay-subscription-webhook/index.ts ; supabase/functions/register-hospital/index.ts,,ok,OK
+subscription_invoices,TABLE,READ|INSERT|UPDATE,7,src/components/billing/PaymentHistoryTable.tsx ; src/pages/platform/RevenueDashboardPage.tsx ; src/pages/settings/SettingsPlanPage.tsx ; supabase/functions/generate-invoice/index.ts,,ok,OK
+subscription_plans,TABLE,READ|INSERT|UPDATE,13,src/components/subscription/UpgradeDialog.tsx ; src/hooks/useSubscriptionConfig.ts ; src/pages/platform/HospitalDetailPage.tsx ; src/pages/platform/PlansManagerPage.tsx,,ok,OK
+system_config,TABLE,READ|UPDATE|INSERT,1,src/pages/admin/GoLiveChecklistPage.tsx,,ok,OK
+tally_export_log,TABLE,READ|INSERT,2,src/components/accounts/ReportsTab.tsx ; supabase/functions/email-tally-xml/index.ts,,ok,OK
+tally_ledger_mapping,TABLE,READ|INSERT,3,src/components/accounts/ReportsTab.tsx ; src/pages/settings/IntegrationsHubPage.tsx ; e2e/phase-02-settings/P2I.integrations.spec.ts,,ok,OK
+tds_sections,TABLE,READ|UPDATE,2,src/components/inventory/PurchaseOrdersPanel.tsx ; src/components/inventory/VendorsPanel.tsx,,ok,OK
+teleconsult_sessions,TABLE,READ|INSERT|UPDATE,7,src/components/telemedicine/ScheduleTeleconsultModal.tsx ; src/pages/portal/PortalAppointments.tsx ; src/pages/portal/PortalDashboard.tsx ; src/pages/portal/PortalTeleconsultPage.tsx,,ok,OK
+therapy_plans,TABLE,READ|INSERT|UPDATE,1,src/components/mental-health/MHTherapyTab.tsx,,ok,OK
+therapy_sessions,TABLE,READ|INSERT|UPDATE,1,src/components/mental-health/MHTherapyTab.tsx,,ok,OK
+toxicity_events,TABLE,READ|INSERT,1,src/components/oncology/OncologyReportsTab.tsx,,ok,OK
+tpa_config,TABLE,READ|INSERT|UPDATE,7,src/components/billing/tabs/InsuranceTab.tsx ; src/components/insurance/ActiveAdmissions.tsx ; src/components/insurance/DocumentChecklist.tsx ; src/components/insurance/PreAuthQualityGate.tsx,,ok,OK
+tpa_dispute_communications,TABLE,READ|INSERT,1,src/components/insurance/TpaDisputePanel.tsx,,ok,OK
+tpa_disputes,TABLE,READ|INSERT|UPDATE,2,src/components/insurance/TpaDisputePanel.tsx ; supabase/functions/hcx-callback-receiver/index.ts,,ok,OK
+tpa_queries,TABLE,READ|UPDATE|INSERT,3,src/components/insurance/TPAQueriesTab.tsx ; src/components/insurance/TPAQueryManager.tsx ; supabase/functions/insurance-daily-alerts/index.ts,,ok,OK
+translate_pricing,TABLE,READ,1,supabase/functions/_shared/translate-text.ts,,ok,OK
+tv_display_settings,TABLE,READ|INSERT|UPDATE,3,src/pages/settings/SettingsTVDisplayPage.tsx ; src/pages/tv/AdvancedQueueDisplayPage.tsx ; e2e/phase-02-settings/P2H.communications.spec.ts,,ok,OK
+user_permission_overrides,TABLE,READ|INSERT|DELETE,2,src/components/settings/StaffAccessPanel.tsx ; src/contexts/HospitalContext.tsx,,ok,OK
+user_tour_progress,TABLE,READ|INSERT,2,src/components/onboarding/OnboardingTour.tsx ; src/pages/platform/CustomerSuccessPage.tsx,,ok,OK
+user_trusted_devices,TABLE,INSERT|READ|DELETE,2,src/components/auth/MFAVerifyModal.tsx ; src/pages/settings/SettingsProfilePage.tsx,,ok,OK
+users,TABLE,READ|INSERT|UPDATE|DELETE,297,src/components/accounts/JournalTab.tsx ; src/components/accounts/PostingFailuresCard.tsx ; src/components/analytics/AIDigestTab.tsx ; src/components/analytics/CustomReportBuilder.tsx,,ok,OK
+vaccination_due,TABLE,READ|INSERT|UPDATE,4,src/components/vaccination/DueListTab.tsx ; src/components/vaccination/PatientCardTab.tsx ; src/components/vaccination/RecordVaccineTab.tsx ; src/pages/vaccination/VaccinationPage.tsx,,ok,OK
+vaccination_records,TABLE,READ|INSERT,6,src/components/vaccination/AEFIReportingTab.tsx ; src/components/vaccination/PatientCardTab.tsx ; src/components/vaccination/RecordVaccineTab.tsx ; src/pages/hmis/HMISPage.tsx,,ok,OK
+vaccine_camps,TABLE,READ|INSERT,1,src/components/vaccination/CampsTab.tsx,,ok,OK
+vaccine_master,TABLE,READ|INSERT|UPDATE|DELETE,4,src/components/vaccination/PatientCardTab.tsx ; src/components/vaccination/RecordVaccineTab.tsx ; src/components/vaccination/StockTab.tsx ; src/components/vaccination/VaccineCatalogueTab.tsx,,ok,OK
+vaccine_stock,TABLE,READ|UPDATE|INSERT,3,src/components/inventory/ConsolidatedStockPanel.tsx ; src/components/vaccination/RecordVaccineTab.tsx ; src/components/vaccination/StockTab.tsx,,ok,OK
+vendor_quotations,TABLE,READ|INSERT|UPDATE,1,src/components/inventory/RfqPanel.tsx,,ok,OK
+vendor_rate_contracts,TABLE,READ|INSERT|UPDATE,3,src/components/inventory/PurchaseOrdersPanel.tsx ; src/components/inventory/VendorsPanel.tsx ; src/pages/inventory/ProcurementRecommendationsPage.tsx,,ok,OK
+vendors,TABLE,READ|UPDATE|INSERT,6,src/components/inventory/GRNPanel.tsx ; src/components/inventory/PurchaseOrdersPanel.tsx ; src/components/inventory/RfqPanel.tsx ; src/components/inventory/VendorsPanel.tsx,,ok,OK
+ventilator_params,TABLE,READ|INSERT,1,src/pages/ipd/ICUWorkspacePage.tsx,,ok,OK
+vial_wastage,TABLE,READ,1,src/components/oncology/OncologyReportsTab.tsx,,ok,OK
+visitor_passes,TABLE,READ|INSERT|UPDATE,1,src/pages/pro/PROPage.tsx,,ok,OK
+ward_acuity_snapshots,TABLE,READ|INSERT,2,src/components/nursing/AcuityDashboard.tsx ; src/lib/acuityStaffing.ts,,ok,OK
+ward_round_notes,TABLE,READ|INSERT,7,src/components/ipd/IPDWorkspace.tsx ; src/components/ipd/tabs/IPDWardRoundTab.tsx ; src/components/patients/PatientPrintHubModal.tsx ; src/components/patients/PatientTimelineDrawer.tsx,,ok,OK
+wards,TABLE,READ|UPDATE|INSERT|DELETE,40,src/components/analytics/DailyCensusSection.tsx ; src/components/dashboard/BedOccupancy.tsx ; src/components/dashboard/drilldowns/BedsDrillDown.tsx ; src/components/housekeeping/BMWEntryModal.tsx,,ok,OK
+webhook_dlq,TABLE,INSERT|READ|UPDATE,3,supabase/functions/razorpay-subscription-webhook/index.ts ; supabase/functions/razorpay-webhook/index.ts ; supabase/functions/webhook-dlq-processor/index.ts,,ok,OK
+webhook_endpoints,MISSING,READ|INSERT|DELETE,2,src/pages/settings/SettingsAPIPortalPage.tsx ; e2e/phase-02-settings/P2I.integrations.spec.ts,(none),CONTRACT VIOLATION - runtime error/silent failure,CRITICAL
+whatsapp_bot_messages,TABLE,INSERT,1,supabase/functions/whatsapp-bot/index.ts,,ok,OK
+whatsapp_bot_sessions,TABLE,READ|INSERT|UPDATE,1,supabase/functions/whatsapp-bot/index.ts,,ok,OK
+whatsapp_connectors,TABLE,READ|UPDATE|INSERT,3,src/pages/settings/IntegrationsHubPage.tsx ; supabase/functions/send-whatsapp-test/index.ts ; e2e/phase-02-settings/P2I.integrations.spec.ts,,ok,OK
+whatsapp_notifications,TABLE,READ|UPDATE|INSERT,6,src/components/layout/NotificationCentre.tsx ; src/lib/whatsapp-notifications.ts ; src/lib/whatsapp-send.ts ; src/pages/settings/SettingsWhatsAppPage.tsx,,ok,OK
+whatsapp_templates,TABLE,READ|UPDATE|INSERT|DELETE,3,src/lib/whatsapp-send.ts ; src/pages/settings/SettingsWhatsAppPage.tsx ; e2e/phase-02-settings/P2H.communications.spec.ts,,ok,OK
+wound_assessments,TABLE,READ|INSERT,1,src/components/ipd/tabs/WoundCareTab.tsx,,ok,OK
+abdm_rate_limits,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+admission_sequences,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+ai_feature_classes,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+ai_provider_config,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+blood_antibody_screening,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+branches,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+chain_memberships,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+clinical_reference_sources,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+coding_audits,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+cold_storage_log,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+demand_forecasts,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+depreciation_postings,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+dialyzer_reuse,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+discount_approvals,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+embryology_records,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+hospital_chains,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+hospital_sequences,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+item_consumption_daily,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+mar_records,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+med_admin_records,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+medication_adherence,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+metrics_registry,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+opd_token_sequences,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+package_station_logs,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+partograph_records,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+patient_encounter_templates,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+patient_template_responses,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+pmjay_preauth_requests,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+razorpay_plan_registry,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+tds_annual_summary,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+transfusion_reactions,TABLE,NONE,0,,,live table never referenced by application code,REVIEW
+rpc:enum_values_app_role,MISSING FUNCTION,RPC,1,e2e/phase-01-foundation/P1D.staff-logins.spec.ts,,RPC called but no such function in pg_proc,HIGH
+rpc:get_next_journal_number,MISSING FUNCTION,RPC,2,src/components/hr/OffboardingTab.tsx ; src/components/hr/PayrollTab.tsx,,RPC called but no such function in pg_proc,HIGH
+rpc:grant_credits,MISSING FUNCTION,RPC,2,src/pages/platform/HospitalDetailPage.tsx ; src/pages/settings/SettingsPlanPage.tsx,,RPC called but no such function in pg_proc,HIGH
+rpc:increment_discount_used_count,MISSING FUNCTION,RPC,1,supabase/functions/razorpay-subscription-webhook/index.ts,,RPC called but no such function in pg_proc,HIGH
+rpc:increment_query_count,MISSING FUNCTION,RPC,1,src/components/insurance/TPAQueryManager.tsx,,RPC called but no such function in pg_proc,HIGH
+rpc:recalculate_bill_totals,MISSING FUNCTION,RPC,1,src/lib/billTotals.ts,,RPC called but no such function in pg_proc,HIGH

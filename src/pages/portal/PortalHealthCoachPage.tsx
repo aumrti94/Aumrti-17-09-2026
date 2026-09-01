@@ -116,9 +116,15 @@ const PortalHealthCoachPage: React.FC = () => {
         .join("; ") || "None recorded";
 
       // Get recent vitals
+      // "patient_vitals" has never existed. The patient-scoped vitals table is nursing_vitals
+      // (ipd_vitals is keyed by admission_id only, so it cannot answer "this patient's latest
+      // vitals"). Column names are aliased back to the shape the rest of this function expects,
+      // so only the query changes: bp_systolic/bp_diastolic/pulse/grbs are the real columns.
       const { data: vitals } = await (supabase as any)
-        .from("patient_vitals")
-        .select("recorded_at, systolic_bp, diastolic_bp, pulse_rate, temperature, spo2, blood_glucose")
+        .from("nursing_vitals")
+        .select(
+          "recorded_at, systolic_bp:bp_systolic, diastolic_bp:bp_diastolic, pulse_rate:pulse, temperature, spo2, blood_glucose:grbs",
+        )
         .eq("patient_id", patientId)
         .order("recorded_at", { ascending: false })
         .limit(1)

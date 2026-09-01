@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import BulkPasteAddModal from "@/components/settings/BulkPasteAddModal";
+import { getConfigDefaults } from "@/constants/configValueDefaults";
 import {
   ArrowLeft, Plus, Pencil, Trash2, RotateCcw, Save, X,
   Loader2, GripVertical, FlaskConical, Pill, Users, Building2,
@@ -130,11 +131,34 @@ const SettingsConfigValuesPage: React.FC = () => {
         .order("label",      { ascending: true });
       if (error) throw error;
 
+      const dbRows = (data ?? []) as ConfigRow[];
+
+      // Hardcoded defaults surface as system rows for any value the table has no
+      // row for, so a category that was never seeded is still listed and editable.
+      // Every handler below branches on `hospital_id === null` rather than on a
+      // row id, so overriding or disabling one works without a DB parent row.
+      const known = new Set(dbRows.map(r => r.value));
+      const defaults: ConfigRow[] = getConfigDefaults(activeCat)
+        .filter(d => !known.has(d.value))
+        .map(d => ({
+          id:          `default:${activeCat}:${d.value}`,
+          hospital_id: null,
+          value:       d.value,
+          label:       d.label,
+          sort_order:  d.sort_order,
+          is_active:   true,
+          is_system:   true,
+          metadata:    null,
+        }));
+
+      const merged = [...dbRows, ...defaults]
+        .sort((a, b) => a.sort_order - b.sort_order || a.label.localeCompare(b.label));
+
       // Mark whether the hospital has overridden each system default
       const hospitalValues = new Set<string>(
-        (data ?? []).filter((r: ConfigRow) => r.hospital_id !== null).map((r: ConfigRow) => r.value)
+        merged.filter(r => r.hospital_id !== null).map(r => r.value)
       );
-      return (data ?? []).map((r: ConfigRow) => ({
+      return merged.map(r => ({
         ...r,
         _overridden: r.hospital_id === null && hospitalValues.has(r.value),
       }));

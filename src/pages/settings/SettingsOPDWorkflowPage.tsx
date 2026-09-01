@@ -69,6 +69,17 @@ const SettingsOPDWorkflowPage: React.FC = () => {
   };
 
   const handleSave = async () => {
+    // A token is a number the receptionist calls out and the patient watches for on the
+    // display board. Zero or negative starts break the queue's sort order and produce a
+    // token nobody can announce, so refuse rather than store it.
+    if (!Number.isFinite(config.tokenStart) || config.tokenStart < 1) {
+      toast({
+        title: "Starting number must be 1 or higher",
+        description: "Tokens are announced to patients — a zero or negative token cannot be called.",
+        variant: "destructive",
+      });
+      return;
+    }
     setSaving(true);
     if (hospitalId) {
       await Promise.all([
@@ -106,7 +117,7 @@ const SettingsOPDWorkflowPage: React.FC = () => {
           <h2 className="text-sm font-semibold text-foreground mb-3">Token Format</h2>
           <div className="grid grid-cols-3 gap-4">
             <div><Label>Prefix</Label><Input value={config.tokenPrefix} onChange={(e) => setConfig({ ...config, tokenPrefix: e.target.value })} className="mt-1" /></div>
-            <div><Label>Starting Number</Label><Input type="number" value={config.tokenStart} onChange={(e) => setConfig({ ...config, tokenStart: +e.target.value })} className="mt-1" /></div>
+            <div><Label>Starting Number</Label><Input type="number" min={1} value={config.tokenStart} onChange={(e) => setConfig({ ...config, tokenStart: +e.target.value })} className="mt-1" /></div>
             <div className="flex items-end gap-2 pb-1"><Switch checked={config.resetDaily} onCheckedChange={(v) => setConfig({ ...config, resetDaily: v })} /><span className="text-sm">Reset daily</span></div>
           </div>
         </section>

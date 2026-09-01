@@ -8,13 +8,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { Plus, CheckCircle2 } from "lucide-react";
+import { useConfigValues } from "@/hooks/useConfigValues";
 
 interface Props { hospitalId: string | null; }
 
-const AREA_TYPES = ["ward", "ot", "icu", "emergency", "outpatient", "toilet", "corridor", "stairwell", "reception", "canteen"];
 const FREQUENCIES = ["hourly", "every_4hrs", "every_shift", "daily", "weekly", "monthly"];
 
 const SchedulesTab: React.FC<Props> = ({ hospitalId }) => {
+  const areaTypes = useConfigValues("housekeeping_area_types");
   const [schedules, setSchedules] = useState<any[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [areaName, setAreaName] = useState("");
@@ -109,7 +110,7 @@ const SchedulesTab: React.FC<Props> = ({ hospitalId }) => {
             <Input placeholder="Area name" value={areaName} onChange={e => setAreaName(e.target.value)} className="text-xs h-8" />
             <Select value={areaType} onValueChange={setAreaType}>
               <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>{AREA_TYPES.map(t => <SelectItem key={t} value={t} className="text-xs">{t}</SelectItem>)}</SelectContent>
+              <SelectContent>{areaTypes.map(t => <SelectItem key={t.value} value={t.value} className="text-xs">{t.label}</SelectItem>)}</SelectContent>
             </Select>
             <Select value={frequency} onValueChange={setFrequency}>
               <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>

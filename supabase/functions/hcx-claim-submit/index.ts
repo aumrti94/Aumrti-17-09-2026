@@ -319,17 +319,21 @@ serve(async (req) => {
     if (billErr || !bill) return json({ error: "Bill not found" }, 404);
 
     // ── Fetch bill items ──────────────────────────────────────────────────────
+    // Table is bill_line_items; "bill_items" has never existed, so this read always failed and
+    // every HCX claim was submitted with an EMPTY item list. Column names differ too:
+    // unit_price -> unit_rate, total -> total_amount, and there is no service_code (hsn_code is
+    // the billing code this schema carries).
     const { data: billItems } = await (sb as any)
-      .from("bill_items")
-      .select("service_code, description, unit_price, quantity, total")
+      .from("bill_line_items")
+      .select("hsn_code, description, unit_rate, quantity, total_amount")
       .eq("bill_id", bill_id);
 
     const items = (billItems ?? []).map((item: any, i: number) => ({
-      service_code: item.service_code ?? null,
+      service_code: item.hsn_code ?? null,
       description: item.description ?? "Service",
-      unit_price: Number(item.unit_price ?? 0),
+      unit_price: Number(item.unit_rate ?? 0),
       quantity: Number(item.quantity ?? 1),
-      total: Number(item.total ?? 0),
+      total: Number(item.total_amount ?? 0),
       sequence: i + 1,
     }));
 

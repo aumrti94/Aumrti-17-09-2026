@@ -9,11 +9,11 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const LANG_MAP: Record<string, string> = {
-  "en": "en-IN", "hi": "hi-IN", "te": "te-IN", "ta": "ta-IN",
-  "kn": "kn-IN", "ml": "ml-IN", "mr": "mr-IN", "gu": "gu-IN",
-  "bn": "bn-IN", "or": "or-IN", "pa": "pa-IN",
-};
+// NOTE: there is deliberately no short→BCP-47 map here. Bhashini's ULCA pipeline wants the
+// bare ISO-639 code ("hi", "or"), which is exactly what this endpoint already receives, so
+// `language_code` is passed through untouched below. A map used to be computed here and then
+// never used — and it mapped the WRONG WAY, so "fixing" the unused variable into the call
+// would have broken every request. See _shared/asr-languages.ts for the real provider maps.
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -55,8 +55,6 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
-    const bhashiniLang = LANG_MAP[language_code] || `${language_code}-IN`;
 
     // Step 1: Get ASR pipeline config
     const pipelineRes = await fetch(

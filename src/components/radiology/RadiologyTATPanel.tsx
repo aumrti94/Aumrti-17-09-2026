@@ -125,7 +125,7 @@ const RadiologyTATPanel: React.FC<Props> = ({ hospitalId }) => {
             alert_type: "radiology_report_overdue",
             severity: "high",
             alert_message: `Radiology report overdue >24h: ${p.study_name} for ${p.patient_name} (${Math.round(p.mins_pending / 60)}h pending)`,
-          }).catch(() => {});
+          }).then(() => {}, () => {});
         });
       }
 

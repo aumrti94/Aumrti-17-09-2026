@@ -30,6 +30,23 @@ export interface LockContext {
 const FINALISED_STATUSES = ["final", "irn_locked", "cancelled", "refunded"];
 
 /**
+ * True while a bill is still an open worksheet that should keep accruing charges.
+ *
+ * Same "not finalised" rule as isLockExempt below and for the same reason — a
+ * running IPD bill legitimately leaves 'draft' mid-stay (requesting a discount
+ * sets 'pending_approval'), and a strict draft test stops the stay's room and
+ * nursing charges accruing from that moment on.
+ *
+ * A MISSING status counts as running here, where isLockExempt refuses to exempt
+ * on one. The two are not in conflict: this drives whether to recompute charges
+ * (open by default), isLockExempt guards a write against a day-closure lock and
+ * so fails closed.
+ */
+export function isRunningBill(billStatus: string | null | undefined): boolean {
+  return !billStatus || !FINALISED_STATUSES.includes(billStatus);
+}
+
+/**
  * True when the DB triggers will let this bill through even on a locked day.
  *
  * Exempt: an admission's RUNNING bill, up until it is finalised. An IPD bill

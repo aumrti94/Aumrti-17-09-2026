@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useConfigValues } from "@/hooks/useConfigValues";
 
 const statusColors: Record<string, string> = {
   pending: "bg-amber-100 text-amber-700",
@@ -18,8 +19,6 @@ const statusColors: Record<string, string> = {
   fulfilled: "bg-blue-100 text-blue-700",
   partial: "bg-purple-100 text-purple-700",
 };
-
-const requesterTypes = ["patient", "legal_guardian", "lawyer", "insurance", "police", "court", "government", "treating_doctor"];
 
 interface Props {
   hospitalId: string;
@@ -30,6 +29,7 @@ interface Props {
 }
 
 const RecordRequestsTab: React.FC<Props> = ({ hospitalId, userId, showNewRequest, onCloseNewRequest, onRefresh }) => {
+  const requesterTypes = useConfigValues("record_requester_types");
   const [requests, setRequests] = useState<any[]>([]);
   const [selected, setSelected] = useState<any>(null);
   const [filter, setFilter] = useState("pending");
@@ -216,7 +216,7 @@ const RecordRequestsTab: React.FC<Props> = ({ hospitalId, userId, showNewRequest
               <Label className="text-xs">Requester Type</Label>
               <Select value={nrRequesterType} onValueChange={setNrRequesterType}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{requesterTypes.map((t) => <SelectItem key={t} value={t}>{t.replace("_", " ")}</SelectItem>)}</SelectContent>
+                <SelectContent>{requesterTypes.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div><Label className="text-xs">Requester Name</Label><Input value={nrRequesterName} onChange={(e) => setNrRequesterName(e.target.value)} /></div>

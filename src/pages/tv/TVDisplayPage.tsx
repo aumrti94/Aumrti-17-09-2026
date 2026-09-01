@@ -66,7 +66,10 @@ const TVDisplayPage: React.FC = () => {
   // Fetch hospital info
   useEffect(() => {
     if (!hospitalId) return;
-    supabase.from("hospitals").select("name, address, logo_url, announcement_text, phone:razorpay_key_id").eq("id", hospitalId).maybeSingle().then(({ data }) => {
+    // `phone:razorpay_key_id` aliased the Razorpay key into the phone field, so the waiting-room
+    // TV rendered a payment gateway key where the hospital's phone number belongs. `phone` is a
+    // real column on hospitals — this was a copy-paste slip, not an intentional alias.
+    supabase.from("hospitals").select("name, address, logo_url, announcement_text, phone").eq("id", hospitalId).maybeSingle().then(({ data }) => {
       setHospital(data);
     });
   }, [hospitalId]);
@@ -78,7 +81,9 @@ const TVDisplayPage: React.FC = () => {
       .select("id, token_number, token_prefix, status, patients(full_name), users:doctor_id(full_name)")
       .eq("hospital_id", hospitalId)
       .eq("visit_date", today)
-      .order("token_number", { ascending: true });
+      // By issue order, not by token_number: that column is text, so it sorted A-10 before
+      // A-2 and the board showed the queue out of order once a doctor passed ten patients.
+      .order("created_at", { ascending: true });
 
     if (deptId) query = query.eq("department_id", deptId);
 
@@ -115,7 +120,7 @@ const TVDisplayPage: React.FC = () => {
         const { data: tok } = await supabase.from("opd_tokens").select("token_number, token_prefix").eq("hospital_id", hospitalId).eq("visit_date", today).eq("department_id", dept.id).in("status", ["in_consultation", "called"]).limit(1).maybeSingle();
         statuses.push({
           name: dept.name,
-          currentToken: tok ? `${tok.token_prefix || ""}${tok.token_number}` : "—",
+          currentToken: tok ? tok.token_number : "—",
         });
       }
       setDeptStatuses(statuses);
@@ -146,7 +151,7 @@ const TVDisplayPage: React.FC = () => {
 
   const tip = HEALTH_TIPS[tipIndex];
   const announcement = hospital?.announcement_text || `Welcome to ${hospital?.name || "our hospital"} — Your health is our priority`;
-  const tokenDisplay = callingToken ? `${callingToken.token_prefix}${callingToken.token_number}` : "—";
+  const tokenDisplay = callingToken ? callingToken.token_number : "—";
 
   return (
     <div className="h-screen flex bg-[#0F172A] text-white overflow-hidden select-none cursor-none">
@@ -180,7 +185,7 @@ const TVDisplayPage: React.FC = () => {
             <div className="space-y-3">
               {nextTokens.map(t => (
                 <div key={t.id} className="flex items-center gap-4 bg-white/5 rounded-xl px-6 py-4">
-                  <span className="text-3xl font-bold">{t.token_prefix}{t.token_number}</span>
+                  <span className="text-3xl font-bold">{t.token_number}</span>
                   <span className="text-lg text-white/50">· {t.patient_name}</span>
                 </div>
               ))}

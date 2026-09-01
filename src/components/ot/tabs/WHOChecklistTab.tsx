@@ -123,7 +123,14 @@ const WHOChecklistTab: React.FC<Props> = ({ schedule, onRefresh }) => {
     if (!row) return;
     setCounts((prev) => prev.map((c) => (c.count_type === type ? { ...c, [field]: value } : c)));
     const { data: { user } } = await supabase.auth.getUser();
-    await supabase.from("ot_instrument_counts").update({ [field]: value, counted_by: user?.id || null }).eq("id", row.id);
+    // Built as an explicitly-typed object rather than an inline computed key: `{ [field]: value }`
+    // widens to a string index signature, which the generated row type rejects. Same runtime
+    // payload, but the column names stay checked.
+    const patch: { opening_count?: number | null; closing_count?: number | null; counted_by: string | null } = {
+      counted_by: user?.id || null,
+    };
+    patch[field] = value;
+    await supabase.from("ot_instrument_counts").update(patch).eq("id", row.id);
   };
 
   const updateDiscrepancyNotesLocal = (type: OTInstrumentCount["count_type"], value: string) => {

@@ -170,28 +170,26 @@ const BookNewTab: React.FC<{ session: PortalSession }> = ({ session }) => {
     if (!selectedDoctor || !selectedDate || !selectedSlot) return;
     setSubmitting(true);
 
-    // Count existing tokens for that day+doctor to generate token number
     const visitDate = selectedDate.toISOString().slice(0, 10);
-    const { count } = await supabase
-      .from("opd_tokens")
-      .select("id", { count: "exact", head: true })
-      .eq("hospital_id", session.hospitalId)
-      .eq("doctor_id", selectedDoctor.id)
-      .eq("visit_date", visitDate);
 
-    const tokenNum = `P${((count || 0) + 1).toString().padStart(3, "0")}`;
-
+    // token_number omitted — allocated by the opd_tokens BEFORE INSERT trigger
+    // (20261015000001_opd_token_sequence.sql), so a portal booking now joins the same
+    // per-doctor daily series the front desk uses.
+    //
+    // The previous `P${count+1}` scheme was broken twice over: COUNT includes cancelled and
+    // no-show rows so it collided with itself after any cancellation, and the P### format
+    // landed in the same token_prefix='A' bucket the desk parsed with split("-")[1], which
+    // returned undefined → 0 and reset that doctor's whole day back to A-1.
     const { data: tokenData, error } = await supabase.from("opd_tokens").insert({
       hospital_id: session.hospitalId,
       patient_id: session.patientId,
       doctor_id: selectedDoctor.id,
       department_id: selectedDept?.id || null,
       visit_date: visitDate,
-      token_number: tokenNum,
       status: "waiting",
       priority: "normal",
       visit_mode: visitMode,
-    } as any).select("id").maybeSingle();
+    } as any).select("id, token_number").maybeSingle();
 
     // If video consult, create a linked teleconsult session
     let sessionId: string | null = null;
@@ -233,7 +231,7 @@ const BookNewTab: React.FC<{ session: PortalSession }> = ({ session }) => {
         department: selectedDept?.name,
         date: dateStr,
         time: selectedSlot || undefined,
-        tokenNumber: tokenNum,
+        tokenNumber: tokenData?.token_number,
       });
       // For teleconsult, send WhatsApp with join link
       if (visitMode === "teleconsult" && sessionId) {

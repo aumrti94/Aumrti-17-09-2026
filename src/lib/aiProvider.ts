@@ -139,6 +139,7 @@ export const FEATURE_LABELS: Record<string, string> = {
   lab_ast_phenotype: "Lab AST Phenotype",
   lab_auto_interpreter: "Lab Auto-Interpreter",
   lab_sample_mixup: "Lab Sample Mix-up Detector",
+  order_catalogue_match: "Order Catalogue Matcher",
   // ── Clinical ──
   differential_diagnosis: "Differential Diagnosis",
   clarifying_questions: "AI Clarifying Questions",

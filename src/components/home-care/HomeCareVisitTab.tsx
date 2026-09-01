@@ -23,7 +23,7 @@ interface Visit {
 }
 
 const HomeCareVisitTab: React.FC = () => {
-  const { hospitalId } = useHospitalId();
+  const { hospitalId, userId } = useHospitalId();
   const { toast } = useToast();
   const [visits, setVisits] = useState<Visit[]>([]);
   const [filter, setFilter] = useState<"today" | "week" | "overdue">("today");
@@ -48,10 +48,13 @@ const HomeCareVisitTab: React.FC = () => {
     if (filter === "today") query = query.eq("scheduled_date", today);
     else if (filter === "week") query = query.gte("scheduled_date", today).lte("scheduled_date", weekEnd);
     else query = query.lt("scheduled_date", today).eq("status", "scheduled");
-    const { data } = await query.order("scheduled_date");
+    const { data, error } = await query.order("scheduled_date");
+    if (error) {
+      toast({ title: "Could not load visits", description: error.message, variant: "destructive" });
+    }
     setVisits((data || []).map((v: any) => ({ ...v, patient_name: v.patients?.full_name, plan_type: v.home_care_plans?.plan_type })));
     setLoading(false);
-  }, [hospitalId, filter]);
+  }, [hospitalId, filter, toast]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -66,6 +69,9 @@ const HomeCareVisitTab: React.FC = () => {
     const { error } = await (supabase as any).from("home_care_visits").update({
       visit_date: new Date().toISOString().split("T")[0],
       status: "completed",
+      // Who actually performed the visit — required NABH AAC.12 evidence,
+      // and the column was never populated before.
+      nurse_id: userId ?? null,
       vital_bp: recordForm.vital_bp || null,
       vital_pulse: recordForm.vital_pulse ? Number(recordForm.vital_pulse) : null,
       vital_temp: recordForm.vital_temp ? Number(recordForm.vital_temp) : null,
@@ -87,6 +93,7 @@ const HomeCareVisitTab: React.FC = () => {
           sourceTable:   "home_care_visits",
           sourceId:      selectedVisit.id,
           serviceDate:   new Date().toISOString().split("T")[0],
+          performedBy:   userId ?? undefined,
         }).catch(() => {});
       }
       toast({ title: "Visit recorded ✓" }); setSelectedVisit(null); load();
@@ -95,7 +102,11 @@ const HomeCareVisitTab: React.FC = () => {
   };
 
   const markMissed = async (visitId: string) => {
-    await (supabase as any).from("home_care_visits").update({ status: "missed" }).eq("id", visitId);
+    const { error } = await (supabase as any).from("home_care_visits").update({ status: "missed" }).eq("id", visitId);
+    if (error) {
+      toast({ title: "Could not mark missed", description: error.message, variant: "destructive" });
+      return;
+    }
     load();
   };
 

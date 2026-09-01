@@ -21,6 +21,7 @@ interface CodeSet {
   id: string;
   set_name: string;
   set_type: string;
+  code_system: string;
   version: string | null;
   description: string | null;
   total_codes: number;
@@ -35,6 +36,7 @@ interface ICDCode {
   description: string;
   category: string | null;
   chapter: string | null;
+  code_system: string;
   is_billable: boolean;
   common_india: boolean;
   use_count: number;
@@ -46,7 +48,15 @@ interface IcdSettings {
   id: string;
   active_set: string;
   show_common_first: boolean;
+  /** icd10 | icd11 | both. Defaults to icd10 — ICD-11 is opt-in per hospital. */
+  active_code_system: string;
 }
+
+/** ICD-11 sits beside ICD-10 in the same catalogue table, told apart by `code_system`. */
+const CODE_SYSTEMS = [
+  { value: "icd10", label: "ICD-10" },
+  { value: "icd11", label: "ICD-11" },
+] as const;
 
 const SettingsICDCodesPage: React.FC = () => {
   const { hospitalId, loading: hospitalLoading } = useHospitalId();
@@ -60,11 +70,14 @@ const SettingsICDCodesPage: React.FC = () => {
   // Settings form
   const [activeSet, setActiveSet] = useState("all");
   const [showCommonFirst, setShowCommonFirst] = useState(true);
+  // Defaults to icd10 so a hospital that never opens this page keeps its pre-ICD-11 behaviour.
+  const [activeCodeSystem, setActiveCodeSystem] = useState("icd10");
 
   // Browse filters
   const [searchQ, setSearchQ] = useState("");
   const [catFilter, setCatFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
+  const [systemFilter, setSystemFilter] = useState("all");
   const [billableOnly, setBillableOnly] = useState(true);
 
   // Upload state
@@ -76,12 +89,14 @@ const SettingsICDCodesPage: React.FC = () => {
   const [errorRows, setErrorRows] = useState<any[]>([]);
   const [setName, setSetName] = useState("My Hospital ICD-10 Codes");
   const [setVersion, setSetVersion] = useState("2022");
+  /** Which classification the uploaded file contains. */
+  const [uploadCodeSystem, setUploadCodeSystem] = useState("icd10");
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
 
   // Add custom code modal
   const [showAddCode, setShowAddCode] = useState(false);
-  const [newCode, setNewCode] = useState({ code: "", description: "", category: "" });
+  const [newCode, setNewCode] = useState({ code: "", description: "", category: "", code_system: "icd10" });
 
   // Delete confirm
   const [deleteTarget, setDeleteTarget] = useState<CodeSet | null>(null);
@@ -98,6 +113,7 @@ const SettingsICDCodesPage: React.FC = () => {
       setSettings(data as IcdSettings);
       setActiveSet(data.active_set);
       setShowCommonFirst(data.show_common_first);
+      setActiveCodeSystem((data as any).active_code_system || "icd10");
     }
   }, [hospitalId]);
 
@@ -136,12 +152,12 @@ const SettingsICDCodesPage: React.FC = () => {
     if (settings) {
       await supabase
         .from("hospital_icd_settings")
-        .update({ active_set: activeSet, show_common_first: showCommonFirst })
+        .update({ active_set: activeSet, show_common_first: showCommonFirst, active_code_system: activeCodeSystem } as any)
         .eq("id", settings.id);
     } else {
       await supabase
         .from("hospital_icd_settings")
-        .insert({ hospital_id: hospitalId, active_set: activeSet, show_common_first: showCommonFirst });
+        .insert({ hospital_id: hospitalId, active_set: activeSet, show_common_first: showCommonFirst, active_code_system: activeCodeSystem } as any);
     }
     toast({ title: "Preference saved" });
     setSaving(false);
@@ -162,9 +178,12 @@ const SettingsICDCodesPage: React.FC = () => {
     if (catFilter !== "all") list = list.filter((c) => c.category === catFilter);
     if (sourceFilter === "system") list = list.filter((c) => !c.hospital_id);
     if (sourceFilter === "uploaded") list = list.filter((c) => !!c.hospital_id);
+    // Rows written before ICD-11 existed have no code_system client-side until reloaded; treat
+    // a missing value as ICD-10, matching the column default.
+    if (systemFilter !== "all") list = list.filter((c) => (c.code_system || "icd10") === systemFilter);
     if (billableOnly) list = list.filter((c) => c.is_billable);
     return list;
-  }, [codes, searchQ, catFilter, sourceFilter, billableOnly]);
+  }, [codes, searchQ, catFilter, sourceFilter, systemFilter, billableOnly]);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -238,6 +257,7 @@ const SettingsICDCodesPage: React.FC = () => {
         hospital_id: hospitalId,
         set_name: setName,
         set_type: "hospital_uploaded",
+        code_system: uploadCodeSystem,
         version: setVersion,
         total_codes: validRows.length,
         is_active: true,
@@ -263,6 +283,7 @@ const SettingsICDCodesPage: React.FC = () => {
         code: r.code,
         description: r.description,
         category: r.category,
+        code_system: uploadCodeSystem,
         is_billable: r.is_billable,
         common_india: false,
       }));
@@ -306,12 +327,13 @@ const SettingsICDCodesPage: React.FC = () => {
       code: newCode.code.trim(),
       description: newCode.description.trim(),
       category: newCode.category.trim() || null,
+      code_system: newCode.code_system,
       is_billable: true,
       common_india: false,
     });
     toast({ title: "Code added" });
     setShowAddCode(false);
-    setNewCode({ code: "", description: "", category: "" });
+    setNewCode({ code: "", description: "", category: "", code_system: "icd10" });
     loadCodes();
   };
 
@@ -332,7 +354,7 @@ const SettingsICDCodesPage: React.FC = () => {
 
   if (hospitalLoading || !hospitalId) return <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
   return (
-    <SettingsPageWrapper title="ICD-10 Code Master" hideSave>
+    <SettingsPageWrapper title="ICD-10 / ICD-11 Code Master" hideSave>
       <Tabs value={tab} onValueChange={setTab} className="w-full">
         <TabsList className="mb-6">
           <TabsTrigger value="sets" className="gap-1.5"><Package size={14} /> Code Sets</TabsTrigger>
@@ -359,6 +381,34 @@ const SettingsICDCodesPage: React.FC = () => {
                 </label>
               ))}
             </RadioGroup>
+
+            {/* Classification switch — a DIFFERENT axis from the set selector above, which
+                chooses system vs hospital-uploaded codes. */}
+            <div className="pt-3 border-t border-border space-y-3">
+              <p className="text-sm font-semibold text-foreground">Which classification do your clinicians code in?</p>
+              <RadioGroup value={activeCodeSystem} onValueChange={setActiveCodeSystem} className="space-y-3">
+                {[
+                  { value: "icd10", label: "ICD-10 only (Default)", desc: "What the system has always used. PMJAY, insurance pre-auth and HCX claims all require ICD-10." },
+                  { value: "both", label: "ICD-10 and ICD-11", desc: "Clinicians record both against a diagnosis. Recommended during the transition — ICD-10 keeps the statutory claims working while ICD-11 satisfies WHO reporting." },
+                  { value: "icd11", label: "ICD-11 only", desc: "Only ICD-11 is offered in the pickers. Choose this only once your statutory reporting no longer needs ICD-10." },
+                ].map((opt) => (
+                  <label key={opt.value} className="flex items-start gap-3 cursor-pointer p-3 rounded-lg hover:bg-muted/50 transition-colors">
+                    <RadioGroupItem value={opt.value} className="mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{opt.label}</p>
+                      <p className="text-xs text-muted-foreground">{opt.desc}</p>
+                    </div>
+                  </label>
+                ))}
+              </RadioGroup>
+              {activeCodeSystem !== "icd10" && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
+                  ICD-11 codes have to be uploaded before they appear in the pickers — no ICD-11 set
+                  ships pre-loaded. Use the Upload tab with the classification set to ICD-11.
+                </p>
+              )}
+            </div>
+
             <div className="flex items-center justify-between pt-2 border-t border-border">
               <div className="flex items-center gap-2">
                 <Switch checked={showCommonFirst} onCheckedChange={setShowCommonFirst} />
@@ -413,13 +463,22 @@ const SettingsICDCodesPage: React.FC = () => {
 
           {/* Upload Section */}
           <div className="rounded-xl border border-dashed border-border p-6 space-y-4">
-            <p className="text-sm font-semibold text-foreground">Upload your hospital's ICD-10 code list</p>
+            <p className="text-sm font-semibold text-foreground">Upload your hospital's ICD-10 or ICD-11 code list</p>
 
             <div className="flex gap-3">
               <Button variant="outline" size="sm" onClick={downloadTemplate}>
                 <Download size={14} className="mr-1" /> Download CSV Template
               </Button>
             </div>
+
+            {/* No ICD-11 set ships pre-loaded: the WHO MMS linearization is ~35k entities and
+                is not something to hand-transcribe into a migration. Hospitals export it from
+                the WHO ICD-11 browser and load it here — the columns are identical. */}
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              The same column layout works for both classifications — set <strong>Classification</strong>
+              {" "}in Step&nbsp;3 to match the file. ICD-11 is not pre-loaded: export the MMS linearization
+              from the WHO ICD-11 browser (icd.who.int) and upload it here.
+            </p>
 
             {uploadStep === 0 && (
               <label className="flex flex-col items-center justify-center border-2 border-dashed border-muted-foreground/30 rounded-lg p-8 cursor-pointer hover:border-primary/50 transition-colors">
@@ -494,7 +553,7 @@ const SettingsICDCodesPage: React.FC = () => {
                 )}
                 <div className="space-y-2">
                   <p className="text-sm font-medium">Step 3 — Name Your Set</p>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-3 gap-3">
                     <div>
                       <Label className="text-xs">Set Name</Label>
                       <Input value={setName} onChange={(e) => setSetName(e.target.value)} className="h-9 text-sm" />
@@ -502,6 +561,17 @@ const SettingsICDCodesPage: React.FC = () => {
                     <div>
                       <Label className="text-xs">Version</Label>
                       <Input value={setVersion} onChange={(e) => setSetVersion(e.target.value)} className="h-9 text-sm" />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Classification</Label>
+                      <Select value={uploadCodeSystem} onValueChange={setUploadCodeSystem}>
+                        <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {CODE_SYSTEMS.map((s) => (
+                            <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
                 </div>
@@ -545,6 +615,15 @@ const SettingsICDCodesPage: React.FC = () => {
                 <SelectItem value="all">All Sources</SelectItem>
                 <SelectItem value="system">System Default</SelectItem>
                 <SelectItem value="uploaded">My Uploaded</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={systemFilter} onValueChange={setSystemFilter}>
+              <SelectTrigger className="w-[130px] h-9 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">ICD-10 &amp; 11</SelectItem>
+                {CODE_SYSTEMS.map((s) => (
+                  <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <div className="flex items-center gap-1.5">
@@ -619,13 +698,29 @@ const SettingsICDCodesPage: React.FC = () => {
       <Dialog open={showAddCode} onOpenChange={setShowAddCode}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add Custom ICD-10 Code</DialogTitle>
+            <DialogTitle>Add Custom ICD Code</DialogTitle>
             <DialogDescription>This code will be added as a hospital-specific code.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div>
+              <Label className="text-xs">Classification *</Label>
+              <Select value={newCode.code_system} onValueChange={(v) => setNewCode((p) => ({ ...p, code_system: v }))}>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {CODE_SYSTEMS.map((s) => (
+                    <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
               <Label className="text-xs">Code *</Label>
-              <Input value={newCode.code} onChange={(e) => setNewCode((p) => ({ ...p, code: e.target.value }))} placeholder="e.g. A01.0" className="h-9" />
+              <Input
+                value={newCode.code}
+                onChange={(e) => setNewCode((p) => ({ ...p, code: e.target.value }))}
+                placeholder={newCode.code_system === "icd11" ? "e.g. 1A00" : "e.g. A01.0"}
+                className="h-9"
+              />
             </div>
             <div>
               <Label className="text-xs">Description *</Label>

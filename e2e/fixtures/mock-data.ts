@@ -41,8 +41,35 @@ export interface Ward {
 }
 
 export interface LabTest {
-  name: string; code: string; sampleType: string; fee: number; unit: string;
-  normalMin: number | null; normalMax: number | null; tatMinutes: number;
+  name: string; code: string; category: string; sampleType: string; fee: number; unit: string;
+  normalMin: number | null; normalMax: number | null;
+  /**
+   * PHASE 5 — `lab_test_master.critical_low` / `critical_high`.
+   *
+   * `LabResultWorkspace.calcFlag()` derives `CL`/`CH` from THESE two columns alone, and only a
+   * `CH`/`CL` flag raises the `clinical_alerts` critical row and blocks release. Seeding a test
+   * with a normal range but no critical range means a critical potassium reads as a plain `H`
+   * and no alert ever fires — the seeder omitted them until Phase 5 (finding L3), which is why
+   * they are typed as required rather than optional.
+   */
+  criticalLow: number | null; criticalHigh: number | null;
+  /**
+   * Sex-specific reference intervals — `lab_test_master.male_normal_*` /
+   * `female_normal_*`. Populated only for the analytes where the interval genuinely
+   * differs (Hb, RBC, PCV, creatinine, uric acid, ESR, GGT, iron, ferritin, CPK,
+   * prolactin); `null` everywhere else, where `normalMin/Max` is the whole story.
+   *
+   * These columns existed since 20260910000001 but nothing READ them until
+   * `src/lib/labReferenceRange.ts` — a male at 12.5 g/dL is anaemic and used to read
+   * Normal against the merged 12.0-17.5 band.
+   */
+  maleNormalMin: number | null; maleNormalMax: number | null;
+  femaleNormalMin: number | null; femaleNormalMax: number | null;
+  /** `lab_test_master.method` — printed on the report; NABL expects it. */
+  method: string | null;
+  /** `lab_test_master.autoverify_eligible` — defaults to FALSE in the database (finding L7). */
+  autoverifyEligible: boolean;
+  tatMinutes: number;
 }
 
 export interface MockData {
@@ -81,10 +108,19 @@ export interface MockData {
   }>;
   defaultBatch: { qty: number; expiry: string; status: string };
   labTests: LabTest[];
-  labTestGroups: Array<{ name: string; fee: number; members: string[]; note: string }>;
+  labTestGroups: Array<{
+    name: string; code: string; category: string; fee: number; tatMinutes: number;
+    members: string[];
+    /** Sum of the members' individual fees. Generated, so the "group price beats the
+     *  parts" assertion can never drift from the catalogue it is asserting about. */
+    membersSum: number;
+    note: string;
+  }>;
   radiologyModalities: Array<{ name: string; type: string }>;
   radiologyStudies: Array<{
     name: string; modality: string; fee: number; sortOrder: number; note: string;
+    /** PCPNDT — `radiology_study_master.requires_form_f`. Absent means false. */
+    requiresFormF?: boolean;
   }>;
   payers: Array<{
     name: string; type: string; roomCeiling: number | null;
@@ -105,6 +141,50 @@ export interface MockData {
     invalid: Record<string, unknown>;
     crossTenantProbe: { name: string; code: string };
     labTestGroup: { name: string; fee: number; members: string[]; membersSum: number };
+  };
+  phase3: {
+    _note: string;
+    registration: Record<string, unknown>;
+    duplicate: Record<string, unknown>;
+    emergency: Record<string, unknown>;
+    newborn: Record<string, unknown>;
+    abha: Record<string, unknown>;
+    kiosk: Record<string, unknown>;
+    portal: Record<string, unknown>;
+    edit: Record<string, unknown>;
+    documents: Record<string, unknown>;
+  };
+  phase4: {
+    _note: string;
+    walkIn: Record<string, string>;
+    invalid: Record<string, string>;
+    consultation: Record<string, string>;
+    prescription: Record<string, Record<string, string>>;
+    drugSafety: Record<string, unknown>;
+    orders: Record<string, unknown>;
+    payer: Record<string, string>;
+    money: Record<string, string | number>;
+    followUp: Record<string, string | number>;
+    mlc: Record<string, string>;
+    teleconsult: Record<string, string>;
+    referral: Record<string, string>;
+    sameDay: Record<string, string>;
+    crossTenant: Record<string, string>;
+  };
+  phase5: {
+    _note: string;
+    labOrder: Record<string, string | number>;
+    results: Record<string, string>;
+    sample: Record<string, string>;
+    amendment: Record<string, string>;
+    dualValidation: Record<string, string>;
+    externalReferral: Record<string, string | number>;
+    radiology: Record<string, string>;
+    pcpndt: Record<string, string | number>;
+    aiImpression: Record<string, string>;
+    ipdAncillary: Record<string, string>;
+    money: Record<string, string>;
+    crossTenant: Record<string, string>;
   };
   commonValues: {
     standardAdvance: number; standardConsultation: number;

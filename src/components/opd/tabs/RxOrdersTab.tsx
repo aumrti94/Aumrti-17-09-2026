@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
-import { X, Plus, AlertTriangle, ShieldX, CheckCircle2, Pencil, RotateCcw } from "lucide-react";
+import { X, Plus, AlertTriangle, ShieldX, CheckCircle2, Pencil, RotateCcw, Clock, FileText } from "lucide-react";
 import type { PrescriptionData, DrugEntry, LabOrder, RadiologyOrder, OrderAvailability } from "../ConsultationWorkspace";
 import { checkDrugSafety, type DrugSafetyResult } from "@/lib/drugSafetyCheck";
 import DrugSafetyAlertModal from "@/components/opd/DrugSafetyAlertModal";
@@ -11,9 +11,18 @@ import AntibioticJustificationModal from "@/components/quality/AntibioticJustifi
 import { useToast } from "@/hooks/use-toast";
 import { useConfigValues } from "@/hooks/useConfigValues";
 import { useDoctorQuickPicks } from "@/hooks/useDoctorQuickPicks";
-import type { RxQuickPickTemplate } from "@/lib/quickPickDefaults";
+import { useRealtimeRefetch } from "@/hooks/useRealtimeRefetch";
+import type { RxQuickPickTemplate, TestGroupOrderEntry } from "@/lib/quickPickDefaults";
 import QuickPickManagerPanel from "@/components/opd/QuickPickManagerPanel";
 import DrugMasterSearchInput from "@/components/opd/DrugMasterSearchInput";
+import TestGroupPickerModal from "@/components/opd/TestGroupPickerModal";
+import {
+  loadOrderCatalogue,
+  matchOrderNameDetailed,
+  type OrderCatalogue,
+} from "@/lib/orderCatalogue";
+import { resolveOrdersWithAI } from "@/lib/orderCatalogueAI";
+import { useAIFeature } from "@/hooks/useAIFeature";
 
 interface Props {
   prescription: PrescriptionData;
@@ -25,6 +34,13 @@ interface Props {
   patientAge?: number;
   patientGender?: string;
   encounterId?: string | null;
+  /** IPD's equivalent of encounterId. Exactly one of the two is set — a prescription belongs
+   *  to an encounter or an admission, never both (CHECK prescriptions_one_context). */
+  admissionId?: string | null;
+  /** Required to attach a drug-safety override to the patient's record (BUG-P4-004). */
+  patientId?: string | null;
+  /** The prescriber. An override with no author is not an audit trail (P4-S11). */
+  userId?: string | null;
 }
 
 
@@ -61,7 +77,48 @@ interface DrugSafetyMeta {
   tooltip: string;
 }
 
-const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, patientAllergies = [], encounterId }) => {
+/**
+ * How far along the money is for a prescribed investigation. Absence from the map is the
+ * third state, PRESCRIBED — it is in the doctor's draft and no order row exists yet.
+ *
+ * The chip used to read "BILLED & ORDERED" purely from the existence of a lab_orders row,
+ * which is not a claim about payment at all. Under payment-first ordering an order row only
+ * exists once the cashier has taken the money, so "awaiting_payment" is now rare (it means an
+ * IPD pre-paid order, or a charge posted by a path that does not collect) — but a chip that
+ * asserts BILLED must be able to say otherwise, or it is just decoration.
+ */
+export type OrderState = "awaiting_payment" | "paid";
+type OrderStateMap = Map<string, OrderState>;
+
+const orderStateOf = (map: OrderStateMap, name: string): OrderState | null =>
+  map.get(name.toLowerCase().trim()) ?? null;
+
+/** The chip on a prescribed investigation. `null` state = PRESCRIBED (no order row yet). */
+export const OrderStateChip: React.FC<{ state: OrderState | null; className?: string }> = ({
+  state, className,
+}) => {
+  if (state === "paid") {
+    return (
+      <span className={cn("text-emerald-600 font-bold flex items-center gap-1", className)}>
+        <CheckCircle2 size={10} /> BILLED &amp; ORDERED
+      </span>
+    );
+  }
+  if (state === "awaiting_payment") {
+    return (
+      <span className={cn("text-amber-700 font-bold flex items-center gap-1", className)}>
+        <Clock size={10} /> AWAITING PAYMENT
+      </span>
+    );
+  }
+  return (
+    <span className={cn("text-muted-foreground font-bold flex items-center gap-1", className)}>
+      <FileText size={10} /> PRESCRIBED
+    </span>
+  );
+};
+
+const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, patientAllergies = [], encounterId, admissionId, patientId, userId }) => {
   const { toast } = useToast();
   const routeOptions     = useConfigValues("drug_routes");
   const frequencyOptions = useConfigValues("drug_frequencies");
@@ -77,17 +134,29 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
     useDoctorQuickPicks<string>("lab_templates");
   const { items: radTemplates, isLoading: radTplLoading, save: saveRadTpl, reset: resetRadTpl } =
     useDoctorQuickPicks<string>("radiology_templates");
+  const { items: testOrderPrefs, save: saveTestOrder } =
+    useDoctorQuickPicks<TestGroupOrderEntry>("test_group_order");
   const [searchQuery, setSearchQuery] = useState("");
   const [newDrug, setNewDrug] = useState<DrugEntry>({ drug_name: "", dose: "", route: "Oral", frequency: "OD", duration_days: "", instructions: "", quantity: "", is_stat: false });
   const [labInput, setLabInput] = useState("");
   const [radInput, setRadInput] = useState("");
-  const [labMaster, setLabMaster] = useState<string[]>([]);
-  const [radMaster, setRadMaster] = useState<string[]>([]);
+  const [labMaster, setLabMaster] = useState<{ name: string; category: string }[]>([]);
+  const [radMaster, setRadMaster] = useState<{ name: string; modality: string }[]>([]);
   const [labGroups, setLabGroups] = useState<{ id: string; group_name: string; fee: number; testNames: string[] }[]>([]);
   const [labSuggestions, setLabSuggestions] = useState<string[]>([]);
   const [radSuggestions, setRadSuggestions] = useState<string[]>([]);
-  const [orderedLabTests, setOrderedLabTests] = useState<Set<string>>(new Set());
-  const [orderedRadStudies, setOrderedRadStudies] = useState<Set<string>>(new Set());
+  const [orderedLabTests, setOrderedLabTests] = useState<OrderStateMap>(new Map());
+  const [orderedRadStudies, setOrderedRadStudies] = useState<OrderStateMap>(new Map());
+  const [openLabPicker, setOpenLabPicker] = useState<{ groupKey: string; title: string; feeLabel?: string; testNames: string[] } | null>(null);
+  const [openRadPicker, setOpenRadPicker] = useState<{ groupKey: string; title: string; studyNames: string[] } | null>(null);
+  /**
+   * The matcher's view of this hospital's catalogue — tests, PANELS and studies together,
+   * plus aliases. The chip lists above deliberately do not serve this purpose: `labMaster`
+   * holds only lab_test_master, so a panel like Fever Panel was invisible to the "is this in
+   * the catalogue?" check and every prescribed panel was reported as not offered.
+   */
+  const [catalogue, setCatalogue] = useState<OrderCatalogue | null>(null);
+  const aiMatchEnabled = useAIFeature("order_catalogue_match");
 
   // Drug safety state
   const [checking, setChecking] = useState(false);
@@ -102,8 +171,8 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
   // Fetch lab tests, groups, and radiology modalities from DB
   useEffect(() => {
     if (!hospitalId) return;
-    supabase.from("lab_test_master").select("test_name").eq("hospital_id", hospitalId).eq("is_active", true).order("test_name")
-      .then(({ data }) => setLabMaster((data || []).map((t: any) => t.test_name)));
+    supabase.from("lab_test_master").select("test_name, category").eq("hospital_id", hospitalId).eq("is_active", true).order("test_name")
+      .then(({ data }) => setLabMaster((data || []).map((t: any) => ({ name: t.test_name, category: t.category || "other" }))));
     (supabase as any)
       .from("lab_test_groups")
       .select("id, group_name, fee, lab_test_group_items(test_id, lab_test_master:test_id(test_name))")
@@ -116,51 +185,273 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
         fee: Number(g.fee) || 0,
         testNames: (g.lab_test_group_items || []).map((i: any) => i.lab_test_master?.test_name).filter(Boolean),
       }))));
-    (supabase as any).from("radiology_study_master").select("study_name").eq("hospital_id", hospitalId).eq("is_active", true).order("sort_order")
-      .then(({ data }: any) => setRadMaster((data || []).map((m: any) => m.study_name)));
+    (supabase as any)
+      .from("radiology_study_master")
+      .select("study_name, modality_id, radiology_modalities:modality_id(name)")
+      .eq("hospital_id", hospitalId)
+      .eq("is_active", true)
+      .order("sort_order")
+      .then(({ data }: any) => setRadMaster((data || []).map((m: any) => ({
+        name: m.study_name,
+        modality: m.radiology_modalities?.name || "Other",
+      }))));
+    // Cached per hospital for 5 minutes and shared with ConsultationWorkspace, so this is
+    // usually free.
+    loadOrderCatalogue(hospitalId).then(setCatalogue).catch(() => setCatalogue(null));
   }, [hospitalId]);
 
-  // Fetch already ordered investigations for this encounter to show status
+  /**
+   * Auto-select the catalogue row a prescribed name actually means.
+   *
+   * "Fever panel test" is Fever Panel; "usg abdomen and pelvis" is USG Abdomen + Pelvis; "KFT"
+   * is the Kidney Function Test panel. Until this ran, each of those was carried to
+   * `syncLabOrders` as free text, failed its exact-name match, and was dropped — never
+   * ordered, never billed, with only an amber line on screen to show for it.
+   *
+   * Rewriting to the canonical name is what makes the order and the charge happen, so it is
+   * done here rather than at commit time: the doctor sees the substitution while they can
+   * still disagree with it. `keep_as_typed` is that disagreement, and is honoured forever.
+   *
+   * Runs on every change to the lists, not just on voice input, because a name arrives here
+   * typed, from a template, from the AI Guidance chips and from a ward round too.
+   */
   useEffect(() => {
-    if (!encounterId) return;
-    const fetchOrdered = async () => {
-      const [labRes, radRes] = await Promise.all([
-        supabase.from("lab_orders").select("lab_order_items(lab_test_master(test_name))").eq("encounter_id", encounterId),
-        supabase.from("radiology_orders").select("study_name").eq("encounter_id", encounterId),
-      ]);
+    if (!catalogue?.all.length) return;
 
-      if (labRes.data) {
-        const tests = new Set<string>();
-        labRes.data.forEach((o: any) => {
-          (o.lab_order_items || []).forEach((i: any) => {
-            if (i.lab_test_master?.test_name) tests.add(i.lab_test_master.test_name.toLowerCase());
-          });
+    const labs: LabOrder[] = [];
+    const rads: RadiologyOrder[] = [];
+    let changed = false;
+
+    for (const l of prescription.lab_orders) {
+      const hit = l.keep_as_typed ? null : matchOrderNameDetailed(l.test_name, catalogue);
+      if (!hit) { labs.push(l); continue; }
+      if (hit.entry.kind === "radiology") {
+        // Catalogue membership is a better router than any keyword rule: an MRI typed into
+        // the lab box is a radiology order, and leaving it in the lab list means no modality
+        // ever sees it.
+        changed = true;
+        rads.push({
+          study_name: hit.entry.name, urgency: l.urgency, clinical_indication: l.clinical_indication,
+          availability: "in_stock", catalogue_id: hit.entry.id,
+          matched_from: hit.entry.name === l.test_name ? undefined : l.test_name,
         });
-        setOrderedLabTests(tests);
+        continue;
       }
-      if (radRes.data) {
-        setOrderedRadStudies(new Set(radRes.data.map(r => r.study_name.toLowerCase())));
+      if (hit.entry.name === l.test_name && l.catalogue_id === hit.entry.id) { labs.push(l); continue; }
+      changed = true;
+      labs.push({
+        ...l, test_name: hit.entry.name, catalogue_id: hit.entry.id, availability: "in_stock",
+        matched_from: hit.entry.name === l.test_name ? l.matched_from : l.test_name,
+      });
+    }
+
+    for (const r of prescription.radiology_orders) {
+      const hit = r.keep_as_typed ? null : matchOrderNameDetailed(r.study_name, catalogue);
+      if (!hit) { rads.push(r); continue; }
+      if (hit.entry.kind !== "radiology") {
+        changed = true;
+        labs.push({
+          test_name: hit.entry.name, urgency: r.urgency, clinical_indication: r.clinical_indication,
+          availability: "in_stock", catalogue_id: hit.entry.id,
+          matched_from: hit.entry.name === r.study_name ? undefined : r.study_name,
+        });
+        continue;
       }
+      if (hit.entry.name === r.study_name && r.catalogue_id === hit.entry.id) { rads.push(r); continue; }
+      changed = true;
+      rads.push({
+        ...r, study_name: hit.entry.name, catalogue_id: hit.entry.id, availability: "in_stock",
+        matched_from: hit.entry.name === r.study_name ? r.matched_from : r.study_name,
+      });
+    }
+
+    if (changed) onChange({ lab_orders: labs, radiology_orders: rads });
+    // `onChange` is a fresh closure on every parent render; depending on it would re-run this
+    // on every keystroke elsewhere in the consultation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalogue, prescription.lab_orders, prescription.radiology_orders]);
+
+  /** Names that resolve to nothing this hospital offers — the only ones that earn the badge. */
+  const unresolvedLabNames = useMemo(() => {
+    const s = new Set<string>();
+    if (!catalogue?.all.length) return s;
+    for (const l of prescription.lab_orders) {
+      if (!matchOrderNameDetailed(l.test_name, catalogue)) s.add(l.test_name);
+    }
+    return s;
+  }, [catalogue, prescription.lab_orders]);
+
+  const unresolvedRadNames = useMemo(() => {
+    const s = new Set<string>();
+    if (!catalogue?.all.length) return s;
+    for (const r of prescription.radiology_orders) {
+      if (!matchOrderNameDetailed(r.study_name, catalogue)) s.add(r.study_name);
+    }
+    return s;
+  }, [catalogue, prescription.radiology_orders]);
+
+  /**
+   * Tier four, for the names local matching genuinely cannot reach.
+   *
+   * Deliberately last and deliberately quiet: it runs after a short settle so a half-typed
+   * name is not sent, it never blocks anything on screen, and a hospital with the feature off
+   * simply keeps the local behaviour. Accepted answers are written to order_name_aliases and
+   * the catalogue is reloaded, at which point the effect above resolves them like any other
+   * alias — so the auto-select path is the same one whether the answer came from a table or a
+   * model.
+   */
+  useEffect(() => {
+    if (!aiMatchEnabled || !hospitalId || !catalogue?.all.length) return;
+    const pending = [...unresolvedLabNames, ...unresolvedRadNames];
+    if (!pending.length) return;
+
+    const t = setTimeout(async () => {
+      const hits = await resolveOrdersWithAI({
+        hospitalId, names: pending, catalogue, patientId, encounterId,
+      });
+      if (hits.length) loadOrderCatalogue(hospitalId).then(setCatalogue).catch(() => {});
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [aiMatchEnabled, hospitalId, catalogue, unresolvedLabNames, unresolvedRadNames, patientId, encounterId]);
+
+  /** Undo an auto-selection: restore the doctor's wording and stop re-matching it. */
+  const revertLabMatch = useCallback((idx: number) => {
+    const next = prescription.lab_orders.map((l, i) => (
+      i !== idx || !l.matched_from ? l
+        : { ...l, test_name: l.matched_from, matched_from: undefined, catalogue_id: undefined,
+            availability: "unresolved" as const, keep_as_typed: true }
+    ));
+    onChange({ lab_orders: next });
+  }, [prescription.lab_orders, onChange]);
+
+  const revertRadMatch = useCallback((idx: number) => {
+    const next = prescription.radiology_orders.map((r, i) => (
+      i !== idx || !r.matched_from ? r
+        : { ...r, study_name: r.matched_from, matched_from: undefined, catalogue_id: undefined,
+            availability: "unresolved" as const, keep_as_typed: true }
+    ));
+    onChange({ radiology_orders: next });
+  }, [prescription.radiology_orders, onChange]);
+
+  // Group individual lab tests by category, and radiology studies by modality,
+  // so they render as named category buttons instead of one flat chip wall.
+  const labByCategory = useMemo(() => {
+    const map = new Map<string, string[]>();
+    labMaster.forEach((t) => {
+      const label = t.category.charAt(0).toUpperCase() + t.category.slice(1);
+      if (!map.has(label)) map.set(label, []);
+      map.get(label)!.push(t.name);
+    });
+    return Array.from(map.entries()).map(([label, testNames]) => ({ label, testNames }));
+  }, [labMaster]);
+
+  const radByModality = useMemo(() => {
+    const map = new Map<string, string[]>();
+    radMaster.forEach((s) => {
+      if (!map.has(s.modality)) map.set(s.modality, []);
+      map.get(s.modality)!.push(s.name);
+    });
+    return Array.from(map.entries()).map(([label, studyNames]) => ({ label, studyNames }));
+  }, [radMaster]);
+
+  // Doctor's personal drag-to-reorder priority per panel/category/modality (groupKey).
+  const testOrderMap = useMemo(
+    () => new Map(testOrderPrefs.map((e) => [e.groupKey, e.order])),
+    [testOrderPrefs]
+  );
+
+  // Puts a group's names in the doctor's saved priority order; names with no
+  // saved order (new tests, or a doctor who never customised this group) keep
+  // their catalogue order at the end.
+  const applyPriorityOrder = (groupKey: string, names: string[]) => {
+    const saved = testOrderMap.get(groupKey);
+    if (!saved || saved.length === 0) return names;
+    const savedSet = new Set(saved);
+    return [...saved.filter((n) => names.includes(n)), ...names.filter((n) => !savedSet.has(n))];
+  };
+
+  const saveGroupPriorityOrder = (groupKey: string, newOrder: string[]) => {
+    saveTestOrder([...testOrderPrefs.filter((e) => e.groupKey !== groupKey), { groupKey, order: newOrder }]);
+  };
+
+  // Fetch already ordered investigations for this encounter (OPD) or admission (IPD) to show
+  // status. IPD used to pass neither, so this returned early on every ward round: nothing was
+  // ever BILLED & ORDERED, and TestGroupPickerModal's `disabled={alreadyOrdered}` never fired,
+  // letting a ward doctor re-order a test that had already been done.
+  const orderScope = useMemo(
+    () => (encounterId ? { col: "encounter_id" as const, val: encounterId }
+      : admissionId ? { col: "admission_id" as const, val: admissionId } : null),
+    [encounterId, admissionId],
+  );
+
+  const fetchOrdered = useCallback(async () => {
+    if (!orderScope) return;
+    const [labRes, radRes] = await Promise.all([
+      supabase.from("lab_orders")
+        .select("payment_status, lab_order_items(lab_test_master(test_name))")
+        .eq(orderScope.col, orderScope.val),
+      supabase.from("radiology_orders").select("study_name, payment_status").eq(orderScope.col, orderScope.val),
+    ]);
+
+    // "paid" wins if the same test appears on two orders — the patient paid for it once and
+    // showing AWAITING PAYMENT afterwards would send them back to the counter.
+    const merge = (map: OrderStateMap, name: string, state: OrderState) => {
+      const key = name.toLowerCase().trim();
+      if (state === "paid" || !map.has(key)) map.set(key, state);
     };
-    fetchOrdered();
-    // Refresh every 5s if there are draft orders
-    const interval = setInterval(fetchOrdered, 5000);
-    return () => clearInterval(interval);
-  }, [encounterId, prescription.lab_orders.length, prescription.radiology_orders.length]);
+
+    if (labRes.data) {
+      const tests: OrderStateMap = new Map();
+      labRes.data.forEach((o: any) => {
+        const state: OrderState = o.payment_status === "paid" ? "paid" : "awaiting_payment";
+        (o.lab_order_items || []).forEach((i: any) => {
+          if (i.lab_test_master?.test_name) merge(tests, i.lab_test_master.test_name, state);
+        });
+      });
+      setOrderedLabTests(tests);
+    }
+    if (radRes.data) {
+      const studies: OrderStateMap = new Map();
+      radRes.data.forEach((r: any) => {
+        if (r.study_name) {
+          merge(studies, r.study_name, r.payment_status === "paid" ? "paid" : "awaiting_payment");
+        }
+      });
+      setOrderedRadStudies(studies);
+    }
+  }, [orderScope]);
+
+  useEffect(() => { fetchOrdered(); }, [
+    fetchOrdered, prescription.lab_orders.length, prescription.radiology_orders.length,
+  ]);
+
+  // Was a 5-second setInterval that polled two tables for the entire consultation. Realtime
+  // gives the same freshness on an event instead of ~700 wasted round trips an hour, and the
+  // hook's focus/reconnect fallback covers what realtime can miss.
+  useRealtimeRefetch({
+    tables: [
+      { table: "lab_orders", filter: `${orderScope?.col}=eq.${orderScope?.val}` },
+      { table: "radiology_orders", filter: `${orderScope?.col}=eq.${orderScope?.val}` },
+    ],
+    hospitalId,
+    onChange: fetchOrdered,
+    enabled: !!orderScope,
+    channelName: "rx-orders-placed",
+  });
 
   // Compute autocomplete suggestions — cross-filtered so radiology studies never appear in lab and vice versa
   useEffect(() => {
     if (!labInput.trim()) { setLabSuggestions([]); return; }
     const q = labInput.toLowerCase();
-    const radSet = new Set(radMaster.map(n => n.toLowerCase()));
-    setLabSuggestions(labMaster.filter(n => n.toLowerCase().includes(q) && !radSet.has(n.toLowerCase())).slice(0, 8));
+    const radSet = new Set(radMaster.map(m => m.name.toLowerCase()));
+    setLabSuggestions(labMaster.map(m => m.name).filter(n => n.toLowerCase().includes(q) && !radSet.has(n.toLowerCase())).slice(0, 8));
   }, [labInput, labMaster, radMaster]);
 
   useEffect(() => {
     if (!radInput.trim()) { setRadSuggestions([]); return; }
     const q = radInput.toLowerCase();
-    const labSet = new Set(labMaster.map(n => n.toLowerCase()));
-    setRadSuggestions(radMaster.filter(n => n.toLowerCase().includes(q) && !labSet.has(n.toLowerCase())).slice(0, 8));
+    const labSet = new Set(labMaster.map(m => m.name.toLowerCase()));
+    setRadSuggestions(radMaster.map(m => m.name).filter(n => n.toLowerCase().includes(q) && !labSet.has(n.toLowerCase())).slice(0, 8));
   }, [radInput, radMaster, labMaster]);
 
   const performSafetyCheck = async (drug: DrugEntry) => {
@@ -175,7 +466,7 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
     const currentDrugNames = prescription.drugs.map((d) => d.drug_name);
 
     try {
-      const result = await checkDrugSafety(drug.drug_name, currentDrugNames, patientAllergies);
+      const result = await checkDrugSafety(drug.drug_name, currentDrugNames, patientAllergies, hospitalId ?? "");
 
       if (result.hasIssues) {
         setSafetyResult(result);
@@ -254,14 +545,39 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
     if (pendingDrug && safetyResult) {
       const newIndex = prescription.drugs.length;
       addDrugDirect(pendingDrug);
-      // Log override via clinical_alerts
+      // Log the override via clinical_alerts.
+      //
+      // BUG-P4-004: this insert previously carried only hospital_id, alert_type, severity and
+      // alert_message. `patient_id` existed on the table and was left NULL, so the override the
+      // modal promises will be "logged in the patient record" was attached to nobody and named
+      // nobody — an anonymous note that no chart review would ever surface. patient_id and
+      // created_by are both required for P4-S11 (reason AND prescriber identity).
       if (hospitalId) {
-        supabase.from("clinical_alerts").insert({
-          hospital_id: hospitalId,
-          alert_type: "drug_override",
-          severity: "critical",
-          alert_message: `Drug safety override: ${pendingDrug.drug_name} added despite ${safetyResult.worstSeverity} alert. Reason: ${reason}`,
-        }).then(() => {});
+        const conflicts = safetyResult.allergyConflicts
+          .map((c) => `${c.allergy} (${c.type})`)
+          .join(", ");
+        supabase
+          .from("clinical_alerts")
+          .insert({
+            hospital_id: hospitalId,
+            patient_id: patientId ?? null,
+            created_by: userId ?? null,
+            alert_type: "drug_override",
+            severity: "critical",
+            alert_message:
+              `Drug safety override: ${pendingDrug.drug_name} added despite ${safetyResult.worstSeverity} alert` +
+              `${conflicts ? ` (allergy conflict: ${conflicts})` : ""}. Reason: ${reason}`,
+          } as never)
+          .then(({ error }) => {
+            if (error) {
+              // A silent failure here recreates the exact gap this fix closes.
+              toast({
+                title: "Override not recorded",
+                description: `${pendingDrug.drug_name} was added but the override could not be written to the patient record: ${error.message}`,
+                variant: "destructive",
+              });
+            }
+          });
       }
       setDrugSafetyMeta((prev) => {
         const next = new Map(prev);
@@ -296,7 +612,7 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
 
   const addLab = (name: string) => {
     if (!name.trim()) return;
-    const radSet = new Set(radMaster.map(n => n.toLowerCase()));
+    const radSet = new Set(radMaster.map(m => m.name.toLowerCase()));
     if (radSet.has(name.toLowerCase())) {
       toast({ title: "Radiology study — use Radiology Orders", description: `"${name}" is a radiology study, not a lab test.`, variant: "destructive" });
       setLabInput("");
@@ -308,16 +624,18 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
     setLabInput("");
   };
 
-  const addLabGroup = (group: { group_name: string; testNames: string[] }) => {
-    const existingNames = new Set(prescription.lab_orders.map((l) => l.test_name));
-    const newOrders = group.testNames
-      .filter((name) => !existingNames.has(name))
-      .map((name) => ({ test_name: name, urgency: "routine", clinical_indication: "" }));
-    if (newOrders.length > 0) onChange({ lab_orders: [...prescription.lab_orders, ...newOrders] });
-  };
+  const countSelectedInLabGroup = (names: string[]) =>
+    names.filter((n) => prescription.lab_orders.some((l) => l.test_name === n)).length;
 
-  const isGroupFullyAdded = (group: { testNames: string[] }) =>
-    group.testNames.length > 0 && group.testNames.every((n) => prescription.lab_orders.some((l) => l.test_name === n));
+  const applyLabPickerSelection = (groupNames: string[], finalNames: string[]) => {
+    const finalSet = new Set(finalNames);
+    const kept = prescription.lab_orders.filter((l) => !groupNames.includes(l.test_name) || finalSet.has(l.test_name));
+    const added = groupNames
+      .filter((n) => finalSet.has(n) && !prescription.lab_orders.some((l) => l.test_name === n))
+      .map((n) => ({ test_name: n, urgency: "routine", clinical_indication: "" }));
+    onChange({ lab_orders: [...kept, ...added] });
+    setOpenLabPicker(null);
+  };
 
   const removeLab = (i: number) => {
     onChange({ lab_orders: prescription.lab_orders.filter((_, idx) => idx !== i) });
@@ -333,6 +651,19 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
 
   const removeRad = (i: number) => {
     onChange({ radiology_orders: prescription.radiology_orders.filter((_, idx) => idx !== i) });
+  };
+
+  const countSelectedInRadGroup = (names: string[]) =>
+    names.filter((n) => prescription.radiology_orders.some((r) => r.study_name === n)).length;
+
+  const applyRadPickerSelection = (groupNames: string[], finalNames: string[]) => {
+    const finalSet = new Set(finalNames);
+    const kept = prescription.radiology_orders.filter((r) => !groupNames.includes(r.study_name) || finalSet.has(r.study_name));
+    const added = groupNames
+      .filter((n) => finalSet.has(n) && !prescription.radiology_orders.some((r) => r.study_name === n))
+      .map((n) => ({ study_name: n, urgency: "routine", clinical_indication: "" }));
+    onChange({ radiology_orders: [...kept, ...added] });
+    setOpenRadPicker(null);
   };
 
   const getSafetyBadge = (index: number) => {
@@ -683,7 +1014,7 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
                   onSave={saveLabTpl}
                   onReset={resetLabTpl}
                   label="quick lab tests"
-                  suggestions={labMaster}
+                  suggestions={labMaster.map(m => m.name)}
                   suggestionLabel="Lab Test Master"
                 />
               )}
@@ -711,40 +1042,77 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
                 </div>
                 <button onClick={() => { addLab(labSuggestions[0] || labInput); setLabSuggestions([]); }} className="text-xs bg-muted px-2 rounded hover:bg-muted/80">+</button>
               </div>
-              {/* Panels / Groups */}
+              {/* Panels — click to pick tests via checkbox popup */}
               {labGroups.length > 0 && (
                 <div className="mb-2">
                   <p className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Panels</p>
                   <div className="flex flex-wrap gap-1">
                     {labGroups.map((g) => {
-                      const done = isGroupFullyAdded(g);
+                      const selectedCount = countSelectedInLabGroup(g.testNames);
+                      const done = selectedCount > 0 && selectedCount === g.testNames.length;
                       return (
-                        <button key={g.id} onClick={() => addLabGroup(g)}
+                        <button key={g.id}
+                          onClick={() => setOpenLabPicker({ groupKey: `panel:${g.group_name}`, title: g.group_name, feeLabel: g.fee > 0 ? `₹${g.fee}` : undefined, testNames: applyPriorityOrder(`panel:${g.group_name}`, g.testNames) })}
                           className={cn("text-[10px] px-2 py-0.5 rounded-full border transition-colors whitespace-nowrap",
                             done
                               ? "bg-primary/10 border-primary/30 text-primary"
+                              : selectedCount > 0
+                              ? "bg-amber-50 border-amber-300 text-amber-700"
                               : "bg-muted/50 border-border text-muted-foreground hover:bg-muted"
                           )}>
                           {g.group_name}{g.fee > 0 && <span className="ml-1 opacity-60">₹{g.fee}</span>}
+                          {selectedCount > 0 && <span className="ml-1 opacity-70">{selectedCount}/{g.testNames.length}</span>}
                         </button>
                       );
                     })}
                   </div>
                 </div>
               )}
-              {/* Individual tests from lab_test_master */}
-              <div className="flex flex-wrap gap-1 mb-2 max-h-40 overflow-y-auto">
-                {labMaster.map((name) => (
-                  <button key={name} onClick={() => addLab(name)}
-                    className={cn("text-[10px] px-2 py-0.5 rounded-full border transition-colors whitespace-nowrap",
-                      prescription.lab_orders.some(l => l.test_name === name)
-                        ? "bg-primary/10 border-primary/30 text-primary"
-                        : "bg-muted/50 border-border text-muted-foreground hover:bg-muted"
-                    )}>
-                    {name}
-                  </button>
-                ))}
-              </div>
+              {/* Test categories — click to pick individual tests via checkbox popup */}
+              {labByCategory.length > 0 && (
+                <div className="mb-2">
+                  <p className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Test Categories</p>
+                  <div className="flex flex-wrap gap-1">
+                    {(() => {
+                      const allNames = labMaster.map((m) => m.name);
+                      const selectedCount = countSelectedInLabGroup(allNames);
+                      const done = selectedCount > 0 && selectedCount === allNames.length;
+                      return (
+                        <button
+                          onClick={() => setOpenLabPicker({ groupKey: "labcat:__all__", title: "All Tests", testNames: applyPriorityOrder("labcat:__all__", allNames) })}
+                          className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold transition-colors whitespace-nowrap",
+                            done
+                              ? "bg-primary/10 border-primary/30 text-primary"
+                              : selectedCount > 0
+                              ? "bg-amber-50 border-amber-300 text-amber-700"
+                              : "bg-primary/5 border-primary/40 text-primary hover:bg-primary/10"
+                          )}>
+                          All Tests <span className="ml-1 opacity-60">({allNames.length})</span>
+                          {selectedCount > 0 && <span className="ml-1 opacity-70">{selectedCount}/{allNames.length}</span>}
+                        </button>
+                      );
+                    })()}
+                    {labByCategory.map((cat) => {
+                      const selectedCount = countSelectedInLabGroup(cat.testNames);
+                      const done = selectedCount > 0 && selectedCount === cat.testNames.length;
+                      return (
+                        <button key={cat.label}
+                          onClick={() => setOpenLabPicker({ groupKey: `labcat:${cat.label}`, title: cat.label, testNames: applyPriorityOrder(`labcat:${cat.label}`, cat.testNames) })}
+                          className={cn("text-[10px] px-2 py-0.5 rounded-full border transition-colors whitespace-nowrap",
+                            done
+                              ? "bg-primary/10 border-primary/30 text-primary"
+                              : selectedCount > 0
+                              ? "bg-amber-50 border-amber-300 text-amber-700"
+                              : "bg-muted/50 border-border text-muted-foreground hover:bg-muted"
+                          )}>
+                          {cat.label} <span className="ml-1 opacity-60">({cat.testNames.length})</span>
+                          {selectedCount > 0 && <span className="ml-1 opacity-70">{selectedCount}/{cat.testNames.length}</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               {prescription.lab_orders.length > 0 && (
                 <div className="mt-2">
                   <div className="flex items-center gap-2 mb-1.5">
@@ -753,7 +1121,12 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
                   </div>
                   <div className="space-y-1">
                     {prescription.lab_orders.map((l, i) => {
-                      const isOrdered = orderedLabTests.has(l.test_name.toLowerCase());
+                      const orderState = orderStateOf(orderedLabTests, l.test_name);
+                      // Resolved through the same matcher syncLabOrders uses, over tests AND
+                      // panels AND aliases. The old check compared raw lowercase strings
+                      // against labMaster alone, so every panel — Fever Panel included — was
+                      // reported as missing from a catalogue it was sitting in.
+                      const notInCatalogue = unresolvedLabNames.has(l.test_name);
                       return (
                         <div key={i} className="flex items-center justify-between bg-blue-50 border border-blue-100 rounded px-2 py-1.5">
                           <div className="flex flex-col">
@@ -761,11 +1134,17 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
                               {l.test_name}
                               <AvailabilityBadge availability={l.availability} kind="test" />
                             </span>
-                            {isOrdered && (
-                              <span className="text-[9px] text-emerald-600 font-bold flex items-center gap-1">
-                                <CheckCircle2 size={10} /> BILLED & ORDERED
+                            {/* The catalogue warning replaces the state chip rather than joining it:
+                                a test that cannot be matched will never become an order, so showing
+                                PRESCRIBED next to it implies a queue it is not in. */}
+                            {notInCatalogue && !orderState ? (
+                              <span className="text-[9px] text-amber-700 font-bold flex items-center gap-1">
+                                Prescribed test not found in the lab catalogue — not ordered or billed
                               </span>
+                            ) : (
+                              <OrderStateChip state={orderState} className="text-[9px]" />
                             )}
+                            <MatchTrace matchedFrom={l.matched_from} onRevert={() => revertLabMatch(i)} />
                           </div>
                           <button onClick={() => removeLab(i)}><X className="h-3 w-3 text-muted-foreground hover:text-destructive" /></button>
                         </div>
@@ -819,7 +1198,7 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
                   onSave={saveRadTpl}
                   onReset={resetRadTpl}
                   label="quick radiology studies"
-                  suggestions={radMaster}
+                  suggestions={radMaster.map(m => m.name)}
                   suggestionLabel="Radiology Study Master"
                 />
               )}
@@ -847,19 +1226,51 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
                 </div>
                 <button onClick={() => { addRad(radSuggestions[0] || radInput); setRadSuggestions([]); }} className="text-xs bg-muted px-2 rounded hover:bg-muted/80">+</button>
               </div>
-              {/* All radiology modalities as chips */}
-              <div className="flex flex-wrap gap-1 mb-2 max-h-40 overflow-y-auto">
-                {radMaster.map((name) => (
-                  <button key={name} onClick={() => addRad(name)}
-                    className={cn("text-[10px] px-2 py-0.5 rounded-full border transition-colors whitespace-nowrap",
-                      prescription.radiology_orders.some(r => r.study_name === name)
-                        ? "bg-primary/10 border-primary/30 text-primary"
-                        : "bg-muted/50 border-border text-muted-foreground hover:bg-muted"
-                    )}>
-                    {name}
-                  </button>
-                ))}
-              </div>
+              {/* Modalities — click to pick studies via checkbox popup */}
+              {radByModality.length > 0 && (
+                <div className="mb-2">
+                  <p className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">Modalities</p>
+                  <div className="flex flex-wrap gap-1">
+                    {(() => {
+                      const allNames = radMaster.map((m) => m.name);
+                      const selectedCount = countSelectedInRadGroup(allNames);
+                      const done = selectedCount > 0 && selectedCount === allNames.length;
+                      return (
+                        <button
+                          onClick={() => setOpenRadPicker({ groupKey: "radmod:__all__", title: "All Studies", studyNames: applyPriorityOrder("radmod:__all__", allNames) })}
+                          className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold transition-colors whitespace-nowrap",
+                            done
+                              ? "bg-primary/10 border-primary/30 text-primary"
+                              : selectedCount > 0
+                              ? "bg-amber-50 border-amber-300 text-amber-700"
+                              : "bg-primary/5 border-primary/40 text-primary hover:bg-primary/10"
+                          )}>
+                          All Studies <span className="ml-1 opacity-60">({allNames.length})</span>
+                          {selectedCount > 0 && <span className="ml-1 opacity-70">{selectedCount}/{allNames.length}</span>}
+                        </button>
+                      );
+                    })()}
+                    {radByModality.map((mod) => {
+                      const selectedCount = countSelectedInRadGroup(mod.studyNames);
+                      const done = selectedCount > 0 && selectedCount === mod.studyNames.length;
+                      return (
+                        <button key={mod.label}
+                          onClick={() => setOpenRadPicker({ groupKey: `radmod:${mod.label}`, title: mod.label, studyNames: applyPriorityOrder(`radmod:${mod.label}`, mod.studyNames) })}
+                          className={cn("text-[10px] px-2 py-0.5 rounded-full border transition-colors whitespace-nowrap",
+                            done
+                              ? "bg-primary/10 border-primary/30 text-primary"
+                              : selectedCount > 0
+                              ? "bg-amber-50 border-amber-300 text-amber-700"
+                              : "bg-muted/50 border-border text-muted-foreground hover:bg-muted"
+                          )}>
+                          {mod.label} <span className="ml-1 opacity-60">({mod.studyNames.length})</span>
+                          {selectedCount > 0 && <span className="ml-1 opacity-70">{selectedCount}/{mod.studyNames.length}</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               {prescription.radiology_orders.length > 0 && (
                 <div className="mt-2">
                   <div className="flex items-center gap-2 mb-1.5">
@@ -868,7 +1279,12 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
                   </div>
                   <div className="space-y-1">
                     {prescription.radiology_orders.map((r, i) => {
-                      const isOrdered = orderedRadStudies.has(r.study_name.toLowerCase());
+                      const orderState = orderStateOf(orderedRadStudies, r.study_name);
+                      // Radiology had no equivalent of the lab warning at all. An unmatched
+                      // study is still ordered — the master is more often incomplete than the
+                      // hospital unable to do the scan — but it bills at the default rate
+                      // rather than the study's own, so it has to be visible.
+                      const notInCatalogue = unresolvedRadNames.has(r.study_name);
                       return (
                         <div key={i} className="flex items-center justify-between bg-purple-50 border border-purple-100 rounded px-2 py-1.5">
                           <div className="flex flex-col">
@@ -876,11 +1292,14 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
                               {r.study_name}
                               <AvailabilityBadge availability={r.availability} kind="study" />
                             </span>
-                            {isOrdered && (
-                              <span className="text-[9px] text-emerald-600 font-bold flex items-center gap-1">
-                                <CheckCircle2 size={10} /> BILLED & ORDERED
+                            {notInCatalogue && !orderState ? (
+                              <span className="text-[9px] text-amber-700 font-bold flex items-center gap-1">
+                                Study not in the radiology catalogue — ordered, but billed at the default rate
                               </span>
+                            ) : (
+                              <OrderStateChip state={orderState} className="text-[9px]" />
                             )}
+                            <MatchTrace matchedFrom={r.matched_from} onRevert={() => revertRadMatch(i)} />
                           </div>
                           <button onClick={() => removeRad(i)}><X className="h-3 w-3 text-muted-foreground hover:text-destructive" /></button>
                         </div>
@@ -899,6 +1318,35 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
           positioned over the test-chip list. It now lives in the IPD workspace's
           bottom action bar (IPDWorkspace.tsx), which is where the other
           admission-level actions already sit and where it covers nothing. */}
+
+      {/* Lab panel / test-category checkbox picker */}
+      {openLabPicker && (
+        <TestGroupPickerModal
+          open={true}
+          title={openLabPicker.title}
+          feeLabel={openLabPicker.feeLabel}
+          items={openLabPicker.testNames}
+          selectedNames={new Set(prescription.lab_orders.map(l => l.test_name))}
+          orderedNames={orderedLabTests}
+          onClose={() => setOpenLabPicker(null)}
+          onConfirm={(finalNames) => applyLabPickerSelection(openLabPicker.testNames, finalNames)}
+          onReorder={(newOrder) => saveGroupPriorityOrder(openLabPicker.groupKey, newOrder)}
+        />
+      )}
+
+      {/* Radiology modality checkbox picker */}
+      {openRadPicker && (
+        <TestGroupPickerModal
+          open={true}
+          title={openRadPicker.title}
+          items={openRadPicker.studyNames}
+          selectedNames={new Set(prescription.radiology_orders.map(r => r.study_name))}
+          orderedNames={orderedRadStudies}
+          onClose={() => setOpenRadPicker(null)}
+          onConfirm={(finalNames) => applyRadPickerSelection(openRadPicker.studyNames, finalNames)}
+          onReorder={(newOrder) => saveGroupPriorityOrder(openRadPicker.groupKey, newOrder)}
+        />
+      )}
 
       {/* Safety alert modal */}
       {showSafetyModal && safetyResult && pendingDrug && (
@@ -927,6 +1375,32 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
         />
       )}
     </div>
+  );
+};
+
+/**
+ * "matched from <what the doctor wrote>", with a way to take it back.
+ *
+ * Auto-selecting a catalogue row creates a clinical order and a charge on the doctor's behalf.
+ * That is only acceptable if the substitution is visible and one click from being undone —
+ * silently swapping "Fever panel test" for a ₹1100 panel would be worse than the bug it fixes.
+ *
+ * Renders nothing when the name matched verbatim, which is the overwhelmingly common case.
+ */
+const MatchTrace: React.FC<{ matchedFrom?: string; onRevert: () => void }> = ({ matchedFrom, onRevert }) => {
+  if (!matchedFrom) return null;
+  return (
+    <span className="text-[9px] text-muted-foreground flex items-center gap-1">
+      matched from “{matchedFrom}”
+      <button
+        type="button"
+        onClick={onRevert}
+        title={`Keep "${matchedFrom}" exactly as written. It will not be auto-ordered or billed.`}
+        className="underline hover:text-destructive"
+      >
+        undo
+      </button>
+    </span>
   );
 };
 

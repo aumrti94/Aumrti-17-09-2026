@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { matchOrderName, resolveOrders, type OrderCatalogue, type CatalogueEntry } from "./orderCatalogue";
+import {
+  matchOrderName,
+  matchOrderNameDetailed,
+  resolveOrders,
+  type OrderCatalogue,
+  type CatalogueEntry,
+} from "./orderCatalogue";
 import { normalizeTerm } from "./medicalLexicon";
 
 function build(entries: CatalogueEntry[]): OrderCatalogue {
@@ -46,6 +52,95 @@ describe("matchOrderName", () => {
   it("handles empty input", () => {
     expect(matchOrderName("", catalogue)).toBeNull();
     expect(matchOrderName("CBC", { byExact: new Map(), all: [] })).toBeNull();
+  });
+});
+
+// The reported defect: "Fever panel test" rendered "Not offered here — Prescribed test not
+// found in the lab catalogue — not ordered or billed" while Fever Panel was on screen as a
+// chip. Whole-string Levenshtein scores the pair 0.714, under the 0.88 gate, because the
+// redundant word "test" is 4 of the 14 characters.
+describe("matchOrderName — redundant words", () => {
+  const panels = build([
+    { id: "g1", name: "Fever Panel", kind: "lab_group" },
+    { id: "g2", name: "Lipid Profile", kind: "lab_group" },
+    { id: "l1", name: "Serum Creatinine", kind: "lab" },
+    { id: "l2", name: "Widal Test", kind: "lab" },
+    { id: "l3", name: "Malaria Antigen (Rapid)", kind: "lab" },
+    { id: "r1", name: "USG Abdomen + Pelvis", kind: "radiology" },
+  ]);
+
+  it("ignores a trailing 'test' / 'scan' / 'study' the doctor appended", () => {
+    expect(matchOrderName("Fever panel test", panels)?.id).toBe("g1");
+    expect(matchOrderName("fever panel testing", panels)?.id).toBe("g1");
+    expect(matchOrderName("please do lipid profile", panels)?.id).toBe("g2");
+  });
+
+  it("ignores word ORDER and the &/+ spelling of a joined study", () => {
+    expect(matchOrderName("USG abdomen and pelvis", panels)?.id).toBe("r1");
+    expect(matchOrderName("pelvis and abdomen USG", panels)?.id).toBe("r1");
+  });
+
+  it("still forgives spelling drift on a single token", () => {
+    expect(matchOrderName("serum creatinin", panels)?.id).toBe("l1");
+  });
+
+  it("does not strip a word the catalogue name needs to be itself", () => {
+    // "Lipid" is not "Lipid Profile" — the panel is a different, more expensive order.
+    expect(matchOrderName("Lipid", panels)).toBeNull();
+    expect(matchOrderName("lipid test", panels)).toBeNull();
+  });
+
+  it("REFUSES a request that carries a token the catalogue row does not", () => {
+    // A malaria-specific fever workup is not the Fever Panel.
+    expect(matchOrderName("malaria fever panel", panels)).toBeNull();
+  });
+
+  it("keeps a catalogue name that is ITSELF mostly noise words matchable", () => {
+    expect(matchOrderName("widal", panels)?.id).toBe("l2");
+    expect(matchOrderName("Widal test", panels)?.id).toBe("l2");
+  });
+
+  it("REFUSES to rewrite plain English into a test name", () => {
+    expect(matchOrderName("check the pain", panels)).toBeNull();
+    expect(matchOrderName("fever", panels)).toBeNull();
+  });
+
+  it("does not swap one immunoglobulin class for the other", () => {
+    // IgM is a current infection, IgG is a past one. Dropping "test" must not also drop the
+    // single letter that carries the whole clinical meaning.
+    const twins = build([
+      { id: "a", name: "Dengue IgM", kind: "lab" },
+      { id: "b", name: "Dengue IgG", kind: "lab" },
+    ]);
+    expect(matchOrderName("dengue igm", twins)?.id).toBe("a");
+    expect(matchOrderName("Dengue IgM test", twins)?.id).toBe("a");
+    expect(matchOrderName("Dengue IgG test", twins)?.id).toBe("b");
+  });
+});
+
+describe("matchOrderNameDetailed — aliases", () => {
+  const withAlias: OrderCatalogue = (() => {
+    const c = build([
+      { id: "g1", name: "Kidney Function Test", kind: "lab_group" },
+      { id: "l1", name: "Blood Sugar Random", kind: "lab" },
+    ]);
+    const byAlias = new Map<string, CatalogueEntry>([
+      ["kft", c.all[0]],
+      ["rbs", c.all[1]],
+    ]);
+    return { ...c, byAlias };
+  })();
+
+  it("resolves shorthand no scorer could reach, and says it was an alias", () => {
+    expect(matchOrderNameDetailed("KFT", withAlias)).toMatchObject({
+      entry: { id: "g1" }, source: "alias",
+    });
+    expect(matchOrderNameDetailed("rbs", withAlias)?.entry.id).toBe("l1");
+  });
+
+  it("reports the tier that actually resolved the name", () => {
+    expect(matchOrderNameDetailed("Blood Sugar Random", withAlias)?.source).toBe("exact");
+    expect(matchOrderNameDetailed("blood sugar random test", withAlias)?.source).toBe("fuzzy");
   });
 });
 

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Plus, CheckCircle2, Clock, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ExternalLabReferralModal from "./ExternalLabReferralModal";
+import { notifyOrderingDoctorExternalLab } from "@/lib/resultNotifications";
 
 interface Props {
   hospitalId: string;
@@ -52,6 +53,14 @@ const ExternalReferralsTab: React.FC<Props> = ({ hospitalId }) => {
       status: next,
       ...(next === "completed" ? { report_received_at: new Date().toISOString() } : {}),
     }).eq("id", ref.id);
+
+    // The outside lab's report has landed — tell the clinician who referred the test out.
+    // Nothing previously notified them, so a referred-out result depended entirely on
+    // somebody remembering to chase it.
+    if (next === "completed") {
+      notifyOrderingDoctorExternalLab(ref.id).catch(() => {});
+    }
+
     toast({ title: `Status updated to ${STATUS_STYLES[next]?.label}` });
     load();
   };

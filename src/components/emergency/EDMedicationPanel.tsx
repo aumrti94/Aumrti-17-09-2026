@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "@/hooks/use-toast";
 import { Loader2, Plus, Pill, AlertTriangle } from "lucide-react";
+import { useConfigValues } from "@/hooks/useConfigValues";
 
 interface MedRow {
   id: string;
@@ -29,7 +30,6 @@ interface Props {
   onAdministered?: () => void;  // refresh parent charge totals when a med is billed
 }
 
-const ROUTES = ["IV", "IM", "PO (oral)", "SC", "SL", "PR", "Nebulized", "Inhaled", "Topical", "Other"];
 
 /**
  * ED medication administration record (eMAR) — Phase 7.
@@ -39,6 +39,9 @@ const ROUTES = ["IV", "IM", "PO (oral)", "SC", "SL", "PR", "Nebulized", "Inhaled
 const EDMedicationPanel: React.FC<Props> = ({
   hospitalId, userId, edVisitId, patientId, patientName, allergies, onClose, onAdministered,
 }) => {
+  // Emergency keeps its own route shorthand ("PO (oral)", "Nebulized") rather than
+  // the pharmacy drug_routes vocabulary — see configValueDefaults.ts.
+  const routes = useConfigValues("emergency_drug_routes");
   const [rows, setRows] = useState<MedRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -160,7 +163,7 @@ const EDMedicationPanel: React.FC<Props> = ({
                 <Select value={route} onValueChange={setRoute}>
                   <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {ROUTES.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                    {routes.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>

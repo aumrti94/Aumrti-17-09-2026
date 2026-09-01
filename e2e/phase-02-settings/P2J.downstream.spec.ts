@@ -724,14 +724,14 @@ test.describe('P2J — Downstream verification battery (the gate)', () => {
   test('TC-P2J-048 The discharge charge sweep does not double-bill', async () => {
     test.skip(!DB_ON(), 'Database access not enabled');
     const hid = await hospitalIdFor('A');
-    const { data, error } = await db().from('ipd_charges')
-      .select('admission_id, service_id, charge_date').eq('hospital_id', hid).limit(500);
-    test.skip(!!error, `ipd_charges is not readable: ${error?.message}`);
+    const { data, error } = await db().from('service_charges')
+      .select('admission_id, service_ref_id, service_date').eq('hospital_id', hid).limit(500);
+    test.skip(!!error, `service_charges is not readable: ${error?.message}`);
     test.skip(!data?.length, 'No IPD charges yet — Phase 7 re-runs this against a real discharge');
 
     const seen = new Map<string, number>();
     for (const c of data!) {
-      const key = `${c.admission_id}|${c.service_id}|${c.charge_date}`;
+      const key = `${c.admission_id}|${c.service_ref_id}|${c.service_date}`;
       seen.set(key, (seen.get(key) ?? 0) + 1);
     }
     const dupes = [...seen.entries()].filter(([, n]) => n > 1).map(([k]) => k);

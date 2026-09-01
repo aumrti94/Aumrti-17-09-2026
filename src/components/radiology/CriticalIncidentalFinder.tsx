@@ -124,7 +124,7 @@ clinical_significance levels:
           ];
 
           if (alerts.length > 0) {
-            supabase.from("clinical_alerts").insert(alerts as any).catch(() => {});
+            supabase.from("clinical_alerts").insert(alerts as any).then(() => {}, () => {});
           }
         }
       } catch {

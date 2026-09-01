@@ -7,6 +7,13 @@ import { ArrowLeft, Upload, X, Monitor, Smartphone, Printer, Save } from "lucide
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import {
+  HANDWRITING_FONTS,
+  HANDWRITING_SECTION_LABELS,
+  DEFAULT_HANDWRITING,
+  fontsHref,
+  type HandwritingSection,
+} from "@/lib/printUtils";
 
 const PRESET_COLORS = [
   { label: "Navy", hex: "#1A2F5A" },
@@ -20,6 +27,15 @@ const PRESET_COLORS = [
 ];
 
 const FONTS = ["Inter", "Poppins", "Roboto", "Noto Sans", "Open Sans", "Lato", "Nunito", "Raleway"];
+
+const INK_COLORS = [
+  { label: "Blue Ink", hex: "#1E3A8A" },
+  { label: "Royal Blue", hex: "#1D4ED8" },
+  { label: "Blue-Black", hex: "#16305C" },
+  { label: "Black", hex: "#111827" },
+];
+
+const HANDWRITING_SECTIONS = Object.keys(HANDWRITING_SECTION_LABELS) as HandwritingSection[];
 
 const HEADER_LAYOUTS = [
   { id: 1, label: "Logo Left + Center Text", desc: "Logo left, name center, contact right" },
@@ -49,9 +65,15 @@ const SettingsBrandingPage: React.FC = () => {
   const [footerLeft, setFooterLeft] = useState("");
   const [footerCenter, setFooterCenter] = useState("");
   const [footerRight, setFooterRight] = useState("");
+  const [hw, setHw] = useState(DEFAULT_HANDWRITING);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("print");
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  // False until the effect below has actually copied the loaded hospital into form state.
+  // `hospital` alone isn't enough to gate on — it can go truthy a render before the effect
+  // that populates `name` etc. has run, and a Save in that window overwrites hospitals.name
+  // with the still-empty initial state.
+  const [hydrated, setHydrated] = useState(false);
 
   const { data: hospital } = useQuery({
     queryKey: ["hospital-branding"],
@@ -77,7 +99,27 @@ const SettingsBrandingPage: React.FC = () => {
     setFooterLeft(cfg.footerLeft || "");
     setFooterCenter(cfg.footerCenter || "");
     setFooterRight(cfg.footerRight || "");
+    setHw({
+      ...DEFAULT_HANDWRITING,
+      ...(cfg.handwriting || {}),
+      sections: { ...DEFAULT_HANDWRITING.sections, ...(cfg.handwriting?.sections || {}) },
+    });
+    setHydrated(true);
   }, [hospital]);
+
+  // The script faces aren't in the app shell (index.html loads Inter only) — pull the
+  // selected one in on demand so the live preview below shows the real typeface.
+  useEffect(() => {
+    const id = "hw-font-preview";
+    let link = document.getElementById(id) as HTMLLinkElement | null;
+    if (!link) {
+      link = document.createElement("link");
+      link.id = id;
+      link.rel = "stylesheet";
+      document.head.appendChild(link);
+    }
+    link.href = fontsHref([...HANDWRITING_FONTS]);
+  }, []);
 
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -103,7 +145,7 @@ const SettingsBrandingPage: React.FC = () => {
   const removeLogo = () => setLogoUrl(null);
 
   const handleSave = async () => {
-    if (!hospital) return;
+    if (!hospital || !hydrated) return;
     setSaving(true);
     const brandingConfig = {
       fontSize,
@@ -111,6 +153,7 @@ const SettingsBrandingPage: React.FC = () => {
       footerLeft,
       footerCenter,
       footerRight,
+      handwriting: hw,
     };
     const { error } = await supabase
       .from("hospitals")
@@ -329,7 +372,117 @@ const SettingsBrandingPage: React.FC = () => {
             ))}
           </div>
 
-          {/* Section 4: Header Layout */}
+          {/* Section 4: Handwritten clinical text */}
+          <SectionHeader>Handwritten Clinical Text</SectionHeader>
+          <p className="text-[11px] text-muted-foreground mb-3">
+            Arogyasri and several TPAs return claim files whose clinical narrative looks machine-set.
+            Turn this on to print the doctor-authored free text in a script face. Only the typeface
+            changes — the author name, timestamp and wording stay exactly as recorded.
+          </p>
+
+          <button
+            onClick={() => setHw({ ...hw, enabled: !hw.enabled })}
+            className={cn(
+              "w-full flex items-center justify-between border rounded-lg px-3 py-2.5 mb-3 transition-colors",
+              hw.enabled ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"
+            )}
+          >
+            <span className="text-xs font-semibold text-foreground">Handwriting mode on printouts</span>
+            <span
+              className={cn(
+                "w-9 h-5 rounded-full flex items-center px-0.5 transition-colors",
+                hw.enabled ? "bg-primary justify-end" : "bg-muted justify-start"
+              )}
+            >
+              <span className="w-4 h-4 rounded-full bg-white shadow" />
+            </span>
+          </button>
+
+          {hw.enabled && (
+            <div className="mb-4">
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Handwriting Style</label>
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                {HANDWRITING_FONTS.map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setHw({ ...hw, font: f })}
+                    className={cn(
+                      "border rounded-lg px-2 py-2 text-left transition-all",
+                      hw.font === f ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"
+                    )}
+                  >
+                    <div
+                      className="text-[15px] leading-tight truncate"
+                      style={{ fontFamily: `'${f}', cursive`, color: hw.color }}
+                    >
+                      Afebrile, cont. same
+                    </div>
+                    <div className="text-[9px] text-muted-foreground mt-0.5">{f}</div>
+                  </button>
+                ))}
+              </div>
+
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Ink Colour</label>
+              <div className="flex gap-1.5 flex-wrap mb-3">
+                {INK_COLORS.map((c) => (
+                  <button
+                    key={c.hex}
+                    onClick={() => setHw({ ...hw, color: c.hex })}
+                    className={cn(
+                      "h-7 px-2 rounded-md border text-[10px] font-medium transition-all",
+                      hw.color.toUpperCase() === c.hex ? "ring-2 ring-primary ring-offset-1" : "border-border hover:border-primary/50"
+                    )}
+                    style={{ color: c.hex }}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                Size — {Math.round(hw.scale * 100)}% of base text
+              </label>
+              <input
+                type="range"
+                min={80}
+                max={200}
+                step={5}
+                value={Math.round(hw.scale * 100)}
+                onChange={(e) => setHw({ ...hw, scale: Number(e.target.value) / 100 })}
+                className="w-full mb-3 accent-primary"
+              />
+
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                Slant — {hw.slant}°
+              </label>
+              <input
+                type="range"
+                min={0}
+                max={12}
+                step={1}
+                value={hw.slant}
+                onChange={(e) => setHw({ ...hw, slant: Number(e.target.value) })}
+                className="w-full mb-3 accent-primary"
+              />
+
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Apply To</label>
+              <div className="space-y-1.5">
+                {HANDWRITING_SECTIONS.map((s) => (
+                  <label key={s} className="flex items-center gap-2 text-[11px] text-foreground cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={hw.sections[s]}
+                      onChange={(e) => setHw({ ...hw, sections: { ...hw.sections, [s]: e.target.checked } })}
+                      className="accent-primary"
+                    />
+                    {HANDWRITING_SECTION_LABELS[s]}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Section 5: Header Layout */}
           <SectionHeader>Print Header Layout</SectionHeader>
           <p className="text-[11px] text-muted-foreground mb-3">Applied to all printed documents</p>
           <div className="grid grid-cols-2 gap-2 mb-4">
@@ -363,7 +516,7 @@ const SettingsBrandingPage: React.FC = () => {
 
         {/* Sticky save button */}
         <div className="flex-shrink-0 px-5 py-3 border-t border-border">
-          <Button className="w-full h-12 gap-2 text-sm font-semibold" onClick={handleSave} disabled={saving}>
+          <Button className="w-full h-12 gap-2 text-sm font-semibold" onClick={handleSave} disabled={saving || !hydrated}>
             <Save size={16} />
             {saving ? "Saving..." : "Save Branding"}
           </Button>
@@ -445,6 +598,42 @@ const SettingsBrandingPage: React.FC = () => {
                   <div className="flex justify-between font-bold border-t border-border pt-1" style={{ color: primaryColor }}>
                     <span>Total</span><span>₹1,947</span>
                   </div>
+                </div>
+              </div>
+
+              {/* Ward-round sample — shows the handwriting settings on real S/O/A/P text */}
+              <div className="font-bold text-xs mb-2" style={{ color: primaryColor }}>WARD ROUND NOTE</div>
+              <div className="border border-border rounded p-2 mb-6">
+                <div className="flex justify-between text-[8px] text-muted-foreground border-b border-border pb-1 mb-1.5">
+                  <span className="font-semibold">26 Aug 2026, 9:15 am</span>
+                  <span>Dr. A. Sharma</span>
+                </div>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                  {[
+                    ["Subjective", "No fresh complaints, slept well"],
+                    ["Objective", "Afebrile, chest clear, BP 124/78"],
+                    ["Assessment", "Improving, sepsis resolving"],
+                    ["Plan", "Continue IV antibiotics × 2 days"],
+                  ].map(([k, v]) => (
+                    <div key={k} className="text-[8px] text-muted-foreground">
+                      {k}:{" "}
+                      <span
+                        style={
+                          hw.enabled
+                            ? {
+                                fontFamily: `'${hw.font}', cursive`,
+                                fontSize: `${Math.round(fontSize * hw.scale * 0.8)}px`,
+                                color: hw.color,
+                                display: hw.slant ? "inline-block" : undefined,
+                                transform: hw.slant ? `skewX(-${hw.slant}deg)` : undefined,
+                              }
+                            : { fontSize: "9px", color: "#1e293b" }
+                        }
+                      >
+                        {v}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               </div>
 

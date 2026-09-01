@@ -16,10 +16,44 @@ const c = {
   y: (s: string) => `\x1b[33m${s}\x1b[0m`,
 };
 
+/**
+ * Pay Vite's cold-compile cost here rather than inside the first test.
+ *
+ * The dev server answers the port as soon as it is listening, but the first request for the
+ * app still triggers on-demand transform of the whole entry graph. That regularly exceeds the
+ * 30s navigationTimeout, which is why the first navigation of a run (and only the first) timed
+ * out while the next thirty tests passed. Warming up here keeps the suite deterministic
+ * instead of papering over it with a retry.
+ */
+async function warmUpDevServer(baseURL: string): Promise<void> {
+  const deadline = Date.now() + 120_000;
+  let lastError = '';
+
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(baseURL, { signal: AbortSignal.timeout(30_000) });
+      if (res.ok) {
+        await res.text(); // wait for the full transformed response, not just headers
+        console.log(`  ${c.g('✓')} dev server warm (${baseURL})`);
+        return;
+      }
+      lastError = `HTTP ${res.status}`;
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+    }
+    await new Promise(r => setTimeout(r, 2_000));
+  }
+
+  // Not fatal — the run should still be allowed to proceed and fail informatively.
+  console.log(`  ${c.y('!')} dev server did not warm up: ${lastError}`);
+}
+
 export default async function globalSetup(_config: FullConfig): Promise<void> {
   console.log(`\n${c.b('Aumrti HMS — Playwright')}\n`);
   console.log(`  App under test   ${TEST_ENV.baseURL}`);
   console.log(`  Supabase project ${projectRefOf(TEST_ENV.supabaseUrl) || c.r('(not set)')}`);
+
+  await warmUpDevServer(TEST_ENV.baseURL);
 
   const guard = checkDbGuard();
 
