@@ -59,7 +59,6 @@ const TODO = new Set([
   "labSamples.ts",
   "offlineQueue.ts",
   "patient-records.ts",
-  "payrollEngine.ts",
   "pendingInvestigations.ts",
   "pharmacyReturns.ts",
   "resultNotifications.ts",
