@@ -16,6 +16,7 @@
     "test:coverage": "vitest run --coverage",
     "test:security": "vitest run --env-file .env.test src/tests/security/",
     "check:rls-coverage": "node scripts/check-rls-coverage.mjs",
+    "check:lib-test-coverage": "node scripts/check-lib-test-coverage.mjs",
     "check:user-fk": "node scripts/check-user-fk-convention.mjs",
     "check:db-contract": "node scripts/check-db-contract.mjs",
     "check:openapi": "node scripts/generate-openapi.mjs --check",

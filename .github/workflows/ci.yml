@@ -49,6 +49,13 @@ jobs:
       - name: OpenAPI spec freshness
         run: npm run check:openapi
 
+      # Ratchet gate: every src/lib file needs a test, is in the justified EXEMPT list
+      # (generated data / print templating / AI-advisory wrappers / third-party param
+      # mapping), or is tracked in TODO as a known, shrinking gap. A new file that is
+      # none of these fails the build — see scripts/check-lib-test-coverage.mjs.
+      - name: Lib test-coverage gate
+        run: npm run check:lib-test-coverage
+
       - name: Unit tests
         run: npm run test:coverage
 

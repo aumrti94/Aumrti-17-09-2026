@@ -75,6 +75,7 @@ npm run qa:phase1            # run one QA phase only (phase1..phase5)
 npm run qa:tracker           # rebuild docs/qa/tracker/AUMRTI_QA_TRACKER.xlsx from results
 
 npm run check:rls-coverage   # every table has a Row-Level Security policy
+npm run check:lib-test-coverage  # every src/lib file has a test, is exempt, or is a tracked gap
 npm run check:user-fk        # *_by columns FK public.users, not auth.users
 npm run check:db-contract    # every .from()/.rpc() call matches the generated schema
 npm run check:openapi        # published API docs match the route registry

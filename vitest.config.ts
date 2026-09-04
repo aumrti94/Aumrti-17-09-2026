@@ -12,9 +12,14 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text-summary", "text", "html"],
-      // Phase 1 gate: only the patient-safety + revenue-critical libs are
-      // measured and ratcheted. Global coverage will be widened as the suite
-      // grows (Sprint 2+). Adding a file here without tests will fail CI.
+      // Two-layer coverage gate for src/lib:
+      //   1. `npm run check:lib-test-coverage` (scripts/check-lib-test-coverage.mjs) is the
+      //      broad gate — every src/lib file needs *a* test, or a justified EXEMPT/TODO
+      //      entry. Wired into CI; catches a new untested file regardless of blended %.
+      //   2. The `include`/`thresholds` below are the narrow, stricter gate — a hand-picked
+      //      set of patient-safety + revenue-critical libs where "has a test" isn't enough
+      //      and a specific statement/branch % floor is enforced. Add a file here when it's
+      //      important enough to need more than layer 1; the floor may only rise.
       include: [
         "src/lib/drugSafetyCheck.ts",
         "src/lib/gstRules.ts",
