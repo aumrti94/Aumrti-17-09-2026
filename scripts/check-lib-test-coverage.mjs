@@ -54,15 +54,11 @@ const EXEMPT = {
 // here is a gap, not a design decision — remove the line the moment a test lands. CI does
 // not block on TODO entries existing, only on a file being in NEITHER list nor tested.
 const TODO = new Set([
-  "ancillaryCharges.ts",
-  "ancillaryGateChecks.ts",
-  "dayCareBilling.ts",
   "dicomParser.ts",
   "insuranceAlerts.ts",
   "inventoryStock.ts",
   "investigationBilling.ts",
   "labSamples.ts",
-  "moduleDepartments.ts",
   "offlineQueue.ts",
   "patient-records.ts",
   "payrollEngine.ts",
