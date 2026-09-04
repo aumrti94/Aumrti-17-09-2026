@@ -80,7 +80,7 @@ async function patientLabel(patientId: string | null): Promise<string> {
  * assert ordered_by = the calling user). `referring_doctor_id` carries the clinician who
  * actually asked for the investigation, and is null when the two are the same person.
  */
-const resultRecipient = (order: { referring_doctor_id?: string | null; ordered_by?: string | null }) =>
+export const resultRecipient = (order: { referring_doctor_id?: string | null; ordered_by?: string | null }) =>
   order.referring_doctor_id ?? order.ordered_by ?? null;
 
 /**

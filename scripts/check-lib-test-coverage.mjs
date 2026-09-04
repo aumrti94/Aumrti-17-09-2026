@@ -61,7 +61,6 @@ const TODO = new Set([
   "patient-records.ts",
   "pendingInvestigations.ts",
   "pharmacyReturns.ts",
-  "resultNotifications.ts",
   "serviceCatalogSync.ts",
   "storeStock.ts",
 ]);
