@@ -48,17 +48,20 @@ const EXEMPT = {
   "whatsapp-notifications.ts": "third-party API param mapping, no branching logic",
   "whatsapp-send.ts": "third-party API param mapping, no branching logic",
   "apiPlatform.ts": "third-party API param mapping, no branching logic",
+
+  // Needs tooling this repo doesn't have yet, not just "hasn't been done" — a real unit test
+  // needs a genuine fixture/shim, not just more mocking effort like everything else here.
+  "dicomParser.ts": "binary DICOM byte parser — verifying it needs real DICOM fixture files " +
+    "or a generation library, neither present here; a hand-rolled fixture would only prove " +
+    "the parser agrees with itself, not with real DICOM output",
+  "offlineQueue.ts": "raw IndexedDB (indexedDB.open/onupgradeneeded) — jsdom has no IndexedDB " +
+    "implementation and this repo has no fake-indexeddb devDependency; add one before testing this",
 };
 
 // Real business logic that genuinely needs a test and does not have one yet. Every entry
 // here is a gap, not a design decision — remove the line the moment a test lands. CI does
 // not block on TODO entries existing, only on a file being in NEITHER list nor tested.
-const TODO = new Set([
-  "dicomParser.ts",
-  "offlineQueue.ts",
-  "pharmacyReturns.ts",
-  "storeStock.ts",
-]);
+const TODO = new Set([]);
 
 const allFiles = readdirSync(LIB_DIR).filter((f) => {
   if (!/\.(ts|tsx)$/.test(f)) return false;
