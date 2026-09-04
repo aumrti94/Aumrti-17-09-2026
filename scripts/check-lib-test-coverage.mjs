@@ -64,7 +64,6 @@ const TODO = new Set([
   "resultNotifications.ts",
   "serviceCatalogSync.ts",
   "storeStock.ts",
-  "tallyXmlGenerator.ts",
 ]);
 
 const allFiles = readdirSync(LIB_DIR).filter((f) => {
