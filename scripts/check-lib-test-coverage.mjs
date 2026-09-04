@@ -55,16 +55,11 @@ const EXEMPT = {
 // not block on TODO entries existing, only on a file being in NEITHER list nor tested.
 const TODO = new Set([
   "accounting.ts",
-  "adminAudit.ts",
   "ancillaryCharges.ts",
   "ancillaryGateChecks.ts",
-  "auditLog.ts",
   "chargePosting.ts",
-  "currentUser.ts",
   "dayCareBilling.ts",
   "dicomParser.ts",
-  "getHospitalId.ts",
-  "ims.ts",
   "insuranceAlerts.ts",
   "inventoryStock.ts",
   "investigationBilling.ts",
