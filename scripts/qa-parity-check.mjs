@@ -128,10 +128,19 @@ function readSpecTitles(phaseFilter) {
     const rel = path.relative(ROOT, file).replace(/\\/g, '/');
     if (phaseFilter && !rel.includes(`phase-${phaseFilter}`)) continue;
     const src = fs.readFileSync(file, 'utf8');
-    const re = /(?:^|\s)test(?:\.only|\.fixme|\.skip)?\s*\(\s*(['"`])((?:\\.|(?!\1).)*)\1/g;
-    for (const m of src.matchAll(re)) {
-      found.push({ title: m[2], file: rel });
-    }
+
+    // Form 1 — a literal title: test('TC-P2D-014 …', …). Phases 1–4.
+    const literal = /(?:^|\s)test(?:\.only|\.fixme|\.skip)?\s*\(\s*(['"`])((?:\\.|(?!\1).)*)\1/g;
+    for (const m of src.matchAll(literal)) found.push({ title: m[2], file: rel });
+
+    // Form 2 — a title resolved from the manifest: test(testTitle('TC-P5A-001'), …).
+    //
+    // Phase 5 journeys take their titles from `p5-manifest.ts` so the spec, the CSV `Steps` column
+    // and the tracker cannot drift apart. That means the title is not a literal in the source, and
+    // a checker that only understood form 1 reported "0 Playwright tests" for a phase with 24 of
+    // them — which read as the entire phase having vanished.
+    const viaManifest = /(?:^|\s)test(?:\.only|\.fixme|\.skip)?\s*\(\s*testTitle\s*\(\s*(['"`])(TC-P\d+[A-Z]-\d+)\1\s*\)/g;
+    for (const m of src.matchAll(viaManifest)) found.push({ title: m[2], file: rel });
   }
   return found;
 }
@@ -190,6 +199,36 @@ function checkQuality(records, file, problems) {
     if (r['Why This Exists'].length < 40) {
       problems.push(`${at} — "Why This Exists" is too thin to justify the case ("${r['Why This Exists']}")`);
     }
+    // ── Phase 5 only: a case must be a JOURNEY, not a field poke ──────────────
+    //
+    // This is the rule the whole Phase 5 rewrite exists to enforce. The previous suite had 154
+    // cases of which 39 never opened a browser and 83 seeded an order, clicked once and asserted
+    // one column — every one of them describing itself as a workflow. Three mechanical conditions
+    // stop that coming back: enough stages to be a journey, at least one thing that must be
+    // REFUSED, and at least one value sitting exactly on a boundary. A case that cannot satisfy
+    // all three is a field poke wearing a journey's name.
+    if (/^TC-P5[A-Z]-/.test(r['TC#'] ?? '')) {
+      const stages = (r['Steps'] ?? '').match(/\d+\)/g)?.length ?? 0;
+      if (stages < 10) {
+        problems.push(
+          `${at} — a Phase 5 journey has ${stages} numbered stage(s); at least 10 are required. ` +
+          'A case with fewer is testing a screen, not a patient\'s path through the hospital.',
+        );
+      }
+      if (!/NEGATIVE:/.test(r['Steps'] ?? '')) {
+        problems.push(
+          `${at} — no NEGATIVE: stage. A journey that only walks the happy path proves the ` +
+          'product works when used correctly, which is not the question a hospital is asking.',
+        );
+      }
+      if (!/BOUNDARY:/.test(r['Steps'] ?? '')) {
+        problems.push(
+          `${at} — no BOUNDARY: stage. The values that break are the ones sitting exactly on a ` +
+          'threshold; a journey that never touches one has not tested the threshold.',
+        );
+      }
+    }
+
     // A case that writes must say where to look. This is what "trust the DB, not the UI" means.
     const writes = /\b(save|create|add|update|edit|delete|deactivate|persist|store)\b/i.test(r['Test Case']);
     if (writes && /^none$/i.test(r['Supabase Verify'])) {

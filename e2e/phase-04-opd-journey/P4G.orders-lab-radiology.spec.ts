@@ -55,7 +55,7 @@ import { registerWalkIn, openTokenAndStart, fillComplaint, addLabTest, completeC
 import { patientIdByUhid, purgeOpdArtefacts } from './opd-helpers';
 import {
   collectPendingLabFromOpd, collectPendingRadiologyFromOpd,
-} from '../phase-05-lab-radiology/lab-rad-flows';
+} from '../phase-05-lab-radiology/p5-stages';
 
 const DB_ON = () => process.env.QA_DB_AVAILABLE === 'true';
 const P4 = MOCK.phase4;

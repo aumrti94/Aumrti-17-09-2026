@@ -285,38 +285,107 @@ the five cross-module hops out to Lab, Radiology, Pharmacy, Billing and IPD.
 > chief complaint (`TC-P4E-008`).
 
 ### Phase 5 — Lab & Radiology
-**Goal:** prove the 16 scenarios in
-[JOURNEY_SCENARIOS.md](JOURNEY_SCENARIOS.md#phase-5--lab--radiology--16-scenarios) hold —
+**Goal:** prove the 17 scenarios in
+[JOURNEY_SCENARIOS.md](JOURNEY_SCENARIOS.md#phase-5--lab--radiology--17-scenarios) hold —
 order to sample to result to release, the critical value and the delta check, auto-verification
 and dual validation, the radiology worklist and report, and the statutory PCPNDT Form F.
 
-**Cases:** [cases/phase-05-lab-radiology.csv](cases/phase-05-lab-radiology.csv) — **146 cases
-across 12 sections**, matched 1:1 by **146 tests in 12 spec files**.
+**Cases:** [cases/phase-05-lab-radiology.csv](cases/phase-05-lab-radiology.csv) — **24 journeys
+across 12 sections**, matched 1:1 by **24 tests in 12 spec files**.
 **Specs:** [e2e/phase-05-lab-radiology/](../../e2e/phase-05-lab-radiology/), run with `npm run qa:phase5`.
 
-> **Phase 5 changes the shape of a test case.** Phases 1–4 are atomic — one row per field, per
-> option value, per permission. Every Phase 5 case is instead a **complete workflow**: 8–15
-> numbered steps that walk a real journey end to end (order → bill → collect → barcode → result →
-> critical alert → acknowledge → release → chart), with several assertions along the way.
-> Negatives and boundaries are their own complete workflows, not field pokes. 146 cases therefore
-> cover more ground than Phase 4's 260, and each one fails in a way that describes something a
-> hospital would actually notice. 1:1 CSV↔spec parity is unchanged.
+> **Phase 5 is 24 complete journeys, not 154 field pokes.** This is the biggest shape change in the
+> programme, and it was made because an audit of the previous 154 cases found that **39 (25%) never
+> opened a browser at all** — they read Supabase and asserted a column, and four of them read
+> `src/*.tsx` off disk — while **83 more (54%) seeded an order straight into the database, opened
+> one screen, clicked once**. Sample *receive* and *process* were clicked twice in 154 cases. Every
+> radiology order in the phase was a service-role insert; `NewRadiologyOrderModal` had never once
+> been completed. Five Lab tabs had never been opened by any test.
+>
+> A hospital going live does not care whether the flag column reads `CH`. It cares whether a patient
+> can be registered, billed, bled, resulted, released and read by the doctor who asked the question.
+> So each case is now one journey of 20–38 stages through the browser, with its positive, negative
+> and boundary conditions asserted inline as it goes. All ~51 negative and ~21 boundary conditions
+> from the old suite survive as stages; coverage went up while the row count went down.
 
-| Section | Cases | Covers |
+> **How a 38-stage case stays diagnosable.** Every stage is a `test.step()` titled
+> `S09/38 · lab_technician · Draw the sample at the collection workstation`, so one line of a
+> failure report says the journey cleared payment and died at phlebotomy. `tracker-reporter.ts`
+> parses that prefix into a **`Stages Passed / Total`** column (`31/38`) and a per-stage artefact,
+> `docs/qa/results/latest-steps.json`. Hard `expect` is used only where the next stage physically
+> depends on it; everything else is `expect.soft`, so one broken locator costs one red assertion
+> rather than silently un-reporting the twenty-six conditions behind it.
+
+> **One source for the stages.** `e2e/phase-05-lab-radiology/p5-manifest.ts` declares every case's
+> stages, roles, patient, timeout and Supabase-verify targets. The spec imports them for its step
+> titles and `node docs/qa/tracker/build-p5-cases.mjs` writes the same list into the CSV `Steps`
+> column — so the steps a tester follows by hand and the stages the automation walks cannot drift.
+> `qa-parity-check.mjs` enforces the shape mechanically: a Phase 5 row needs **at least 10 numbered
+> stages, at least one `NEGATIVE:` and at least one `BOUNDARY:`**, which is what stops a narrow case
+> being reintroduced wearing a journey's name.
+
+> **Every case gets its own patient, and nothing is deleted.** Phases 1–4 share `PT-QA-NNNN` records
+> and purge what they create; Phase 5 provisions `PT-QA-<case>-<run>` per case and leaves every
+> order, sample, result, report and Form F in place. Three reasons:
+>
+> 1. **The failures here are about persistence.** L1 is "the result save is silently discarded", R1
+>    is "the report shell is never created", L6 is "an amendment overwrites the original". Each is a
+>    question about a row that should still exist — and an `afterEach` purge answers all three with
+>    an empty table, which is also the answer a passing test gives.
+> 2. **One patient cannot hold contradictory histories.** A journey asserting a patient's FIRST
+>    result has nothing to compare against cannot share a chart with one asserting a 30-day-old
+>    baseline. Under the old model both held only because a delete ran between them.
+> 3. **An empty tenant is not a realistic tenant.** A worklist with exactly one order never
+>    exercises "which of these eleven is the current one", which is where real defects live.
+>
+> The persona is deterministic from the case ID and clinically shaped where it matters — the Form F
+> journeys get a woman of childbearing age, the false-positive side gets a man — so a statutory
+> record can never pass for the wrong reason. Two fixtures are still REUSED because their premise is
+> a patient who was already there: `PT-QA-0018` (the live admission an ancillary charge accrues to)
+> and `PT-QA-0030` (the Hospital-B isolation control). Pin `QA_P5_RUN_TAG` to re-enter a previous
+> run's charts; reset deliberately with `npm run qa:seed`.
+
+> **A service-role write now needs a reason.** `p5-seed-of-last-resort.ts` permits one only for
+> state that (a) predates the test's clock, (b) belongs to a tenant the test cannot log into, or
+> (c) originates outside the product — a device, a PACS, a reference lab. Everything a user of this
+> hospital could have done today, the journey does through the browser. That is why
+> `seedLabOrder`, `advanceSamples`, `seedRadiologyOrder` and `seedUnpaidCharge` are gone: between
+> them they used to skip the order wizard, the payment, the accession, the bill, the two-identifier
+> check, the collection, the receipt and the processing — which is to say, the product.
+
+> **Missing configuration is repaired, not reported as a defect.** `p5-prereqs.ts` provisions every
+> `SETTINGS_PREREQ_MATRIX` Lab/Radiology row it finds absent — critical ranges, panel members,
+> `requires_form_f`, PCPNDT registrations — and returns what it had to repair. `TC-P5L-001` reads
+> the tenant BEFORE it runs, so a configuration gap surfaces as exactly one red case rather than
+> forty phantom product defects. The state that used to cause that: migration `20261009000171`
+> deactivates every lab test, and every lookup in the app filters `is_active = true`.
+
+| Section | Journeys | Covers |
 |---|---:|---|
-| 5A Lab order intake & billing | 16 | OPD pay-then-test, IPD post-paid accrual, accession numbering, STAT alerting, **the Fever Panel group price** |
-| 5B Collection, barcoding & rejection | 12 | collect → receive → process, accession vs sample barcode, haemolysed rejection → recollection with **no second charge** |
-| 5C Results, critical values & delta | 14 | potassium 7.2 → `CH` → alert → acknowledge → release; both boundary pairs; **creatinine 0.9 → 4.5** |
-| 5D Verification, dual validation & amendment | 14 | auto-verify and its seven refusal reasons, the two-person control, amendment after release |
-| 5E External / referred-out | 8 | the send-out register and the four gaps that make it a dead end |
-| 5F Radiology order, worklist & report | 16 | the real status ladder, sign-off, critical findings, CT dose, **the report shell that never gets created** |
-| 5G PCPNDT Form F | 14 | obstetric USG → Form F → register → both gates; the non-obstetric false-positive side |
-| 5H AI radiology impression | 10 | AI Suggest → attestation → **the radiologist's edited text is what is saved**; the governance gaps |
-| 5I Billing & payment gates | 12 | the seven-rule ancillary gate, STAT bypass, override audit, the double-bill probe |
-| 5J Downstream & compliance | 10 | result → chart, charge → bill, NABH evidence, ABDM care context |
-| 5K RBAC & tenant isolation | 12 | role reach, and A-vs-B on eight lab/radiology/PCPNDT tables through a real session |
-| 5L Prerequisites & Phase 6 gate | 8 | every SETTINGS_PREREQ_MATRIX Lab/Radiology row, re-proven |
-| **Total** | **146** | |
+| 5A Outpatient lab | 3 | consultation → prescription → desk payment → draw → bench → release → the doctor's chart; the panel group price; the desk order modal and every way it refuses |
+| 5B Inpatient lab & ancillary money | 2 | post-paid ward accrual with no cash step; the pre-paid gate — four ways it holds, two ways it is bypassed |
+| 5C Specimen lifecycle | 2 | rejection and recollection with no second charge, all eight reasons; barcode vs accession, receipt, processing, the mix-up guard |
+| 5D Result correctness | 3 | the critical-value boundary battery and the phone call; the delta check with a 30-day baseline; the result workspace exhaustively |
+| 5E Validation & pathology | 2 | dual validation and amendment; histopathology from specimen to a two-pathologist sign-off **[new surface]** |
+| 5F External referral | 1 | referred out and back — five chips, three advances, and the four gaps that make it a dead end |
+| 5G Instrument governance | 2 | a Westgard violation stops a release and only a supervisor restarts it; NABL calibration, the analyzer connector, mapping and an inbound message **[new surface]** |
+| 5H Turnaround | 1 | when the TAT clock starts, when it breaches, and what the dashboards show **[new surface]** |
+| 5I Radiology reporting | 3 | the order modal nobody had ever driven, the viewer, the report, the chart; critical findings; the AI impression |
+| 5J PCPNDT | 2 | obstetric USG → Form F → the gate → the statutory register; the non-obstetric false positive |
+| 5K RBAC & tenant isolation | 2 | the role matrix walked as a journey; nine tables and one write attempt across tenants |
+| 5L Prerequisites | 1 | the phase cannot run against a hospital that is not configured for it |
+| **Total** | **24** | 481 stages |
+
+> **Delivery status.** Sections **A–H (16 journeys, the lab chain) are implemented and runnable**.
+> Sections **I–L (8 journeys) are declared but not yet automated** — their stages, patients and
+> verify targets are in the manifest and the CSV, so a tester can walk them by hand today, and the
+> specs are `test.fixme` placeholders that report `N/A` rather than vanishing from the tracker.
+
+> **Two run tiers.** `npm run qa:phase5:smoke` runs the six journeys that would stop a go-live — the
+> money, the pre-paid gate, the specimen, the critical value, the radiology report and the statutory
+> Form F — in roughly 25 minutes. `npm run qa:phase5` runs all 24 and takes closer to two hours at
+> `workers=1`. Do not expect the full phase to run on every push; a suite that long stops being run,
+> which is worse than the narrow cases it replaced.
 
 > **Run 5L first, then again last.** It re-proves every "symptom if missing" in
 > `SETTINGS_PREREQ_MATRIX.md`, so anything failing elsewhere is a real defect rather than a

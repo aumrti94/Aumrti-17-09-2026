@@ -28,7 +28,7 @@
  * forbids this outright; the parity check rejects any template-literal test title.
  */
 import type {
-  Reporter, TestCase, TestResult, FullConfig, Suite, FullResult,
+  Reporter, TestCase, TestResult, TestStep, FullConfig, Suite, FullResult,
 } from '@playwright/test/reporter';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -51,6 +51,50 @@ interface CaseAgg {
   screenshot?: string;
   consoleError?: string;
   flaky: boolean;
+  /** Phase 5 journey stages, in order. Empty for the atomic cases in phases 1–4. */
+  stages: StageResult[];
+  /** `S09/38 · lab_technician · Draw the sample` — the stage a journey actually died at. */
+  firstFailingStage?: string;
+  /** Soft-assertion failures, which do not abort the journey but must still be reported. */
+  softFailures: string[];
+}
+
+export interface StageResult {
+  title: string;
+  ok: boolean;
+  ms: number;
+  error?: string;
+}
+
+/**
+ * A Phase 5 journey stage: `S09/38 · lab_technician · Draw the sample at the collection workstation`.
+ *
+ * Only steps matching this shape are recorded. Playwright emits a step for every `expect` and every
+ * fixture as well, and keeping those would bury the journey's own structure under a few hundred
+ * assertions — the stage list is meant to be readable as the story the case tells.
+ */
+const STAGE_TITLE = /^S\d+\/\d+ · /;
+
+/**
+ * Walk the step tree and pull out the journey stages.
+ *
+ * A 38-stage journey that dies at stage 9 reports one error at the top level, and without this the
+ * tracker records "FAILED" and nothing about how far it got. The whole argument for collapsing 154
+ * narrow cases into 24 journeys depends on being able to say *where* — otherwise the rewrite trades
+ * breadth of signal for narrative and comes out behind.
+ */
+function collectStages(steps: readonly TestStep[], out: StageResult[]): void {
+  for (const step of steps) {
+    if (STAGE_TITLE.test(step.title)) {
+      out.push({
+        title: step.title,
+        ok: !step.error,
+        ms: step.duration,
+        error: step.error ? tidy(stripAnsi(step.error.message ?? ''), 400) : undefined,
+      });
+    }
+    if (step.steps?.length) collectStages(step.steps, out);
+  }
 }
 
 /** Playwright colourises error messages; raw ANSI in a spreadsheet cell is unreadable. */
@@ -133,10 +177,28 @@ export default class TrackerReporter implements Reporter {
       consoleText = fs.readFileSync(consoleAtt.path, 'utf8');
     }
 
+    // Journey stages, for the Phase 5 cases. Phases 1–4 emit none and are unaffected.
+    const stages: StageResult[] = [];
+    collectStages(result.steps ?? [], stages);
+
+    // Soft assertions do not abort the journey, so they never surface as `result.error` — but each
+    // one is a real condition that failed and must reach the tracker, or a journey reports PASS
+    // while quietly having proven six things wrong.
+    const softFailures = (result.errors ?? [])
+      .map(e => tidy(stripAnsi(e.message ?? ''), 300))
+      .filter(Boolean);
+
     for (const tc of ids) {
       const agg = this.cases.get(tc) ?? {
         tc, verdict: 'N/A', total: 0, passed: 0, failed: 0, skipped: 0, flaky: false,
+        stages: [], softFailures: [],
       };
+
+      if (stages.length) {
+        agg.stages = stages;
+        agg.firstFailingStage = stages.find(s => !s.ok)?.title;
+      }
+      if (softFailures.length && !agg.softFailures.length) agg.softFailures = softFailures;
 
       agg.total += 1;
       if (verdict === 'PASS') agg.passed += 1;
@@ -172,22 +234,36 @@ export default class TrackerReporter implements Reporter {
     }
 
     const cases: Record<string, unknown> = {};
+    /** Per-stage detail, written alongside as `latest-steps.json` so the 21-column CSV is untouched. */
+    const stageDetail: Record<string, StageResult[]> = {};
 
     for (const [tc, a] of [...this.cases].sort(([x], [y]) => x.localeCompare(y))) {
       // Only say "N of M" when a case really is backed by several tests — on a 1:1
       // case that phrasing reads like a bug.
       const scope = a.total > 1 ? ` (${a.passed}/${a.total} checks passed)` : '';
 
+      // For a journey, "how far did it get" is most of the diagnosis. `S09/38 · lab_technician ·
+      // Draw the sample` tells a reader the case cleared payment and died at phlebotomy without
+      // them opening a trace — which is what a 24-row tracker has to buy back from a 154-row one.
+      const stagesDone = a.stages.filter(s => s.ok).length;
+      const stageScope = a.stages.length ? ` ${stagesDone} of ${a.stages.length} stages passed.` : '';
+      const softNote = a.softFailures.length
+        ? `\n${a.softFailures.length} soft assertion(s) also failed:\n` +
+          a.softFailures.slice(0, 5).map(s => `  · ${s.split('\n')[0]}`).join('\n')
+        : '';
+
       let actual: string;
       if (a.verdict === 'PASS') {
-        actual = `Automated: passed${scope}.`;
+        actual = `Automated: passed${scope}.${stageScope}${softNote}`;
       } else if (a.verdict === 'N/A') {
         actual = `Automated: skipped${scope} — precondition not met (see spec skip reason).`;
       } else {
         actual =
-          `Automated: FAILED${scope}.\n` +
+          `Automated: FAILED${scope}` +
+          (a.firstFailingStage ? ` at ${a.firstFailingStage}` : '') + '.' +
+          stageScope + '\n' +
           (a.total > 1 && a.firstFailureTitle ? `First failing check: ${a.firstFailureTitle}\n` : '') +
-          (a.firstFailureMessage ?? '');
+          (a.firstFailureMessage ?? '') + softNote;
       }
 
       cases[tc] = {
@@ -201,7 +277,13 @@ export default class TrackerReporter implements Reporter {
         totalChecks: a.total,
         passedChecks: a.passed,
         failedChecks: a.failed,
+        // Feeds the tracker's "Stages Passed / Total" column.
+        stagesPassed: stagesDone,
+        stagesTotal: a.stages.length,
+        firstFailingStage: a.firstFailingStage ?? '',
+        softFailureCount: a.softFailures.length,
       };
+      stageDetail[tc] = a.stages;
     }
 
     const payload = {
@@ -220,10 +302,34 @@ export default class TrackerReporter implements Reporter {
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
 
+    /*
+     * The stage tree goes in a SIBLING file rather than into `latest.json`.
+     *
+     * A 38-stage journey carries 38 titles, durations and error strings; folding that into the
+     * results file every phase reads would bloat it for the four phases that have no stages at
+     * all, and would tempt someone to widen the 21-column CSV contract to carry it. Keeping it
+     * separate means `build-tracker.mjs` can render a "Stages Passed / Total" column and a future
+     * dashboard can render the whole grid, while the contract stays exactly as it was.
+     */
+    const withStages = Object.entries(stageDetail).filter(([, s]) => s.length);
+    if (withStages.length) {
+      const stepsFile = abs.replace(/latest\.json$/, 'latest-steps.json');
+      fs.writeFileSync(
+        stepsFile,
+        `${JSON.stringify({
+          generatedAt: this.startedAt,
+          finishedAt: new Date().toISOString(),
+          cases: Object.fromEntries(withStages),
+        }, null, 2)}\n`,
+        'utf8',
+      );
+    }
+
     const failed = Object.values(cases).filter(c => (c as { status: Verdict }).status === 'FAIL').length;
     console.log(
       `\n  Tracker results → ${path.relative(this.projectRoot, abs).replace(/\\/g, '/')}\n` +
       `  ${payload.caseCount} case(s) recorded, ${failed} failing` +
+      (withStages.length ? `, ${withStages.length} journey(s) with stage detail` : '') +
       (this.unmapped.size ? `, ${this.unmapped.size} test(s) with no case ID (see unmappedTests)` : '') +
       `\n  Merge into the workbook with: npm run qa:tracker\n`,
     );

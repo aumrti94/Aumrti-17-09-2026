@@ -203,7 +203,7 @@ Token cancelled/marked no-show, slot released, no orphan bill left behind.
 
 ---
 
-# Phase 5 — Lab & Radiology · 16 scenarios
+# Phase 5 — Lab & Radiology · 17 scenarios
 
 | # | Scenario | The story | Must not break |
 |---|---|---|---|
@@ -223,6 +223,7 @@ Token cancelled/marked no-show, slot released, no orphan bill left behind.
 | **P5-S14** | Non-obstetric USG | Abdominal ultrasound | Form F must **not** be created — false positives are their own problem |
 | **P5-S15** | AI radiology impression | Radiologist uses AI-drafted impression | Draft is editable; radiologist's verification is what's recorded |
 | **P5-S16** | External / referred-out test | Test not done in-house, sent to a reference lab | Tracked as external referral; result still lands in the chart |
+| **P5-S17** | Results reach the ordering doctor | A released result finds its way back to the clinician who asked the question | It appears in the consultation the doctor is already in; the alert names the ordering doctor and nobody else; reading it stamps the review; an inpatient result stays on the admission, not a stale OPD visit |
 
 ---
 

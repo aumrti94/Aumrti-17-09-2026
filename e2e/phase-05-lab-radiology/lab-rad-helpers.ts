@@ -24,10 +24,10 @@
  *   2. `seedPriorResult()` back-dates a previous validated result so the delta check has
  *      something to compare against. A test cannot wait a week between two creatinines.
  *
- * PURGE ORDERING IS NOT NEGOTIABLE — see `purgeLabRadArtefacts` at the bottom. Nothing in this
- * chain declares ON DELETE CASCADE, so children must go first, and a failed delete must be
- * SURFACED. A purge that swallows its error leaves rows behind that poison every later run,
- * which is exactly the class of bug Phase 3 documents.
+ * NOTHING HERE DELETES ANYTHING. Each case provisions its own patient (`p5-patients.ts`), so the
+ * orders, samples, results and reports a case creates are left in place for inspection. The
+ * reasoning, and why the old `purgeLabRadArtefacts()` is not coming back, is at the bottom of
+ * this file.
  */
 import { db, hospitalIdFor } from '../utils/db-verify';
 import { MOCK } from '../fixtures/mock-data';
@@ -365,7 +365,11 @@ export async function seedRadiologyOrder(opts: {
     is_pcpndt: isPcpndt,
     ordered_at: now.toISOString(),
     order_date: now.toISOString().split('T')[0],
-    order_time: now.toTimeString().slice(0, 8),
+    // `radiology_orders.order_time` is a timestamptz (migration 20260322152823:31), NOT a `time`.
+    // The name reads like a clock value and this fixture used to write one — `"22:44:57"` — which
+    // PostgREST rejects with `invalid input syntax for type timestamp with time zone`, failing
+    // every radiology case at the seed step before it could test anything.
+    order_time: now.toISOString(),
   } as never).select('id, accession_number').maybeSingle();
 
   if (error) throw new Error(`Seeding a radiology order (${opts.studyName}): ${error.message}`);
@@ -605,85 +609,29 @@ export async function setAncillaryMode(
   return () => write(before);
 }
 
-/* ── Cleanup ──────────────────────────────────────────────────────────── */
+/* ── Cleanup: deliberately none ───────────────────────────────────────── */
 
 /**
- * Delete everything Phase 5 can create for a set of patients, children first.
+ * THERE IS NO PURGE IN PHASE 5, AND THAT IS THE DESIGN.
  *
- * ORDER MATTERS AND IS NOT NEGOTIABLE. Nothing in this chain declares ON DELETE CASCADE, so:
- *   - `lab_samples` and `lab_order_items` reference `lab_orders` and must precede it;
- *     `lab_samples.recollected_from_sample_id` is self-referential, so a rejected sample's
- *     recollection must not outlive it — the whole set for the order goes in one delete.
- *   - `lab_results` references `lab_order_items` (microbiology antibiograms only, but a culture
- *     case creates them).
- *   - `pcpndt_form_f` and `pcpndt_records` key on the ORDER, not the patient — neither table has
- *     a `patient_id` that would be caught by a patient-scoped delete, and `pcpndt_form_f`
- *     additionally carries a `no_delete_pcpndt` policy, so a failure here is expected under the
- *     anon role and must not be swallowed under the service role.
- *   - `clinical_alerts` rows reference `lab_order_item_id`; they go before the items.
+ * This file used to export `purgeLabRadArtefacts()` and `purgeByUhid()`, which deleted every
+ * order, sample, result, report and Form F a case had created, in FK-safe order, from an
+ * `afterEach`. They are gone. Each case now provisions its OWN patient (`p5-patients.ts`), so
+ * there is no shared chart that needs resetting between cases — and the records a case leaves
+ * behind are the evidence you open when it goes red.
  *
- * Errors are SURFACED, never swallowed. A purge that hides its failure leaves rows that poison
- * every later run and produces the stale-row class of bug Phase 3 documents at length.
+ * Three concrete reasons not to bring them back:
+ *
+ *   1. **The failures here are about persistence.** L1 is "the result save is silently
+ *      discarded"; R1 is "the report shell is never created"; L6 is "an amendment overwrites
+ *      the original". Every one of those is a question about a row that should still exist —
+ *      and a purge answers all of them with an empty table.
+ *   2. **A Form F is a statutory record.** `pcpndt_form_f` carries a `no_delete_pcpndt` policy
+ *      precisely because the PCPNDT Act does not permit the register to be edited away. Test
+ *      code that routinely deletes from it is test code modelling something unlawful.
+ *   3. **An empty tenant is not a realistic tenant.** A worklist with one order in it never
+ *      exercises "which of these eleven is the current one", which is where real defects live.
+ *
+ * If you need a clean slate, re-seed the tenant deliberately: `node scripts/qa-seed.mjs`.
  */
-export async function purgeLabRadArtefacts(hospitalId: string, patientIds: string[]): Promise<void> {
-  if (!patientIds.length) return;
-
-  const D = db() as unknown as {
-    from: (t: string) => {
-      select: (c: string) => { in: (c: string, v: string[]) => Promise<{ data: Array<{ id: string }> | null }> };
-      delete: () => { in: (c: string, v: string[]) => Promise<{ error: { message: string } | null }> };
-    };
-  };
-
-  const idsOf = async (table: string, col: string, values: string[]): Promise<string[]> => {
-    if (!values.length) return [];
-    const { data } = await D.from(table).select('id').in(col, values);
-    return (data ?? []).map(r => r.id);
-  };
-
-  const del = async (table: string, col: string, values: string[]): Promise<void> => {
-    if (!values.length) return;
-    const { error } = await D.from(table).delete().in(col, values);
-    if (error) {
-      throw new Error(
-        `Purging "${table}" by ${col} failed: ${error.message}. Either a child table now ` +
-        `references it without ON DELETE CASCADE — add it to purgeLabRadArtefacts() ABOVE this ` +
-        `line — or a delete-blocking policy applies (pcpndt_form_f carries no_delete_pcpndt).`,
-      );
-    }
-  };
-
-  const labOrderIds = await idsOf('lab_orders', 'patient_id', patientIds);
-  const radOrderIds = await idsOf('radiology_orders', 'patient_id', patientIds);
-  const labItemIds = await idsOf('lab_order_items', 'lab_order_id', labOrderIds);
-
-  // Alerts reference the item; they must go before it.
-  await del('clinical_alerts', 'lab_order_item_id', labItemIds);
-  await del('clinical_alerts', 'patient_id', patientIds);
-
-  // Lab: results -> samples -> items -> order.
-  await del('lab_results', 'order_item_id', labItemIds);
-  await del('lab_samples', 'lab_order_id', labOrderIds);
-  await del('lab_order_items', 'lab_order_id', labOrderIds);
-  await del('lab_orders', 'patient_id', patientIds);
-
-  // Radiology: BOTH PCPNDT tables and the report key on order_id, not patient_id.
-  await del('pcpndt_records', 'radiology_order_id', radOrderIds);
-  await del('pcpndt_form_f', 'order_id', radOrderIds);
-  await del('radiology_reports', 'order_id', radOrderIds);
-  await del('radiology_orders', 'patient_id', patientIds);
-
-  await del('external_lab_referrals', 'patient_id', patientIds);
-}
-
-/** Convenience: resolve a hospital and purge a list of UHIDs in one call. */
-export async function purgeByUhid(hospitalKey: 'A' | 'B', uhids: string[]): Promise<void> {
-  const hid = await hospitalIdFor(hospitalKey);
-  const ids: string[] = [];
-  for (const uhid of uhids) {
-    const { data } = await db().from('patients').select('id')
-      .eq('hospital_id', hid).eq('uhid', uhid).maybeSingle();
-    if (data) ids.push((data as { id: string }).id);
-  }
-  await purgeLabRadArtefacts(hid, ids);
-}
+export {};

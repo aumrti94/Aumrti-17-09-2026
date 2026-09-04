@@ -69,8 +69,25 @@ const COLUMNS = [
   { key: 'Supabase Verify',                                     width: 40, wrap: true },
   { key: 'Playwright Spec',                                     width: 48 },
   { key: 'Defect ID',                                           width: 14, user: true },
+  // The 22nd column, added with the Phase 5 journey rewrite.
+  //
+  // A Phase 5 case is now one 20–38 stage journey rather than six to ten narrow cases, so the row
+  // count fell from 154 to 24 while the number of conditions asserted went UP. Read as a coverage
+  // metric, the row count alone makes that look like an 84% cut. This column keeps the metric
+  // honest: "31/38" says how much of the journey actually ran, and a case that dies at stage 9
+  // is visibly different from one that dies at stage 37. Machine-owned, populated from
+  // docs/qa/results/latest-steps.json; blank for the atomic cases in phases 1–4.
+  { key: 'Stages Passed / Total',                               width: 18 },
 ];
 const COL = Object.fromEntries(COLUMNS.map((c, i) => [c.key, i + 1]));
+/**
+ * Columns computed from the run rather than authored in a CSV.
+ *
+ * They appear in the workbook but must never be required in a case file, or the 21-column contract
+ * in `docs/qa/test-case-template.md` stops being true and every phase has to carry a column its
+ * authors can never fill.
+ */
+const MACHINE_ONLY_COLS = new Set(['Stages Passed / Total']);
 /** Columns the tester fills in — these are what we merge back on re-run. */
 const USER_COLS = COLUMNS.filter(c => c.user).map(c => c.key);
 /**
@@ -148,7 +165,13 @@ function readPhaseCSVs() {
 
       // Fail loudly on a header drift rather than silently writing to the
       // wrong columns — a misaligned tracker is worse than no tracker.
-      const missing = COLUMNS.map(c => c.key).filter(k => !header.includes(k));
+      //
+      // MACHINE_ONLY_COLS are excluded: they are computed from the run, never authored in a CSV,
+      // so requiring them in the header would force every phase to carry an always-blank column
+      // and would break the 21-column contract that `test-case-template.md` documents.
+      const missing = COLUMNS.map(c => c.key)
+        .filter(k => !MACHINE_ONLY_COLS.has(k))
+        .filter(k => !header.includes(k));
       if (missing.length) {
         console.error(`\n  ✗ ${file} is missing column(s):`);
         missing.forEach(m => console.error(`      "${m}"`));
@@ -211,6 +234,12 @@ function applyAutomatedResults(answers, results, csvTcs) {
     // Notes: only fill when the human has not written anything there.
     if (r.notes && !String(kept['Notes'] ?? '').trim()) kept['Notes'] = r.notes;
     // Defect ID is never touched.
+
+    // "31/38" for a Phase 5 journey; blank for the atomic cases in phases 1–4, which emit no
+    // stages. This is the column that stops a 24-row phase reading as a coverage cut.
+    if (Number(r.stagesTotal) > 0) {
+      kept['Stages Passed / Total'] = `${r.stagesPassed ?? 0}/${r.stagesTotal}`;
+    }
 
     answers.set(tc, kept);
     applied += 1;

@@ -732,15 +732,45 @@ starts from the seeded baseline.
 
 ## Phase 5 additions — rows you TYPE IN during Lab & Radiology testing
 
-**Phase 5 creates no new patients either.** All 16 scenarios reuse the seeded set:
+**Phase 5 gives every case its own patient, and deletes nothing.** This is the one place the
+program departs from the "reuse the seeded set" rule above, and the reason is worth reading before
+you run the phase.
 
-| Patient | Drives |
+Phases 1–4 share `PT-QA-NNNN` records and clean up after themselves. Phase 5 cannot: its cases are
+complete workflows whose whole subject is what PERSISTS. `TC-P5C-014` asserts that a patient's
+first ever result has nothing to compare against, while `TC-P5C-011` asserts the same workflow on a
+patient carrying a 30-day-old creatinine — under a shared patient both were true only because a
+purge ran between them. And when a case does go red, the first question is "what does the chart
+actually look like?", which a purge has already answered with nothing.
+
+So each case provisions its own patient before it runs, and the run leaves every order, sample,
+result, report and Form F in place:
+
+| | |
 |---|---|
-| `PT-QA-0001` Ramesh Kumar | the baseline lab journey, the Fever Panel, sample rejection and recollection, the plain chest X-ray and the AI impression |
-| `PT-QA-0012` Deepa Nair | the obstetric ultrasound and every PCPNDT Form F case (22 weeks pregnant) |
-| `PT-QA-0022` Gopal Krishna | the delta check — CKD, so a creatinine of 0.9 rising to 4.5 is the story his chart tells |
-| `PT-QA-0018` Sharma Ji | the IPD ancillary paths, post-paid **and** pre-paid, and the payment-gate override |
-| `PT-QA-0030` Rohan Kulkarni | the Hospital-B cross-tenant probe |
+| **UHID** | `PT-QA-<case>-<run>` — `TC-P5C-002` becomes `PT-QA-5C002-MKQ3X1` |
+| **Name** | `<persona> <case>-<run>` — `Jyothi Gupta 5C002-MKQ3X1` |
+| **Run tag** | Base36 minutes-since-epoch, one per `playwright test` process. It is in the name as well as the UHID because the collection workstation and radiology worklist match on name alone, and nothing is deleted — without it, a case would match its own order from the *previous* run |
+| **Persona** | Deterministic from the case ID, so `TC-P5C-002` is the same person on every machine. Defined in [e2e/phase-05-lab-radiology/p5-personas.ts](../../e2e/phase-05-lab-radiology/p5-personas.ts) |
+| **Clinical overrides** | The 5G Form F cases get a woman of childbearing age; `TC-P5G-003`/`014` get a man for the false-positive side; the 5C delta cases get a 62-year-old CKD adult. A statutory record raised on the wrong sort of patient would pass for the wrong reason |
+| **Created by** | `ensureCasePatient()` in [p5-patients.ts](../../e2e/phase-05-lab-radiology/p5-patients.ts), through the service role, before the case's first click |
+| **Deleted by** | Nothing. `npm run qa:seed` is the deliberate reset |
+
+Set `QA_P5_RUN_TAG` to pin the tag — useful to re-enter the exact chart a failing run left behind,
+or to watch a longitudinal history build up across runs.
+
+**Five cases deliberately REUSE a seeded patient**, because their premise is someone who was
+already there before the test opened. Creating a fresh patient would make them test something else:
+
+| Patient | Reused by | Why it must be the existing record |
+|---|---|---|
+| `PT-QA-0018` Sharma Ji | `TC-P5A-009/010`, `TC-P5I-002…008`, `TC-P5I-011` | The ancillary charge has to accrue against a **live admission**. A fresh patient has no admission to accrue to, so the gate under test never engages |
+| `PT-QA-0030` Rohan Kulkarni | `TC-P5K-012` | The Hospital-B record that must stay invisible to Hospital A. It is only ever read from |
+
+The steps in [cases/phase-05-lab-radiology.csv](cases/phase-05-lab-radiology.csv) name each case's
+own patient, generated from the same persona module the tests use — run
+`npm run qa:p5:patients` after changing a persona, and `npm run qa:p5:patients:check` in CI to
+catch the two drifting apart.
 
 The values a case actually **types** live in `e2e/fixtures/mock-data.json`'s `phase5` block:
 
@@ -766,9 +796,17 @@ The values a case actually **types** live in `e2e/fixtures/mock-data.json`'s `ph
 > creatinines, so `seedPriorResult()` back-dates the 0.9 as a fixture. Everything the case
 > actually asserts still goes through the browser — same precedent as Phase 4's `seedPriorVisit()`.
 
-Delete anything these cases create (orders, samples, results, reports, Form F rows and
-referrals) at the end of the phase, or re-run `npm run qa:seed`, so Phase 6 starts from the
-seeded baseline.
+**Do not delete what these cases create.** The orders, samples, results, reports, Form F rows and
+referrals are left in place on purpose — they are the evidence you open when a case goes red, and
+three of the phase's findings (L1 "the result save is silently discarded", R1 "the report shell is
+never created", L6 "an amendment overwrites the original") are questions about rows that should
+still exist. A Form F additionally carries a `no_delete_pcpndt` policy, because the PCPNDT Act does
+not permit the register to be edited away; test code that routinely deletes from it is modelling
+something unlawful.
+
+Each case owning its own patient is what makes this safe: no case can see another's work, so
+nothing needs resetting between them. If you do want a clean tenant before Phase 6, reset it
+deliberately with `npm run qa:seed`.
 
 ---
 
