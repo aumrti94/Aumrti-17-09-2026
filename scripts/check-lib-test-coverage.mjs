@@ -56,7 +56,6 @@ const EXEMPT = {
 const TODO = new Set([
   "dicomParser.ts",
   "offlineQueue.ts",
-  "pendingInvestigations.ts",
   "pharmacyReturns.ts",
   "storeStock.ts",
 ]);
