@@ -34,5 +34,20 @@ docs/qa/results/
 .env
 .env.local
 .env.test
+.env.*.qabak
+*.qabak
 e2e/.auth/
 mcp_config.json
+
+# Local scratch scripts and one-off migration/debug runners — never
+# meant to be shared; ad-hoc and often hold live credentials inline.
+scratch_*.cjs
+scratch_*.js
+run_migration.cjs
+
+# node_modules committed inside docs/ (e.g. a pitch-deck build tool)
+docs/**/node_modules
+
+# ESLint cache dumps left behind by ad-hoc `--output-file` runs
+cur.json
+cur2.json
