@@ -34,7 +34,6 @@ Full module-by-module breakdown, routes, and billing keys: [docs/product/MODULE_
 - **Frontend:** React 18 + TypeScript + Vite, shadcn/ui (Radix primitives) + Tailwind CSS
 - **Data & auth:** Supabase (Postgres + Row-Level Security + Auth + Edge Functions on Deno)
 - **State/data-fetching:** TanStack Query
-- **Testing:** Vitest (unit) + Playwright (end-to-end)
 - **Mobile:** React Native (Expo) in [mobile/](mobile/)
 
 ## Getting started
@@ -65,24 +64,16 @@ npm run dev                # start the dev server
 npm run build               # production build
 npm run lint                 # ESLint
 
-npm run test                # unit tests (Vitest)
-npm run test:watch           # unit tests, watch mode
-npm run test:coverage        # unit tests with coverage report
-
-npm run test:e2e             # full Playwright suite
-npm run test:e2e:ui          # Playwright UI mode
-npm run qa:phase1            # run one QA phase only (phase1..phase5)
-npm run qa:tracker           # rebuild docs/qa/tracker/AUMRTI_QA_TRACKER.xlsx from results
-
 npm run check:rls-coverage   # every table has a Row-Level Security policy
-npm run check:lib-test-coverage  # every src/lib file has a test, is exempt, or is a tracked gap
 npm run check:user-fk        # *_by columns FK public.users, not auth.users
 npm run check:db-contract    # every .from()/.rpc() call matches the generated schema
 npm run check:openapi        # published API docs match the route registry
 ```
 
-All of these run in CI on every PR — see [.github/workflows/ci.yml](.github/workflows/ci.yml) and
-[.github/workflows/qa-e2e.yml](.github/workflows/qa-e2e.yml).
+All of these run in CI on every PR — see [.github/workflows/ci.yml](.github/workflows/ci.yml).
+
+> There is currently no automated test suite (unit or end-to-end) in this repo — it was removed
+> pending a restart. See [CLAUDE.md](CLAUDE.md) before adding new tests.
 
 ## Project layout
 
@@ -94,18 +85,13 @@ src/
   hooks/          data-fetching and shared UI state
   contexts/       app-wide React context providers
   integrations/   generated Supabase client + types (do not hand-edit)
-  test/           Vitest setup + shared test utilities
+  test/           Vitest setup (no test suite currently — see the note above)
 supabase/
   migrations/     schema history, applied in filename order
   functions/      Edge Functions (Deno), one directory per function
   tests/          pgTAP database tests
-e2e/
-  phase-NN-*/     Playwright specs, grouped by product area
-  fixtures/       shared login/session fixtures and mock data
-  reporters/      custom reporter that feeds the QA tracker workbook
 docs/
   product/        generated fact base + module catalogue (source of truth for numbers)
-  qa/             QA scenarios, mock data book, phase map, tracker
   api/            generated OpenAPI spec
 mobile/           React Native (Expo) companion app
 .claude/          Claude Code agent/skill/command configuration for this repo
@@ -127,8 +113,4 @@ These are structural, not stylistic — CI fails without them:
 ## Contributing
 
 - Read [CLAUDE.md](CLAUDE.md) before making structural changes — it's the load-bearing rulebook
-  for this repo (multi-tenancy, RLS, testing, and the module boundaries).
-- New `src/lib` logic needs unit tests — coverage on that directory is enforced and ratchets up,
-  never down (see [vitest.config.ts](vitest.config.ts)).
-- New Playwright specs belong under the relevant `e2e/phase-NN-*/` directory, using that phase's
-  existing fixtures/helpers rather than new ad-hoc ones.
+  for this repo (multi-tenancy, RLS, and the module boundaries).

@@ -156,7 +156,7 @@ async function logCentralTxn(
 }
 
 // Plan FEFO takes across a source's batches; returns takes + shortage (if any).
-export function planTakes(rows: Batch[], qty: number) {
+function planTakes(rows: Batch[], qty: number) {
   let remaining = qty;
   const takes: { batch: Batch; take: number }[] = [];
   for (const row of rows) {
