@@ -272,7 +272,7 @@ serve(async (req) => {
     });
 
   } catch (err) {
-    console.error("delete-hospital error:", err);
-    return json({ error: (err as Error).message }, 500);
+    console.error("delete-hospital error:", err instanceof Error ? err.message : String(err));
+    return json({ error: "Internal error" }, 500);
   }
 });

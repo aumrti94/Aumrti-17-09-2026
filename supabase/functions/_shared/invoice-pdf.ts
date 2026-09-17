@@ -17,6 +17,19 @@
  * If the font cannot be fetched we fall back to "Rs." with the standard fonts
  * rather than failing — an invoice that says Rs. is recoverable, a webhook that
  * 500s because a font CDN blipped is not.
+ *
+ * NO EXTERNAL CDN FALLBACK. This used to also try fetching NotoSans from jsdelivr when the
+ * hospital's own storage bucket had no font uploaded yet. Found live (Phase 6 edge-function
+ * testing): an external fetch returning HTTP 200 with corrupted/substituted content (a
+ * captive-portal-style network response, a truncated download — anything short of a clean
+ * network failure) is NOT recoverable by the try/catch around loadFonts(). fontkit's own
+ * subsetting/encoding work runs partly in a deferred internal callback outside the awaited
+ * promise chain, so a malformed font crashes the ENTIRE Deno worker
+ * (InvalidWorkerResponse: "value argument is out of bounds") rather than rejecting a promise —
+ * exactly the un-recoverable failure this module's own header says it exists to avoid. The
+ * bucket path is trusted (an admin-uploaded, controlled file) and kept; the network fallback
+ * is removed rather than made "more validated", because no practical byte-level check closes
+ * every way an untrusted external fetch can return structurally-plausible-but-corrupt content.
  */
 
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "https://esm.sh/pdf-lib@1.17.1";
@@ -67,39 +80,42 @@ export interface InvoicePdfInput {
 let fontCache: { regular: Uint8Array; bold: Uint8Array } | null = null;
 let fontFetchFailed = false;
 
-// Must be real TTF/OTF — @pdf-lib/fontkit is a trimmed build and WOFF is not
-// reliably decodable by it.
-const FONT_URLS = {
-  regular: "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Regular.ttf",
-  bold: "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Bold.ttf",
-};
+// TrueType/OpenType magic-byte signatures. A response with any other leading bytes is not a
+// usable font — a truncated download or an unexpected substitution. `rRes.ok` alone would not
+// catch this (a fetch can 200 with a garbage body), so this is checked in addition to that —
+// a floor, not a full validation: see the module header for why a deeper byte-level check was
+// judged not worth attempting, and the external CDN path removed instead.
+function looksLikeTrueTypeOrOpenType(bytes: Uint8Array): boolean {
+  if (bytes.length < 4) return false;
+  const sig = bytes.slice(0, 4);
+  const matches = (s: string) => s.split("").every((c, i) => sig[i] === c.charCodeAt(0));
+  return (
+    (sig[0] === 0x00 && sig[1] === 0x01 && sig[2] === 0x00 && sig[3] === 0x00) || // TrueType
+    matches("OTTO") || // OpenType/CFF
+    matches("true") || // legacy TrueType (macOS)
+    matches("ttcf")    // TrueType Collection
+  );
+}
 
 /**
- * Loads a Unicode TTF/OTF. `bucketFetch` lets the caller serve the font from
- * their own storage bucket (preferred: no external dependency at charge time);
- * the CDN is the fallback for a first run before anyone has uploaded one.
+ * Loads a Unicode TTF/OTF from the hospital's own storage bucket. No external network
+ * fallback — see the module header for why. Returns null (triggering the "Rs." standard-font
+ * fallback) whenever no font has been uploaded there yet.
  */
 async function loadFonts(
   bucketFetch?: (name: string) => Promise<Uint8Array | null>,
 ): Promise<{ regular: Uint8Array; bold: Uint8Array } | null> {
   if (fontCache) return fontCache;
   if (fontFetchFailed) return null;
+  if (!bucketFetch) return null;
 
   try {
-    if (bucketFetch) {
-      const [r, b] = await Promise.all([bucketFetch("NotoSans-Regular.ttf"), bucketFetch("NotoSans-Bold.ttf")]);
-      if (r && b) {
-        fontCache = { regular: r, bold: b };
-        return fontCache;
-      }
+    const [r, b] = await Promise.all([bucketFetch("NotoSans-Regular.ttf"), bucketFetch("NotoSans-Bold.ttf")]);
+    if (r && b && looksLikeTrueTypeOrOpenType(r) && looksLikeTrueTypeOrOpenType(b)) {
+      fontCache = { regular: r, bold: b };
+      return fontCache;
     }
-    const [rRes, bRes] = await Promise.all([fetch(FONT_URLS.regular), fetch(FONT_URLS.bold)]);
-    if (!rRes.ok || !bRes.ok) throw new Error(`font fetch ${rRes.status}/${bRes.status}`);
-    fontCache = {
-      regular: new Uint8Array(await rRes.arrayBuffer()),
-      bold: new Uint8Array(await bRes.arrayBuffer()),
-    };
-    return fontCache;
+    return null;
   } catch (e) {
     console.error("Invoice font load failed, falling back to 'Rs.':", (e as Error).message);
     fontFetchFailed = true;

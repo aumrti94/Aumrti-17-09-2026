@@ -140,6 +140,18 @@ export default function FeatureFlagsPage() {
         </button>
       </div>
 
+      {/* No screen in the product currently calls usePlatformFeatureFlag() to read a flag's
+          state — the read half of this feature was never wired up after the admin half was
+          built. Flags created and toggled here are stored correctly but have no effect
+          anywhere yet. Remove this banner once at least one call site checks a flag. */}
+      <div className="px-6 py-2 bg-amber-50 border-b border-amber-200 shrink-0">
+        <p className="text-[11px] text-amber-800">
+          <strong>Not yet wired to any feature.</strong> Flags saved here are stored, but no
+          screen currently checks them — creating or toggling a flag has no effect on the
+          product yet.
+        </p>
+      </div>
+
       <div className="flex-1 overflow-auto">
         <table className="w-full text-sm">
           <thead className="sticky top-0 bg-card z-10">

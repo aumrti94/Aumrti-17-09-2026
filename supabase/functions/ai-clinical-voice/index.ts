@@ -327,10 +327,16 @@ What the speech recogniser produced:
     // Started here but NOT awaited until the safety check actually needs it, so this DB
     // round trip overlaps the translation, lexicon, config resolution and LLM call instead
     // of adding its latency to theirs.
-    const patientContextPromise = patient_id
+    // hospitalId (resolved above from the caller's OWN session, never from
+    // the request) must scope this lookup too — patient_id alone let a
+    // caller at one hospital pull allergy/medication fragments belonging to
+    // another hospital's patient into their own safety-check flags. Found
+    // in the Phase 4 isolation audit — see KNOWN_BUGS.md.
+    const patientContextPromise = patient_id && hospitalId
       ? sb.from("patient_ai_context")
           .select("known_allergies, current_medications")
           .eq("patient_id", patient_id)
+          .eq("hospital_id", hospitalId)
           .maybeSingle()
           .then(({ data }: { data: { known_allergies?: string[]; current_medications?: string[] } | null }) => ({
             allergies: data?.known_allergies || [],

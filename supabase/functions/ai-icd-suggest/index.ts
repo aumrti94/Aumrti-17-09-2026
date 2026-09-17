@@ -1,6 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveAiConfig, callAiChat } from "../_shared/ai-config.ts";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
+import { checkAIAllowed } from "../_shared/ai-entitlement.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -50,6 +52,20 @@ serve(async (req) => {
       });
     }
     const hospital_id = userData.hospital_id;
+
+    // Entitlement is already enforced inside resolveAiConfig() below (matching the real
+    // frontend caller's own `featureKey: "icd_coding"`, ICDCodingTab.tsx) — it calls
+    // checkAIAllowed internally and throws AIDisabledError on a real disabled decision,
+    // but this file's outer catch-all doesn't special-case that error, so a disabled
+    // hospital got a confusing 500 instead of a clean 403. Checked explicitly here for the
+    // right status/message, threaded into resolveAiConfig's `options.entitlement` below to
+    // avoid re-running the same 4 queries. Found via Phase 6 AI-function-plumbing testing.
+    const gate = await checkAIAllowed(sb, hospital_id, "icd_coding");
+    if (!gate.allowed) {
+      return new Response(JSON.stringify({ error: gate.reason }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     let clinicalText = "";
 
@@ -103,7 +119,7 @@ serve(async (req) => {
       });
     }
 
-    const config = await resolveAiConfig(hospital_id, "icd_coding", 600);
+    const config = await resolveAiConfig(hospital_id, "icd_coding", 600, { entitlement: gate });
     if (!config) {
       return new Response(JSON.stringify({ error: "No AI provider configured. Go to Settings → API Hub." }), {
         status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -148,7 +164,7 @@ ${clinicalText}`,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
-    console.error("ai-icd-suggest error:", e);
+    console.error("ai-icd-suggest error:", sanitizeForLog(e instanceof Error ? e.message : String(e)));
     return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

@@ -50,7 +50,6 @@ const SettingsDoctorSchedulesPage: React.FC = () => {
     { start: "09:00", end: "13:00", maxPatients: 30, slotDuration: 15 },
     { start: "17:00", end: "20:00", maxPatients: 20, slotDuration: 15 },
   ]);
-  const [fee, setFee] = useState("500");
   const [advanceDays, setAdvanceDays] = useState("30");
   const [genFrom, setGenFrom] = useState("");
   const [genTo, setGenTo] = useState("");
@@ -132,12 +131,16 @@ const SettingsDoctorSchedulesPage: React.FC = () => {
             }
           });
           setSessions(Array.from(uniqueSessions.values()));
+          // Stored uniformly across every row for this doctor (KNOWN-BUG-145) — any row's
+          // value is the doctor's value.
+          setAdvanceDays(String((data[0] as any).advance_booking_days ?? 30));
         } else {
           setWorkingDays(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]);
           setSessions([
             { start: "09:00", end: "13:00", maxPatients: 30, slotDuration: 15 },
             { start: "17:00", end: "20:00", maxPatients: 20, slotDuration: 15 },
           ]);
+          setAdvanceDays("30");
         }
       } catch (e: any) {
         console.error("Failed to load schedule:", e);
@@ -179,6 +182,10 @@ const SettingsDoctorSchedulesPage: React.FC = () => {
         .eq("doctor_id", selected);
       if (delErr) throw delErr;
 
+      // advance_booking_days was previously captured on this screen and never saved at all
+      // (KNOWN-BUG-145) — stored uniformly per row since it's a per-doctor, not per-session,
+      // value and doctor_schedules has no doctor-level row to hold it.
+      const advanceBookingDays = Number(advanceDays) || 30;
       const rows = workingDays.flatMap((day) =>
         sessions.map((s) => ({
           hospital_id: hospitalId,
@@ -188,12 +195,15 @@ const SettingsDoctorSchedulesPage: React.FC = () => {
           session_end: s.end,
           max_patients: s.maxPatients,
           slot_duration_minutes: s.slotDuration,
+          advance_booking_days: advanceBookingDays,
           is_active: true,
         }))
       );
 
       if (rows.length > 0) {
-        const { error: insErr } = await supabase
+        // advance_booking_days isn't in the generated types yet — same reason as elsewhere in
+        // this session's fixes (types.ts regenerates from a live push).
+        const { error: insErr } = await (supabase as any)
           .from("doctor_schedules")
           .upsert(rows, { onConflict: "hospital_id,doctor_id,day_of_week,session_start" });
         if (insErr) throw insErr;
@@ -377,16 +387,17 @@ const SettingsDoctorSchedulesPage: React.FC = () => {
                 ))}
               </section>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label>Consultation Fee (₹)</Label>
-                  <Input type="number" value={fee} onChange={(e) => setFee(e.target.value)} className="mt-1.5" />
-                </div>
-                <div>
-                  <Label>Advance Booking (days)</Label>
-                  <Input type="number" value={advanceDays} onChange={(e) => setAdvanceDays(e.target.value)} className="mt-1.5" />
-                </div>
+              <div className="max-w-[240px]">
+                <Label>Advance Booking (days)</Label>
+                <Input type="number" value={advanceDays} onChange={(e) => setAdvanceDays(e.target.value)} className="mt-1.5" />
+                <p className="text-[11px] text-amber-700 mt-1">
+                  Saved, but not yet enforced — patient self-booking and staff scheduling do not
+                  currently check this limit.
+                </p>
               </div>
+              <p className="text-[11px] text-muted-foreground">
+                Consultation fee is set per-doctor in Settings → Staff Members, not here.
+              </p>
 
               <Button onClick={handleSave} disabled={saving} className="bg-primary text-primary-foreground">
                 {saving ? <><Loader2 size={14} className="animate-spin mr-2" />Saving...</> : "Save Schedule"}

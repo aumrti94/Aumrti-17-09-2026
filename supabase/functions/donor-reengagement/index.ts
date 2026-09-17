@@ -62,6 +62,23 @@ serve(async (req) => {
     });
   }
 
+  // The caller was verified as SOME real user above, but nothing checked
+  // that user's own hospital against the request's hospital_id — any
+  // logged-in staff member of any hospital could name another hospital's
+  // id, read its blood inventory, and trigger a real WhatsApp/SMS campaign
+  // to its donors using its own messaging credentials. Found in the Phase 4
+  // isolation audit — see KNOWN_BUGS.md.
+  const { data: staff } = await supabaseAdmin
+    .from("users")
+    .select("hospital_id")
+    .eq("auth_user_id", user.id)
+    .maybeSingle();
+  if (!staff || staff.hospital_id !== hospital_id) {
+    return new Response(JSON.stringify({ error: "Forbidden" }), {
+      status: 403, headers: { ...CORS, "Content-Type": "application/json" },
+    });
+  }
+
   // ── 1. Identify critically low blood groups ──────────────────────────────
   const { data: units } = await supabaseAdmin
     .from("blood_units")

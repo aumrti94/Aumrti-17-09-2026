@@ -116,16 +116,20 @@ const RadiologyTATPanel: React.FC<Props> = ({ hospitalId }) => {
 
       setPending(pendingList);
 
-      // Fire clinical_alerts for critically overdue studies (>24h)
+      // Fire clinical_alerts for critically overdue studies (>24h) — deduped on the study
+      // itself (same shape as LabTATPanel / KNOWN-BUG-002), so page load and the manual
+      // refresh button don't create a second alert for a study still overdue from before.
       const criticallyOverdue = pendingList.filter(p => p.mins_pending > 1440);
       if (criticallyOverdue.length > 0) {
         criticallyOverdue.forEach(p => {
-          (supabase as any).from("clinical_alerts").insert({
+          (supabase as any).from("clinical_alerts").upsert({
             hospital_id: hospitalId,
             alert_type: "radiology_report_overdue",
             severity: "high",
             alert_message: `Radiology report overdue >24h: ${p.study_name} for ${p.patient_name} (${Math.round(p.mins_pending / 60)}h pending)`,
-          }).then(() => {}, () => {});
+            radiology_order_id: p.id,
+            dedupe_key: p.id,
+          }, { onConflict: "hospital_id,alert_type,dedupe_key", ignoreDuplicates: true }).then(() => {}, () => {});
         });
       }
 

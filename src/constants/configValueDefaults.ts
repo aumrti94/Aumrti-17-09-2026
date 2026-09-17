@@ -9,8 +9,9 @@
 // These defaults sit UNDERNEATH the database: a DB row always wins, and a value
 // only falls back to this file when no row exists for it.
 //
-// Kept in sync with supabase/migrations/20261103000001_config_value_defaults.sql —
-// configValueDefaults.test.ts fails the build if the two drift.
+// Kept in sync with supabase/migrations/20261103000001_config_value_defaults.sql.
+// UNGUARDED as of 2026-09-05 — configValueDefaults.test.ts, which failed the build if the
+// two drifted, was removed with the rest of the suite. Nothing currently checks this.
 //
 // lab_test_categories / sample_types are derived from labTestCatalog.ts rather
 // than restated here: that file is the generator source for the lab seed and is

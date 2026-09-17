@@ -1,9 +1,60 @@
-# Aumrti HMS
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 Multi-tenant Hospital Management System for Indian hospitals. React + TypeScript + Vite frontend,
 Supabase (Postgres + RLS + Auth + Edge Functions) backend. One deployment serves many hospitals;
 tenant isolation is enforced at the database layer via Row-Level Security keyed on `hospital_id`.
-See [README.md](README.md) for the product overview, stack, and command surface.
+See [README.md](README.md) for the product overview, module catalogue, and full stack breakdown.
+
+## Commands
+
+```bash
+npm install
+npm run dev                  # dev server, http://localhost:8080
+npm run build                # production build (tsc + vite build)
+npm run lint                 # ESLint over the whole repo — no per-file target
+
+npm run check:rls-coverage   # every table has a Row-Level Security policy
+npm run check:user-fk        # *_by columns FK public.users, not auth.users
+npm run check:db-contract    # every .from()/.rpc() call matches the generated schema
+npm run check:openapi        # published API docs match the route registry
+npm run check:lab-catalog    # generated lab test catalogue is in sync
+
+npm run supabase:link        # link local checkout to a Supabase project (needs .env.local)
+npm run supabase:push        # apply pending migrations in supabase/migrations/
+npm run supabase:deploy      # deploy Edge Functions in supabase/functions/
+```
+
+All `check:*` scripts and `lint`/`build` run in CI on every PR
+([.github/workflows/ci.yml](.github/workflows/ci.yml)) — run the relevant one locally before
+pushing a change that touches migrations, `.from()`/`.rpc()` calls, or `*_by` columns.
+
+There is no unit or e2e test command right now — see **Testing** below before adding one back.
+`supabase/tests/` has pgTAP database tests, run manually per
+[supabase/MIGRATION_RUNBOOK.md](supabase/MIGRATION_RUNBOOK.md), not wired into `npm run`.
+
+## Architecture
+
+- **Routing (`src/App.tsx`):** every route is lazy-loaded and wrapped in `AuthGuard` →
+  `RoleGuard(ROUTE_ROLES[route])` → `ModuleErrorBoundary`. Role lists live in
+  `src/lib/routeRoles.ts`, not inline on the route.
+- **Module catalogue (`src/lib/modules.ts`):** `ALL_MODULES` is the single source of truth for the
+  67 billable module tiles — name, route, category, allowed roles. Registering a new module means
+  touching it plus the route in `App.tsx`, the role list in `routeRoles.ts`, entitlement gating,
+  and the sidebar/launcher — see the `module-scaffold` skill for the full checklist; missing one
+  spot fails silently (module renders but isn't reachable, or is reachable but unbilled).
+  Category colors (`CATEGORY_COLORS`) are the only place UI category color-coding is defined.
+- **`src/integrations/supabase/`:** generated Supabase client and DB types — do not hand-edit;
+  regenerate via the Supabase CLI after a migration.
+  `src/lib/getHospitalId.ts` / `src/hooks/useHospitalId.ts` are the only sanctioned way to read the
+  current tenant.
+  `src/contexts/HospitalContext.tsx` provides it app-wide.
+- **`src/lib/`:** all pure business logic (billing/GST math, drug safety, clinical calculators,
+  payroll, entitlement resolution) lives here, decoupled from components — this is what
+  `check:db-contract` and the future test ratchet both target.
+- **Mobile app** in [mobile/](mobile/) is a separate React Native/Expo project, not built by Vite
+  and excluded from the root ESLint React-Fast-Refresh rules.
 
 ## Working in this repo
 
@@ -53,17 +104,61 @@ tablet.
 
 ### Testing
 
-- New `src/lib/**` logic needs a unit test in the same PR. Coverage there is a ratchet — it can
-  only go up (see [vitest.config.ts](vitest.config.ts)).
+> **Current state (2026-09-05): the rules below are the target, not an enforced gate.** The test
+> suite was removed on this date ("restarting testing from a clean slate") and has not yet been
+> rebuilt. `vitest.config.ts` has no coverage thresholds, CI runs no tests, and there is no
+> mechanism today that blocks a merge for missing coverage. Do not assert that a change "isn't
+> mergeable" or that coverage "can only go up" — neither is currently true. See the README for
+> what test infrastructure exists (`supabase/tests/`, pgTAP, run manually) and treat rebuilding
+> this as its own piece of work, not something a cleanup pass restores incidentally.
+
+- New `src/lib/**` logic should get a unit test in the same PR once the suite exists again.
+  The intent is a ratchet — coverage only goes up — enforced via `vitest.config.ts` once its
+  `coverage.include`/thresholds are restored.
 - `drugSafetyCheck`, `clinicalCalculators`, and `gstRules`/billing totals are patient-safety and
-  revenue surfaces — they carry the highest coverage bar in the repo and a change to them without
-  a test is not mergeable.
-- Multi-tenant isolation claims need an automated two-hospital test, never a manual check alone.
+  revenue surfaces and should carry the highest coverage bar in the repo when tests return.
+- Multi-tenant isolation claims should be backed by an automated two-hospital test, never a
+  manual check alone, once such a test exists.
 
 ## The agent system
 
 Requests get routed to a **pod**, not handled directly. Say what you want in plain English —
 naming a module or a person's name (e.g. `@priya`, `@meera`) is optional, not required.
+
+### Leadership tier — say a name, get a team
+
+Five leaders are invocable agents. They read the roster, decide who is needed, and activate those
+pods themselves — in parallel. They hold `Task` but not `Edit`/`Write`/`Bash`: they assemble and
+arbitrate, they do not write code.
+
+| Say | Agent | Brings the team together for |
+|---|---|---|
+| "Nikhil, ..." | `nikhil-pm` | Building a feature — scoping, sequencing, assembling the delivery team |
+| "Preethi, ..." | `preethi-ceo` | Priority, vision, build-vs-buy, arbitrating a cross-pod disagreement |
+| "Vikram, ..." | `vikram-cto` | Architecture and infra spanning modules, vendors, scaling, control plane |
+| "Kavitha, ..." | `kavitha-cfo` | Unit economics, pricing, any ₹ figure heading for a board |
+| "Nalini, ..." | `nalini-cdo` | **Gate on every clinical-path AI feature**, prompt governance, SaMD |
+
+> "Nikhil, please involve whoever is needed" → Nikhil decomposes the request into surfaces, looks
+> each up in the roster, and spawns the owning pods concurrently — `data-pod` for Meera's schema,
+> `security-pod` for Ananya's PHI review, `frontend-pod` for Kiran's design-law check — then
+> synthesises what came back.
+
+`conductor` remains available for pure routing with no persona attached.
+
+### Where to look things up
+
+- `.claude/agents/refs/_roster-index.md` — **all 79 specialists in one table**: name, handle, role,
+  pod, which subagent reaches them, and the mandatory CC gates. Read this first when you know a
+  name but not its owner.
+- `.claude/agents/refs/_leadership-protocol.md` — how a leader decomposes a request, activates in
+  parallel, and synthesises.
+- `.claude/agents/refs/_team-coordination-rules.md` — per-pod activation maps, the **Convene
+  Protocol** for multi-agent discussion, and the delegation depth limit.
+- `.claude/agents/refs/_review-gates.md` — the escalation chain when two agents disagree.
+
+Pods hold `Task` and may pull in a peer pod for a mandatory CC gate, one hop only. Delegation depth
+is capped: `leader → pod → peer pod (review only) → stop`. A pod never calls a leadership agent.
 
 | Pod | Owns | Agent file |
 |---|---|---|

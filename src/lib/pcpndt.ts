@@ -107,6 +107,15 @@ export interface FormFRowInput {
   /** The user recording the order. `pcpndt_form_f.signed_by` is NOT NULL. */
   signedBy: string;
   referredBy?: string | null;
+  /**
+   * From Settings → Radiology's `pcpndt_settings` row (one machine + one registered doctor per
+   * hospital today — not per-scan). Previously captured on that screen and never reached this
+   * table at all: KNOWN-BUG-142. Pass whatever the caller has already fetched; omit rather than
+   * guess if the hospital hasn't configured PCPNDT settings yet.
+   */
+  machineName?: string | null;
+  machineRegistrationNumber?: string | null;
+  doctorPcpndtRegistration?: string | null;
 }
 
 /**
@@ -123,6 +132,9 @@ export function buildFormFRow(input: FormFRowInput): Record<string, unknown> {
     indication: input.indication ?? null,
     signed_by: input.signedBy,
     referred_by: input.referredBy ?? null,
+    machine_name: input.machineName ?? null,
+    machine_registration_number: input.machineRegistrationNumber ?? null,
+    doctor_pcpndt_registration: input.doctorPcpndtRegistration ?? null,
   };
 }
 

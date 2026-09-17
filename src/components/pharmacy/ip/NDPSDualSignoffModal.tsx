@@ -90,12 +90,22 @@ const NDPSDualSignoffModal: React.FC<NDPSDualSignoffModalProps> = ({
     // app_role enum has no senior_pharmacist/chief_pharmacist value — querying for them
     // throws (invalid enum literal), which silently emptied this dropdown. hospital_admin
     // is the only role above plain "pharmacist" that actually exists.
+    //
+    // Excludes the primary pharmacist (KNOWN-BUG, found live): without this, a primary
+    // pharmacist who is themselves hospital_admin-role appeared in their own counter-signer
+    // list and could "counter-sign" by re-entering their own already-known password —
+    // signInWithPassword accepts it, since it genuinely is their credential. The DB's one
+    // safety net (ndps_different_pharmacists CHECK) would then reject the resulting
+    // ndps_register insert, but DispensingWorkspace.tsx never checks that insert's result,
+    // so the failure was completely silent: stock still deducted, "Dispensed" still showed,
+    // and the legally-mandated register entry simply never existed.
     const { data, error } = await (supabase as any)
       .from("users")
       .select("id, full_name, email")
       .eq("hospital_id", hospitalId)
       .in("role", ["hospital_admin"])
-      .eq("is_active", true);
+      .eq("is_active", true)
+      .neq("id", primaryUserId);
     if (error) console.error("loadSeniorPharmacists failed:", error.message);
     setSeniorPharmacists(data || []);
   };

@@ -250,7 +250,7 @@ const NABHMatrixPage: React.FC = () => {
         { onConflict: "hospital_id,nabh_standard_id" },
       )
       .select()
-      .single();
+      .maybeSingle();
 
     setSaving(p => ({ ...p, [standardId]: false }));
     if (error) {

@@ -2,7 +2,8 @@
 //
 // Edge functions cannot import from src/, and vitest cannot see supabase/functions/, so
 // the repo's established answer (see _shared/medical-lexicon.ts) is a duplicated file
-// guarded by a parity test. asrLanguages.parity.test.ts fails if the two drift.
+// guarded by a parity test. UNGUARDED as of 2026-09-05 — asrLanguages.parity.test.ts was
+// removed with the rest of the suite and nothing currently catches drift.
 //
 // DO NOT EDIT BY HAND — edit src/lib/asrLanguages.ts and copy the region across.
 // @ts-nocheck

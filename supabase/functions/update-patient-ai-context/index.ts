@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveAiConfig, callAiChat } from "../_shared/ai-config.ts";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -27,7 +28,14 @@ serve(async (req) => {
       });
     }
 
-    const { patient_id } = await req.json();
+    let patient_id: string | undefined;
+    try {
+      ({ patient_id } = await req.json());
+    } catch {
+      return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
     if (!patient_id) {
       return new Response(JSON.stringify({ error: "patient_id required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -54,12 +62,20 @@ serve(async (req) => {
 
     // Fetch patient record — scoped to the caller's own hospital, so a patient_id
     // belonging to another hospital resolves to nothing rather than leaking PHI.
-    const { data: patient } = await sb
+    // Was "allergy_history" — that column has never existed (the real free-text column is
+    // "allergies"), so this select failed on every call, PostgREST's error was never checked,
+    // and `patient` was always falsy — every invocation of this function, for every patient,
+    // has returned 404 "Not found" since it shipped. Found via Phase 6 edge-function testing.
+    const { data: patient, error: patientErr } = await sb
       .from("patients")
-      .select("full_name, dob, gender, allergy_history")
+      .select("full_name, dob, gender, allergies")
       .eq("id", patient_id)
       .eq("hospital_id", hospital_id)
       .maybeSingle();
+
+    if (patientErr) {
+      console.error("[update-patient-ai-context] patient lookup failed:", sanitizeForLog(patientErr.message));
+    }
 
     if (!patient) {
       return new Response(JSON.stringify({ error: "Not found" }), {
@@ -107,8 +123,8 @@ serve(async (req) => {
     const knownAllergies = (allergies || [])
       .map((a: any) => `${a.allergen}${a.severity ? ` (${a.severity})` : ""}`)
       .filter(Boolean);
-    if (patient?.allergy_history && knownAllergies.length === 0) {
-      knownAllergies.push(patient.allergy_history);
+    if (patient?.allergies && knownAllergies.length === 0) {
+      knownAllergies.push(patient.allergies);
     }
 
     const currentMeds: string[] = [];
@@ -195,7 +211,10 @@ serve(async (req) => {
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), {
+    // Never return a raw error to the caller — it can carry table/constraint names or, since
+    // this function's own upsert payload is entirely patient clinical data, PHI-shaped content.
+    console.error("[update-patient-ai-context] failed:", sanitizeForLog(err instanceof Error ? err.message : String(err)));
+    return new Response(JSON.stringify({ error: "Internal error" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

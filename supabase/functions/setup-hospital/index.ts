@@ -93,7 +93,7 @@ serve(async (req) => {
 
     if (hospitalError || !hospitalData) {
       return new Response(
-        JSON.stringify({ error: hospitalError.message }),
+        JSON.stringify({ error: hospitalError?.message ?? "Failed to create hospital record" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -105,11 +105,21 @@ serve(async (req) => {
       p_hospital_id: hospitalData.id,
     });
 
-    // Insert user record linked to the authenticated user
+    // Insert user record linked to the authenticated user.
+    // Was `id: user.id` with no `auth_user_id` set at all — conflating public.users.id with
+    // the auth uid (the two are deliberately separate identifiers; see CLAUDE.md, migration
+    // 20260322111223) and leaving `auth_user_id` null. Since every RLS policy and
+    // `get_user_hospital_id()` itself resolve a caller via `.eq("auth_user_id", auth.uid())`,
+    // a user created this way could never actually be resolved anywhere else in the app —
+    // the hospital and auth account would exist, but the admin would be functionally locked
+    // out immediately. No caller of this function exists anywhere in src/ today (confirmed by
+    // grep), so this has not yet caused live harm, but the bug is real. Found via Phase 6
+    // Priority-4 (tenant lifecycle) edge-function testing.
     const { error: userError } = await supabaseAdmin
       .from("users")
       .insert({
-        id: user.id,
+        id: crypto.randomUUID(),
+        auth_user_id: user.id,
         hospital_id: hospitalData.id,
         full_name: admin.full_name,
         email: user.email || admin.email,
@@ -127,18 +137,24 @@ serve(async (req) => {
       );
     }
 
-    // Seed chart of accounts, posting rules, and lab catalog (defence in depth)
-    await supabaseAdmin.rpc("seed_hospital_defaults", {
-      p_hospital_id: hospitalData.id,
-    }).catch(() => {}); // non-fatal — trigger also fires on INSERT
+    // Seed chart of accounts, posting rules, and lab catalog (defence in depth).
+    // Was `.rpc(...).catch(() => {})` — `.rpc()` returns the same non-Promise
+    // PostgrestBuilder as `.from()` (confirmed: no real `.catch()`, unlike
+    // `.functions.invoke()`, which genuinely is a Promise) — so this threw synchronously on
+    // EVERY call, crashing this handler with a 500 after the hospital and user had already
+    // been created successfully. Found via Phase 6 edge-function testing.
+    try {
+      await supabaseAdmin.rpc("seed_hospital_defaults", { p_hospital_id: hospitalData.id });
+    } catch (_) { /* non-fatal — trigger also fires on INSERT */ }
 
     return new Response(
       JSON.stringify({ success: true, hospitalId: hospitalData.id }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {
+    console.error("setup-hospital error:", err instanceof Error ? err.message : String(err));
     return new Response(
-      JSON.stringify({ error: err.message }),
+      JSON.stringify({ error: "Internal error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

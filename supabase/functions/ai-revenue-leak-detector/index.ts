@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { resolveAiConfig, callAiChat } from "../_shared/ai-config.ts";
+import { resolveAiConfig, callAiChat, AIDisabledError } from "../_shared/ai-config.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -239,8 +239,18 @@ Rules:
       JSON.stringify({ ...analysisResult, patterns: patternsWithStatus, data_summary: dataSummary }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
-  } catch (err: any) {
-    console.error("ai-revenue-leak-detector error:", err);
+  } catch (err) {
+    // Entitlement is already enforced inside resolveAiConfig() above (checkAIAllowed,
+    // throwing AIDisabledError on a real disabled decision) — but this catch never
+    // special-cased it, so a disabled hospital got a confusing generic 500 instead of a
+    // clean 403. Found via Phase 6 AI-function-plumbing testing. (No caller of this
+    // function exists anywhere in src/ today, so this has not yet caused live harm.)
+    if (err instanceof AIDisabledError) {
+      return new Response(JSON.stringify({ error: err.message }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    console.error("ai-revenue-leak-detector error:", err instanceof Error ? err.message : String(err));
     return new Response(
       JSON.stringify({ error: err instanceof Error ? err.message : "Analysis failed" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },

@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { resolveAiConfig, resolveAiConfigFromEnv, callAiChat } from "../_shared/ai-config.ts";
+import { resolveAiConfig, resolveAiConfigFromEnv, callAiChat, AIDisabledError } from "../_shared/ai-config.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -46,6 +46,19 @@ serve(async (req: Request) => {
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
+
+    // The caller was verified as SOME real user above, but nothing checked
+    // that user's own hospital against the request's hospital_id — any
+    // logged-in staff member of any hospital could name another hospital's
+    // id and pull its NABH compliance gaps, safety/sentinel events, IPC
+    // infection data and governance/CAPA records. Found in the Phase 4
+    // isolation audit — see KNOWN_BUGS.md.
+    const { data: staff } = await sb
+      .from("users")
+      .select("hospital_id")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
+    if (!staff || staff.hospital_id !== hospital_id) return json({ error: "Forbidden" }, 403);
 
     // ── Fetch context data based on context_type ──────────────────────────────
 
@@ -578,7 +591,16 @@ Environment: [physical environment, workload, or "Not applicable"]`;
     });
 
   } catch (err) {
-    console.error("ai-nabh-assistant:", err);
+    // Entitlement is already enforced inside resolveAiConfig() above (checkAIAllowed,
+    // throwing AIDisabledError on a real disabled decision) — but this catch never
+    // special-cased it, so a disabled hospital got a confusing generic 500 instead of a
+    // clean 403, unlike the sibling functions (ai-resolve-orders, ai-clarifying-questions,
+    // ai-history-digest) that already handle this correctly. Found via Phase 6
+    // AI-function-plumbing testing.
+    if (err instanceof AIDisabledError) {
+      return json({ error: err.message }, 403);
+    }
+    console.error("ai-nabh-assistant:", err instanceof Error ? err.message : String(err));
     return json({ error: "Internal server error" }, 500);
   }
 });

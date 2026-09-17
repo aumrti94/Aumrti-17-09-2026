@@ -383,6 +383,31 @@ allow_dynamic_registration = false
 [functions.api-gateway]
 verify_jwt = false
 
+# The same failure mode as api-gateway above, times four: each of these is a receiver for an
+# external party that authenticates by its OWN signature scheme, never a Supabase JWT —
+# Razorpay's HMAC-SHA256 `x-razorpay-signature`, NHA's RS256-signed gateway JWT (a different
+# key entirely from this project's own JWT secret), and NHA/NHCX's JWE-encrypted FHIR Bundle.
+# With the platform default of verify_jwt = true, EVERY one of these calls was rejected at the
+# Supabase edge gateway with a 401 before the function's own — correctly implemented —
+# signature/JWT/JWE verification code ever ran. Concretely: no Razorpay payment or subscription
+# webhook, no ABDM HIP callback, and no HCX claim/pre-auth response could ever have reached this
+# system once actually deployed, since none of the four had this override. Found via Phase 6
+# edge-function testing, which is precisely why it was missed until now: these functions were
+# always tested locally against a `supabase functions serve --no-verify-jwt` process (the only
+# way to exercise their own signature-checking code with a live HTTP request from outside
+# Deno), which suppresses this exact platform gate — see KNOWN_BUGS.md KNOWN-BUG-182.
+[functions.razorpay-webhook]
+verify_jwt = false
+
+[functions.razorpay-subscription-webhook]
+verify_jwt = false
+
+[functions.abdm-hip-callback]
+verify_jwt = false
+
+[functions.hcx-callback-receiver]
+verify_jwt = false
+
 [edge_runtime]
 enabled = true
 # Supported request policies: `oneshot`, `per_worker`.

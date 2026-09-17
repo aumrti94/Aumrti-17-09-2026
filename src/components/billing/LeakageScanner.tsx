@@ -5,6 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Sparkles, Plus, X, FlaskConical, Radio, Pill, Scissors, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { chargeOTCase } from "@/lib/serviceBilling";
+import {
+  buildDedupeKey,
+  splitBilledServices,
+  type BillableCandidate,
+  type ChargedLine,
+} from "@/lib/billedServiceCheck";
 import type { BillRecord } from "@/pages/billing/BillingPage";
 import type { LineItem } from "@/components/billing/BillEditor";
 
@@ -17,6 +23,8 @@ interface LeakageItem {
   itemType: string;
   hsnCode: string;
   gstPercent: number;
+  /** Carried through so the line written back can be recognised on the next scan. */
+  dedupeKey?: string;
   otSchedule?: any; // full ot_schedules row — present only for type "surgery"
 }
 
@@ -47,8 +55,18 @@ const LeakageScanner: React.FC<Props> = ({ bill, hospitalId, lineItems, onRefres
     if (!hospitalId) return;
     setIsScanning(true);
 
-    const existingDesc = lineItems.map((i) => i.description.toLowerCase());
-    const leakage: LeakageItem[] = [];
+    // PHASE 2 EXTRACTION. This used `existingDesc.some(d => d.includes(name))` — a SUBSTRING
+    // match on bill-line descriptions. Billing "Blood Sugar Fasting" therefore made a separate
+    // "Blood Sugar" order read as already billed, and the hospital was never paid for it. The
+    // scanner that exists to catch missed revenue was hiding it. Identity now goes through
+    // source_dedupe_key; see src/lib/billedServiceCheck.ts.
+    const chargedLines: ChargedLine[] = lineItems.map((i) => ({
+      source_dedupe_key: (i as unknown as { source_dedupe_key?: string | null }).source_dedupe_key ?? null,
+      // These lines are this bill's own, so they are live by construction.
+      billStatus: null,
+    }));
+
+    const candidates: (BillableCandidate & Omit<LeakageItem, "description">)[] = [];
 
     try {
       // 1. Lab tests
@@ -62,24 +80,23 @@ const LeakageScanner: React.FC<Props> = ({ bill, hospitalId, lineItems, onRefres
         const { data: labData } = await labQuery;
         (labData || []).forEach((item: any) => {
           const lo = item.lab_orders;
-          if (!lo) return;
+          if (!lo || !item.id) return;
           const matchEnc = bill.encounter_id && lo.encounter_id === bill.encounter_id;
           const matchAdm = bill.admission_id && lo.admission_id === bill.admission_id;
           if (!matchEnc && !matchAdm) return;
 
           const testName = item.lab_test_master?.test_name || "Lab Test";
-          if (!existingDesc.some((d) => d.includes(testName.toLowerCase()))) {
-            leakage.push({
-              type: "lab",
-              description: `Lab: ${testName}`,
-              suggestedRate: 200,
-              qty: 1,
-              source: `Lab Order`,
-              itemType: "lab",
-              hsnCode: "998931",
-              gstPercent: 12,
-            });
-          }
+          candidates.push({
+            dedupeKey: buildDedupeKey("lab", item.id),
+            type: "lab",
+            description: `Lab: ${testName}`,
+            suggestedRate: 200,
+            qty: 1,
+            source: `Lab Order`,
+            itemType: "lab",
+            hsnCode: "998931",
+            gstPercent: 12,
+          });
         });
       }
 
@@ -96,18 +113,18 @@ const LeakageScanner: React.FC<Props> = ({ bill, hospitalId, lineItems, onRefres
 
         const { data: radData } = await radQ;
         (radData || []).forEach((item: any) => {
-          if (!existingDesc.some((d) => d.includes(item.study_name.toLowerCase()))) {
-            leakage.push({
-              type: "radiology",
-              description: `Radiology: ${item.study_name}`,
-              suggestedRate: 500,
-              qty: 1,
-              source: `Accession ${item.accession_number || "—"}`,
-              itemType: "radiology",
-              hsnCode: "998921",
-              gstPercent: 12,
-            });
-          }
+          if (!item.id) return;
+          candidates.push({
+            dedupeKey: buildDedupeKey("radiology", item.id),
+            type: "radiology",
+            description: `Radiology: ${item.study_name}`,
+            suggestedRate: 500,
+            qty: 1,
+            source: `Accession ${item.accession_number || "—"}`,
+            itemType: "radiology",
+            hsnCode: "998921",
+            gstPercent: 12,
+          });
         });
       }
 
@@ -123,18 +140,20 @@ const LeakageScanner: React.FC<Props> = ({ bill, hospitalId, lineItems, onRefres
 
         (pharmaData || []).forEach((pd: any) => {
           ((pd as any).pharmacy_dispensing_items || []).forEach((item: any) => {
-            if (!existingDesc.some((d) => d.includes(item.drug_name.toLowerCase()))) {
-              leakage.push({
-                type: "pharmacy",
-                description: `Pharmacy: ${item.drug_name}`,
-                suggestedRate: Number(item.unit_price) * Number(item.quantity_dispensed),
-                qty: Number(item.quantity_dispensed),
-                source: `Dispensing #${pd.dispensing_number || "—"}`,
-                itemType: "pharmacy",
-                hsnCode: "",
-                gstPercent: 12,
-              });
-            }
+            if (!item.id) return;
+            candidates.push({
+              // Keyed on the dispense ITEM, matching UnbilledServicesModal. Keying on the
+              // dispense header would collapse two dispenses of the same drug into one.
+              dedupeKey: buildDedupeKey("pharmacy", `dispense-item:${item.id}`),
+              type: "pharmacy",
+              description: `Pharmacy: ${item.drug_name}`,
+              suggestedRate: Number(item.unit_price) * Number(item.quantity_dispensed),
+              qty: Number(item.quantity_dispensed),
+              source: `Dispensing #${pd.dispensing_number || "—"}`,
+              itemType: "pharmacy",
+              hsnCode: "",
+              gstPercent: 12,
+            });
           });
         });
       }
@@ -159,26 +178,29 @@ const LeakageScanner: React.FC<Props> = ({ bill, hospitalId, lineItems, onRefres
         const otSuggestedRate = otRateRow?.fee ? Number(otRateRow.fee) * 2 : 15000;
 
         (otData || []).forEach((ot: any) => {
-          if (!existingDesc.some((d) => d.includes(ot.surgery_name.toLowerCase()))) {
-            leakage.push({
-              type: "surgery",
-              description: `OT: ${ot.surgery_name}`,
-              suggestedRate: otSuggestedRate,
-              qty: 1,
-              source: `OT Case`,
-              itemType: "surgery",
-              hsnCode: "999315",
-              gstPercent: 5,
-              otSchedule: ot,
-            });
-          }
+          if (!ot.id) return;
+          candidates.push({
+            // The theatre charge stands for "this case was billed at all" — chargeOTCase
+            // writes it alongside the surgeon, anaesthesia and implant segments.
+            dedupeKey: buildDedupeKey("ot", ot.id, "ot_charge"),
+            type: "surgery",
+            description: `OT: ${ot.surgery_name}`,
+            suggestedRate: otSuggestedRate,
+            qty: 1,
+            source: `OT Case`,
+            itemType: "surgery",
+            hsnCode: "999315",
+            gstPercent: 5,
+            otSchedule: ot,
+          });
         });
       }
     } catch (e) {
       console.error("Leakage scan error:", e);
     }
 
-    setLeakageItems(leakage);
+    const split = splitBilledServices(candidates, chargedLines);
+    setLeakageItems(split.unbilled.map((u) => u.candidate as unknown as LeakageItem));
     setIsScanning(false);
     setScanned(true);
   };
@@ -217,6 +239,10 @@ const LeakageScanner: React.FC<Props> = ({ bill, hospitalId, lineItems, onRefres
       total_amount: taxable + gstAmt,
       hsn_code: item.hsnCode || null,
       source_module: item.type,
+      // Without this the line the scan just wrote carries no identity, so the NEXT scan
+      // cannot see it and offers the same service again — which is how a scanner meant to
+      // stop leakage starts causing double-billing instead.
+      source_dedupe_key: item.dedupeKey ?? null,
     });
     setLeakageItems((prev) => prev.filter((l) => l !== item));
     onRefresh();

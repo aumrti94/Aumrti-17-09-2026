@@ -150,9 +150,9 @@ const CreateCommitteeDialog: React.FC<CreateCommitteeProps> = ({
       description: description || null,
       chairperson_id: chairId || null,
       secretary_id: secId || null,
-    }).select("*, chairperson:chairperson_id(full_name), secretary:secretary_id(full_name)").single();
+    }).select("*, chairperson:chairperson_id(full_name), secretary:secretary_id(full_name)").maybeSingle();
     setSaving(false);
-    if (error) { toast({ title: "Failed", description: error.message, variant: "destructive" }); return; }
+    if (error || !data) { toast({ title: "Failed", description: error?.message, variant: "destructive" }); return; }
     toast({ title: "Committee created", description: data.name });
     onCreated(data);
     onOpenChange(false);
@@ -253,9 +253,9 @@ const AddMemberDialog: React.FC<AddMemberProps> = ({
     }
     setSaving(true);
     const { data, error } = await (supabase as any).from("committee_members")
-      .insert(payload).select("*, users(full_name, role)").single();
+      .insert(payload).select("*, users(full_name, role)").maybeSingle();
     setSaving(false);
-    if (error) { toast({ title: "Failed", description: error.message, variant: "destructive" }); return; }
+    if (error || !data) { toast({ title: "Failed", description: error?.message, variant: "destructive" }); return; }
     onAdded(data);
     onOpenChange(false);
     setUserId(""); setMemberName(""); setDesignation(""); setMemberRole("Member"); setIsCore(false);
@@ -364,9 +364,9 @@ const NewMeetingDialog: React.FC<NewMeetingProps> = ({
       minutes,
       nabh_chapters_covered,
       created_by: userId,
-    }).select().single();
+    }).select().maybeSingle();
     setSaving(false);
-    if (error) { toast({ title: "Failed", description: error.message, variant: "destructive" }); return; }
+    if (error || !data) { toast({ title: "Failed", description: error?.message, variant: "destructive" }); return; }
     toast({ title: "Meeting created", description: format(new Date(date), "dd MMM yyyy") });
     onCreated(data);
     onOpenChange(false);
@@ -622,7 +622,7 @@ const CommitteesPage: React.FC = () => {
 
       const { data: comp } = await (supabase as any).from("nabh_hospital_compliance")
         .upsert({ hospital_id: hospitalId, nabh_standard_id: stds[0].id }, { onConflict: "hospital_id,nabh_standard_id" })
-        .select("id").single();
+        .select("id").maybeSingle();
       if (!comp?.id) continue;
 
       await (supabase as any).from("nabh_evidence_items").insert({
@@ -647,9 +647,9 @@ const CommitteesPage: React.FC = () => {
       responsible_owner_id: newActionOwner || null,
       owner_name: !newActionOwner ? null : undefined,
       due_date: newActionDue || null,
-    }).select("*, users:responsible_owner_id(full_name)").single();
+    }).select("*, users:responsible_owner_id(full_name)").maybeSingle();
     setSavingAction(false);
-    if (error) { toast({ title: "Failed", description: error.message, variant: "destructive" }); return; }
+    if (error || !data) { toast({ title: "Failed", description: error?.message, variant: "destructive" }); return; }
     setMeetingActions(prev => [...prev, data]);
     setNewActionDesc(""); setNewActionOwner(""); setNewActionDue("");
   };

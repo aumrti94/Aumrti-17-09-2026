@@ -149,7 +149,7 @@ serve(async (req) => {
           status: "sent",
         })
         .select("id")
-        .single();
+        .maybeSingle();
       if (insertErr || !surveyRow) { skippedNoProvider++; continue; }
 
       const result = await sendSms(patient.phone, surveyMessage(hospitalNameById.get(candidate.hospital_id) || "", surveyRow.id));

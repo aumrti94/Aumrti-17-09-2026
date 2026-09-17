@@ -54,6 +54,23 @@ serve(async (req) => {
     });
 
   try {
+    // ── Auth ──────────────────────────────────────────────────────────────
+    // No auth check at all previously. This function is purely internal —
+    // "All other ABDM edge functions call this one instead of hitting the
+    // sessions endpoint directly" (see this file's own header), always via
+    // getAbdmToken() in _shared/abdm-auth.ts, which invokes it using the
+    // CALLING function's service-role client. It is never invoked from
+    // src/ (confirmed by grep). So any request naming a hospital_id
+    // returned that hospital's live NHA gateway bearer token to whoever
+    // asked — letting an outsider impersonate that hospital's HIP/HIU
+    // registration directly against the government ABDM gateway. Found in
+    // the Phase 4 isolation audit — see KNOWN_BUGS.md. Restricted to the
+    // one caller that has ever legitimately called it: the service-role key.
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    if (req.headers.get("Authorization") !== `Bearer ${serviceKey}`) {
+      return json({ error: "Unauthorized" }, 401);
+    }
+
     const body = await req.json();
     const hospitalId: string | undefined = body.hospital_id;
     const forceRefresh: boolean = body.force_refresh === true;
@@ -64,7 +81,7 @@ serve(async (req) => {
 
     const sb = createClient(
       Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      serviceKey,
     );
 
     // ── 1. Load hospital ABDM config ────────────────────────────────────────
@@ -151,15 +168,23 @@ serve(async (req) => {
           const errText = await tokenRes.text();
           lastError = `NHA auth failed (${statusCode}): ${errText.slice(0, 300)}`;
 
-          await sb.from("abdm_gateway_logs").insert({
+          // Every abdm_gateway_logs insert in this file used column names that don't exist
+          // on this table at all (request_id/endpoint/payload/status_code/error/response —
+          // the real columns are action/direction/request_payload/response_payload/status),
+          // plus `direction: "OUTBOUND"` against a CHECK constraint that only ever allowed
+          // lowercase 'inbound'/'outbound'. Every log insert in this function has always
+          // failed, silently (the error was never checked) — purely an audit-trail gap, since
+          // the actual token fetch/cache logic below doesn't depend on these writes
+          // succeeding. Found via Phase 6 edge-function testing.
+          const { error: logErr } = await sb.from("abdm_gateway_logs").insert({
             hospital_id: hospitalId,
-            request_id: requestId,
-            direction: "OUTBOUND",
-            endpoint,
-            payload: logPayload,
-            status_code: statusCode,
-            error: lastError,
+            action: "gateway_token",
+            direction: "outbound",
+            request_payload: { ...logPayload, endpoint },
+            status: "error",
+            response_payload: { status_code: statusCode, error: lastError },
           });
+          if (logErr) console.error("abdm-gateway-token: gateway log insert failed:", logErr.message);
 
           continue; // retry
         }
@@ -176,7 +201,7 @@ serve(async (req) => {
         // ── 5. Cache token in DB ─────────────────────────────────────────────
         const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
 
-        await sb
+        const { error: cacheErr } = await sb
           .from("hospital_abdm_config")
           .update({
             abdm_access_token: accessToken,
@@ -184,21 +209,18 @@ serve(async (req) => {
             updated_at: new Date().toISOString(),
           })
           .eq("hospital_id", hospitalId);
+        if (cacheErr) console.error("abdm-gateway-token: token cache update failed:", cacheErr.message);
 
         // Log success (no token in payload)
-        await sb.from("abdm_gateway_logs").insert({
+        const { error: successLogErr } = await sb.from("abdm_gateway_logs").insert({
           hospital_id: hospitalId,
-          request_id: requestId,
-          direction: "OUTBOUND",
-          endpoint,
-          payload: logPayload,
-          response: {
-            tokenType: tokenData.tokenType,
-            expiresIn,
-            expiresAt,
-          },
-          status_code: statusCode,
+          action: "gateway_token",
+          direction: "outbound",
+          request_payload: { ...logPayload, endpoint },
+          status: "ok",
+          response_payload: { tokenType: tokenData.tokenType, expiresIn, expiresAt, status_code: statusCode },
         });
+        if (successLogErr) console.error("abdm-gateway-token: gateway log insert failed:", successLogErr.message);
 
         return json({
           accessToken,
@@ -214,20 +236,22 @@ serve(async (req) => {
     }
 
     // Both attempts failed
-    await sb.from("abdm_gateway_logs").insert({
+    const { error: finalLogErr } = await sb.from("abdm_gateway_logs").insert({
       hospital_id: hospitalId,
-      direction: "OUTBOUND",
-      endpoint: "/api/hiecm/gateway/v3/sessions",
-      error: lastError,
-      status_code: 0,
+      action: "gateway_token",
+      direction: "outbound",
+      request_payload: { endpoint: "/api/hiecm/gateway/v3/sessions" },
+      status: "error",
+      response_payload: { error: lastError },
     });
+    if (finalLogErr) console.error("abdm-gateway-token: gateway log insert failed:", finalLogErr.message);
 
     return json(
       { error: lastError || "ABDM gateway unreachable", accessToken: null },
       502,
     );
   } catch (err) {
-    console.error("abdm-gateway-token unhandled error:", err);
+    console.error("abdm-gateway-token unhandled error:", err instanceof Error ? err.message : String(err));
     return json(
       { error: err instanceof Error ? err.message : "Unknown error" },
       500,

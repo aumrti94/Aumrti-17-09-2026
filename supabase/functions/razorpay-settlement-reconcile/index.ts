@@ -30,8 +30,21 @@ const CORS = {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
 
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  // No caller of this function exists anywhere in src/ — it is meant to be a cron/manual
+  // platform-admin trigger only, like dunning-processor (KNOWN-BUG-181(a)), but had no auth
+  // check at all beyond the platform's own JWT verification, which accepts any logged-in
+  // user's session token. Any authenticated user of any hospital could trigger a full
+  // settlement scan across every hospital's invoices, burning this platform's shared Razorpay
+  // API quota on demand. Found via Phase 6 edge-function testing.
+  if (req.headers.get("Authorization") !== `Bearer ${serviceKey}`) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401, headers: { ...CORS, "Content-Type": "application/json" },
+    });
+  }
+
   try {
-    const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const admin = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey);
     // Razorpay keys: /platform-configured row first, env vars as fallback.
     const { keyId, keySecret } = await getRazorpaySubscriptionKeys(admin);
 
@@ -105,27 +118,30 @@ serve(async (req) => {
           razorpay_status: razorpayStatus,
         };
         if (existing) {
-          await admin.from("settlement_reconciliation_flags").update(row).eq("id", existing.id);
+          const { error: updateErr } = await admin.from("settlement_reconciliation_flags").update(row).eq("id", existing.id);
+          if (updateErr) console.error(`razorpay-settlement-reconcile: flag update failed for invoice ${inv.id}:`, updateErr.message);
         } else {
-          await admin.from("settlement_reconciliation_flags").insert(row);
+          const { error: insertErr } = await admin.from("settlement_reconciliation_flags").insert(row);
+          if (insertErr) console.error(`razorpay-settlement-reconcile: flag insert failed for invoice ${inv.id}:`, insertErr.message);
         }
       } else {
         // No discrepancy this run — auto-resolve any previously open flag
         // for this invoice rather than leaving a stale flag visible.
-        const { data: resolvedRows } = await admin
+        const { data: resolvedRows, error: resolveErr } = await admin
           .from("settlement_reconciliation_flags")
           .update({ resolved_at: new Date().toISOString(), resolution_note: "auto-resolved: matched on re-scan" })
           .eq("invoice_id", inv.id)
           .is("resolved_at", null)
           .select("id");
+        if (resolveErr) console.error(`razorpay-settlement-reconcile: flag auto-resolve failed for invoice ${inv.id}:`, resolveErr.message);
         if (resolvedRows && resolvedRows.length > 0) results.resolved++;
       }
     }
 
     return new Response(JSON.stringify(results), { headers: { ...CORS, "Content-Type": "application/json" } });
   } catch (err) {
-    console.error("razorpay-settlement-reconcile error:", err);
-    return new Response(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }), {
+    console.error("razorpay-settlement-reconcile error:", err instanceof Error ? err.message : String(err));
+    return new Response(JSON.stringify({ error: "Internal error" }), {
       status: 500, headers: { ...CORS, "Content-Type": "application/json" },
     });
   }

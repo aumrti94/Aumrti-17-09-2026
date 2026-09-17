@@ -76,7 +76,14 @@ const SettingsABDMPage: React.FC = () => {
     queryFn: async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return null;
-      const { data } = await supabase.from("users").select("hospital_id").eq("id", user.id).single();
+      // auth_user_id, NOT id: public.users.id and auth.users.id have been different
+      // values since migration 20260322111223, so matching on `id` finds nothing for
+      // any account created after it — the page then loads with no hospital at all.
+      const { data } = await supabase
+        .from("users")
+        .select("hospital_id")
+        .eq("auth_user_id", user.id)
+        .maybeSingle();
       return data;
     },
   });

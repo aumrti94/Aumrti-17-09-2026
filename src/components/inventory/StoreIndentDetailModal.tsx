@@ -70,7 +70,7 @@ const StoreIndentDetailModal: React.FC<Props> = ({ indentId, userRole, onClose, 
         .from("store_indents")
         .select("*, from_store:store_locations!store_indents_from_store_id_fkey(name, type), to_store:store_locations!store_indents_to_store_id_fkey(name, type), requested_by_user:users!store_indents_requested_by_fkey(full_name), approved_by_user:users!store_indents_approved_by_fkey(full_name)")
         .eq("id", indentId)
-        .single(),
+        .maybeSingle(),
       (supabase as any).from("store_indent_items").select("*").eq("indent_id", indentId).order("item_name"),
     ]);
     setIndent(ind);

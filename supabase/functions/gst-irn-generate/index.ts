@@ -46,11 +46,31 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
+    // The Authorization header was verified as SOME real user above, but
+    // nothing checked that user's own hospital against the request's
+    // hospital_id — any billing staff member of any hospital could name
+    // another hospital's bill_id/hospital_id, fetch its bill (the lookup
+    // below was also unscoped by hospital_id), and generate a live
+    // government e-Invoice/IRN under that hospital's GSTIN, locking their
+    // bill in the process. Found in the Phase 4 isolation audit — see
+    // KNOWN_BUGS.md.
+    const { data: staff } = await sb
+      .from("users")
+      .select("hospital_id")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
+    if (!staff || staff.hospital_id !== hospital_id) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // Fetch bill with patient join (patients table holds patient_name)
     const { data: bill } = await sb
       .from("bills")
       .select("*, patients(full_name)")
       .eq("id", bill_id)
+      .eq("hospital_id", hospital_id)
       .maybeSingle();
     const { data: hospital } = await sb
       .from("hospitals")
@@ -98,22 +118,49 @@ serve(async (req) => {
     const sgstVal = Math.round((gstAmount - cgstVal) * 100) / 100;
     const gstRate = taxable > 0 ? Math.round((gstAmount / taxable) * 100) : 0;
 
-    const irpUsername = Deno.env.get("GST_IRP_USERNAME");
-    const irpPassword = Deno.env.get("GST_IRP_PASSWORD");
-    const irpClientId = Deno.env.get("GST_IRP_CLIENT_ID");
-    const irpClientSecret = Deno.env.get("GST_IRP_CLIENT_SECRET");
+    // Settings → GST / NIC IRP (SettingsGSTPage.tsx) writes per-hospital credentials to
+    // api_configurations (service_key='nic_irp') — each hospital has its own GSTIN and its own
+    // NIC IRP registration, so a single global secret can only ever serve one hospital "live"
+    // at a time. That screen previously captured these six fields into React state and never
+    // referenced them in its save handler at all — a hospital filling them in saw "GST config
+    // saved" while nothing reached this function (KNOWN-BUG-144). The Deno env vars remain a
+    // fallback for a genuinely single-tenant/ops-managed deployment, not the primary path.
+    const { data: irpConfig } = await sb
+      .from("api_configurations")
+      .select("config")
+      .eq("hospital_id", hospital_id)
+      .eq("service_key", "nic_irp")
+      .eq("is_active", true)
+      .maybeSingle();
+    const irpCfg = (irpConfig?.config ?? {}) as Record<string, string>;
+
+    const irpUsername = irpCfg.irp_user || Deno.env.get("GST_IRP_USERNAME");
+    const irpPassword = irpCfg.irp_password || Deno.env.get("GST_IRP_PASSWORD");
+    const irpClientId = irpCfg.irp_client_id || Deno.env.get("GST_IRP_CLIENT_ID");
+    const irpClientSecret = irpCfg.irp_client_secret || Deno.env.get("GST_IRP_CLIENT_SECRET");
     const irpBaseUrl =
-      Deno.env.get("GST_IRP_BASE_URL") || "https://einvoice1-uat.nic.in";
+      irpCfg.irp_base_url || Deno.env.get("GST_IRP_BASE_URL") || "https://einvoice1-uat.nic.in";
 
     // Sandbox/demo mode if creds missing
     if (!irpUsername || !irpClientId) {
       const demoIrn = `DEMO-IRN-${String(bill_id).slice(0, 8).toUpperCase()}-${Date.now()}`;
-      await sb.from("bills").update({
+      const { error: lockErr } = await sb.from("bills").update({
         irn: demoIrn,
         irn_generated_at: new Date().toISOString(),
         bill_status: "irn_locked",
         irn_mode: "sandbox",
       }).eq("id", bill_id);
+      // Was unchecked — bill_status had no 'irn_locked' value in its CHECK constraint until
+      // this same pass, so this update has always failed silently, forever, on both the
+      // sandbox and live paths (see the fix below): the API told the caller an IRN was
+      // generated while the bill's own irn/bill_status columns were never actually written.
+      if (lockErr) {
+        console.error("gst-irn-generate: failed to lock bill after demo IRN:", lockErr.message);
+        return new Response(
+          JSON.stringify({ error: "IRN generated but could not be recorded on the bill — contact support before retrying" }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
       return new Response(
         JSON.stringify({
           irn: demoIrn,
@@ -221,12 +268,25 @@ serve(async (req) => {
       );
     }
 
-    await sb.from("bills").update({
+    const { error: lockErr } = await sb.from("bills").update({
       irn: irnData.Data.Irn,
       irn_generated_at: new Date().toISOString(),
       bill_status: "irn_locked",
       irn_mode: "live",
     }).eq("id", bill_id);
+    if (lockErr) {
+      // The government IRN has already been minted at this point and cannot be un-minted —
+      // this is now a real, government-registered e-Invoice that this system failed to record.
+      // Never re-attempt IRN generation for this bill_id without investigating first.
+      console.error("gst-irn-generate: LIVE IRN minted but failed to record on bill:", lockErr.message, "irn:", irnData.Data.Irn);
+      return new Response(
+        JSON.stringify({
+          error: "IRN was generated with the government IRP but could not be recorded on the bill — contact support immediately, do not retry",
+          irn: irnData.Data.Irn,
+        }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     return new Response(
       JSON.stringify({
@@ -237,9 +297,9 @@ serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err: any) {
-    console.error("gst-irn-generate error:", err);
+    console.error("gst-irn-generate error:", err instanceof Error ? err.message : String(err));
     return new Response(
-      JSON.stringify({ error: err?.message || "IRN service unavailable" }),
+      JSON.stringify({ error: "IRN service unavailable" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }

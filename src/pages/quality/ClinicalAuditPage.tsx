@@ -137,9 +137,9 @@ const CreateAuditWizard: React.FC<WizardProps> = ({
     if (f.period_to) payload.period_to = f.period_to;
 
     const { data, error } = await (supabase as any)
-      .from("clinical_audits").insert(payload).select("*, departments(name)").single();
+      .from("clinical_audits").insert(payload).select("*, departments(name)").maybeSingle();
     setSaving(false);
-    if (error) { toast({ title: "Save failed", description: error.message, variant: "destructive" }); return; }
+    if (error || !data) { toast({ title: "Save failed", description: error?.message, variant: "destructive" }); return; }
     toast({ title: "Audit created", description: data.title });
     onCreated(data);
     onOpenChange(false);
@@ -315,7 +315,7 @@ const ConvertToQIDialog: React.FC<ConvertQIProps> = ({
       start_date: f.start_date || null,
       project_owner_id: userId,
       source_audit_id: audit.id,
-    }).select("id").single();
+    }).select("id").maybeSingle();
     setSaving(false);
     if (error) { toast({ title: "Failed", description: error.message, variant: "destructive" }); return; }
     toast({ title: "QI Project created", description: "Navigating to QI Projects…" });
@@ -491,9 +491,9 @@ const ClinicalAuditPage: React.FC = () => {
       reference_module: newSample.reference_module || null,
       is_compliant: newSample.is_compliant === "true" ? true : newSample.is_compliant === "false" ? false : null,
       remarks: newSample.remarks || null,
-    }).select().single();
+    }).select().maybeSingle();
     setSavingSample(false);
-    if (error) { toast({ title: "Failed", description: error.message, variant: "destructive" }); return; }
+    if (error || !data) { toast({ title: "Failed", description: error?.message, variant: "destructive" }); return; }
     setSamples(prev => [...prev, data]);
     setNewSample({ reference_module: "OPD", is_compliant: "", remarks: "" });
     setAddSampleOpen(false);

@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { callAI } from "@/lib/aiProvider";
 import { autoPostJournalEntry } from "@/lib/accounting";
 import { formatINR, formatINRExact } from "@/lib/currency";
+import { computeClaimKpis, computeTpaPerformance } from "@/lib/claimKpis";
 import { cn } from "@/lib/utils";
 import {
   CheckCircle2, AlertTriangle, IndianRupee, Download,
@@ -240,36 +241,22 @@ const PaymentReconciliation: React.FC = () => {
         .eq("hospital_id", hospitalId).eq("dispute_raised", true).eq("reconciled", false),
     ]);
 
-    const pendingAmount = (pendingRes.data ?? []).reduce((s: number, c: any) => s + Number(c.claimed_amount ?? 0), 0);
-    const pendingCount  = pendingRes.data?.length ?? 0;
-    const receivedThisMonth = (receivedRes.data ?? []).reduce((s: number, r: any) => s + Number(r.tpa_paid_amount ?? 0), 0);
-    const underpayItems = underpayRes.data ?? [];
-    const underpaymentDisputed = underpayItems.reduce((s: number, r: any) => {
-      const diff = Number(r.hospital_claimed_amount ?? 0) - Number(r.tpa_paid_amount ?? 0);
-      return s + Math.max(0, diff);
-    }, 0);
-    const underpaymentDisputedCount = underpayItems.length;
-
     // Avg settlement days + recovery rate
     const { data: settledData } = await (supabase as any)
       .from("insurance_payment_reconciliation")
       .select("tpa_paid_amount, hospital_claimed_amount, payment_date, created_at")
       .eq("hospital_id", hospitalId).eq("reconciled", true).limit(200);
 
-    let avgSettlementDays: number | null = null;
-    let recoveryRate: number | null = null;
-    if (settledData?.length) {
-      const days = (settledData as any[]).map(r =>
-        differenceInDays(parseISO(r.payment_date ?? r.created_at), parseISO(r.created_at))
-      ).filter(d => d >= 0 && d < 365);
-      if (days.length) avgSettlementDays = Math.round(days.reduce((a, b) => a + b) / days.length);
-
-      const totalClaimed = (settledData as any[]).reduce((s, r) => s + Number(r.hospital_claimed_amount ?? 0), 0);
-      const totalPaid    = (settledData as any[]).reduce((s, r) => s + Number(r.tpa_paid_amount ?? 0), 0);
-      if (totalClaimed > 0) recoveryRate = Math.round((totalPaid / totalClaimed) * 100);
-    }
-
-    setKpis({ pendingAmount, pendingCount, receivedThisMonth, underpaymentDisputed, underpaymentDisputedCount, avgSettlementDays, recoveryRate });
+    // PHASE 2 EXTRACTION. The maths moved to src/lib/claimKpis.ts — same split billTotals.ts
+    // establishes for bills. These are the figures a CFO reads to decide which TPA to escalate
+    // and how much cash to expect; they were computed inline, interleaved with their own
+    // queries, and had never been asserted.
+    setKpis(computeClaimKpis({
+      pendingClaims: pendingRes.data ?? [],
+      receivedThisMonth: receivedRes.data ?? [],
+      disputedUnderpayments: underpayRes.data ?? [],
+      settled: settledData ?? [],
+    }));
   };
 
   const loadTpaPerformance = async () => {
@@ -284,48 +271,12 @@ const PaymentReconciliation: React.FC = () => {
         .eq("hospital_id", hospitalId).limit(1000),
     ]);
 
-    const allClaims: any[] = claimsRes.data ?? [];
-    const allRecon:  any[] = reconRes.data  ?? [];
-    const reconByClaimId = Object.fromEntries(allRecon.map(r => [r.claim_id, r]));
-
-    // Group by TPA
-    const tpaMap: Record<string, {
-      total: number; approved: number; claimed: number; paid: number;
-      days: number[]; underpay: number;
-    }> = {};
-
-    for (const c of allClaims) {
-      if (!c.tpa_name) continue;
-      if (!tpaMap[c.tpa_name]) tpaMap[c.tpa_name] = { total: 0, approved: 0, claimed: 0, paid: 0, days: [], underpay: 0 };
-      const t = tpaMap[c.tpa_name];
-      t.total++;
-      t.claimed += Number(c.claimed_amount ?? 0);
-      if (c.status === "approved") t.approved++;
-      const rc = reconByClaimId[c.id];
-      if (rc) {
-        const paid = Number(rc.tpa_paid_amount ?? 0);
-        const claimed = Number(rc.hospital_claimed_amount ?? 0);
-        t.paid += paid;
-        if (claimed > paid) t.underpay++;
-        if (rc.payment_date && rc.created_at) {
-          const d = differenceInDays(parseISO(rc.payment_date), parseISO(rc.created_at));
-          if (d >= 0 && d < 365) t.days.push(d);
-        }
-      }
-    }
-
-    const perf: TPAPerformance[] = Object.entries(tpaMap).map(([tpa_name, t]) => ({
-      tpa_name,
-      totalClaims:       t.total,
-      approvedClaims:    t.approved,
-      approvalRate:      t.total > 0 ? Math.round((t.approved / t.total) * 100) : 0,
-      avgSettlementDays: t.days.length ? Math.round(t.days.reduce((a, b) => a + b) / t.days.length) : null,
-      totalClaimed:      t.claimed,
-      totalPaid:         t.paid,
-      underpaymentCount: t.underpay,
-      underpaymentRate:  t.approved > 0 ? Math.round((t.underpay / t.approved) * 100) : 0,
-      totalReceived:     t.paid,
-    })).sort((a, b) => b.totalClaims - a.totalClaims);
+    // PHASE 2 EXTRACTION — see computeTpaPerformance in src/lib/claimKpis.ts.
+    const perf = computeTpaPerformance(claimsRes.data ?? [], reconRes.data ?? []).map((p) => ({
+      ...p,
+      // The table renders "received" separately from "paid"; they are the same figure today.
+      totalReceived: p.totalPaid,
+    }));
 
     setTpaPerf(perf);
   };

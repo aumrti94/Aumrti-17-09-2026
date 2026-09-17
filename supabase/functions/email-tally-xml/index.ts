@@ -16,6 +16,30 @@ serve(async (req) => {
     const resendKey = Deno.env.get("RESEND_API_KEY");
     const supabase = createClient(supabaseUrl, serviceKey);
 
+    // ── Auth ──────────────────────────────────────────────────────────────
+    // No auth check at all previously — any request naming a hospital_id
+    // could make the platform's own Resend account email attacker-controlled
+    // xml_content to that hospital's real billing/accounts inbox, and forge
+    // exported_by in the resulting audit log row. Found in the Phase 4
+    // isolation audit — see KNOWN_BUGS.md.
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const anonClient = createClient(
+      supabaseUrl,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { Authorization: authHeader } } },
+    );
+    const { data: { user }, error: authErr } = await anonClient.auth.getUser();
+    if (authErr || !user) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const {
       hospital_id,
       xml_content,
@@ -23,7 +47,6 @@ serve(async (req) => {
       date_end,
       export_type = "full_bundle",
       voucher_count = 0,
-      exported_by,
     } = await req.json();
 
     if (!hospital_id || !xml_content) {
@@ -32,14 +55,29 @@ serve(async (req) => {
       });
     }
 
-    // Fetch hospital billing email
-    const { data: hospital } = await supabase
+    const { data: staff } = await supabase.from("users").select("id, hospital_id").eq("auth_user_id", user.id).maybeSingle();
+    if (!staff || staff.hospital_id !== hospital_id) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    // The real caller's own users.id, never a body-supplied value — a
+    // client-supplied exported_by could forge who the audit trail blames.
+    const exported_by = staff.id;
+
+    // Fetch hospital billing email. Was "name, billing_email, email" — hospitals has no
+    // billing_email column at all, so this select failed outright on every call (its `error`
+    // was never checked, only `data`), `hospital` was always undefined, and this function has
+    // always returned "No billing email configured for this hospital" regardless of whether
+    // the hospital actually had one. Found via Phase 6 edge-function testing.
+    const { data: hospital, error: hospErr } = await supabase
       .from("hospitals")
-      .select("name, billing_email, email")
+      .select("name, email")
       .eq("id", hospital_id)
       .maybeSingle();
+    if (hospErr) console.error("email-tally-xml: hospital lookup failed:", hospErr.message);
 
-    const toEmail = (hospital as any)?.billing_email || hospital?.email;
+    const toEmail = hospital?.email;
     if (!toEmail) {
       return new Response(JSON.stringify({ error: "No billing email configured for this hospital" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -117,8 +155,8 @@ serve(async (req) => {
     });
 
   } catch (err) {
-    console.error("email-tally-xml error:", err);
-    return new Response(JSON.stringify({ error: String(err) }), {
+    console.error("email-tally-xml error:", err instanceof Error ? err.message : String(err));
+    return new Response(JSON.stringify({ error: "Internal error" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

@@ -7,9 +7,9 @@
  * Docker, edge-function code is only verifiable in production — so the logic
  * lives in `src/lib/` where vitest covers it, and this file mirrors it.
  *
- * `src/lib/platformBilling.parity.test.ts` asserts the exported logic here
- * matches the source of truth. If you edit one, edit both — the test fails
- * otherwise, which is the whole point.
+ * `src/lib/platformBilling.parity.test.ts` asserted the exported logic here matched the
+ * source of truth. UNGUARDED as of 2026-09-05 — that test was removed with the rest of
+ * the suite. If you edit one, edit both by hand; nothing currently checks that you did.
  */
 
 export type BillingCycle = "monthly" | "yearly";

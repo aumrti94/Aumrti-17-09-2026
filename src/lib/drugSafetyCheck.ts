@@ -24,40 +24,102 @@ export interface DrugSafetyResult {
   allergyConflicts: AllergyConflict[];
   duplicates: string[];
   worstSeverity: "contraindicated" | "major" | "moderate" | "minor" | "none";
+  /**
+   * True when a reference lookup failed, so this result is INCOMPLETE rather than clean.
+   *
+   * KNOWN-BUG-108. Supabase returns errors as VALUES, and this module used to destructure
+   * only `data` — a timed-out interaction query yielded `data: null`, zero findings, and
+   * `hasIssues: false`. A transport failure was indistinguishable from a clean bill of
+   * health on a patient-safety surface. The check now fails LOUD: `hasIssues` is true and
+   * `worstSeverity` is raised, so a prescribing gate reading either one stops.
+   */
+  checkUnavailable: boolean;
+  /** Human-readable reasons the check is incomplete. Empty when checkUnavailable is false. */
+  unavailableReasons: string[];
 }
 
+/**
+ * Severity vocabularies, merged.
+ *
+ * KNOWN-BUG-106. `drug_interactions.severity` uses contraindicated/major/moderate/minor,
+ * while `drug_allergy_cross_reactivity.risk_level` uses high/moderate/low — and 'high' is
+ * also this module's own fallback (`cr.risk_level || "high"`). 'high' was absent from this
+ * map, so it scored 0, and a HIGH-risk penicillin cross-reaction reported worstSeverity
+ * 'none' — ranking below a moderate one. Any gate reading worstSeverity let it through.
+ */
 const SEVERITY_RANK: Record<string, number> = {
   contraindicated: 4,
   major: 3,
   moderate: 2,
   minor: 1,
   none: 0,
+  // drug_allergy_cross_reactivity.risk_level
+  high: 3,
+  low: 1,
+};
+
+/**
+ * An unrecognised severity ranks as MAJOR, never as none.
+ *
+ * A value this module has not seen means "a reference table says this is dangerous and we
+ * cannot tell how dangerous" — which is not the same as safe, and must not collapse to the
+ * bottom of the scale. Failing upward shows a warning that a clinician can dismiss; failing
+ * downward hides one they never see.
+ */
+const UNKNOWN_SEVERITY_RANK = 3;
+
+/**
+ * Prescribing the same molecule twice is a real overdose, not an informational note, so it
+ * has to reach worstSeverity — the second facet of KNOWN-BUG-106 was that duplicates never
+ * did, leaving hasIssues true and worstSeverity 'none' on a paracetamol double-dose.
+ *
+ * 'moderate' rather than 'major': duplication warrants a hard look, but the same molecule
+ * under two brands is sometimes deliberate (different routes, PRN plus scheduled).
+ * RATIFICATION OUTSTANDING — Dr. Ramesh owns the clinical grading of this.
+ */
+const DUPLICATE_THERAPY_SEVERITY = "moderate";
+
+function rankSeverity(value: string | null | undefined): number {
+  const key = String(value ?? "").toLowerCase().trim();
+  if (!key) return UNKNOWN_SEVERITY_RANK;
+  const rank = SEVERITY_RANK[key];
+  return rank === undefined ? UNKNOWN_SEVERITY_RANK : rank;
+}
+
+const RANK_TO_SEVERITY: Record<number, DrugSafetyResult["worstSeverity"]> = {
+  4: "contraindicated",
+  3: "major",
+  2: "moderate",
+  1: "minor",
+  0: "none",
 };
 
 function getWorstSeverity(
   interactions: DrugInteraction[],
-  allergyConflicts: AllergyConflict[]
+  allergyConflicts: AllergyConflict[],
+  duplicates: string[],
+  checkUnavailable: boolean
 ): DrugSafetyResult["worstSeverity"] {
   let worst = 0;
-  for (const i of interactions) {
-    worst = Math.max(worst, SEVERITY_RANK[i.severity] || 0);
-  }
-  for (const a of allergyConflicts) {
-    worst = Math.max(worst, SEVERITY_RANK[a.severity] || 0);
-  }
-  const map: Record<number, DrugSafetyResult["worstSeverity"]> = {
-    4: "contraindicated",
-    3: "major",
-    2: "moderate",
-    1: "minor",
-    0: "none",
-  };
-  return map[worst] || "none";
+  for (const i of interactions) worst = Math.max(worst, rankSeverity(i.severity));
+  for (const a of allergyConflicts) worst = Math.max(worst, rankSeverity(a.severity));
+  if (duplicates.length > 0) worst = Math.max(worst, rankSeverity(DUPLICATE_THERAPY_SEVERITY));
+  // An incomplete check outranks a quiet one: the prescriber must see that the safety net
+  // was not fully in place, at a severity that any gate treats as blocking.
+  if (checkUnavailable) worst = Math.max(worst, UNKNOWN_SEVERITY_RANK);
+  return RANK_TO_SEVERITY[worst] ?? "none";
 }
 
-/** Normalize drug name for matching: lowercase, strip dosage suffixes */
-function normalize(name: string): string {
-  return name
+/**
+ * Normalize drug name for matching: lowercase, strip dosage suffixes.
+ *
+ * KNOWN-BUG-111: this used to take `string` and be called with values off a medication list
+ * that can contain nulls, so `null.toLowerCase()` threw and the whole safety check REJECTED
+ * rather than returning. A safety check that throws hands the decision to whatever the
+ * caller's catch block does — which is not obviously safer than one that returns clean.
+ */
+function normalize(name: string | null | undefined): string {
+  return String(name ?? "")
     .toLowerCase()
     .replace(/\s*\d+\s*(mg|ml|mcg|g|iu|%)\s*/gi, "")
     .trim();
@@ -121,10 +183,11 @@ function splitGenerics(generic: string | null | undefined): string[] {
 async function resolveAliases(
   names: string[],
   hospitalId: string
-): Promise<Map<string, string[]>> {
+): Promise<{ aliases: Map<string, string[]>; degradedReason: string | null }> {
   const out = new Map<string, string[]>();
-  const unique = [...new Set(names.map((n) => (n ?? "").trim()).filter(Boolean))];
-  if (!unique.length) return out;
+  let degradedReason: string | null = null;
+  const unique = [...new Set(names.map((n) => String(n ?? "").trim()).filter(Boolean))];
+  if (!unique.length) return { aliases: out, degradedReason: null };
 
   // Whatever happens below, a drug always matches on the name that was typed.
   for (const n of unique) out.set(n, [normalize(n)]);
@@ -142,7 +205,8 @@ async function resolveAliases(
   try {
     // Pass 1 — exact names. This is the normal path: DrugMasterSearchInput writes the
     // catalogue's own drug_name into the prescription when the doctor picks a suggestion.
-    const { data: exact } = await base().in("drug_name", unique).limit(200);
+    const { data: exact, error: exactError } = await base().in("drug_name", unique).limit(200);
+    if (exactError) degradedReason = `Formulary lookup failed: ${exactError.message}`;
     const resolved = new Set<string>();
     for (const row of (exact ?? []) as { drug_name: string; generic_name: string | null }[]) {
       const key = unique.find((n) => n === row.drug_name);
@@ -157,16 +221,21 @@ async function resolveAliases(
     let budget = 8;
     for (const n of unique) {
       if (resolved.has(n) || budget-- <= 0) continue;
-      const { data } = await base().ilike("drug_name", n).limit(1);
+      const { data, error: fuzzyError } = await base().ilike("drug_name", n).limit(1);
+      if (fuzzyError && !degradedReason) degradedReason = `Formulary lookup failed: ${fuzzyError.message}`;
       const row = (data ?? [])[0] as { generic_name: string | null } | undefined;
       if (row) add(n, row.generic_name);
     }
-  } catch {
-    // A formulary lookup failure must never block prescribing — fall back to the typed name,
-    // which is exactly the behaviour that existed before this resolution was added.
+  } catch (e) {
+    // A formulary lookup failure must never BLOCK prescribing — fall back to the typed name,
+    // which is the behaviour that existed before this resolution was added. But it must not
+    // be silent either: without drug_master, "Mox 500" is no longer known to be amoxicillin,
+    // so a brand prescribed against a documented allergy is missed. The caller reports the
+    // check as incomplete rather than clean. (KNOWN-BUG-108, formulary facet.)
+    degradedReason = `Formulary lookup failed: ${e instanceof Error ? e.message : String(e)}`;
   }
 
-  return out;
+  return { aliases: out, degradedReason };
 }
 
 export const checkDrugSafety = async (
@@ -181,6 +250,15 @@ export const checkDrugSafety = async (
     allergyConflicts: [],
     duplicates: [],
     worstSeverity: "none",
+    checkUnavailable: false,
+    unavailableReasons: [],
+  };
+
+  /** Record that a reference lookup failed, so the result reads incomplete, never clean. */
+  const markUnavailable = (reason: string) => {
+    results.checkUnavailable = true;
+    results.hasIssues = true;
+    if (!results.unavailableReasons.includes(reason)) results.unavailableReasons.push(reason);
   };
 
   const newDrugNorm = normalize(newDrug);
@@ -188,8 +266,10 @@ export const checkDrugSafety = async (
 
   // Brand → generic resolution, done ONCE for every name in play. All three checks below match
   // on these aliases rather than on the raw typed name; see resolveAliases() for why.
-  const aliasMap = await resolveAliases([newDrug, ...currentDrugs], hospitalId);
-  const aliasesOf = (name: string): string[] => aliasMap.get((name ?? "").trim()) ?? [normalize(name)];
+  const { aliases: aliasMap, degradedReason } = await resolveAliases([newDrug, ...currentDrugs], hospitalId);
+  if (degradedReason) markUnavailable(degradedReason);
+  const aliasesOf = (name: string | null | undefined): string[] =>
+    aliasMap.get(String(name ?? "").trim()) ?? [normalize(name)];
   const newAliases = aliasesOf(newDrug);
 
   // CHECK 1: Duplicates — including the same molecule under two different brands
@@ -218,20 +298,32 @@ export const checkDrugSafety = async (
 
     // Also query local DB for any pairs not covered by DrugBank
     const allNames = [...new Set([...newAliases, ...currentNorms])];
-    const { data: allInteractions } = await supabase
+    // KNOWN-BUG-108: `error` was not destructured here. Supabase returns errors as values,
+    // so a failed or timed-out query left `allInteractions` null, the `if` below never ran,
+    // and the result came back clean.
+    const { data: allInteractions, error: interactionsError } = await supabase
       .from("drug_interactions")
       .select("*")
       .or(
         `drug_a.in.(${allNames.map((n) => `"${n}"`).join(",")}),drug_b.in.(${allNames.map((n) => `"${n}"`).join(",")})`
       );
 
+    if (interactionsError) {
+      markUnavailable(`Interaction check unavailable: ${interactionsError.message}`);
+    }
+
     if (allInteractions) {
       for (const interaction of allInteractions) {
         const a = interaction.drug_a;
         const b = interaction.drug_b;
-        // Skip if already found via DrugBank
+        // Skip if already found via DrugBank. Compared normalized (KNOWN-BUG-107): DrugBank and
+        // this local table don't share a casing convention, so a raw `===` let the same pair
+        // ("Aspirin"/"aspirin") report twice — alert fatigue on the prescribing screen.
+        const na = normalize(a);
+        const nb = normalize(b);
         const alreadyFound = results.interactions.some(
-          (i) => (i.drug_a === a && i.drug_b === b) || (i.drug_a === b && i.drug_b === a)
+          (i) => (normalize(i.drug_a) === na && normalize(i.drug_b) === nb) ||
+            (normalize(i.drug_a) === nb && normalize(i.drug_b) === na)
         );
         if (alreadyFound) continue;
 
@@ -273,10 +365,16 @@ export const checkDrugSafety = async (
       }
     }
 
-    // Cross-reactivity
-    const { data: crossReacts } = await supabase
+    // Cross-reactivity. Same errors-as-values fix as the interaction query above: a dead
+    // reference table used to read as "no cross-reactions", which for a penicillin-allergic
+    // patient is the difference between a blocked cephalosporin and an anaphylaxis.
+    const { data: crossReacts, error: crossError } = await supabase
       .from("drug_allergy_cross_reactivity")
       .select("*");
+
+    if (crossError) {
+      markUnavailable(`Cross-reactivity check unavailable: ${crossError.message}`);
+    }
 
     if (crossReacts) {
       for (const cr of crossReacts) {
@@ -305,13 +403,13 @@ export const checkDrugSafety = async (
   }
 
   // Sort interactions: contraindicated first
-  results.interactions.sort(
-    (a, b) => (SEVERITY_RANK[b.severity] || 0) - (SEVERITY_RANK[a.severity] || 0)
-  );
+  results.interactions.sort((a, b) => rankSeverity(b.severity) - rankSeverity(a.severity));
 
   results.worstSeverity = getWorstSeverity(
     results.interactions,
-    results.allergyConflicts
+    results.allergyConflicts,
+    results.duplicates,
+    results.checkUnavailable
   );
 
   return results;

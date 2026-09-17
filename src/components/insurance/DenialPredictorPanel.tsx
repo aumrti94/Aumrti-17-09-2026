@@ -31,18 +31,36 @@ interface Props {
   hospitalId: string;
   onProceedSubmit: () => void;
   onRiskAssessed?: (score: number) => void;
+  /** Called when the hospital chooses to proceed without an AI assessment (e.g. AI call failed
+   * or no credentials are configured) — must unblock submission the same as a real score. */
+  onSkip?: () => void;
 }
 
-const DenialPredictorPanel: React.FC<Props> = ({ claimData, preAuthNumber, hospitalId, onProceedSubmit, onRiskAssessed }) => {
+const DenialPredictorPanel: React.FC<Props> = ({ claimData, preAuthNumber, hospitalId, onProceedSubmit, onRiskAssessed, onSkip }) => {
   const { toast } = useToast();
   const aiOn = useAIFeature("denial_predictor");
   const [loading, setLoading] = useState(false);
   const [prediction, setPrediction] = useState<DenialPrediction | null>(null);
+  const [aiFailed, setAiFailed] = useState(false);
 
-  if (!aiOn) return null; // AI master or denial-predictor feature disabled
+  if (!aiOn) {
+    // AI master or denial-predictor feature disabled — claim submission must not depend on a
+    // feature the hospital doesn't have turned on. Offer the same manual-proceed path as an AI
+    // failure below, rather than disappearing and leaving the Submit button permanently
+    // disabled (KNOWN-BUG-208).
+    return (
+      <div className="bg-muted/40 border border-border rounded-lg p-4 flex items-center justify-between gap-3">
+        <p className="text-[11px] text-muted-foreground">AI risk assessment is not enabled for this hospital.</p>
+        <Button size="sm" variant="outline" className="text-[11px] h-8" onClick={onSkip}>
+          Continue without AI review
+        </Button>
+      </div>
+    );
+  }
 
   const runPrediction = async () => {
     setLoading(true);
+    setAiFailed(false);
     try {
       const response = await callAI({
         featureKey: "denial_predictor",
@@ -67,6 +85,7 @@ Return ONLY JSON:
 
       if (response.error || !response.text) {
         toast({ title: "Denial prediction unavailable", description: response.error || "AI returned empty response", variant: "destructive" });
+        setAiFailed(true);
       } else {
         const parsed = JSON.parse(response.text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim());
         setPrediction(parsed);
@@ -83,6 +102,7 @@ Return ONLY JSON:
       }
     } catch {
       toast({ title: "Denial prediction failed", description: "Could not parse AI response", variant: "destructive" });
+      setAiFailed(true);
     }
     setLoading(false);
   };
@@ -108,6 +128,14 @@ Return ONLY JSON:
         <p className="text-[11px] text-muted-foreground mt-1">
           Predict denial probability before submission
         </p>
+        {aiFailed && (
+          <div className="flex items-center justify-between mt-2 pt-2 border-t border-primary/10">
+            <p className="text-[11px] text-destructive">AI assessment unavailable right now.</p>
+            <Button size="sm" variant="outline" className="text-[11px] h-7" onClick={onSkip}>
+              Continue without AI review
+            </Button>
+          </div>
+        )}
       </div>
     );
   }

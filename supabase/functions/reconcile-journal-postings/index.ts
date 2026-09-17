@@ -169,7 +169,11 @@ Deno.serve(async (req) => {
                 amount: bill.total_amount,
                 reason: "No auto_posting_rule configured for this hospital",
               },
-              changed_by: user.id,
+              // Was `user.id` (the auth uid) — `postedBy` (public.users.id, resolved above)
+              // is the correct attribution value; audit_log.changed_by has no FK constraint
+              // so this never errored, it just recorded a value that can never resolve back
+              // to the acting admin via public.users. Found via Phase 6 edge-function testing.
+              changed_by: postedBy,
               hospital_id: hospitalId,
             }).then(() => {});
 
@@ -252,8 +256,8 @@ Deno.serve(async (req) => {
     });
 
   } catch (err: any) {
-    console.error("reconcile-journal-postings fatal:", err);
-    return new Response(JSON.stringify({ ok: false, error: err.message }), {
+    console.error("reconcile-journal-postings fatal:", err instanceof Error ? err.message : String(err));
+    return new Response(JSON.stringify({ ok: false, error: "Internal error" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

@@ -280,7 +280,13 @@ serve(async (req) => {
     }, { onConflict: "hospital_id" });
 
     // ── Log event ──────────────────────────────────────────────────────────
-    await db.from("subscription_events").insert({
+    // Was `.insert(...).catch(() => {})` / `.invoke(...).catch(() => {})` directly
+    // on the Supabase query-builder / functions-invoke result — both are thenable
+    // but neither implements a real `.catch()`, so either call would have thrown
+    // synchronously and 500'd this endpoint AFTER the real Razorpay subscription
+    // and hospital_subscriptions row had already been created — the same root
+    // cause as KNOWN-BUG-172/175/177/179. Found via Phase 6 edge-function testing.
+    const { error: eventLogErr } = await db.from("subscription_events").insert({
       hospital_id,
       event_type:  isUpgrade ? "plan_upgraded" : "plan_downgraded",
       old_status:  currentStatus,
@@ -288,7 +294,8 @@ serve(async (req) => {
       old_plan_id: currentSub?.plan_id || null,
       new_plan_id: new_plan_id,
       metadata:    { change_type: isUpgrade ? "upgrade" : "downgrade", new_plan_name: newPlan.name },
-    }).catch(() => {});
+    });
+    if (eventLogErr) console.error("change-subscription-plan: logging subscription_events failed:", eventLogErr.message);
 
     // ── Notify admin ───────────────────────────────────────────────────────
     const { data: admin } = await db
@@ -300,15 +307,20 @@ serve(async (req) => {
       .maybeSingle();
 
     if (admin?.email) {
-      await db.functions.invoke("send-subscription-notification", {
-        body: {
-          event:       isUpgrade ? "plan_upgraded" : "plan_downgraded",
-          hospital_id,
-          email:       admin.email,
-          full_name:   admin.full_name,
-          plan_name:   newPlan.name,
-        },
-      }).catch(() => {});
+      try {
+        const { error: notifyErr } = await db.functions.invoke("send-subscription-notification", {
+          body: {
+            event:       isUpgrade ? "plan_upgraded" : "plan_downgraded",
+            hospital_id,
+            email:       admin.email,
+            full_name:   admin.full_name,
+            plan_name:   newPlan.name,
+          },
+        });
+        if (notifyErr) console.error("change-subscription-plan: send-subscription-notification failed:", notifyErr.message);
+      } catch (e) {
+        console.error("change-subscription-plan: send-subscription-notification failed:", e instanceof Error ? e.message : String(e));
+      }
     }
 
     // ── Return Razorpay checkout params for new subscription ───────────────
@@ -335,7 +347,7 @@ serve(async (req) => {
     }), { status: 200, headers: JSON_H });
 
   } catch (e) {
-    console.error("change-subscription-plan error:", e);
+    console.error("change-subscription-plan error:", e instanceof Error ? e.message : String(e));
     return err("Internal server error", 500);
   }
 });

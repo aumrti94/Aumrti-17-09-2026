@@ -11,13 +11,21 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // Declared outside the try block (and assigned as early as possible inside it) so the
+  // catch-all below can actually reach the payload for the DLQ. It previously tried to read
+  // it off `(err as any)._rawBody` — nothing anywhere ever set that property, so every DLQ
+  // row this function has ever written has `payload: {}` and `event_type: "unknown"`,
+  // regardless of what the original webhook actually contained — a dead letter queue with no
+  // way to identify or replay the letter. Found via Phase 6 edge-function testing.
+  let rawBody = "";
+
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
     // ── Signature verification ────────────────────────────────────────────
-    const rawBody = await req.text();
+    rawBody = await req.text();
     const signature = req.headers.get("x-razorpay-signature");
     const webhookSecret = Deno.env.get("RAZORPAY_WEBHOOK_SECRET");
 
@@ -154,16 +162,15 @@ serve(async (req) => {
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {
-    console.error("Webhook error:", err);
+    console.error("Webhook error:", err instanceof Error ? err.message : String(err));
     // Persist to DLQ so the processor can retry on its next run
     try {
       const supabaseAdmin = createClient(
         Deno.env.get("SUPABASE_URL")!,
         Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
       );
-      const rawBodyText = err instanceof Error && (err as any)._rawBody ? (err as any)._rawBody : "";
       let parsedPayload: Record<string, unknown> = {};
-      try { parsedPayload = rawBodyText ? JSON.parse(rawBodyText) : {}; } catch { /* ignore */ }
+      try { parsedPayload = rawBody ? JSON.parse(rawBody) : {}; } catch { /* ignore */ }
       await supabaseAdmin.from("webhook_dlq").insert({
         source: "razorpay_payment",
         event_type: (parsedPayload as any)?.event ?? "unknown",
@@ -171,9 +178,9 @@ serve(async (req) => {
         error_message: err instanceof Error ? err.message : String(err),
       });
     } catch (dlqErr) {
-      console.error("Failed to write to webhook_dlq:", dlqErr);
+      console.error("Failed to write to webhook_dlq:", dlqErr instanceof Error ? dlqErr.message : String(dlqErr));
     }
-    return new Response(JSON.stringify({ error: String(err) }), {
+    return new Response(JSON.stringify({ error: "Internal error" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

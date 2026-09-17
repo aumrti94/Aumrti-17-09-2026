@@ -39,6 +39,7 @@ import { buildInvestigationResultsHtml } from "@/lib/investigationPrint";
 import { logRecordAccess } from "@/lib/ims";
 import { translateText, getHospitalLanguages, ALL_PATIENT_LANGUAGES, buildBilingualHtml } from "@/lib/translateUtils";
 import { useCurrentHistoryDigest, formatDigestForPrompt, digestComorbidities } from "@/lib/historyDigest";
+import { chargedTierToVisitType } from "@/lib/visitTypes";
 
 interface Props {
   token: OpdToken | null;
@@ -1510,10 +1511,12 @@ const ConsultationWorkspace: React.FC<Props> = ({ token, hospitalId, userId, onT
             patientId: token.patient_id,
             doctorId: token.doctor_id,
             departmentId: token.department_id,
-            visitType:
-              token.charged_tier === "emergency" ? "emergency"
-              : token.charged_tier === "follow_up" ? "followup"
-              : "new",
+            // charged_tier ('new'|'follow_up'|'emergency') and visit_type
+            // ('new'|'revisit'|'followup'|'emergency') are different vocabularies on
+            // different columns — see src/lib/visitTypes.ts. The translation lived here as
+            // an inline ternary, which is how 'follow_up' came to be compared against a
+            // column whose CHECK only allows 'followup'.
+            visitType: chargedTierToVisitType(token.charged_tier),
             excludeTokenId: token.id,
           });
           const fee = priced.fee;

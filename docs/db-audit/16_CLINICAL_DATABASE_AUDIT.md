@@ -51,8 +51,10 @@ sensitive table was right the first time.
 **0 rows**. `drug_allergy_cross_reactivity` likewise contains 0 rows.
 
 [`src/lib/drugSafetyCheck.ts`](../../src/lib/drugSafetyCheck.ts) implements interaction checking in
-browser TypeScript with a unit test ([`drugSafetyCheck.test.ts`](../../src/lib/drugSafetyCheck.test.ts)),
-and the `check-drugbank-ddi` edge function exists to query an external DDI service.
+browser TypeScript. It had a unit test, `drugSafetyCheck.test.ts`, removed 2026-09-05 with the
+rest of the suite and not yet restored — CLAUDE.md names this file as carrying the highest
+coverage bar in the repo, and it is currently at zero. The `check-drugbank-ddi` edge function
+exists to query an external DDI service.
 
 So the enforcement chain is: frontend logic → external API → an empty local table. There is no
 database constraint preventing a prescription that conflicts with a recorded interaction, and no

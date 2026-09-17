@@ -19,6 +19,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -387,9 +388,11 @@ serve(async (req) => {
     );
 
   } catch (err: any) {
-    console.error("lab-analyzer-ingest error:", err);
+    // The message is already logged server-side, redacted, above — returning the raw message
+    // to the caller too risks echoing PHI (a DB constraint violation can embed row values).
+    console.error("lab-analyzer-ingest error:", sanitizeForLog(err instanceof Error ? err.message : String(err)));
     return new Response(
-      JSON.stringify({ error: err.message }),
+      JSON.stringify({ error: "Internal error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

@@ -48,13 +48,20 @@ serve(async (req) => {
     if (!hospital) return json({ error: "Hospital not found" }, 404);
 
     // Prefer the hospital's own super_admin; fall back to the oldest active user.
+    // Was `.order("role", { ascending: true })` — that orders alphabetically by role string,
+    // not by tenure, so the documented "fall back to the oldest active user" fallback
+    // actually picked whichever remaining role sorted first alphabetically (e.g. a
+    // `billing_executive` over a longer-tenured `doctor`, purely by coincidence of spelling)
+    // whenever no super_admin existed. The explicit `.find(role === "super_admin")` below
+    // was unaffected either way — this only mattered for the fallback path. Found via
+    // Phase 6 edge-function testing.
     const { data: candidates } = await admin
       .from("users")
       .select("id, auth_user_id, email, full_name, role")
       .eq("hospital_id", hospital_id)
       .eq("is_active", true)
       .not("auth_user_id", "is", null)
-      .order("role", { ascending: true }) // 'super_admin' sorts before most other role strings
+      .order("created_at", { ascending: true })
       .limit(20);
 
     const target = (candidates || []).find((c) => c.role === "super_admin") || (candidates || [])[0];
@@ -68,7 +75,7 @@ serve(async (req) => {
     });
     if (linkErr || !linkData) return json({ error: `Failed to create impersonation session: ${linkErr?.message}` }, 500);
 
-    await admin.from("admin_audit_log").insert({
+    const { error: auditErr } = await admin.from("admin_audit_log").insert({
       admin_id: adminRow.id,
       admin_name: adminRow.full_name,
       action: "impersonation_start",
@@ -76,6 +83,7 @@ serve(async (req) => {
       target_hospital_name: hospital.name,
       details: { impersonated_user_id: target.id, impersonated_email: target.email, impersonated_role: target.role },
     });
+    if (auditErr) console.error("admin-impersonate-start: audit log insert failed:", auditErr.message);
 
     return json({
       hashed_token: (linkData.properties as any)?.hashed_token,
@@ -84,7 +92,7 @@ serve(async (req) => {
       impersonated_role: target.role,
     });
   } catch (err) {
-    console.error("admin-impersonate-start error:", err);
-    return json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    console.error("admin-impersonate-start error:", err instanceof Error ? err.message : String(err));
+    return json({ error: "Internal error" }, 500);
   }
 });

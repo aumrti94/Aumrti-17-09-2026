@@ -142,10 +142,17 @@ Change: ${direction} by ${absDeviation}% vs baseline (this is the WORSENING dire
 
 Write the 2-sentence NABH QI anomaly alert.`;
 
-  const config = (await resolveAiConfig(hospitalId, "nabh_evidence", 200)) ?? resolveAiConfigFromEnv(200);
-  if (!config) return fallback();
-
+  // resolveAiConfig() throws AIDisabledError (not returns null) when the hospital's AI
+  // switch withholds this feature — it was previously called OUTSIDE this try/catch, so a
+  // disabled hospital's AIDisabledError propagated up through this function and out of the
+  // per-hospital loop that calls it, aborting the whole batch scan for every hospital
+  // processed after the disabled one, rather than gracefully degrading to the deterministic
+  // fallback() text the way every other failure mode here already does. Found via Phase 6
+  // AI-function-plumbing testing.
   try {
+    const config = (await resolveAiConfig(hospitalId, "nabh_evidence", 200)) ?? resolveAiConfigFromEnv(200);
+    if (!config) return fallback();
+
     const text = await callAiChat(config, [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
@@ -185,12 +192,34 @@ serve(async (req) => {
       if (serviceKey && token === serviceKey) {
         authorised = true;
       } else {
+        // Previously any authenticated bearer token was accepted here — not
+        // just an admin, despite the comment's own stated intent — so any
+        // logged-in staff member of any hospital could trigger a scan of
+        // (or, with no hospital_id, ALL hospitals') NABH anomalies, writing
+        // real clinical_alerts rows into that hospital's stream and reading
+        // back its anomaly counts. Found in the Phase 4 isolation audit —
+        // see KNOWN_BUGS.md. Manual invocation is genuinely admin-only (the
+        // no-hospital_id path scans every tenant), so this now requires
+        // aumrti_admins, the same check every other admin-gated function in
+        // this repo uses — never a hospital_id comparison.
         const anonClient = createClient(
           Deno.env.get("SUPABASE_URL")!,
           Deno.env.get("SUPABASE_ANON_KEY")!,
         );
         const { data: { user }, error } = await anonClient.auth.getUser(token);
-        if (!error && user) authorised = true;
+        if (!error && user) {
+          const adminCheckClient = createClient(
+            Deno.env.get("SUPABASE_URL")!,
+            Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+          );
+          const { data: adminRow } = await adminCheckClient
+            .from("aumrti_admins")
+            .select("id")
+            .eq("auth_user_id", user.id)
+            .eq("is_active", true)
+            .maybeSingle();
+          if (adminRow) authorised = true;
+        }
       }
     }
 
@@ -219,7 +248,7 @@ serve(async (req) => {
         anomalies = await readIndicatorAnomalies(sb, hospital.id);
       } catch (e) {
         // One tenant's data must not abort the run for everyone else.
-        console.error(`readIndicatorAnomalies failed for ${hospital.id}:`, e);
+        console.error(`readIndicatorAnomalies failed for ${hospital.id}:`, e instanceof Error ? e.message : String(e));
         summary.push({ hospital: hospital.name, anomalies: 0, inserted: 0 });
         continue;
       }
@@ -249,7 +278,12 @@ serve(async (req) => {
           unit: ind.unit,
         };
 
-        await sb.from("clinical_alerts").insert({
+        // `alert_type: "nabh_qi_anomaly"` was never in clinical_alerts_alert_type_check
+        // despite being the real, actively-used vocabulary (NABHQIAlertCard.tsx filters and
+        // realtime-subscribes on this exact string) — every insert has always violated the
+        // CHECK constraint, silently, since the error was never checked. Fixed via migration
+        // 20261106000028 plus this error check. Found via Phase 6 edge-function testing.
+        const { error: alertErr } = await sb.from("clinical_alerts").insert({
           hospital_id: hospital.id,
           alert_type: "nabh_qi_anomaly",
           alert_message: aiMessage,
@@ -263,6 +297,10 @@ serve(async (req) => {
           patient_id: null,
           is_acknowledged: false,
         });
+        if (alertErr) {
+          console.error(`ai-nabh-indicator-alert: clinical_alerts insert failed for ${hospital.id}/${ind.key}:`, alertErr.message);
+          continue;
+        }
         inserted++;
       }
 
@@ -271,7 +309,7 @@ serve(async (req) => {
 
     return json({ ok: true, processed: (hospitals || []).length, summary });
   } catch (err) {
-    console.error("ai-nabh-indicator-alert:", err);
-    return json({ error: String(err) }, 500);
+    console.error("ai-nabh-indicator-alert:", err instanceof Error ? err.message : String(err));
+    return json({ error: "Internal error" }, 500);
   }
 });

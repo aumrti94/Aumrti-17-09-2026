@@ -70,18 +70,23 @@ const DayCareAdmitGateModal: React.FC<Props> = ({
     setSubmitting(true);
 
     // Audit first, so the override is on record even if the admit write then fails.
+    // Three schema bugs fixed here: `message` was never a real column (`alert_message` is);
+    // `severity: "warning"` was never a valid CHECK value; `admission_id` never existed as a
+    // column at all — so despite this file's own header comment claiming every override is
+    // "audited into clinical_alerts", this insert has never once succeeded, silently.
     const userId = await getCurrentUserRowId();
-    await (supabase as any).from("clinical_alerts").insert({
+    const { error: alertErr } = await (supabase as any).from("clinical_alerts").insert({
       hospital_id: hospitalId,
       patient_id: patient.id,
       admission_id: admissionId,
       alert_type: "payment_override",
-      severity: "warning",
-      message:
+      severity: "high",
+      alert_message:
         `Day care financial gate overridden by ${role || "unknown role"} for ${patient.full_name} ` +
         `(${patient.uhid}) — ${formatINRExact(clearance.shortfall)} uncollected. Reason: ${reason.trim()}`,
       created_by: userId,
     });
+    if (alertErr) console.error("DayCareAdmitGateModal: clinical_alerts insert failed:", alertErr.message);
 
     onAdmit(reason.trim());
     setSubmitting(false);

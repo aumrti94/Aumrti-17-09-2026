@@ -52,6 +52,10 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chemo_orders_hospital_id
   ON public.chemo_orders (hospital_id);   -- FK chemo_orders_hospital_id_fkey -> hospitals
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_clinical_protocols_hospital_id
   ON public.clinical_protocols (hospital_id);   -- FK clinical_protocols_hospital_id_fkey -> hospitals
+-- KNOWN-BUG-120 (2026-09-12), RESOLVED: `clinical_reference_sources` had no CREATE TABLE
+-- anywhere in this repo's history — recovered in 20261016000000 from the live cloud schema,
+-- which also creates this exact index. Restored here as a harmless IF-NOT-EXISTS no-op so this
+-- migration's own FK-index sweep stays complete; see KNOWN_BUGS.md for the recovery story.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_clinical_reference_sources_hospital_id
   ON public.clinical_reference_sources (hospital_id);   -- FK clinical_reference_sources_hospital_id_fkey -> hospitals
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_coding_audits_hospital_id
@@ -504,6 +508,8 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_advance_receipts_adjusted_in_bill_id
   ON public.advance_receipts (adjusted_in_bill_id);   -- FK advance_receipts_adjusted_in_bill_id_fkey -> bills
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_advance_receipts_received_by
   ON public.advance_receipts (received_by);   -- FK advance_receipts_received_by_fkey -> users
+-- KNOWN-BUG-120 (2026-09-12), RESOLVED: same recovery as clinical_reference_sources above —
+-- see 20261016000000 and KNOWN_BUGS.md. Restored as a harmless IF-NOT-EXISTS no-op.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ai_feature_classes_updated_by
   ON public.ai_feature_classes (updated_by);   -- FK ai_feature_classes_updated_by_fkey -> users
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ai_suggestions_audit_user_id

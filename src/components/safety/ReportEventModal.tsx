@@ -186,7 +186,7 @@ Respond ONLY as valid JSON with exactly these keys:
       .from("safety_events")
       .insert(payload)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) {
       setSaving(false);
@@ -203,7 +203,7 @@ Respond ONLY as valid JSON with exactly these keys:
           { onConflict: "hospital_id,nabh_standard_id" },
         )
         .select("id")
-        .single();
+        .maybeSingle();
 
       if (compData?.id) {
         await (supabase as any).from("nabh_evidence_items").insert({

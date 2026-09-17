@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -30,11 +31,43 @@ serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, serviceKey);
 
+    // ── Auth ──────────────────────────────────────────────────────────────
+    // No auth check at all previously, and patient_id was never checked
+    // against hospital_id — any caller with just the public anon key could
+    // name any hospital_id + another hospital's patient_id, pull that
+    // patient's PHI (name/age/gender/phone), and file a government IDSP
+    // disease notification under the wrong hospital's credentials. Found in
+    // the Phase 4 isolation audit — see KNOWN_BUGS.md.
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const anonClient = createClient(
+      supabaseUrl,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { Authorization: authHeader } } },
+    );
+    const { data: { user }, error: authErr } = await anonClient.auth.getUser();
+    if (authErr || !user) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const { hospital_id, patient_id, icd_code, disease_name: providedName, lab_order_id } = await req.json();
 
     if (!hospital_id || !icd_code) {
       return new Response(JSON.stringify({ error: "hospital_id and icd_code required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const { data: staff } = await supabase.from("users").select("hospital_id").eq("auth_user_id", user.id).maybeSingle();
+    if (!staff || staff.hospital_id !== hospital_id) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -50,7 +83,7 @@ serve(async (req) => {
     // Fetch hospital and patient details
     const [hospitalRes, patientRes] = await Promise.all([
       supabase.from("hospitals").select("name, state, district, address").eq("id", hospital_id).maybeSingle(),
-      patient_id ? supabase.from("patients").select("full_name, age, gender, phone").eq("id", patient_id).maybeSingle() : Promise.resolve({ data: null }),
+      patient_id ? supabase.from("patients").select("full_name, age, gender, phone").eq("id", patient_id).eq("hospital_id", hospital_id).maybeSingle() : Promise.resolve({ data: null }),
     ]);
 
     const hospital = hospitalRes.data;
@@ -103,7 +136,7 @@ serve(async (req) => {
     }
 
     // Store submission record
-    const { data: submission } = await supabase
+    const { data: submission, error: submissionErr } = await supabase
       .from("idsp_submissions" as any)
       .insert({
         hospital_id,
@@ -116,6 +149,7 @@ serve(async (req) => {
       })
       .select("id")
       .maybeSingle();
+    if (submissionErr) console.error("idsp-alert-submit: submission insert failed:", submissionErr.message);
 
     return new Response(JSON.stringify({
       success: true,
@@ -127,8 +161,8 @@ serve(async (req) => {
     }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   } catch (err) {
-    console.error("idsp-alert-submit error:", err);
-    return new Response(JSON.stringify({ error: String(err) }), {
+    console.error("idsp-alert-submit error:", sanitizeForLog(err instanceof Error ? err.message : String(err)));
+    return new Response(JSON.stringify({ error: "Internal error" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

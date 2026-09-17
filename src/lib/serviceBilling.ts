@@ -30,6 +30,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { generateBillNumber } from "@/hooks/useBillNumber";
 import { findOrCreateAdmissionBill } from "@/lib/admissionBill";
 import { autoPostJournalEntry } from "@/lib/accounting";
+import { getCurrentUserRowId } from "@/lib/currentUser";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
 import { roundCurrency, calcGST } from "@/lib/currency";
 import { getModuleDefaultRate, getRate, SERVICE_RATE_CODES } from "@/lib/serviceRates";
@@ -580,7 +581,12 @@ export async function recordOTServiceCharges(opts: {
 }): Promise<void> {
   const { hospitalId, patientId, admissionId, scheduleId, billId, items } = opts;
   if (!patientId || items.length === 0) return;
-  const { data: { user } } = await supabase.auth.getUser();
+  // KNOWN-BUG-206: therapist_id/created_by both FK public.users(id), but this used the raw
+  // auth uid (supabase.auth.getUser().id) — a different value since migration
+  // 20260322111223. Every insert here has always violated both foreign keys; the failure was
+  // invisible because the insert's own error was discarded on both branches
+  // (`.then(() => {}, () => {})`), not just left unchecked.
+  const userRowId = await getCurrentUserRowId();
   const now = new Date().toISOString();
   const rows = items.map((item) => ({
     hospital_id: hospitalId,
@@ -595,13 +601,14 @@ export async function recordOTServiceCharges(opts: {
     gst_percent: item.gst_percent,
     gst_amount: item.gst_amount,
     total_amount: item.total_amount,
-    therapist_id: user?.id || null,
+    therapist_id: userRowId,
     billing_status: "billed",
     bill_id: billId,
     billed_at: now,
-    created_by: user?.id || null,
+    created_by: userRowId,
   }));
-  await (supabase as any).from("service_charges").insert(rows).then(() => {}, () => {});
+  const { error } = await (supabase as any).from("service_charges").insert(rows);
+  if (error) console.error("recordOTServiceCharges failed:", error.message);
 }
 
 /** service_master rate lookup, optionally scoped to a specific doctor_id. */
@@ -798,7 +805,12 @@ export async function chargeOTCase(opts: {
     await (supabase as any).from("ot_implants").update({ billed: true }).in("id", billedImplantIds);
   }
 
-  const { data: { user } } = await supabase.auth.getUser();
+  // KNOWN-BUG-206: journal_entries.posted_by FKs public.users(id), but this passed the raw
+  // auth uid — confirmed live via a genuine FK violation surfaced on every OT charge posted
+  // during this journey's own test run ("journal_entries_posted_by_fkey ... Key is not
+  // present in table \"users\""). Every OT case's revenue journal entry has silently never
+  // posted for any account created after migration 20260322111223 (i.e. effectively always).
+  const userRowId = await getCurrentUserRowId();
   await autoPostJournalEntry({
     triggerEvent: "bill_finalized_ot",
     sourceModule: MODULE_OT,
@@ -806,7 +818,7 @@ export async function chargeOTCase(opts: {
     amount: total,
     description: `OT Revenue - ${schedule.surgery_name}`,
     hospitalId,
-    postedBy: user?.id || "",
+    postedBy: userRowId || "",
   });
 
   return { billId, total, itemsAdded: newItems.length };

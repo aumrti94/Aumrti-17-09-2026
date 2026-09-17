@@ -99,7 +99,7 @@ async function getOrCreateSession(hospitalId: string, phone: string, patientId?:
     .from("whatsapp_bot_sessions")
     .insert({ hospital_id: hospitalId, phone, patient_id: patientId || null, context_json: {} })
     .select()
-    .single();
+    .maybeSingle();
 
   return session;
 }

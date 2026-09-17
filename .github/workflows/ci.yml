@@ -7,7 +7,11 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  # Named for what it does. This job runs static checks and a production build; it runs
+  # no tests — the `tests` job below does that. Calling THIS job `test` reported a green
+  # "test" check on every PR while nothing was being tested, which is why it was renamed.
+  # Keep the split: one job may not claim the other's guarantee.
+  checks:
     runs-on: ubuntu-latest
 
     steps:
@@ -48,4 +52,117 @@ jobs:
       # way is worse than no spec, because integrators build against it.
       - name: OpenAPI spec freshness
         run: npm run check:openapi
+
+      # src/lib/labTestCatalog.ts is the source of truth for lab reference intervals, and
+      # this generates the migration that seeds lab_test_catalog_default from it. The check
+      # existed in package.json but was never wired here, so when the generator broke it
+      # produced no signal anywhere — and a broken generator means a corrected reference
+      # range cannot reach a live database at all.
+      - name: Lab catalogue freshness
+        run: npm run check:lab-catalog
+
+      # Phase 6 exit gate (PHASED_TEST_PLAN.md) — CLAUDE.md's "no PHI in Supabase logs, Edge
+      # Function console.log, or error messages, ever" has had zero enforcement until this.
+      # Heuristic text scan: flags a console.* call that names a PHI-shaped identifier or dumps
+      # a whole request/row object without routing through _shared/phi-redactor.ts.
+      - name: PHI-in-logs check
+        run: npm run check:no-phi-logs
+
+      # The test inventory is generated from the code's own registries (ALL_MODULES,
+      # SETTINGS_CATALOG, ROUTE_ROLES, types.ts, supabase/functions/, src/lib/**). This
+      # fails when a registry gained a row without the inventory being regenerated, so a
+      # new module or edge function cannot silently avoid appearing on the coverage
+      # checklist. Same pattern as check:openapi and check:lab-catalog above.
+      - name: Test inventory freshness
+        run: npm run check:inventory
+
+      # D5: fixture data gets pasted into issues, CI logs and screenshots, so an identifier
+      # merely SHAPED like a real Aadhaar/ABHA/mobile is a DPDP exposure regardless of whether
+      # it belongs to anyone. Structural check — it does not try to decide whether a number is
+      # real, because "this Aadhaar is fake, I promise" is not reviewable.
+      - name: Fixture PHI check
+        run: npm run check:fixture-phi
+
+      # Vite does not typecheck, so a build is the only thing standing between a merge and
+      # a broken bundle. CI previously never built the project.
+      - name: Build
+        run: npm run build
+
+  # Unit tests and the coverage ratchet. Added by Phase 0 of docs/testing/PHASED_TEST_PLAN.md
+  # — until this existed, `npm test` passing meant nothing to a merge.
+  #
+  # Separate job rather than a step in `checks` so the PR shows a distinct "tests" status.
+  # It runs in parallel: nothing here depends on lint or the build.
+  tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Same constraint as `checks`: on Node 18 rolldown's `import { styleText }`
+          # throws while loading vitest.config.ts, before a single test runs.
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      # --coverage, not a bare run. vitest.config.ts carries per-file thresholds for every
+      # surface Phase 1 covered; without --coverage they are never evaluated and coverage
+      # could silently fall to zero while this job stayed green. R3's ratchet only works if
+      # the thresholds are actually checked on every PR.
+      - name: Unit tests and coverage thresholds
+        run: npm run test:coverage
+
+  # E2E against LOCAL Supabase (D4) — not blocked on cloud provisioning. Phase 3 of
+  # docs/testing/PHASED_TEST_PLAN.md.
+  #
+  # `supabase start` brings up Postgres with all migrations applied; global-setup seeds the
+  # two tenants and writes the two storageState files; the suite then runs every spec twice,
+  # once per tenant. That two-tenant shape is the point — Phase 4's isolation assertions need
+  # a second hospital to be absent from, and retrofitting one means rebuilding the fixture.
+  e2e:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # Applies every migration in supabase/migrations/ to a throwaway local stack. This is
+      # also the only place the migrations are executed at all — the static check:* scripts
+      # are text scans and cannot catch a migration that fails to apply.
+      - name: Start local Supabase
+        run: supabase start
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      # Seeds twice and diffs the resulting state. A fixture that accumulates rows breaks
+      # every "exactly one" assertion on its second run, for a reason that has nothing to do
+      # with the code under test.
+      - name: Seed Tier-0 and verify idempotency
+        run: npm run e2e:seed -- --check
+
+      - name: E2E (both tenants)
+        run: npm run test:e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
 

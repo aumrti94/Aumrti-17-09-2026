@@ -32,7 +32,11 @@
  * everything because it is a different service, not a discounted one.
  *
  * `computeConsultationFee` is deliberately PURE — no Supabase, no clock — so the rule above
- * is unit-testable without a database. See consultationFee.test.ts.
+ * is unit-testable without a database. consultationFee.test.ts, which exercised it, was
+ * removed 2026-09-05 with the rest of the suite. The fixtures it used were ported into
+ * supabase/tests/booking-engine/10-fee-parity.sql, a pgTAP file that still runs manually
+ * against the SQL engine — see that file — but nothing wires it into CI, so a change here
+ * is currently unchecked either way.
  */
 
 import { supabase } from "@/integrations/supabase/client";
@@ -43,8 +47,15 @@ export const DEFAULT_CONSULTATION_FEE = 500;
 /** Which tier of the rate ladder answered. Surfaced in the UI so "default" is visible. */
 export type RateSource = "doctor" | "dept" | "global" | "default";
 
-/** Which rate actually billed. Persisted to opd_tokens.charged_tier for episode counting. */
-export type ChargedTier = "new" | "follow_up" | "emergency";
+/**
+ * Which rate actually billed. Persisted to opd_tokens.charged_tier for episode counting.
+ *
+ * Re-exported from visitTypes.ts, which is now the single source of truth for all three OPD
+ * visit vocabularies. Declaring the union inline here is what let `visit_type` and
+ * `charged_tier` spellings be compared against each other at call sites.
+ */
+export type { ChargedTier } from "@/lib/visitTypes";
+import type { ChargedTier, VisitType, VisitPurpose } from "@/lib/visitTypes";
 
 export interface ConsultationRate {
   /** Full consultation fee. */
@@ -286,8 +297,8 @@ export async function findFeeEpisode(opts: {
 export function computeConsultationFee(opts: {
   rate: ConsultationRate;
   episode: FeeEpisode;
-  visitType: "new" | "revisit" | "followup" | "emergency";
-  visitPurpose?: "new" | "revisit" | "follow_up" | "review" | "procedure";
+  visitType: VisitType;
+  visitPurpose?: VisitPurpose;
   revisitRules?: { enabled?: boolean; rules?: RevisitRule[] } | null;
 }): ComputedFee {
   const { rate, episode, visitType, visitPurpose = "new", revisitRules = null } = opts;

@@ -2,7 +2,8 @@
 // Ensure a Data Processing Agreement (DPA) covering PHI is in place before production use.
 // @ts-ignore: Deno HTTP imports resolved by Supabase Edge Function runtime
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { resolveAiConfig, callAiChat } from "../_shared/ai-config.ts";
+import { resolveAiConfig, callAiChat, AIDisabledError } from "../_shared/ai-config.ts";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -139,9 +140,19 @@ ${clinicalContext || "No additional context provided."}`,
     return new Response(JSON.stringify({ success: true, ...result }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-  } catch (e: any) {
-    console.error("ai-generate-clinical-note error:", e);
-    return new Response(JSON.stringify({ success: false, error: e.message || "Unknown error" }), {
+  } catch (e) {
+    // Entitlement is already enforced inside resolveAiConfig() above (checkAIAllowed,
+    // throwing AIDisabledError on a real disabled decision) — but this catch never
+    // special-cased it, so a disabled hospital got a confusing generic 500 instead of a
+    // clean 403. Found via Phase 6 AI-function-plumbing testing. (No caller of this
+    // function exists anywhere in src/ today, so this has not yet caused live harm.)
+    if (e instanceof AIDisabledError) {
+      return new Response(JSON.stringify({ success: false, error: e.message }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    console.error("ai-generate-clinical-note error:", sanitizeForLog(e instanceof Error ? e.message : String(e)));
+    return new Response(JSON.stringify({ success: false, error: e instanceof Error ? e.message : "Unknown error" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

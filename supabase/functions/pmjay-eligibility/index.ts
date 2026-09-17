@@ -257,7 +257,10 @@ async function checkEligibilityHcx(params: {
   });
 
   // Log the outbound call
-  await sb.from("hcx_submissions").insert({
+  // Was `.insert(...).catch(() => {})` — same non-existent-.catch() defect found
+  // repeatedly this session; here it crashed with a 500 before the real
+  // eligibility result below could ever be returned. Found via Phase 6.
+  const { error: hcxLogErr } = await sb.from("hcx_submissions").insert({
     hospital_id: hospitalId,
     api_call_id: apiCallId,
     correlation_id: correlationId,
@@ -267,7 +270,8 @@ async function checkEligibilityHcx(params: {
     request_fhir: fhirBundle,
     response_payload: { status: gwRes.status },
     hcx_status: gwRes.ok ? "submitted" : "error",
-  }).catch(() => {});
+  });
+  if (hcxLogErr) console.error("pmjay-eligibility: hcx_submissions insert failed:", hcxLogErr.message);
 
   if (!gwRes.ok) {
     const errText = await gwRes.text().catch(() => "");
@@ -333,6 +337,21 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
+    // ── Auth ────────────────────────────────────────────────────────────────
+    // No auth check at all previously — any request naming a hospital_id with
+    // feature_hcx_claims enabled could pull that hospital's HCX credentials
+    // and submit a real eligibility check to the NHA gateway under its
+    // identity. Found in the Phase 4 isolation audit — see KNOWN_BUGS.md.
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) return json({ eligible: false, error: "Unauthorized" }, 401);
+    const anonClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { Authorization: authHeader } } },
+    );
+    const { data: { user }, error: authErr } = await anonClient.auth.getUser();
+    if (authErr || !user) return json({ eligible: false, error: "Unauthorized" }, 401);
+
     const body = await req.json() as {
       pmjay_card_number?: string;
       patient_name?: string;
@@ -351,6 +370,14 @@ serve(async (req) => {
         Deno.env.get("SUPABASE_URL")!,
         Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
       );
+      const { data: staff } = await sb
+        .from("users")
+        .select("hospital_id")
+        .eq("auth_user_id", user.id)
+        .maybeSingle();
+      if (!staff || staff.hospital_id !== hospital_id) {
+        return json({ eligible: false, error: "Forbidden" }, 403);
+      }
       const { data: cfg } = await sb
         .from("hospital_abdm_config")
         .select("feature_hcx_claims")

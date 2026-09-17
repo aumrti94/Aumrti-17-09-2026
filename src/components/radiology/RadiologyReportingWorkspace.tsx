@@ -206,7 +206,14 @@ const RadiologyReportingWorkspace: React.FC<Props> = ({ order, hospitalId, onSta
     }
 
     setLoading(false);
-  }, [order]);
+    // `order.id` only — not the whole `order` object. `RadiologyPage`'s realtime subscription
+    // refetches and rebuilds the orders array (fresh object references) on ANY radiology_orders
+    // change in the hospital, including this component's own status-transition clicks echoing
+    // back. Depending on `order` re-ran this fetch on every such echo and reset `findings`/
+    // `impression` to whatever was last saved (empty, before the first save) — silently wiping
+    // a radiologist's in-progress typing. Found live: filling Findings then Impression in two
+    // steps left Findings empty because a realtime echo from "Begin Report" landed in between.
+  }, [order.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { fetchData(); }, [fetchData]);
 

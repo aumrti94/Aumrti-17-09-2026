@@ -64,7 +64,42 @@ const STATUS_CONFIG: Record<string, { bg: string; text: string; label?: string }
   preauth_expired:  { bg: "bg-red-100",     text: "text-red-600",   label: "Pre-Auth Expired" },
   resubmitted:      { bg: "bg-blue-100",    text: "text-blue-700" },
   irdai_overdue:    { bg: "bg-red-100",     text: "text-red-700",   label: "IRDAI Overdue" },
+  // Platform — subscription status (was PLATFORM_STATUS_PILL in platform-utils.ts).
+  // "active"/"cancelled" reuse the patient/billing entries above rather than
+  // duplicating a key with a different colour for the same word.
+  trial:            { bg: "bg-blue-100",    text: "text-blue-700" },
+  suspended:        { bg: "bg-red-100",     text: "text-red-600" },
+  past_due:         { bg: "bg-amber-100",   text: "text-amber-700", label: "Past Due" },
+  no_subscription:  { bg: "bg-slate-100",   text: "text-slate-600", label: "No Subscription" },
+  // Platform — enterprise lead pipeline (was LEAD_STATUS_COLORS in PlansManagerPage.tsx)
+  new:              { bg: "bg-blue-100",    text: "text-blue-700" },
+  contacted:        { bg: "bg-amber-100",   text: "text-amber-700" },
+  demo_scheduled:   { bg: "bg-purple-100",  text: "text-purple-700", label: "Demo Scheduled" },
+  converted:        { bg: "bg-emerald-100", text: "text-emerald-700" },
+  lost:             { bg: "bg-red-100",     text: "text-red-600" },
+  // Platform — admin audit log action types (was ACTION_STYLE in AuditLogPage.tsx)
+  hospital_delete_requested: { bg: "bg-amber-100",   text: "text-amber-700", label: "Hospital Delete Requested" },
+  hospital_purged:           { bg: "bg-red-100",     text: "text-red-600",   label: "Hospital Purged" },
+  hospital_restored:         { bg: "bg-emerald-100", text: "text-emerald-700", label: "Hospital Restored" },
+  admin_added:               { bg: "bg-blue-100",    text: "text-blue-700",  label: "Admin Added" },
+  admin_deactivated:         { bg: "bg-amber-100",   text: "text-amber-700", label: "Admin Deactivated" },
+  erasure_request_approved:  { bg: "bg-red-100",     text: "text-red-600",   label: "Erasure Request Approved" },
+  erasure_request_rejected:  { bg: "bg-slate-100",   text: "text-slate-600", label: "Erasure Request Rejected" },
+  impersonation_start:       { bg: "bg-purple-100",  text: "text-purple-700", label: "Impersonation Start" },
+  impersonation_end:         { bg: "bg-purple-100",  text: "text-purple-600", label: "Impersonation End" },
 };
+
+/**
+ * Raw `"bg text"` Tailwind classes for a status key, for the rare caller that
+ * needs the same colour language on something that isn't a plain `<span>`
+ * pill (e.g. an interactive "move to this status" button). Prefer
+ * `<StatusBadge>` itself whenever a static display pill is all that's needed.
+ */
+export function getStatusBadgeClasses(status: string): string {
+  const key = status?.toLowerCase() ?? "";
+  const config = STATUS_CONFIG[key] ?? { bg: "bg-slate-100", text: "text-slate-600" };
+  return `${config.bg} ${config.text}`;
+}
 
 interface StatusBadgeProps {
   status: string;

@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Calendar, FlaskConical, Receipt, Pill, Download, Video } from "lucide-react";
-import type { PortalSession } from "./PortalLogin";
+import type { PortalSession } from "./portalTypes";
 import HealthCoachBot from "@/components/portal/HealthCoachBot";
 import { REFUND_PAYMENT_STATUSES } from "@/lib/billStatus";
 

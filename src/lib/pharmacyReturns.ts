@@ -136,7 +136,16 @@ export async function processPharmacyReturn(
 
       const newBalance = Number(lastNdps?.balance_after ?? 0) + line.quantity;
 
-      await (supabase as any).from("ndps_register").insert({
+      // countersigned_by is set now (KNOWN-BUG, found live) — this insert previously wrote
+      // only second_pharmacist_id, never countersigned_by, so the schema's one dual-signature
+      // safety net (the ndps_different_pharmacists CHECK, which only inspects
+      // countersigned_by) never applied to a return at all: countersigned_by stayed NULL,
+      // which trivially satisfies "countersigned_by IS NULL OR countersigned_by !=
+      // pharmacist_id" regardless of what second_pharmacist_id held. The result is also
+      // checked now, for the same reason as the dispensing-side inserts this same table
+      // receives elsewhere — an unchecked failure here would let the return complete with no
+      // legally-mandated register entry.
+      const { error: ndpsErr } = await (supabase as any).from("ndps_register").insert({
         hospital_id: ctx.hospitalId,
         drug_id: line.drugId,
         drug_name: line.drugName,
@@ -147,8 +156,13 @@ export async function processPharmacyReturn(
         patient_name: ctx.patientName || null,
         pharmacist_id: ctx.ndpsPharmacistId || ctx.userId,
         second_pharmacist_id: ctx.ndpsSeniorId || null,
+        countersigned_by: ctx.ndpsSeniorId || null,
+        countersigned_at: ctx.ndpsSeniorId ? now : null,
         remarks: `Return: ${line.reason}. Dispensing item ${line.dispensingItemId}`,
       });
+      if (ndpsErr) {
+        throw new Error(`NDPS register entry for ${line.drugName} failed to save (${ndpsErr.message}) — this return has NOT been completed.`);
+      }
     }
 
     creditLinePayloads.push({

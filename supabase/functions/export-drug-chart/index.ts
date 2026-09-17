@@ -20,6 +20,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -267,10 +268,16 @@ serve(async (req) => {
 
     // ── Fetch drug data in parallel ─────────────────────────────────────────
     const [rxRes, dispRes, marRes] = await Promise.all([
-      // IPD medication orders
+      // IPD medication orders. Was "...,notes" — ipd_medications has no notes column (the real
+      // free-text column is "instructions", unused by buildHtml's template either way) — naming
+      // a nonexistent column fails the whole select, and since neither this query's `.error` nor
+      // the other two's was ever checked, the failure was invisible: "IPD Medication Orders" has
+      // shown "No IPD medication orders found" on every drug-chart export since this shipped,
+      // regardless of what was actually prescribed. Found via Phase 6 edge-function testing —
+      // the identical failure shape as KNOWN-BUG-168 (allergy_history vs allergies).
       sb
         .from("ipd_medications")
-        .select("drug_name, dose, route, frequency, start_date, end_date, is_active, notes")
+        .select("drug_name, dose, route, frequency, start_date, end_date, is_active")
         .eq("admission_id", admission_id)
         .eq("hospital_id", hospitalId)
         .order("start_date", { ascending: true }),
@@ -298,6 +305,13 @@ serve(async (req) => {
         .order("scheduled_time", { ascending: true })
         .limit(200),
     ]);
+
+    // None of these three were ever checked for `error` — exactly the shape that hid the
+    // ipd_medications column-name bug above. A failed query now degrades that one section of
+    // the chart (already-generated sections still render) rather than silently vanishing.
+    for (const [label, res] of [["ipd_medications", rxRes], ["pharmacy_dispensing_items", dispRes], ["nursing_mar", marRes]] as const) {
+      if (res.error) console.error(`[export-drug-chart] ${label} query failed:`, sanitizeForLog(res.error.message));
+    }
 
     // Flatten dispensing items — add dispensed_at from parent
     const dispensingItems = (dispRes.data ?? []).map((di: any) => ({

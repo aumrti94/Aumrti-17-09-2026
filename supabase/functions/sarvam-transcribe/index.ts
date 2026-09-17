@@ -7,6 +7,7 @@ import {
 } from "../_shared/asr-metering.ts";
 import { isSarvamAsrCode, explainBadSarvamCode } from "../_shared/asr-languages.ts";
 import { loadHospitalLexicon, topHotwords } from "../_shared/medical-lexicon.ts";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -202,8 +203,8 @@ serve(async (req) => {
         const parsed = JSON.parse(body);
         message = parsed?.error?.message ?? parsed?.message ?? parsed?.error ?? body;
       } catch { /* not JSON — the raw text is the best message available */ }
-      // Bounded: an upstream error body can echo the request, and this lands in logs.
-      console.error("Sarvam API error:", status, body.slice(0, 500));
+      // An upstream error body can echo the request — redact before it lands in logs.
+      console.error("Sarvam API error:", status, sanitizeForLog(body.slice(0, 500)));
       return new Response(
         JSON.stringify({
           error: `Sarvam ${status}: ${String(message).slice(0, 400)}`,

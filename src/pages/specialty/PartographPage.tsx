@@ -15,7 +15,7 @@ export default function PartographPage() {
   const { data: patients } = useQuery({
     queryKey: ["patients-partograph", hospitalId],
     queryFn: async () => {
-      const { data } = await supabase.from("patients").select("id, full_name, uhid, gender").eq("hospital_id", hospitalId!).eq("gender", "Female").order("full_name").limit(200);
+      const { data } = await supabase.from("patients").select("id, full_name, uhid, gender").eq("hospital_id", hospitalId!).eq("gender", "female").order("full_name").limit(200);
       return data ?? [];
     },
     enabled: !!hospitalId,
@@ -24,7 +24,7 @@ export default function PartographPage() {
   const { data: admissions } = useQuery({
     queryKey: ["admissions-partograph", hospitalId, patientId],
     queryFn: async () => {
-      const { data } = await supabase.from("admissions").select("id, admission_number, admission_date").eq("hospital_id", hospitalId!).eq("patient_id", patientId!).eq("status", "active").order("admission_date", { ascending: false }).limit(10);
+      const { data } = await supabase.from("admissions").select("id, admission_number, admitted_at").eq("hospital_id", hospitalId!).eq("patient_id", patientId!).eq("status", "active").order("admitted_at", { ascending: false }).limit(10);
       return data ?? [];
     },
     enabled: !!hospitalId && !!patientId,
@@ -64,7 +64,7 @@ export default function PartographPage() {
                 className="w-full h-10 rounded-md border border-rose-300 bg-white px-3 text-sm"
               >
                 <option value="">— Not linked to admission —</option>
-                {admissions.map((a: any) => <option key={a.id} value={a.id}>{a.admission_number} · {a.admission_date}</option>)}
+                {admissions.map((a: any) => <option key={a.id} value={a.id}>{a.admission_number} · {a.admitted_at?.split("T")[0]}</option>)}
               </select>
             </div>
           )}

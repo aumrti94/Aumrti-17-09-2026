@@ -12,6 +12,9 @@ import { MODULE_TABS, MODULE_ACTIONS } from "@/lib/tabPermissions";
 import { ModuleAccessDrawer } from "@/components/access/ModuleAccessDrawer";
 import type { AddonSku } from "@/lib/addons";
 import AddonSkuEditor from "@/components/platform/AddonSkuEditor";
+import { PageHeader } from "@/components/shared/PageHeader";
+import { StatusBadge, getStatusBadgeClasses } from "@/components/shared/StatusBadge";
+import { Card, CardContent } from "@/components/ui/card";
 
 type ModuleDetail = { tabs: Record<string, boolean>; actions: Record<string, boolean> };
 
@@ -30,14 +33,6 @@ interface EnterpriseLead {
   notes: string | null;
   created_at: string;
 }
-
-const LEAD_STATUS_COLORS: Record<string, string> = {
-  new:            "bg-blue-500/15 text-blue-700",
-  contacted:      "bg-amber-500/15 text-amber-700",
-  demo_scheduled: "bg-purple-500/15 text-purple-700",
-  converted:      "bg-emerald-500/15 text-emerald-700",
-  lost:           "bg-red-500/15 text-red-600",
-};
 
 const LEAD_STATUSES = ["new", "contacted", "demo_scheduled", "converted", "lost"] as const;
 
@@ -322,9 +317,9 @@ export default function PlansManagerPage() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="h-14 border-b border-border flex items-center justify-between px-6 shrink-0">
-        <div className="flex items-center gap-4">
-          <h1 className="text-[15px] font-semibold text-foreground">Plans Manager</h1>
+      <PageHeader
+        title="Plans Manager"
+        titleExtra={
           <div className="flex gap-1">
             {(["plans", "addons", "leads"] as const).map((tab) => (
               <button
@@ -345,18 +340,22 @@ export default function PlansManagerPage() {
               </button>
             ))}
           </div>
-        </div>
-        {activeTab === "plans" && (
-          <button onClick={openNew} className="flex items-center gap-2 px-3 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold rounded-lg transition-colors">
-            <Plus size={12} /> New Plan
-          </button>
-        )}
-        {activeTab === "addons" && (
-          <button onClick={() => setEditingSku("new")} className="flex items-center gap-2 px-3 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold rounded-lg transition-colors">
-            <Plus size={12} /> New Add-on
-          </button>
-        )}
-      </div>
+        }
+        actions={
+          <>
+            {activeTab === "plans" && (
+              <button onClick={openNew} className="flex items-center gap-2 px-3 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold rounded-lg transition-colors">
+                <Plus size={12} /> New Plan
+              </button>
+            )}
+            {activeTab === "addons" && (
+              <button onClick={() => setEditingSku("new")} className="flex items-center gap-2 px-3 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold rounded-lg transition-colors">
+                <Plus size={12} /> New Add-on
+              </button>
+            )}
+          </>
+        }
+      />
 
       {/* Add-ons tab — the SKU catalogue. Prices and the module/AI keys each SKU
           grants are edited here, so packaging changes need no deploy. */}
@@ -369,7 +368,8 @@ export default function PlansManagerPage() {
           </p>
           <div className="grid gap-3 md:grid-cols-2 max-w-4xl">
             {(addonSkus || []).map((s) => (
-              <div key={s.id} className="border border-border rounded-xl p-4 bg-card">
+              <Card key={s.id}>
+              <CardContent className="p-4">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-foreground">
@@ -402,7 +402,8 @@ export default function PlansManagerPage() {
                     {s.ai_feature_keys?.length ? s.ai_feature_keys.join(", ") : "none"}
                   </p>
                 </div>
-              </div>
+              </CardContent>
+              </Card>
             ))}
             {(!addonSkus || addonSkus.length === 0) && (
               <p className="text-xs text-muted-foreground">
@@ -442,7 +443,8 @@ export default function PlansManagerPage() {
           ) : (
             <div className="space-y-3">
               {leads.map((lead) => (
-                <div key={lead.id} className="bg-card border border-border rounded-xl p-4 space-y-3">
+                <Card key={lead.id}>
+                <CardContent className="p-4 space-y-3">
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
                       <p className="text-sm font-semibold text-foreground truncate">{lead.hospital_name}</p>
@@ -453,9 +455,7 @@ export default function PlansManagerPage() {
                       )}
                     </div>
                     <div className="flex flex-col items-end gap-2 shrink-0">
-                      <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full capitalize ${LEAD_STATUS_COLORS[lead.status] ?? ""}`}>
-                        {lead.status.replace("_", " ")}
-                      </span>
+                      <StatusBadge status={lead.status} />
                       <p className="text-[10px] text-muted-foreground">{new Date(lead.created_at).toLocaleDateString("en-IN")}</p>
                     </div>
                   </div>
@@ -466,7 +466,7 @@ export default function PlansManagerPage() {
                       <button
                         key={s}
                         onClick={() => updateLeadStatus.mutate({ id: lead.id, status: s })}
-                        className={`text-[10px] px-2 py-0.5 rounded-md transition-colors border ${LEAD_STATUS_COLORS[s]} border-current/20 hover:opacity-80`}
+                        className={`text-[10px] px-2 py-0.5 rounded-md transition-colors border ${getStatusBadgeClasses(s)} border-current/20 hover:opacity-80`}
                       >
                         {s.replace("_", " ")}
                       </button>
@@ -493,7 +493,8 @@ export default function PlansManagerPage() {
                       Email
                     </a>
                   </div>
-                </div>
+                </CardContent>
+                </Card>
               ))}
             </div>
           )}
@@ -514,7 +515,8 @@ export default function PlansManagerPage() {
               const hasRows = features.size > 0;
               const enabledCount = ALL_KEYS.filter((k) => (hasRows ? features.get(k) === true : true)).length;
               return (
-                <div key={plan.id} className={`bg-card border rounded-xl p-5 space-y-3 shadow-sm ${plan.is_active ? "border-border" : "border-border opacity-60"}`}>
+                <Card key={plan.id} className={plan.is_active ? "" : "opacity-60"}>
+                <CardContent className="p-5 space-y-3">
                   <div className="flex items-start justify-between">
                     <div>
                       <p className="text-sm font-bold text-foreground">{plan.name}</p>
@@ -544,7 +546,8 @@ export default function PlansManagerPage() {
                   >
                     {plan.is_active ? "Deactivate" : "Activate"}
                   </button>
-                </div>
+                </CardContent>
+                </Card>
               );
             })}
           </div>

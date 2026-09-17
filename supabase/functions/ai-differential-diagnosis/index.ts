@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveAiConfig, resolveAiConfigFromEnv, callAiChat } from "../_shared/ai-config.ts";
+import { checkAIAllowed } from "../_shared/ai-entitlement.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -49,10 +50,25 @@ serve(async (req) => {
     }
     const hospital_id = userData.hospital_id;
 
+    // Entitlement is already enforced inside resolveAiConfig() below (it calls
+    // checkAIAllowed internally and throws AIDisabledError on a real disabled decision) —
+    // but this file's own outer catch-all doesn't special-case that error, so a disabled
+    // hospital got a confusing 500 instead of a clean 403. Checking explicitly here fixes
+    // the status code and message, and the result is threaded into resolveAiConfig's
+    // `options.entitlement` below so it does not re-run the same 4 queries to re-answer a
+    // boolean this call already knows (the pattern ai-clinical-voice already uses). Found
+    // via Phase 6 AI-function-plumbing testing.
+    const gate = await checkAIAllowed(sbAuth, hospital_id, "differential_diagnosis");
+    if (!gate.allowed) {
+      return new Response(JSON.stringify({ error: gate.reason }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // Resolve AI config: the platform (global) config is DB-backed and does not
     // actually use hospital_id, so always try it first, then fall back to env.
     const config =
-      (await resolveAiConfig(hospital_id || "", "differential_diagnosis", 1000)) ??
+      (await resolveAiConfig(hospital_id || "", "differential_diagnosis", 1000, { entitlement: gate })) ??
       resolveAiConfigFromEnv(1000, hospital_id || undefined, "differential_diagnosis");
 
     if (!config) {

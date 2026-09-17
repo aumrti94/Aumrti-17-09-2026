@@ -13,6 +13,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getAbdmToken, abdmHeaders } from "../_shared/abdm-auth.ts";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -348,8 +349,9 @@ serve(async (req) => {
     const { data: userData } = await sb
       .from("users")
       .select("hospital_id, role")
-      .eq("id", user.id)
-      .single();
+      // auth_user_id, NOT id — the two diverged in migration 20260322111223.
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
 
     if (!userData) return json({ success: false, error: "User record not found" }, 404);
 
@@ -418,14 +420,23 @@ serve(async (req) => {
     const overall = results.every((r) => r.pass) ? "pass" : "fail";
 
     // Log test run
-    await sb.from("abdm_gateway_logs").insert({
+    // Was `.insert(...).catch(() => {})` — the same non-existent-.catch() defect
+    // found repeatedly this session, here discarding the whole test-run response
+    // with a synchronous 500 on every call. Found via Phase 6 edge-function testing.
+    // `direction: "internal"` was ALSO a second, independent bug stacked on the same
+    // insert: abdm_gateway_logs_direction_check only ever allowed 'inbound'/'outbound' —
+    // no other call site in the codebase uses "internal", so this aligns to the
+    // existing vocabulary (this log summarises what are, underneath, outbound NHA
+    // calls) rather than expanding a two-value enum for one site.
+    const { error: sandboxLogErr } = await sb.from("abdm_gateway_logs").insert({
       hospital_id: resolvedHospitalId,
       action: `sandbox_test_${test}`,
-      direction: "internal",
+      direction: "outbound",
       request_payload: { test },
       response_payload: { overall, results_count: results.length, pass_count: results.filter((r) => r.pass).length },
       status: overall === "pass" ? "ok" : "error",
-    }).catch(() => {});
+    });
+    if (sandboxLogErr) console.error("abdm-sandbox-test: gateway log insert failed:", sandboxLogErr.message);
 
     return json({
       success: true,
@@ -435,7 +446,7 @@ serve(async (req) => {
     });
 
   } catch (err: unknown) {
-    console.error("abdm-sandbox-test:", err);
+    console.error("abdm-sandbox-test:", sanitizeForLog(err instanceof Error ? err.message : String(err)));
     return json({ success: false, error: (err as Error).message }, 500);
   }
 });

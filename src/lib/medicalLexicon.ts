@@ -21,8 +21,10 @@
 // never forced to take. Every applied repair is returned so the doctor can see it.
 //
 // PARITY: supabase/functions/_shared/medical-lexicon.ts holds a Deno copy of the pure
-// functions here (edge functions cannot import from src/). medicalLexicon.parity.test.ts
-// enforces that the two stay identical.
+// functions here (edge functions cannot import from src/). UNGUARDED as of 2026-09-05 —
+// the parity test that enforced they stay identical (medicalLexicon.parity.test.ts) was
+// removed with the rest of the suite. Editing one file without the other now drifts
+// silently. Copy any change to both until the test is restored.
 
 // ── region:pure ────────────────────────────────────────────────────────────
 

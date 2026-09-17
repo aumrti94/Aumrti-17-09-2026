@@ -1,0 +1,10 @@
+# Generated files are written with LF by their generator scripts. Without pinning them,
+# a checkout on Windows (core.autocrlf=true) converts them to CRLF, and the next `--check`
+# run compares CRLF-on-disk against LF-from-generator and reports the file as stale when
+# its content is identical. That sends someone regenerating an already-correct file and
+# committing 480 lines of pure line-ending churn.
+#
+# Scoped deliberately to the generated artifacts rather than `*.sql` — a blanket rule
+# would renormalise all 612 migrations on the next checkout.
+supabase/migrations/*_lab_test_catalog_v*.sql text eol=lf
+docs/api/openapi.json                         text eol=lf

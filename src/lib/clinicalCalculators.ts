@@ -39,6 +39,28 @@ export interface Calculator {
 const n = (v: string, fallback = 0) => parseFloat(v) || fallback;
 const i = (v: string, fallback = 0) => parseInt(v) || fallback;
 
+/**
+ * KNOWN-BUG-101. Several calculators divide by a user-entered value, and `n()` returns 0 for
+ * a blank field (and for "0", since `parseFloat("0") || 0` is 0). Cockcroft-Gault with no
+ * creatinine therefore returned `Infinity`, rendered "Infinity mL/min", and interpreted it
+ * as **"Normal"** — on the calculator used to dose renally-cleared drugs. BMI with no height
+ * did the same.
+ *
+ * A calculator with a missing input has no answer. Saying so is the only safe output; a
+ * number that happens to be reassuring is the dangerous one.
+ */
+const MISSING_INPUT_RESULT = (what: string): CalcResult => ({
+  score: "—",
+  interpretation: `Enter ${what} to calculate.`,
+  noteText: undefined,
+});
+
+/** True when a denominator is unusable — blank, zero, negative or non-numeric. */
+const unusable = (v: string): boolean => {
+  const parsed = parseFloat(v);
+  return !Number.isFinite(parsed) || parsed <= 0;
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // RENAL
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -54,6 +76,7 @@ const ckdEpi: Calculator = {
     { id: "sex", label: "Biological Sex", type: "select", options: [{ value: "female", label: "Female" }, { value: "male", label: "Male" }], required: true },
   ],
   calculate(v) {
+    if (unusable(v.scr)) return MISSING_INPUT_RESULT("serum creatinine");
     const scr = n(v.scr); const age = n(v.age); const female = v.sex === "female";
     const kappa = female ? 0.7 : 0.9;
     const alpha = female ? -0.241 : -0.302;
@@ -78,6 +101,7 @@ const cockcroft: Calculator = {
     { id: "sex", label: "Biological Sex", type: "select", options: [{ value: "male", label: "Male" }, { value: "female", label: "Female" }], required: true },
   ],
   calculate(v) {
+    if (unusable(v.scr)) return MISSING_INPUT_RESULT("serum creatinine");
     const crcl = ((140 - n(v.age)) * n(v.weight)) / (72 * n(v.scr)) * (v.sex === "female" ? 0.85 : 1);
     const r = Math.round(crcl);
     const interp = r >= 90 ? "Normal" : r >= 60 ? "Mild CKD" : r >= 30 ? "Moderate CKD" : r >= 15 ? "Severe CKD" : "Kidney Failure";
@@ -97,6 +121,7 @@ const fena: Calculator = {
     { id: "s_cr", label: "Serum Creatinine", type: "number", unit: "mg/dL", required: true },
   ],
   calculate(v) {
+    if (unusable(v.s_na) || unusable(v.u_cr)) return MISSING_INPUT_RESULT("serum sodium and urine creatinine");
     const fena = (n(v.u_na) * n(v.s_cr)) / (n(v.s_na) * n(v.u_cr)) * 100;
     const r = fena.toFixed(2);
     const interp = fena < 1 ? "< 1% — Pre-renal AKI (respond to fluids)" : fena < 2 ? "1–2% — Borderline — consider clinical context" : "> 2% — Intrinsic renal AKI (ATN)";
@@ -119,12 +144,21 @@ const anionGap: Calculator = {
     const ag = n(v.na) - (n(v.cl) + n(v.hco3));
     const alb = n(v.albumin, 4);
     const correctedAg = ag + 2.5 * (4 - alb);
-    const high = ag > 12;
-    const interp = high ? "Elevated AG — MUDPILES: Methanol, Uraemia, DKA, Propylene glycol, INH/Iron, Lactic acidosis, Ethanol, Salicylates" : "Normal AG (8–12) — Non-AG metabolic acidosis";
+    const rounded = Math.round(correctedAg);
+    // KNOWN-BUG-102. The interpretation was computed from the RAW gap while the score
+    // displayed the corrected one, so a hypoalbuminaemic patient whose corrected gap is
+    // elevated read "Normal AG" — and unmasking exactly that patient is the entire purpose
+    // of correcting for albumin. The correction now drives the conclusion, not just the
+    // number next to it.
+    const high = rounded > 12;
+    const masked = high && ag <= 12;
+    const interp = high
+      ? `Elevated AG${masked ? " once corrected for albumin (raw gap looks normal)" : ""} — MUDPILES: Methanol, Uraemia, DKA, Propylene glycol, INH/Iron, Lactic acidosis, Ethanol, Salicylates`
+      : "Normal AG (8–12) — Non-AG metabolic acidosis";
     return {
-      score: `AG: ${ag} (Corrected: ${Math.round(correctedAg)})`,
+      score: `AG: ${ag} (Corrected: ${rounded})`,
       interpretation: interp,
-      noteText: `Anion Gap: ${ag} mEq/L (albumin-corrected: ${Math.round(correctedAg)}) — ${high ? "Elevated AG metabolic acidosis" : "Normal AG"}`,
+      noteText: `Anion Gap: ${ag} mEq/L (albumin-corrected: ${rounded}) — ${high ? "Elevated AG metabolic acidosis" : "Normal AG"}`,
     };
   },
 };
@@ -149,7 +183,12 @@ const chadsVasc: Calculator = {
     { id: "sex", label: "Biological Sex", type: "select", options: [{ value: "1", label: "Female (+1)" }, { value: "0", label: "Male" }] },
   ],
   calculate(v) {
-    const score = ["chf","htn","age75","dm","stroke","vd","age65","sex"].reduce((s, k) => s + i(v[k] || "0"), 0);
+    // KNOWN-BUG-103. "Age ≥ 75" (+2) and "Age 65–74" (+1) are independent selects and both
+    // could be set, though no patient is in both bands — producing "10 / 9", a score outside
+    // its own stated scale. The older band wins, which is what a clinician would do.
+    const age65 = i(v.age75 || "0") > 0 ? 0 : i(v.age65 || "0");
+    const score =
+      ["chf", "htn", "age75", "dm", "stroke", "vd", "sex"].reduce((s, k) => s + i(v[k] || "0"), 0) + age65;
     const riskPct = [0, 1.3, 2.2, 3.2, 4.0, 6.7, 9.8, 9.6, 6.7, 15.2][Math.min(score, 9)];
     const rec = score === 0 ? "No anticoagulation needed" : score === 1 && v.sex === "1" ? "Consider anticoagulation" : "Anticoagulation recommended (OAC)";
     return { score: `${score} / 9`, interpretation: `Annual stroke risk ~${riskPct}% — ${rec}`, noteText: `CHA₂DS₂-VASc: ${score}/9 (~${riskPct}%/yr) — ${rec}` };
@@ -240,6 +279,7 @@ const pao2fio2: Calculator = {
     { id: "fio2", label: "FiO₂", type: "number", unit: "fraction (0.21–1.0)", min: 0.21, max: 1.0, step: 0.01, required: true },
   ],
   calculate(v) {
+    if (unusable(v.fio2)) return MISSING_INPUT_RESULT("FiO₂");
     const ratio = n(v.pao2) / n(v.fio2);
     const r = Math.round(ratio);
     const interp = ratio > 300 ? "Normal" : ratio > 200 ? "Mild ARDS (200–300)" : ratio > 100 ? "Moderate ARDS (100–200)" : "Severe ARDS (< 100) — consider prone positioning";
@@ -286,7 +326,15 @@ const gcs: Calculator = {
   calculate(v) {
     const score = i(v.eye || "1") + i(v.verbal || "1") + i(v.motor || "1");
     const interp = score >= 13 ? "Mild TBI / Minimal impairment" : score >= 9 ? "Moderate TBI" : "Severe TBI (≤ 8) — consider intubation";
-    return { score: `${score} / 15  (E${v.eye || "?"}V${v.verbal || "?"}M${v.motor || "?"})`, interpretation: interp, noteText: `GCS: ${score}/15 (E${v.eye}V${v.verbal}M${v.motor}) — ${interp}` };
+    // KNOWN-BUG-104. `score` guarded unset components with `|| "?"`; noteText interpolated
+    // them raw, so "Insert to Note" wrote "(EundefinedVundefinedMundefined)" into the
+    // permanent clinical record. Both now read from one breakdown.
+    const breakdown = `E${v.eye || "?"}V${v.verbal || "?"}M${v.motor || "?"}`;
+    return {
+      score: `${score} / 15  (${breakdown})`,
+      interpretation: interp,
+      noteText: `GCS: ${score}/15 (${breakdown}) — ${interp}`,
+    };
   },
 };
 
@@ -326,6 +374,8 @@ const bmi: Calculator = {
     { id: "sex", label: "Biological Sex", type: "select", options: [{ value: "male", label: "Male" }, { value: "female", label: "Female" }] },
   ],
   calculate(v) {
+    if (unusable(v.height)) return MISSING_INPUT_RESULT("height");
+    if (unusable(v.weight)) return MISSING_INPUT_RESULT("weight");
     const wt = n(v.weight); const ht = n(v.height); const htM = ht / 100;
     const bmiVal = wt / (htM * htM);
     const htIn = ht / 2.54;
@@ -405,7 +455,11 @@ const asaClass: Calculator = {
       "5": "Moribund — surgery as last resort", "6": "Organ donor",
       "E": "Emergency surgery — add E to class",
     };
-    return { score: `ASA ${v.class}`, interpretation: interps[v.class] || "—", noteText: `ASA Class: ${v.class} — ${interps[v.class]}` };
+    // KNOWN-BUG-104, same shape as GCS: `interpretation` fell back to "—" but noteText did
+    // not, so an unselected class wrote "ASA Class: undefined — undefined" into the note.
+    if (!v.class) return MISSING_INPUT_RESULT("an ASA class");
+    const interp = interps[v.class] || "—";
+    return { score: `ASA ${v.class}`, interpretation: interp, noteText: `ASA Class: ${v.class} — ${interp}` };
   },
 };
 
@@ -445,9 +499,16 @@ const gestationalAge: Calculator = {
     const weeks = Math.floor(daysAgo / 7);
     const days = daysAgo % 7;
     const eddDays = 280 - daysAgo;
-    const eddWeeks = Math.floor(eddDays / 7);
-    const interp = `GA: ${weeks}w ${days}d | EDD in ${eddWeeks} weeks`;
-    return { score: `${weeks}w + ${days}d`, interpretation: interp, noteText: `Gestational age: ${weeks} weeks ${days} days (EDD in ~${eddWeeks} weeks)` };
+    // KNOWN-BUG-105. Past 280 days eddDays goes negative and Math.floor rounds AWAY from
+    // zero, so 41w+3d rendered "EDD in -2 weeks". Post-dates is the cohort under the most
+    // active surveillance, and "overdue by N days" is what its management turns on.
+    const overdue = eddDays < 0;
+    const eddWeeks = Math.floor(Math.abs(eddDays) / 7);
+    const eddText = overdue
+      ? `EDD passed ${Math.abs(eddDays)} day${Math.abs(eddDays) === 1 ? "" : "s"} ago — post-dates`
+      : `EDD in ${eddWeeks} week${eddWeeks === 1 ? "" : "s"}`;
+    const interp = `GA: ${weeks}w ${days}d | ${eddText}`;
+    return { score: `${weeks}w + ${days}d`, interpretation: interp, noteText: `Gestational age: ${weeks} weeks ${days} days (${eddText})` };
   },
 };
 

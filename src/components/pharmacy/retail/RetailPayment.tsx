@@ -55,8 +55,12 @@ const RetailPayment: React.FC<Props> = ({
   const [amountReceived, setAmountReceived] = useState<number>(0);
   const [processing, setProcessing] = useState(false);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
-  const [pharmacistUsers, setPharmacistUsers] = useState<{ id: string; full_name: string; role: string }[]>([]);
+  const [pharmacistUsers, setPharmacistUsers] = useState<{ id: string; full_name: string; role: string; email: string }[]>([]);
   const [secondPharmacistId, setSecondPharmacistId] = useState("");
+  // Re-authentication for the NDPS second-signature — see the password field's own comment
+  // below for why this exists (KNOWN-BUG, found live: picking a name from this dropdown used
+  // to be the entire "sign-off", with no verification the named person was even present).
+  const [secondPharmacistPassword, setSecondPharmacistPassword] = useState("");
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -73,14 +77,17 @@ const RetailPayment: React.FC<Props> = ({
   // NDPS/Schedule-X drugs need a dual-pharmacist sign-off at the point of sale, same control
   // the IP dispensing workspace already enforces — H1 does not require this, only NDPS does.
   const hasNdpsItem = billableItems.some(i => i.is_ndps);
-  const canComplete = billableItems.length > 0 && netTotal > 0 && (!hasNdpsItem || !!secondPharmacistId);
+  // A selected name is no longer sufficient on its own — the password field must also be
+  // filled, and handleCompleteSale re-authenticates it for real before the sale proceeds.
+  const canComplete = billableItems.length > 0 && netTotal > 0 && (!hasNdpsItem || (!!secondPharmacistId && !!secondPharmacistPassword));
 
   useEffect(() => {
     if (!hasNdpsItem) return;
-    // app_role enum has no senior_pharmacist/chief_pharmacist value.
+    // app_role enum has no senior_pharmacist/chief_pharmacist value. `email` is fetched now
+    // (it wasn't before) because re-authenticating this person by password needs it.
     (supabase as any)
       .from("users")
-      .select("id, full_name, role")
+      .select("id, full_name, role, email")
       .eq("hospital_id", hospitalId)
       .in("role", ["pharmacist", "hospital_admin"])
       .then(({ data, error }: any) => {
@@ -94,6 +101,32 @@ const RetailPayment: React.FC<Props> = ({
     setProcessing(true);
 
     try {
+      // NDPS second-signature re-authentication (KNOWN-BUG, found live) — this used to be a
+      // bare name picked from a dropdown, with nothing verifying the named pharmacist was
+      // actually present and consenting. Mirrors the IP dispensing workspace's own pattern
+      // (NDPSDualSignoffModal.tsx): sign in as the named person to prove the password is
+      // genuinely theirs, then restore the cashier's own session regardless of outcome —
+      // this must never leave the browser logged in as the second pharmacist.
+      if (hasNdpsItem) {
+        const signer = pharmacistUsers.find(p => p.id === secondPharmacistId);
+        if (!signer?.email) throw new Error("Confirming pharmacist not found");
+
+        const { data: { session: cashierSession } } = await supabase.auth.getSession();
+        const { error: signerAuthErr } = await supabase.auth.signInWithPassword({
+          email: signer.email,
+          password: secondPharmacistPassword,
+        });
+        if (cashierSession) {
+          await supabase.auth.setSession({
+            access_token: cashierSession.access_token,
+            refresh_token: cashierSession.refresh_token,
+          });
+        }
+        if (signerAuthErr) {
+          throw new Error(`Confirming pharmacist's password is incorrect: ${signerAuthErr.message}`);
+        }
+      }
+
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
       const { data: userData } = await supabase
@@ -238,7 +271,11 @@ const RetailPayment: React.FC<Props> = ({
             .limit(1)
             .maybeSingle();
 
-          await supabase.from("ndps_register").insert({
+          // Result checked deliberately (KNOWN-BUG, found live) — an unchecked failure here
+          // (e.g. the ndps_different_pharmacists CHECK constraint) would let the sale complete
+          // with stock already deducted and no legally-mandated register entry, with nothing
+          // telling anyone.
+          const { error: ndpsErr } = await supabase.from("ndps_register").insert({
             hospital_id: hospitalId,
             drug_id: item.drug_id,
             drug_name: item.drug_name,
@@ -256,6 +293,9 @@ const RetailPayment: React.FC<Props> = ({
                 }
               : {}),
           });
+          if (ndpsErr) {
+            throw new Error(`NDPS register entry for ${item.drug_name} failed to save (${ndpsErr.message}) — this sale has NOT been completed. Do not hand over the drug; contact your pharmacy admin.`);
+          }
         }
       }
 
@@ -501,7 +541,7 @@ const RetailPayment: React.FC<Props> = ({
               <p className="text-[11px] text-destructive font-semibold">
                 🔴 NDPS Drug — Second Pharmacist Sign-off Required
               </p>
-              <Select value={secondPharmacistId} onValueChange={setSecondPharmacistId}>
+              <Select value={secondPharmacistId} onValueChange={(v) => { setSecondPharmacistId(v); setSecondPharmacistPassword(""); }}>
                 <SelectTrigger className="h-9 text-[12px]">
                   <SelectValue placeholder="Select confirming pharmacist…" />
                 </SelectTrigger>
@@ -513,6 +553,15 @@ const RetailPayment: React.FC<Props> = ({
                   ))}
                 </SelectContent>
               </Select>
+              {secondPharmacistId && (
+                <Input
+                  type="password"
+                  placeholder="Confirming pharmacist's password"
+                  value={secondPharmacistPassword}
+                  onChange={(e) => setSecondPharmacistPassword(e.target.value)}
+                  className="h-9 text-[12px]"
+                />
+              )}
             </div>
           )}
         </div>

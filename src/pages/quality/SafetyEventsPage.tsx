@@ -310,7 +310,7 @@ const SafetyEventsPage: React.FC = () => {
     if (rcaId) {
       ({ error } = await (supabase as any).from("safety_event_rca").update(payload).eq("id", rcaId));
     } else {
-      const { data, error: e } = await (supabase as any).from("safety_event_rca").insert(payload).select("id").single();
+      const { data, error: e } = await (supabase as any).from("safety_event_rca").insert(payload).select("id").maybeSingle();
       error = e;
       if (data) setRcaId(data.id);
     }
@@ -451,9 +451,9 @@ Environment: [physical environment, workload, time pressure — or "Not applicab
     if (capaForm.responsible_owner_id)  payload.responsible_owner_id = capaForm.responsible_owner_id;
     if (capaForm.due_date)              payload.due_date = capaForm.due_date;
 
-    const { data, error } = await (supabase as any).from("safety_event_capa").insert(payload).select().single();
+    const { data, error } = await (supabase as any).from("safety_event_capa").insert(payload).select().maybeSingle();
     setSavingCapa(false);
-    if (error) { toast({ title: "Save failed", description: error.message, variant: "destructive" }); return; }
+    if (error || !data) { toast({ title: "Save failed", description: error?.message, variant: "destructive" }); return; }
     setCapas(prev => [...prev, data]);
     setCapaForm(BLANK_CAPA);
     setAddingCapa(false);
@@ -521,7 +521,7 @@ Respond ONLY as a JSON array of 3 objects:
       action_type: match[1] as string,
       action_description: match[2],
       ai_suggested: true,
-    }).select().single();
+    }).select().maybeSingle();
     if (!error && data) {
       setCapas(prev => [...prev, data]);
       toast({ title: "Action added from AI suggestion" });

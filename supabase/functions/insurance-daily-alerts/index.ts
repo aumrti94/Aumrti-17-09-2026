@@ -26,6 +26,7 @@
 
 import { serve }        from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -344,7 +345,7 @@ serve(async (req) => {
           );
         }
       } catch (e: any) {
-        console.error(`Scan failed for hospital ${row.hospital_id}:`, e);
+        console.error(`Scan failed for hospital ${row.hospital_id}:`, sanitizeForLog(e instanceof Error ? e.message : String(e)));
         summary.push({
           hospital_id:     row.hospital_id,
           overdue_queries: 0,

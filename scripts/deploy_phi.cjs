@@ -1,3 +1,9 @@
+// DANGER — this mints a NEW PHI_MASTER_KEY every time it runs (line ~12) and overwrites the
+// existing secret unconditionally. If PHI has already been encrypted under the current key,
+// re-running this script replaces that key with one that cannot decrypt it: the existing
+// ciphertext becomes permanently unrecoverable, with no re-encryption path. Confirm no PHI is
+// currently encrypted under the live PHI_MASTER_KEY before running this a second time. Its
+// near-duplicate scripts/deploy_phi.js was removed 2026-09-05 — this is now the only version.
 const { execSync } = require('child_process');
 const crypto = require('crypto');
 

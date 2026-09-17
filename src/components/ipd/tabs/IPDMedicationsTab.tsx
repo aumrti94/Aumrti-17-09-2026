@@ -160,15 +160,30 @@ const IPDMedicationsTab: React.FC<Props> = ({
     setChecking(true);
     const activeDrugNames = meds.filter(m => m.is_active).map(m => m.drug_name);
     try {
-      const result = await checkDrugSafety(form.drug_name, activeDrugNames, patientAllergies);
+      // hospitalId was omitted here, so this path never reached DrugBank — checkDrugSafety
+      // only consults it when a hospital id is supplied. The OPD path passed it; IPD did
+      // not, so the ward got a strictly weaker interaction check than outpatients.
+      const result = await checkDrugSafety(form.drug_name, activeDrugNames, patientAllergies, hospitalId ?? "");
       if (result.hasIssues) {
         setSafetyResult(result);
         setShowSafetyModal(true);
       } else {
         await insertMed();
       }
-    } catch {
-      await insertMed();
+    } catch (e) {
+      // KNOWN-BUG-108, caller facet — this used to prescribe past any throw. See RxOrdersTab.
+      setSafetyResult({
+        hasIssues: true,
+        interactions: [],
+        allergyConflicts: [],
+        duplicates: [],
+        worstSeverity: "major",
+        checkUnavailable: true,
+        unavailableReasons: [
+          `Drug safety check failed: ${e instanceof Error ? e.message : String(e)}`,
+        ],
+      });
+      setShowSafetyModal(true);
     } finally {
       setChecking(false);
     }

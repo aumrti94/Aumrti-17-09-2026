@@ -2,7 +2,8 @@
 //
 // Edge functions cannot import from src/, and vitest cannot see supabase/functions/,
 // so the repo's established answer (see _shared/platform-billing.ts) is a duplicated
-// file guarded by a parity test. medicalLexicon.parity.test.ts fails if these drift.
+// file guarded by a parity test. UNGUARDED as of 2026-09-05 — medicalLexicon.parity.test.ts
+// was removed with the rest of the suite and nothing currently catches drift.
 //
 // DO NOT EDIT THE PURE REGION BY HAND — edit src/lib/medicalLexicon.ts and copy across.
 // The database-loading layer below is Deno-only and has no counterpart in src/.

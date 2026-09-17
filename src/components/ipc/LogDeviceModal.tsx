@@ -73,7 +73,7 @@ export const LogDeviceModal: React.FC<{
       insertion_site: insertionSite || null,
       notes: notes || null,
       inserted_by: userId ?? null,
-    }).select().single();
+    }).select().maybeSingle();
 
     setSaving(false);
     if (err) { setError(getErrorMessage(err)); return; }

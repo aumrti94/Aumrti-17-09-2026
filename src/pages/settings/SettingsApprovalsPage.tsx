@@ -54,6 +54,20 @@ const SettingsApprovalsPage: React.FC = () => {
         if (Array.isArray(rules.t2_roles)) setT2Roles(rules.t2_roles);
         if (Array.isArray(rules.t3_roles)) setT3Roles(rules.t3_roles);
       }
+      // Clinical approval policy intent — see KNOWN-BUG-140. Loaded separately from the
+      // discount rules above; they are two unrelated settings that happened to share a page.
+      const { data: clinicalSetting } = await (supabase as any)
+        .from("hospital_settings")
+        .select("value")
+        .eq("hospital_id", hid)
+        .eq("key", "clinical_approval_policy")
+        .maybeSingle();
+      if (clinicalSetting?.value) {
+        const policy = typeof clinicalSetting.value === "string" ? JSON.parse(clinicalSetting.value) : clinicalSetting.value;
+        if (typeof policy.restricted_abx === "boolean") setRestrictedAbx(policy.restricted_abx);
+        if (typeof policy.blood_tx === "boolean") setBloodTx(policy.blood_tx);
+        if (typeof policy.lama === "boolean") setLama(policy.lama);
+      }
     })();
   }, []);
 
@@ -67,6 +81,25 @@ const SettingsApprovalsPage: React.FC = () => {
     };
     await (supabase as any).from("hospital_settings").upsert(
       { hospital_id: hospitalId, key: "discount_approval_rules", value: JSON.stringify(rules) },
+      { onConflict: "hospital_id,key" }
+    );
+    // The three Clinical Approvals switches below were previously local-only React state —
+    // "Save" persisted the discount rules above but silently discarded these three, so a
+    // hospital believing it had turned on e.g. mandatory Blood Bank MO sign-off had actually
+    // configured nothing at all. They are now at least persisted as stated POLICY INTENT.
+    // They still gate no real workflow — no blocking antibiotic-approval check, Blood Bank MO
+    // sign-off step, or LAMA CMO/witness step exists anywhere in this codebase today (confirmed
+    // by investigation, not assumed). Building those is a genuine new clinical-safety feature
+    // each, not a wiring fix, and needs clinical-pod/Nalini's sign-off on the actual approval
+    // workflow (who approves, what blocks, what the override path is) before code is written —
+    // see KNOWN-BUG-140. Persisting the intent now means that work has a real starting value to
+    // build against instead of also needing to invent where a hospital's preference is stored.
+    await (supabase as any).from("hospital_settings").upsert(
+      {
+        hospital_id: hospitalId,
+        key: "clinical_approval_policy",
+        value: JSON.stringify({ restricted_abx: restrictedAbx, blood_tx: bloodTx, lama }),
+      },
       { onConflict: "hospital_id,key" }
     );
     toast({ title: "Approval rules saved" });
@@ -199,7 +232,13 @@ const SettingsApprovalsPage: React.FC = () => {
         </section>
 
         <section>
-          <h2 className="text-sm font-semibold text-foreground mb-4">Clinical Approvals</h2>
+          <h2 className="text-sm font-semibold text-foreground mb-1">Clinical Approvals</h2>
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
+            Records your hospital's policy intent — saved, but not yet enforced anywhere in the
+            app. No screen currently blocks prescribing, dispensing, blood issue, or discharge
+            on these switches. Treat this as a documented policy decision, not an active
+            safeguard, until the corresponding workflow gate ships.
+          </p>
           <div className="space-y-4">
             <div className="flex items-center justify-between bg-card border border-border rounded-lg px-4 py-3">
               <div>

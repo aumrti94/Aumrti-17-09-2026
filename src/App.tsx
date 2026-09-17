@@ -131,6 +131,7 @@ const NeonatalPage = lazy(() => import("./pages/specialty/NeonatalPage"));
 const AnaesthesiaPage = lazy(() => import("./pages/specialty/AnaesthesiaPage"));
 const OphthalmologyPage = lazy(() => import("./pages/specialty/OphthalmologyPage"));
 const PartographPage = lazy(() => import("./pages/specialty/PartographPage"));
+const DeliveryRecordPage = lazy(() => import("./pages/specialty/DeliveryRecordPage"));
 const ProcurementRecommendationsPage = lazy(() => import("./pages/inventory/ProcurementRecommendationsPage"));
 const PublicBookingPage = lazy(() => import("./pages/packages/PublicBookingPage"));
 const PublicAppointmentPage = lazy(() => import("./pages/booking/PublicAppointmentPage"));
@@ -441,6 +442,7 @@ const App = () => (
             <Route path="/specialty/anaesthesia" element={<RG path="/ot"><SM name="Anaesthesia EMR"><AnaesthesiaPage /></SM></RG>} />
             <Route path="/specialty/ophthalmology" element={<RG path="/opd"><SM name="Ophthalmology EMR"><OphthalmologyPage /></SM></RG>} />
             <Route path="/specialty/partograph" element={<RG path="/ipd"><SM name="Partograph"><PartographPage /></SM></RG>} />
+            <Route path="/specialty/delivery" element={<RG path="/ipd"><SM name="Delivery Record"><DeliveryRecordPage /></SM></RG>} />
             <Route path="/inventory/procurement-recommendations" element={<RG path="/inventory"><SM name="Procurement Recommendations"><ProcurementRecommendationsPage /></SM></RG>} />
             <Route path="/admin/go-live" element={<RG path="/admin/go-live"><SM name="Go-Live Checklist"><GoLiveChecklistPage /></SM></RG>} />
             <Route path="/admin/data-migration" element={<RG path="/admin/data-migration"><SM name="Data Migration"><DataMigrationPage /></SM></RG>} />

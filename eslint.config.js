@@ -45,9 +45,11 @@ export default tseslint.config(
     rules: { "@typescript-eslint/ban-ts-comment": "off" },
   },
   {
-    // The Playwright test suite is Node, not React. Its fixture API takes a
-    // callback named `use`, which react-hooks/rules-of-hooks mistakes for
-    // React's use() hook and reports as an error.
+    // The e2e/ Playwright suite was removed 2026-09-05 ("restarting testing from a clean
+    // slate") — this block currently matches nothing and is a no-op. Left in place rather
+    // than deleted: if the suite returns, its fixture API takes a callback named `use`,
+    // which react-hooks/rules-of-hooks mistakes for React's use() hook and reports as an
+    // error. Rediscovering that is more expensive than carrying an inert glob.
     files: ["e2e/**/*.{ts,tsx}"],
     languageOptions: { globals: globals.node },
     rules: {

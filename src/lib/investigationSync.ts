@@ -402,6 +402,21 @@ export async function syncRadiologyOrders(opts: {
     return formFPatient;
   };
 
+  // Hospital-wide machine/doctor PCPNDT registration (Settings → Radiology) — same
+  // lazy-once pattern as loadFormFPatient above. Was captured on that settings screen and
+  // never reached this register at all until KNOWN-BUG-142.
+  let pcpndtSettings: { machine_name: string | null; machine_registration_number: string | null; doctor_pcpndt_registration: string | null } | null = null;
+  const loadPcpndtSettings = async () => {
+    if (pcpndtSettings) return pcpndtSettings;
+    const { data } = await (supabase as any)
+      .from("pcpndt_settings")
+      .select("machine_name, machine_registration_number, doctor_pcpndt_registration")
+      .eq("hospital_id", opts.hospitalId)
+      .maybeSingle();
+    pcpndtSettings = data ?? { machine_name: null, machine_registration_number: null, doctor_pcpndt_registration: null };
+    return pcpndtSettings;
+  };
+
   for (const item of opts.items) {
     if (!item.study_name?.trim()) continue;
 
@@ -488,6 +503,7 @@ export async function syncRadiologyOrders(opts: {
       // surfacing it lets the radiologist complete the form before the scan rather than
       // discover the gap at inspection.
       const patient = await loadFormFPatient();
+      const pcpndtCfg = await loadPcpndtSettings();
       const { error: formFErr } = await (supabase as any)
         .from("pcpndt_form_f")
         .insert(
@@ -500,6 +516,9 @@ export async function syncRadiologyOrders(opts: {
             indication: item.clinical_indication || null,
             signedBy: opts.orderedBy,
             referredBy: opts.orderedBy,
+            machineName: pcpndtCfg.machine_name,
+            machineRegistrationNumber: pcpndtCfg.machine_registration_number,
+            doctorPcpndtRegistration: pcpndtCfg.doctor_pcpndt_registration,
           })
         );
       if (formFErr) {

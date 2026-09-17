@@ -71,8 +71,9 @@ export default function IncidentsPage() {
       const { data: incident, error } = await (supabase as any).from("platform_incidents").insert({
         title: form.title, severity: form.severity, affected_services: services,
         status: "investigating", created_by: user?.id,
-      }).select("id").single();
+      }).select("id").maybeSingle();
       if (error) throw error;
+      if (!incident) throw new Error("Incident was not created — no row returned.");
       if (form.message.trim()) {
         await (supabase as any).from("platform_incident_updates").insert({
           incident_id: incident.id, message: form.message, status: "investigating", created_by: user?.id,

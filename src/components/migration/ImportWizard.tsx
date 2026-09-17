@@ -51,7 +51,13 @@ const ENTITY_FIELDS: Record<EntityType, FieldDef[]> = {
     { key: "chronic_conditions", label: "Chronic Conditions", required: false },
     { key: "insurance_id", label: "Insurance / TPA ID", required: false },
     { key: "abha_id", label: "ABHA ID", required: false },
-    { key: "aadhaar_id", label: "Aadhaar ID", required: false },
+    // Deliberately no Aadhaar column. supabase/functions/upsert-patient-phi/index.ts is
+    // documented as "the ONLY write path for encrypted PHI columns — the browser never sends
+    // PHI directly to Supabase PostgREST", and this wizard writes straight to `patients` via
+    // PostgREST. A prior version accepted aadhaar_id here and inserted it in cleartext,
+    // bypassing that invariant and phi-crypto.ts's normalizeAadhaar entirely. Bulk import of
+    // Aadhaar needs a per-row call through upsert-patient-phi to encrypt correctly — that is
+    // real feature work, not restored here. Accept the ABHA ID above instead.
     { key: "patient_gstin", label: "Company GSTIN", required: false },
     { key: "referral_source", label: "Referral Source", required: false },
     { key: "emergency_contact_name", label: "Emergency Contact Name", required: false },
@@ -141,7 +147,6 @@ const AUTO_MATCH: Record<string, string[]> = {
   chronic_conditions: ["chronic_conditions", "chronic_condition", "comorbidities", "conditions"],
   insurance_id: ["insurance_id", "insurance_tpa_id", "tpa_id", "insurance_no", "policy_number"],
   abha_id: ["abha_id", "abha_number", "abha"],
-  aadhaar_id: ["aadhaar_id", "aadhaar", "aadhar", "aadhar_id"],
   patient_gstin: ["patient_gstin", "gstin", "company_gstin"],
   referral_source: ["referral_source", "referral", "referred_by", "source"],
   emergency_contact_name: ["emergency_contact_name", "emergency_contact", "emergency_name", "next_of_kin"],
@@ -399,7 +404,6 @@ const ImportWizard: React.FC<ImportWizardProps> = ({ entityType, onClose, onComp
           if (!validCategories.includes(c)) err = `Patient Category must be: ${validCategories.join(", ")}`;
           else mapped.patient_category = c;
         }
-        if (mapped.aadhaar_id) mapped.aadhaar_id = String(mapped.aadhaar_id).replace(/\D/g, "").slice(0, 12);
         if (mapped.patient_gstin) mapped.patient_gstin = String(mapped.patient_gstin).trim().toUpperCase();
         if (mapped.chronic_conditions) {
           mapped.chronic_conditions = String(mapped.chronic_conditions).split(/[,;]/).map((s) => s.trim()).filter(Boolean);
@@ -583,7 +587,6 @@ const ImportWizard: React.FC<ImportWizardProps> = ({ entityType, onClose, onComp
               chronic_conditions: Array.isArray(row.chronic_conditions) && row.chronic_conditions.length ? row.chronic_conditions : null,
               insurance_id: row.insurance_id || null,
               abha_id: row.abha_id || null,
-              aadhaar_id: row.aadhaar_id || null,
               patient_gstin: row.patient_gstin || null,
               referral_source: row.referral_source || null,
               emergency_contact_name: row.emergency_contact_name || null,
@@ -600,10 +603,10 @@ const ImportWizard: React.FC<ImportWizardProps> = ({ entityType, onClose, onComp
             // Duplicate check: match by UHID if provided, else by phone + name
             if (row.uhid) {
               const { data: existing } = await supabase.from("patients").select("id").eq("hospital_id", hospitalId).eq("uhid", row.uhid).maybeSingle();
-              if (existing) { skipped++; logs.push({ hospital_id: hospitalId, job_id: jobId, row_number: batch.indexOf(row) + i + 2, entity_id: existing.id, status: "skipped", error_message: `Duplicate UHID: ${row.uhid}`, source_data: row }); continue; }
+              if (existing) { skipped++; logs.push({ hospital_id: hospitalId, job_id: jobId, row_number: batch.indexOf(row) + i + 2, entity_id: existing.id, status: "skipped", error_message: "Duplicate UHID" }); continue; }
             } else if (row.phone) {
               const { data: existing } = await supabase.from("patients").select("id").eq("hospital_id", hospitalId).eq("phone", row.phone).maybeSingle();
-              if (existing) { skipped++; logs.push({ hospital_id: hospitalId, job_id: jobId, row_number: batch.indexOf(row) + i + 2, entity_id: existing.id, status: "skipped", error_message: `Duplicate phone: ${row.phone}`, source_data: row }); continue; }
+              if (existing) { skipped++; logs.push({ hospital_id: hospitalId, job_id: jobId, row_number: batch.indexOf(row) + i + 2, entity_id: existing.id, status: "skipped", error_message: "Duplicate phone" }); continue; }
             }
             const { data: ins, error } = await supabase.from("patients").insert(record).select("id").maybeSingle();
             if (error) throw error;
@@ -688,10 +691,15 @@ const ImportWizard: React.FC<ImportWizardProps> = ({ entityType, onClose, onComp
             entityId = ins?.id || null;
           }
 
-          logs.push({ hospital_id: hospitalId, job_id: jobId, row_number: row._rowNum, entity_id: entityId, status: "imported", source_data: row });
+          // No source_data here: migration_logs is not encrypted like `patients`, its admin
+          // viewer (DataMigrationPage.tsx) never rendered this column, and row_number already
+          // lets an admin find the offending row in their own source file. A prior version
+          // wrote the complete mapped record — name, phone, address, allergies, chronic
+          // conditions — on every successful import, not just failures.
+          logs.push({ hospital_id: hospitalId, job_id: jobId, row_number: row._rowNum, entity_id: entityId, status: "imported" });
           imported++;
         } catch (err: any) {
-          logs.push({ hospital_id: hospitalId, job_id: jobId, row_number: row._rowNum, status: "error", error_message: err?.message || "Unknown error", source_data: row });
+          logs.push({ hospital_id: hospitalId, job_id: jobId, row_number: row._rowNum, status: "error", error_message: err?.message || "Unknown error" });
           errors++;
         }
       }
@@ -711,7 +719,6 @@ const ImportWizard: React.FC<ImportWizardProps> = ({ entityType, onClose, onComp
       row_number: e.row,
       status: "error" as const,
       error_message: e.message,
-      source_data: e.data,
     }));
     if (skipLogs.length > 0) {
       await supabase.from("migration_logs" as any).insert(skipLogs);

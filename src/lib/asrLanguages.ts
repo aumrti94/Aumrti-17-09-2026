@@ -14,7 +14,8 @@
  *
  * The region between the region:pure markers is duplicated verbatim into
  * supabase/functions/_shared/asr-languages.ts (edge functions cannot import from src/).
- * asrLanguages.parity.test.ts fails if the two drift.
+ * UNGUARDED as of 2026-09-05 — asrLanguages.parity.test.ts, which caught drift between
+ * the two, was removed with the rest of the suite. Copy any change to both by hand.
  */
 
 // ── region:pure ────────────────────────────────────────────────────────────

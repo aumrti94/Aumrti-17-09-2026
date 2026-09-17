@@ -2,9 +2,13 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Building2, TrendingUp, Users, AlertTriangle, IndianRupee, RefreshCw, MapPin, Filter } from "lucide-react";
-import { PLATFORM_STATUS_PILL, fmtINR } from "@/lib/platform-utils";
+import { fmtINR } from "@/lib/platform-utils";
 import { effectiveMonthlyAmount } from "@/lib/platformBilling";
 import { format } from "date-fns";
+import { PageHeader } from "@/components/shared/PageHeader";
+import { StatusBadge } from "@/components/shared/StatusBadge";
+import { Card, CardContent } from "@/components/ui/card";
+import { DataTable, DataTableRow } from "@/components/shared/DataTable";
 
 interface DashStat {
   totalHospitals: number;
@@ -28,8 +32,6 @@ interface DashStat {
   // Geographic
   byState: Array<{ state: string; count: number }>;
 }
-
-const STATUS_PILL = PLATFORM_STATUS_PILL;
 
 async function fetchDash(): Promise<DashStat> {
   const [hResult, sResult, funnelResult] = await Promise.all([
@@ -129,23 +131,27 @@ export default function PlatformDashboard() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="h-14 border-b border-border flex items-center justify-between px-6 shrink-0">
-        <h1 className="text-[15px] font-semibold text-foreground">Platform Overview</h1>
-        <button onClick={() => refetch()} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
-          <RefreshCw size={12} /> Refresh
-        </button>
-      </div>
+      <PageHeader
+        title="Platform Overview"
+        actions={
+          <button onClick={() => refetch()} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
+            <RefreshCw size={12} /> Refresh
+          </button>
+        }
+      />
 
       <div className="flex-1 overflow-auto p-6 space-y-6">
 
         {/* ── KPIs ── */}
         <div className="grid grid-cols-5 gap-4">
           {KPIS.map(({ label, value, icon: Icon, color }) => (
-            <div key={label} className="bg-card border border-border rounded-xl p-4 shadow-sm">
-              <Icon size={15} className={`${color} mb-3`} />
-              <p className="text-2xl font-bold text-foreground font-mono">{isLoading ? "—" : (value ?? 0)}</p>
-              <p className="text-[11px] text-muted-foreground mt-1">{label}</p>
-            </div>
+            <Card key={label}>
+              <CardContent className="p-4">
+                <Icon size={15} className={`${color} mb-3`} />
+                <p className="text-2xl font-bold text-foreground font-mono">{isLoading ? "—" : (value ?? 0)}</p>
+                <p className="text-[11px] text-muted-foreground mt-1">{label}</p>
+              </CardContent>
+            </Card>
           ))}
         </div>
 
@@ -153,7 +159,8 @@ export default function PlatformDashboard() {
         <div className="grid grid-cols-2 gap-5">
 
           {/* Activation Funnel */}
-          <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
+          <Card>
+          <CardContent className="p-5">
             <div className="flex items-center gap-2 mb-4">
               <Filter size={14} className="text-blue-500" />
               <p className="text-sm font-semibold text-foreground">Activation Funnel</p>
@@ -206,10 +213,12 @@ export default function PlatformDashboard() {
                 )}
               </div>
             )}
-          </div>
+          </CardContent>
+          </Card>
 
           {/* Geographic Distribution */}
-          <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
+          <Card>
+          <CardContent className="p-5">
             <div className="flex items-center gap-2 mb-4">
               <MapPin size={14} className="text-blue-500" />
               <p className="text-sm font-semibold text-foreground">Geographic Distribution</p>
@@ -240,53 +249,53 @@ export default function PlatformDashboard() {
                 )}
               </div>
             )}
-          </div>
+          </CardContent>
+          </Card>
 
         </div>
 
         {/* ── Recent hospitals table ── */}
-        <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
+        <Card className="overflow-hidden">
           <div className="px-5 py-3 border-b border-border flex items-center justify-between">
             <p className="text-sm font-semibold text-foreground">Recent Hospitals</p>
             <button onClick={() => navigate("/platform/hospitals")} className="text-xs text-blue-500 hover:text-blue-600 transition-colors">
               View all →
             </button>
           </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-[10px] uppercase font-bold text-muted-foreground border-b border-border">
-                {["Hospital", "State", "Beds", "Plan", "Status", "Joined", ""].map((h) => (
-                  <th key={h} className="px-5 py-2.5 text-left">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {isLoading ? (
-                <tr><td colSpan={7} className="px-5 py-8 text-center text-xs text-muted-foreground">Loading…</td></tr>
-              ) : !data?.recent.length ? (
-                <tr><td colSpan={7} className="px-5 py-8 text-center text-xs text-muted-foreground">No hospitals yet</td></tr>
-              ) : data.recent.map((h) => (
-                <tr key={h.id} className="border-t border-border hover:bg-muted/40 transition-colors">
-                  <td className="px-5 py-3 text-xs font-medium text-foreground">{h.name}</td>
-                  <td className="px-5 py-3 text-xs text-muted-foreground">{h.state || "—"}</td>
-                  <td className="px-5 py-3 text-xs text-muted-foreground font-mono">{h.beds_count}</td>
-                  <td className="px-5 py-3 text-xs text-foreground/80">{h.plan_name}</td>
-                  <td className="px-5 py-3">
-                    <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${STATUS_PILL[h.status] || STATUS_PILL.no_subscription}`}>
-                      {h.status.replace("_", " ")}
-                    </span>
-                  </td>
-                  <td className="px-5 py-3 text-xs text-muted-foreground">{format(new Date(h.created_at), "dd MMM yyyy")}</td>
-                  <td className="px-5 py-3">
-                    <button onClick={() => navigate(`/platform/hospitals/${h.id}`)} className="text-xs text-blue-500 hover:text-blue-600">
-                      Manage →
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+          <DataTable
+            columns={[
+              { key: "hospital", header: "Hospital" },
+              { key: "state", header: "State" },
+              { key: "beds", header: "Beds" },
+              { key: "plan", header: "Plan" },
+              { key: "status", header: "Status" },
+              { key: "joined", header: "Joined" },
+              { key: "actions", header: "" },
+            ]}
+            sticky={false}
+            loading={isLoading}
+            empty={!data?.recent.length}
+            emptyMessage="No hospitals yet"
+          >
+            {data?.recent.map((h) => (
+              <DataTableRow key={h.id}>
+                <td className="px-5 py-3 text-xs font-medium text-foreground">{h.name}</td>
+                <td className="px-5 py-3 text-xs text-muted-foreground">{h.state || "—"}</td>
+                <td className="px-5 py-3 text-xs text-muted-foreground font-mono">{h.beds_count}</td>
+                <td className="px-5 py-3 text-xs text-foreground/80">{h.plan_name}</td>
+                <td className="px-5 py-3">
+                  <StatusBadge status={h.status} />
+                </td>
+                <td className="px-5 py-3 text-xs text-muted-foreground">{format(new Date(h.created_at), "dd MMM yyyy")}</td>
+                <td className="px-5 py-3">
+                  <button onClick={() => navigate(`/platform/hospitals/${h.id}`)} className="text-xs text-blue-500 hover:text-blue-600">
+                    Manage →
+                  </button>
+                </td>
+              </DataTableRow>
+            ))}
+          </DataTable>
+        </Card>
 
       </div>
     </div>

@@ -13,7 +13,7 @@ interface MaternityRecord {
   patient_age: number | null;
   admission_date: string | null;
   delivery_date: string | null;
-  delivery_type: string | null;
+  delivery_type: string | null; // derived from outcome — the schema has one combined mode/outcome enum
   outcome: string | null;
   discharge_date: string | null;
   admission_number: string | null;
@@ -28,25 +28,27 @@ const MaternityRegisterTab: React.FC<Props> = ({ hospitalId }) => {
   const load = useCallback(async () => {
     if (!hospitalId) return;
     setLoading(true);
+    // record_type filter: only rows a delivery screen actually created carry a delivery_date.
     const { data } = await (supabase as any)
       .from("obstetric_records")
       .select(`
-        id, delivery_date, delivery_type, outcome,
+        id, delivery_date, outcome,
         admissions!obstetric_records_admission_id_fkey(
           admission_number, admitted_at, discharged_at,
-          patients!admissions_patient_id_fkey(full_name, date_of_birth)
+          patients!admissions_patient_id_fkey(full_name, dob)
         )
       `)
       .eq("hospital_id", hospitalId)
+      .eq("record_type", "delivery")
       .gte("delivery_date", fromDate)
-      .lte("delivery_date", toDate)
+      .lte("delivery_date", toDate + "T23:59:59")
       .order("delivery_date", { ascending: false })
       .limit(200);
 
-    setRecords((data || []).map((r: any, idx: number) => {
+    setRecords((data || []).map((r: any) => {
       const adm = r.admissions;
       const patient = adm?.patients;
-      const dob = patient?.date_of_birth;
+      const dob = patient?.dob;
       const age = dob ? Math.floor((Date.now() - new Date(dob).getTime()) / (1000 * 60 * 60 * 24 * 365.25)) : null;
       return {
         id: r.id,
@@ -54,8 +56,10 @@ const MaternityRegisterTab: React.FC<Props> = ({ hospitalId }) => {
         patient_age: age,
         admission_date: adm?.admitted_at ? adm.admitted_at.split("T")[0] : null,
         delivery_date: r.delivery_date || null,
-        delivery_type: r.delivery_type || null,
-        outcome: r.outcome || null,
+        // The schema has one combined mode/outcome enum (svd|lscs|forceps|vacuum|still_born) —
+        // "Type of Delivery" shows the raw mode, "Outcome" derives live-birth vs stillbirth from it.
+        delivery_type: r.outcome || null,
+        outcome: r.outcome ? (r.outcome === "still_born" ? "Stillbirth" : "Live Birth") : null,
         discharge_date: adm?.discharged_at ? adm.discharged_at.split("T")[0] : null,
         admission_number: adm?.admission_number || null,
       };

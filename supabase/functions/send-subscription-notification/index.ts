@@ -29,6 +29,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { APP_DOMAIN, APP_URL, SUPPORT_EMAIL, NO_REPLY_EMAIL } from "../_shared/brand.ts";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 type NotificationEvent =
   | "welcome"
@@ -307,10 +308,10 @@ serve(async (req) => {
 
     if (sgKey) {
       await sendViaSendGrid(emailPayload, sgKey, sgFrom);
-      console.log(`✓ Email sent via SendGrid: ${event} → ${email}`);
+      console.log(sanitizeForLog(`✓ Email sent via SendGrid: ${event} → ${email}`));
     } else {
       // No email provider configured — log only (non-fatal in trial mode)
-      console.warn(`No email provider configured. Would send "${emailPayload.subject}" to ${email}`);
+      console.warn(sanitizeForLog(`No email provider configured. Would send "${emailPayload.subject}" to ${email}`));
     }
 
     return new Response(JSON.stringify({ sent: true, event, to: email }), {

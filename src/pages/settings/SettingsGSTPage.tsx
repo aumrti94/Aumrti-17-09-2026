@@ -25,6 +25,30 @@ const SettingsGSTPage: React.FC = () => {
       if (!hospitalId) return;
       const { data } = await (supabase as any).from("hospitals").select("gstin, state_code, state").eq("id", hospitalId).maybeSingle();
       if (data) setConfig((c) => ({ ...c, gstin: data.gstin || "", stateCode: data.state_code || "", placeOfSupply: data.state || "" }));
+
+      // IRP credentials were previously captured into this same `config` state and never once
+      // saved anywhere — handleSave only ever wrote gstin/stateCode/placeOfSupply, so this
+      // whole section was decorative: "GST config saved" showed regardless, and
+      // gst-irn-generate stayed on Deno env vars / demo-IRN mode no matter what was typed here.
+      // See KNOWN-BUG-144.
+      const { data: irpRow } = await (supabase as any)
+        .from("api_configurations")
+        .select("config")
+        .eq("hospital_id", hospitalId)
+        .eq("service_key", "nic_irp")
+        .maybeSingle();
+      if (irpRow?.config) {
+        const irp = irpRow.config as Record<string, string>;
+        setConfig((c) => ({
+          ...c,
+          irpUser: irp.irp_user || "",
+          irpPassword: irp.irp_password || "",
+          irpClientId: irp.irp_client_id || "",
+          irpClientSecret: irp.irp_client_secret || "",
+          irpBaseUrl: irp.irp_base_url || c.irpBaseUrl,
+          irpMode: irp.irp_mode || c.irpMode,
+        }));
+      }
     })();
   }, []);
 
@@ -37,6 +61,27 @@ const SettingsGSTPage: React.FC = () => {
         state_code: config.stateCode || null,
         state: config.placeOfSupply || null,
       }).eq("id", hospitalId);
+
+      // Per-hospital, not a global Deno secret: each hospital has its own GSTIN and its own
+      // NIC IRP registration, so gst-irn-generate reads this row (falling back to env vars
+      // only for a single-tenant/ops-managed deployment) — see that function's own comment.
+      await (supabase as any).from("api_configurations").upsert(
+        {
+          hospital_id: hospitalId,
+          service_name: "NIC IRP (e-Invoice)",
+          service_key: "nic_irp",
+          is_active: true,
+          config: {
+            irp_user: config.irpUser,
+            irp_password: config.irpPassword,
+            irp_client_id: config.irpClientId,
+            irp_client_secret: config.irpClientSecret,
+            irp_base_url: config.irpBaseUrl,
+            irp_mode: config.irpMode,
+          },
+        },
+        { onConflict: "hospital_id,service_key" },
+      );
     }
     toast({ title: "GST config saved" });
     setSaving(false);

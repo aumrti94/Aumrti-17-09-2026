@@ -7,7 +7,6 @@ import PatientPortalLayout from "./PatientPortalLayout";
 import PortalDashboard from "./PortalDashboard";
 import PortalAppointments from "./PortalAppointments";
 import PatientPortalReportsPage from "./PatientPortalReportsPage";
-import PortalBills from "./PortalBills";
 import PatientPortalBillsPage from "./PatientPortalBillsPage";
 import PortalPrescriptions from "./PortalPrescriptions";
 import PortalFeedback from "./PortalFeedback";
@@ -17,7 +16,7 @@ import PortalProfilePage from "./PortalProfilePage";
 import PortalChatPage from "./PortalChatPage";
 import PortalHealthCoachPage from "./PortalHealthCoachPage";
 import PortalHealthStoryPage from "./PortalHealthStoryPage";
-import type { PortalSession } from "./PortalLogin";
+import type { PortalSession } from "./portalTypes";
 
 // ── Loading spinner ───────────────────────────────────────────────────────────
 const Spinner: React.FC = () => (

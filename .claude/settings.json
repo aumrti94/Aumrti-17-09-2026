@@ -1,13 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(node phase13_smoketest.mjs)",
       "Read(//c/Users/yeswa/AppData/Local/Temp/claude/d--Aumrti-06-06-2026/45a06218-86f9-47e4-91eb-fb87812f2e5e/scratchpad/**)",
       "Bash(node -e ' *)",
-      "Bash(node __TRACKED_VAR__/emit-csv.mjs __TRACKED_VAR__/sections docs/qa/cases/phase-02-settings.csv)",
-      "Bash(node scripts/qa-parity-check.mjs 02)",
       "Bash(cd \"d:/Aumrti 06-06-2026\")",
-      "Bash(python3 -)"
+      "Bash(python3 -)",
+      "Bash(xargs -0 grep -anE \"sbp_[a-f0-9]{35,}|eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\\\\.eyJ[A-Za-z0-9_-]{30,}|sk-[A-Za-z0-9]{30,}|AIza[A-Za-z0-9_-]{30,}|postgresql://[^ '\\\\\"]*:[^ @'\\\\\"]+@\")"
     ]
   }
 }

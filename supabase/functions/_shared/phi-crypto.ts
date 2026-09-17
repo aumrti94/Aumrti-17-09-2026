@@ -50,6 +50,16 @@ interface DEKCacheEntry {
 // ── Module-level DEK cache (lives only for the Edge Function invocation) ───
 const dekCache = new Map<string, DEKCacheEntry>();
 
+// In-flight loadDEK() promises, keyed the same as dekCache. `encrypt_and_write` calls
+// encryptPHI() and hashPHI() concurrently via Promise.all for the same hospitalId — on a
+// hospital's very first PHI write (no row in phi_encryption_keys yet), both calls saw an empty
+// dekCache and both raced into generateAndStoreDEK's INSERT, the second one always losing to
+// phi_encryption_keys_one_active_per_hospital. Every hospital's first patient registration that
+// wrote phone+name together hit this. Deduping concurrent callers onto one shared promise closes
+// the in-process race; generateAndStoreDEK below still handles the cross-process case (two
+// simultaneous requests, e.g. two receptionists registering different patients at once).
+const dekLoadPromises = new Map<string, Promise<DEKCacheEntry>>();
+
 // ── Supabase service-role client ───────────────────────────────────────────
 function getServiceClient() {
   const url = Deno.env.get("SUPABASE_URL");
@@ -82,45 +92,60 @@ async function getMasterKey(): Promise<CryptoKey> {
 async function loadDEK(hospitalId: string): Promise<DEKCacheEntry> {
   if (dekCache.has(hospitalId)) return dekCache.get(hospitalId)!;
 
-  const sb = getServiceClient();
-  const { data, error } = await sb
-    .from("phi_encryption_keys")
-    .select("encrypted_dek, key_version")
-    .eq("hospital_id", hospitalId)
-    .eq("is_active", true)
-    .maybeSingle();
+  // Dedupe concurrent callers (e.g. encryptPHI + hashPHI racing via Promise.all) onto the one
+  // in-flight load, so only the first caller actually queries/generates — see the comment on
+  // dekLoadPromises above.
+  const inFlight = dekLoadPromises.get(hospitalId);
+  if (inFlight) return inFlight;
 
-  if (error) throw new Error(`phi-crypto: DEK fetch failed — ${error.message}`);
+  const promise = (async (): Promise<DEKCacheEntry> => {
+    const sb = getServiceClient();
+    const { data, error } = await sb
+      .from("phi_encryption_keys")
+      .select("encrypted_dek, key_version")
+      .eq("hospital_id", hospitalId)
+      .eq("is_active", true)
+      .maybeSingle();
 
-  if (!data) {
-    // No DEK yet — generate and store a new one
-    return await generateAndStoreDEK(hospitalId);
+    if (error) throw new Error(`phi-crypto: DEK fetch failed — ${error.message}`);
+
+    if (!data) {
+      // No DEK yet — generate and store a new one
+      return await generateAndStoreDEK(hospitalId);
+    }
+
+    // Unwrap the DEK using the master KEK
+    const masterKey = await getMasterKey();
+    const encryptedDekBytes = base64ToBytes(data.encrypted_dek);
+    // Format: iv[12] || ciphertext[32] || authTag[16] = 60 bytes total
+    const iv = encryptedDekBytes.slice(0, 12);
+    const dekCiphertext = encryptedDekBytes.slice(12);
+
+    const dekRaw = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv },
+      masterKey,
+      dekCiphertext,
+    );
+
+    const keyBytes = new Uint8Array(dekRaw);
+
+    const [aesKey, hmacKey] = await Promise.all([
+      crypto.subtle.importKey("raw", keyBytes, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]),
+      // Derive a separate HMAC key from the DEK bytes + a domain separator
+      deriveHmacKey(keyBytes),
+    ]);
+
+    const entry: DEKCacheEntry = { keyBytes, aesKey, hmacKey, version: data.key_version };
+    dekCache.set(hospitalId, entry);
+    return entry;
+  })();
+
+  dekLoadPromises.set(hospitalId, promise);
+  try {
+    return await promise;
+  } finally {
+    dekLoadPromises.delete(hospitalId);
   }
-
-  // Unwrap the DEK using the master KEK
-  const masterKey = await getMasterKey();
-  const encryptedDekBytes = base64ToBytes(data.encrypted_dek);
-  // Format: iv[12] || ciphertext[32] || authTag[16] = 60 bytes total
-  const iv = encryptedDekBytes.slice(0, 12);
-  const dekCiphertext = encryptedDekBytes.slice(12);
-
-  const dekRaw = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv },
-    masterKey,
-    dekCiphertext,
-  );
-
-  const keyBytes = new Uint8Array(dekRaw);
-
-  const [aesKey, hmacKey] = await Promise.all([
-    crypto.subtle.importKey("raw", keyBytes, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]),
-    // Derive a separate HMAC key from the DEK bytes + a domain separator
-    deriveHmacKey(keyBytes),
-  ]);
-
-  const entry: DEKCacheEntry = { keyBytes, aesKey, hmacKey, version: data.key_version };
-  dekCache.set(hospitalId, entry);
-  return entry;
 }
 
 // ── Generate a brand-new DEK for a hospital ────────────────────────────────
@@ -154,7 +179,26 @@ async function generateAndStoreDEK(hospitalId: string): Promise<DEKCacheEntry> {
     .select("key_version")
     .maybeSingle();
 
-  if (error) throw new Error(`phi-crypto: DEK storage failed — ${error.message}`);
+  if (error) {
+    // Two separate concurrent requests (different edge-function invocations, so the in-process
+    // dekLoadPromises dedup in loadDEK() does not cover this) can both reach here on a hospital's
+    // very first PHI write. Postgres unique_violation is 23505 — the loser did not corrupt
+    // anything, it lost a race to create the SAME hospital's first DEK, so fetch and use the
+    // winner's row instead of failing the request.
+    if (error.code === "23505") {
+      const { data: won, error: refetchErr } = await sb
+        .from("phi_encryption_keys")
+        .select("encrypted_dek, key_version")
+        .eq("hospital_id", hospitalId)
+        .eq("is_active", true)
+        .maybeSingle();
+      if (refetchErr || !won) {
+        throw new Error(`phi-crypto: DEK storage race lost and re-fetch failed — ${refetchErr?.message ?? "no active row found"}`);
+      }
+      return await unwrapDEK(hospitalId, won.encrypted_dek, won.key_version);
+    }
+    throw new Error(`phi-crypto: DEK storage failed — ${error.message}`);
+  }
 
   const [aesKey, hmacKey] = await Promise.all([
     crypto.subtle.importKey("raw", keyBytes, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]),
@@ -162,6 +206,26 @@ async function generateAndStoreDEK(hospitalId: string): Promise<DEKCacheEntry> {
   ]);
 
   const entry: DEKCacheEntry = { keyBytes, aesKey, hmacKey, version: data?.key_version ?? 1 };
+  dekCache.set(hospitalId, entry);
+  return entry;
+}
+
+// ── Unwrap an already-stored, base64-encoded encrypted DEK ────────────────
+async function unwrapDEK(hospitalId: string, encryptedDekB64: string, version: number): Promise<DEKCacheEntry> {
+  const masterKey = await getMasterKey();
+  const encryptedDekBytes = base64ToBytes(encryptedDekB64);
+  const iv = encryptedDekBytes.slice(0, 12);
+  const dekCiphertext = encryptedDekBytes.slice(12);
+
+  const dekRaw = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, masterKey, dekCiphertext);
+  const keyBytes = new Uint8Array(dekRaw);
+
+  const [aesKey, hmacKey] = await Promise.all([
+    crypto.subtle.importKey("raw", keyBytes, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]),
+    deriveHmacKey(keyBytes),
+  ]);
+
+  const entry: DEKCacheEntry = { keyBytes, aesKey, hmacKey, version };
   dekCache.set(hospitalId, entry);
   return entry;
 }

@@ -17,6 +17,9 @@ import { getAbdmToken, abdmHeaders } from "../_shared/abdm-auth.ts";
 import { fetchAbdmPublicKey, encryptWithAbdmKey } from "../_shared/abdm-encrypt.ts";
 import { checkRateLimit } from "../_shared/abdm-rate-limit.ts";
 import { logAuditEvent } from "../_shared/abdm-audit.ts";
+// Aliased: this file already defines its own object-shaped sanitizeForLog for UIDAI
+// Aadhaar/OTP key redaction. The shared helper is the TEXT redactor, used for log lines.
+import { sanitizeForLog as redactPhiText } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -101,13 +104,19 @@ serve(async (req) => {
     // ── Resolve hospital from JWT (body.hospital_id only validated, never trusted alone) ─
     const { data: userData, error: userErr } = await sb
       .from("users")
-      .select("hospital_id")
-      .eq("id", user.id)
-      .single();
+      .select("id, hospital_id")
+      // auth_user_id, NOT id — public.users.id and auth.users.id diverged in migration
+      // 20260322111223, so matching on id 404s for every account created since.
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
 
     if (userErr || !userData) return jsonResp({ error: "User record not found" }, 404);
 
     const hospitalId = userData.hospital_id as string;
+    // The real public.users.id — patient_abha_profiles.linked_by FKs to public.users(id),
+    // never the auth uid (`user.id`) below, which is a different value for every account
+    // created since migration 20260322111223.
+    const callerUserId = userData.id as string;
 
     if (body.hospital_id && body.hospital_id !== hospitalId) {
       return jsonResp({ error: "Forbidden: hospital_id does not match authenticated user" }, 403);
@@ -127,6 +136,12 @@ serve(async (req) => {
     const token = await getAbdmToken(hospitalId, sb);
 
     // ── Log helper (strips Aadhaar/OTP from all payloads) ────────────────────
+    // Was using columns that don't exist on abdm_gateway_logs at all
+    // (request_id/endpoint/payload/response/status_code/error, and uppercase
+    // direction: "OUTBOUND" against a lowercase-only CHECK constraint) — the same defect
+    // found in abdm-gateway-token (KNOWN-BUG-192) and abdm-hfr-register, here centralized in
+    // one helper used by all 6 of this file's NHA call sites. `.then(() => {})` discarded
+    // the error explicitly. Found via Phase 6 edge-function testing.
     const logGw = (opts: {
       endpoint: string;
       payload: unknown;
@@ -138,14 +153,21 @@ serve(async (req) => {
       // UIDAI data protection compliance: sanitize before any storage
       sb.from("abdm_gateway_logs").insert({
         hospital_id: hospitalId,
-        request_id: opts.requestId ?? crypto.randomUUID(),
-        direction: "OUTBOUND",
-        endpoint: opts.endpoint,
-        payload: sanitizeForLog(opts.payload) ?? null,
-        response: sanitizeForLog(opts.response) ?? null,
-        status_code: opts.statusCode ?? 0,
-        error: opts.error ?? null,
-      }).then(() => {});
+        action: opts.endpoint,
+        direction: "outbound",
+        request_payload: {
+          request_id: opts.requestId ?? crypto.randomUUID(),
+          body: sanitizeForLog(opts.payload) ?? null,
+        },
+        response_payload: {
+          status_code: opts.statusCode ?? 0,
+          error: opts.error ?? null,
+          body: sanitizeForLog(opts.response) ?? null,
+        },
+        status: opts.error ? "error" : "ok",
+      }).then(({ error }) => {
+        if (error) console.error("abdm-abha-create: gateway log insert failed:", error.message);
+      });
     };
 
     const callNha = async (
@@ -398,7 +420,7 @@ serve(async (req) => {
                 // UIDAI compliance: abha_profile may contain PII but never Aadhaar
                 abha_profile: sanitizeForLog(d) as Record<string, unknown>,
                 mobile: body.mobile ?? (d.mobile as string) ?? null,
-                linked_by: user.id,
+                linked_by: callerUserId,
                 consent_given: true,
                 consent_given_at: new Date().toISOString(),
                 is_active: true,
@@ -414,7 +436,11 @@ serve(async (req) => {
                 .eq("hospital_id", hospitalId);
             }
           } catch (dbErr) {
-            console.error("abdm-abha-create: DB upsert failed after create_address:", dbErr);
+            // A Postgres unique-violation on the (hospital_id, abha_number) conflict target
+            // embeds the conflicting value in `detail` — logging dbErr raw would put a
+            // patient's literal ABHA number in Edge Function logs. Name only, matching the
+            // pattern this file already uses for its top-level catch below.
+            console.error("abdm-abha-create: DB upsert failed after create_address:", dbErr instanceof Error ? dbErr.name : "UnknownError");
           }
 
           // Audit log
@@ -423,7 +449,7 @@ serve(async (req) => {
             hospital_id: hospitalId,
             patient_id: body.patient_id,
             abha_address: abhaAddress || null,
-            performed_by: user.id,
+            performed_by: callerUserId,
             raw_ip: rawIp,
           });
         }
@@ -483,7 +509,7 @@ serve(async (req) => {
                   hospital_id: hospitalId,
                   abha_number: String(healthId),
                   abha_address: null,
-                  linked_by: user.id,
+                  linked_by: callerUserId,
                   consent_given: false,
                   is_active: true,
                 },
@@ -507,14 +533,15 @@ serve(async (req) => {
                   patient_id: body.patient_id,
                   hospital_id: hospitalId,
                   abha_address: String(healthId),
-                  linked_by: user.id,
+                  linked_by: callerUserId,
                   consent_given: false,
                   is_active: true,
                 });
               }
             }
           } catch (dbErr) {
-            console.error("abdm-abha-create: DB linkage failed after verify_existing:", dbErr);
+            // Same reasoning as the create_address catch above: name only, never the raw error.
+            console.error("abdm-abha-create: DB linkage failed after verify_existing:", dbErr instanceof Error ? dbErr.name : "UnknownError");
           }
 
           // Audit log
@@ -523,7 +550,7 @@ serve(async (req) => {
             hospital_id: hospitalId,
             patient_id: body.patient_id,
             abha_address: String(healthId),
-            performed_by: user.id,
+            performed_by: callerUserId,
             raw_ip: rawIp,
           });
         }
@@ -535,7 +562,7 @@ serve(async (req) => {
         return jsonResp({ error: `Unknown action: ${body.action}` }, 400);
     }
   } catch (err) {
-    console.error("abdm-abha-create unhandled error:", err);
+    console.error("abdm-abha-create unhandled error:", redactPhiText(err instanceof Error ? err.message : String(err)));
     return jsonResp(
       { error: err instanceof Error ? err.message : "Unknown error" },
       500,

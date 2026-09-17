@@ -230,7 +230,7 @@ const WeeklyDigestModal: React.FC<Props> = ({ open, hospitalId, onClose }) => {
           notes: result.narrative,
         })
         .select("id")
-        .single();
+        .maybeSingle();
       if (error) throw error;
       setSavedId(data?.id ?? "saved");
       toast({ title: "Evidence saved", description: "Weekly Digest added to NABH evidence repository." });

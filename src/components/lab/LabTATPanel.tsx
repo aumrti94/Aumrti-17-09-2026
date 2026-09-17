@@ -88,15 +88,19 @@ const LabTATPanel: React.FC<Props> = ({ hospitalId }) => {
         .filter((m: number) => m > 0 && m < 20000);
       setAvgTat(tats.length ? Math.round(tats.reduce((s: number, m: number) => s + m, 0) / tats.length) : null);
 
-      // Raise alerts for orders overdue by >2× target
+      // Raise alerts for orders overdue by >2× target — deduped on the order itself, so a
+      // page reload or repeated manual refresh (this function's only two triggers) does not
+      // create a second alert for a study that is still the same overdue order (KNOWN-BUG-002).
       const overdue = list.filter(p => p.risk === "overdue");
       overdue.forEach(p => {
-        (supabase as any).from("clinical_alerts").insert({
+        (supabase as any).from("clinical_alerts").upsert({
           hospital_id: hospitalId,
           alert_type: "lab_tat_overdue",
           severity: "high",
           alert_message: `Lab TAT overdue: ${p.accession || "order"} for ${p.patient_name} — ${Math.round(p.mins_pending / 60)}h pending (target ${Math.round(p.target_tat / 60)}h)`,
-        }).then(() => {}, () => {});
+          lab_order_id: p.id,
+          dedupe_key: p.id,
+        }, { onConflict: "hospital_id,alert_type,dedupe_key", ignoreDuplicates: true }).then(() => {}, () => {});
       });
     } catch (err) {
       console.error("Lab TAT panel error:", err);

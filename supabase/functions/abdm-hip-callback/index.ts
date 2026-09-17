@@ -12,6 +12,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createRemoteJWKSet, jwtVerify } from "https://esm.sh/jose@5.2.4";
 import { getAbdmToken, abdmHeaders } from "../_shared/abdm-auth.ts";
 import { logAuditEvent } from "../_shared/abdm-audit.ts";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -171,7 +172,7 @@ async function handleDiscover(
       status: gwResponse.status,
     });
   } catch (err) {
-    console.error("handleDiscover error:", err);
+    console.error("handleDiscover error:", sanitizeForLog(err instanceof Error ? err.message : String(err)));
   }
 }
 
@@ -251,7 +252,7 @@ async function handleLinkConfirm(
       status: gwResponse.status,
     });
   } catch (err) {
-    console.error("handleLinkConfirm error:", err);
+    console.error("handleLinkConfirm error:", sanitizeForLog(err instanceof Error ? err.message : String(err)));
   }
 }
 
@@ -379,7 +380,7 @@ async function handleDataRequest(
       contexts_pushed: entries.length,
     });
   } catch (err) {
-    console.error("handleDataRequest error:", err);
+    console.error("handleDataRequest error:", sanitizeForLog(err instanceof Error ? err.message : String(err)));
   }
 }
 

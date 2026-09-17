@@ -421,11 +421,14 @@ export const SETTINGS_CATALOG: SettingsEntry[] = [
                "token", "developer", "key", "secret", "webhook"],
   },
   {
+    // Razorpay and NIC IRP dropped from this screen's scope 2026-09-12 — /settings/razorpay
+    // and /settings/gst own those integrations respectively; see KNOWN-BUG-139/144 for why
+    // this screen must never overlap either again.
     icon: Cpu, title: "Integration Keys",
-    desc: "Payment, WhatsApp & government API keys (AI is configured centrally)",
+    desc: "WhatsApp & government API keys (Razorpay is under Razorpay Payments; AI is configured centrally)",
     route: "/settings/api-hub", group: "Integrations",
-    modules: ["payments", "crm", "abdm", "hmis"],
-    keywords: ["credential", "api key", "secret", "provider", "gateway"],
+    modules: ["crm", "abdm", "hmis"],
+    keywords: ["credential", "api key", "secret", "provider"],
   },
   {
     icon: Languages, title: "AI Language Packs",

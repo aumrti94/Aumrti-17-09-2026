@@ -415,7 +415,7 @@ async function processChunk(
 
 // ── Job run ───────────────────────────────────────────────────────────────────────────
 
-async function runJob(sb: ReturnType<typeof admin>, jobId: string, retryFailed: boolean) {
+async function runJob(sb: ReturnType<typeof admin>, jobId: string, retryFailed: boolean, callerHospitalId: string | null) {
   const startedAt = Date.now();
 
   const { data: job } = await sb
@@ -430,6 +430,13 @@ async function runJob(sb: ReturnType<typeof admin>, jobId: string, retryFailed: 
   // the request body — a caller who guessed a job_id must not also get to choose the tenant
   // it is checked against.
   const hospitalId = job.hospital_id as string;
+
+  // callerHospitalId is null only for the service-role self-invoke path (see serve() below);
+  // any browser caller must belong to the SAME hospital as the job they named, or a staff
+  // member at hospital B could drive hospital A's scan by guessing/observing its job_id.
+  if (callerHospitalId && callerHospitalId !== hospitalId) {
+    return json({ error: "Forbidden" }, 403);
+  }
   const patientId = job.patient_id as string;
   const encounterId = (job.encounter_id as string | null) ?? null;
 
@@ -666,16 +673,46 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
+    // No auth check existed here at all previously — the same "no auth check at all" defect
+    // class as KNOWN-BUG-126/-199. This function is reached two ways: the browser calls it
+    // directly with the doctor's own session to start/resume a scan (see
+    // PatientHistoryUploadPanel.tsx), and it self-re-invokes (selfInvoke() below) with the
+    // service-role secret to continue past the wall-clock budget. Neither path was checked, so
+    // any caller holding only the public anon key — which ships in every browser bundle —
+    // could name ANOTHER hospital's job_id and force it to (re)process, burning that
+    // hospital's AI budget and, via `sweep`, purge ANY hospital's staged scan files early.
+    // Found via Phase 6 AI-function-plumbing testing.
+    const authHeader = req.headers.get("Authorization");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const isServiceCall = authHeader === `Bearer ${serviceKey}`;
+
     const { job_id, sweep, retry_failed } = await req.json().catch(() => ({}));
     const sb = admin();
 
     if (sweep) {
+      // Touches every hospital's staging in one call (bounded 50, no hospital_id) —
+      // internal/cron only, never a browser caller.
+      if (!isServiceCall) return json({ error: "Unauthorized" }, 401);
       const purged = await sweepStaging(sb, 50);
       return json({ swept: purged });
     }
+
+    // Resolve caller identity BEFORE validating the rest of the body, so an unauthenticated
+    // request is always told "Unauthorized" rather than "job_id is required".
+    let callerHospitalId: string | null = null;
+    if (!isServiceCall) {
+      if (!authHeader?.startsWith("Bearer ")) return json({ error: "Unauthorized" }, 401);
+      const anonClient = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!);
+      const { data: { user }, error: authError } = await anonClient.auth.getUser(authHeader.replace("Bearer ", ""));
+      if (authError || !user) return json({ error: "Unauthorized" }, 401);
+      const { data: userData } = await sb.from("users").select("hospital_id").eq("auth_user_id", user.id).maybeSingle();
+      if (!userData?.hospital_id) return json({ error: "Forbidden" }, 403);
+      callerHospitalId = userData.hospital_id as string;
+    }
+
     if (!job_id) return json({ error: "job_id is required" }, 400);
 
-    return await runJob(sb, String(job_id), retry_failed === true);
+    return await runJob(sb, String(job_id), retry_failed === true, callerHospitalId);
   } catch (err) {
     if (err instanceof AIDisabledError) {
       return json({ error: err.message, disabled: true }, 403);

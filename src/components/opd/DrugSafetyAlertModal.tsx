@@ -6,6 +6,10 @@ import { Textarea } from "@/components/ui/textarea";
 import type { DrugSafetyResult, DrugInteraction, AllergyConflict } from "@/lib/drugSafetyCheck";
 import { callAI } from "@/lib/aiProvider";
 import { useAIFeature } from "@/hooks/useAIFeature";
+// `toast` was called in runAIAnalysis without ever being imported — a ReferenceError that
+// the surrounding catch swallowed, so an AI failure silently rendered the generic
+// "unavailable" text instead of the real reason. Found by tsc while fixing KNOWN-BUG-113.
+import { useToast } from "@/hooks/use-toast";
 
 interface Props {
   open: boolean;
@@ -58,6 +62,7 @@ const severityBadge: Record<string, string> = {
 
 const DrugSafetyAlertModal: React.FC<Props> = ({ open, drugName, result, hospitalId, onClose, onAddAnyway, onOverride }) => {
   const __aiOn = useAIFeature("drug_interaction_analysis");
+  const { toast } = useToast();
   const [showOverride, setShowOverride] = useState(false);
   const [overrideReason, setOverrideReason] = useState("");
   const [acknowledged, setAcknowledged] = useState(false);
@@ -87,11 +92,30 @@ const DrugSafetyAlertModal: React.FC<Props> = ({ open, drugName, result, hospita
     setAiLoading(false);
   };
 
-  if (!__aiOn) return null; // AI master or drug-interaction feature disabled
+  // KNOWN-BUG-113. This used to read `if (!__aiOn) return null;` — the ENTIRE drug
+  // interaction and allergy warning was hidden whenever the hospital lacked the `ai_suite`
+  // entitlement. On those tenants a contraindicated prescription produced no modal at all:
+  // RxOrdersTab set showSafetyModal(true), nothing rendered, and the drug was not added, so
+  // the prescriber saw a click that did nothing rather than a contraindication.
+  //
+  // `useAIFeature` is documented as a gate for "the visible AI UI" — the analysis button
+  // below, not the safety alert. CLAUDE.md: drug interaction and allergy checks are never
+  // mocked or skipped, and clinical alerts are never silenced. An add-on entitlement must
+  // not be able to switch one off.
   if (!open) return null;
 
   const config = severityConfig[result.worstSeverity] || severityConfig.moderate;
   const isContraindicated = result.worstSeverity === "contraindicated";
+
+  // A degraded check raises worstSeverity to 'major' so any gate stops (KNOWN-BUG-108), but
+  // "MAJOR DRUG INTERACTION" would be the wrong thing to tell a prescriber when the real
+  // finding is that the check could not complete. Say which it is.
+  const onlyUnavailable =
+    result.checkUnavailable &&
+    result.interactions.length === 0 &&
+    result.allergyConflicts.length === 0 &&
+    result.duplicates.length === 0;
+  const headerLabel = onlyUnavailable ? "⚠️ SAFETY CHECK INCOMPLETE" : config.label;
 
   const handleOverrideSubmit = () => {
     if (overrideReason.trim() && acknowledged) {
@@ -108,7 +132,7 @@ const DrugSafetyAlertModal: React.FC<Props> = ({ open, drugName, result, hospita
         {/* Header */}
         <div className={cn("px-5 py-4 border-b-2 flex items-center gap-3", config.bg, config.border)}>
           {config.icon}
-          <span className={cn("text-base font-bold flex-1", config.textColor)}>{config.label}</span>
+          <span className={cn("text-base font-bold flex-1", config.textColor)}>{headerLabel}</span>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
             <X className="h-5 w-5" />
           </button>
@@ -122,6 +146,28 @@ const DrugSafetyAlertModal: React.FC<Props> = ({ open, drugName, result, hospita
 
         {/* Issues */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          {/* Incomplete check (KNOWN-BUG-108). A reference lookup failed, so what is shown
+              below is not the whole picture — and "nothing found" here does not mean safe. */}
+          {result.checkUnavailable && (
+            <div className="bg-amber-50 border-2 border-amber-400 rounded-xl p-3.5">
+              <div className="flex items-center gap-2 mb-1.5">
+                <ShieldAlert className="h-4 w-4 text-amber-600" />
+                <span className="text-xs font-bold text-amber-700 uppercase">Safety check incomplete</span>
+              </div>
+              <p className="text-sm font-semibold text-foreground">
+                Part of the drug safety check could not run. Treat this result as unverified.
+              </p>
+              <ul className="mt-1.5 space-y-0.5">
+                {result.unavailableReasons.map((reason, i) => (
+                  <li key={i} className="text-xs text-muted-foreground">• {reason}</li>
+                ))}
+              </ul>
+              <p className="text-xs font-bold text-amber-700 mt-1.5">
+                Verify interactions and allergies manually before prescribing.
+              </p>
+            </div>
+          )}
+
           {/* Allergy conflicts */}
           {result.allergyConflicts.length > 0 && (
             <div className="space-y-2">
@@ -193,8 +239,8 @@ const DrugSafetyAlertModal: React.FC<Props> = ({ open, drugName, result, hospita
             </div>
           )}
 
-          {/* AI Analysis */}
-          {hospitalId && (
+          {/* AI Analysis — the one part of this modal the ai_suite entitlement governs. */}
+          {hospitalId && __aiOn && (
             <div className="border border-primary/20 rounded-xl p-3 bg-primary/5">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-bold text-primary flex items-center gap-1">

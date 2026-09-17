@@ -216,18 +216,28 @@ serve(async (req) => {
     const { data: hosp } = await sb.from("hospitals").select("name").eq("id", hospitalId).maybeSingle();
     const hospitalName = hosp?.name ?? "Hospital";
 
-    // ── Fetch lab data in parallel ──────────────────────────────────────────
-    // lab_order_items store test_name via a join to lab_test_master through test_id.
-    // We select test_name from a nested join where available.
-    const [ordersRes, itemsRes] = await Promise.all([
-      sb
-        .from("lab_orders")
-        .select("id, order_date, priority, clinical_notes, status")
-        .eq("admission_id", admission_id)
-        .eq("hospital_id", hospitalId)
-        .order("order_date", { ascending: true }),
+    // ── Fetch lab data ──────────────────────────────────────────────────────
+    const { data: ordersData } = await sb
+      .from("lab_orders")
+      .select("id, order_date, priority, clinical_notes, status")
+      .eq("admission_id", admission_id)
+      .eq("hospital_id", hospitalId)
+      .order("order_date", { ascending: true });
 
-      sb
+    const orders: any[] = ordersData ?? [];
+    const orderIds = orders.map((o) => o.id);
+
+    // Was previously scoped only by hospital_id (fetching every lab_order_item in the whole
+    // hospital, then filtering to this admission's orders in memory). PostgREST's default
+    // row cap (1000) meant a hospital with enough accumulated lab_order_items could silently
+    // truncate an admission's own results out of its own report — ordered oldest-first, a
+    // current admission's items sit at the END of that dataset and are exactly what a cap
+    // drops first. Scoping the query itself by this admission's order ids fixes both the
+    // correctness risk and the wasted whole-hospital fetch. Found via Phase 6 edge-function
+    // testing. lab_order_items store test_name via a join to lab_test_master through test_id.
+    const itemsByOrder: Record<string, any[]> = {};
+    if (orderIds.length > 0) {
+      const { data: itemsData } = await sb
         .from("lab_order_items")
         .select(`
           id, lab_order_id, result_value, result_numeric, result_unit,
@@ -236,22 +246,17 @@ serve(async (req) => {
           lab_test_master(test_name)
         `)
         .eq("hospital_id", hospitalId)
-        .order("created_at", { ascending: true }),
-    ]);
+        .in("lab_order_id", orderIds)
+        .order("created_at", { ascending: true });
 
-    const orders: any[] = ordersRes.data ?? [];
-    const orderIds = new Set(orders.map((o) => o.id));
-
-    // Flatten items, enrich with test_name, filter to only this admission's orders
-    const itemsByOrder: Record<string, any[]> = {};
-    for (const item of (itemsRes.data ?? [])) {
-      if (!orderIds.has(item.lab_order_id)) continue;
-      const enriched = {
-        ...item,
-        test_name: (item.lab_test_master as any)?.test_name ?? null,
-      };
-      if (!itemsByOrder[item.lab_order_id]) itemsByOrder[item.lab_order_id] = [];
-      itemsByOrder[item.lab_order_id].push(enriched);
+      for (const item of (itemsData ?? [])) {
+        const enriched = {
+          ...item,
+          test_name: (item.lab_test_master as any)?.test_name ?? null,
+        };
+        if (!itemsByOrder[item.lab_order_id]) itemsByOrder[item.lab_order_id] = [];
+        itemsByOrder[item.lab_order_id].push(enriched);
+      }
     }
 
     // ── Render HTML ──────────────────────────────────────────────────────────

@@ -90,7 +90,7 @@ const RaiseIndentModal: React.FC<Props> = ({ hospitalId, fromStore, onClose, onC
       to_store_id: toStoreId,
       status: "pending",
       remarks: remarks || null,
-    }).select().single();
+    }).select().maybeSingle();
 
     if (ie || !indent) {
       toast({ title: "Failed to create indent", description: ie?.message, variant: "destructive" });

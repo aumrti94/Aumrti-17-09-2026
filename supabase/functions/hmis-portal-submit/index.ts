@@ -29,10 +29,19 @@ serve(async (req) => {
         status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    // Was `.eq("id", caller.id)` — public.users.id and auth.users.id (what caller.id is)
+    // diverged at migration 20260322111223; every account created since then has a
+    // DIFFERENT public.users.id than its own auth uid, so this lookup found zero rows for
+    // any such account, and every real staff member got a 403 "Forbidden" regardless of
+    // their actual role or hospital. The correct join key is auth_user_id, already used
+    // correctly by every other function in this codebase for exactly this reason. Found via
+    // Phase 6 edge-function testing — the Tier-0 seed fixture deliberately sets auth_user_id
+    // different from id for this exact reason (see the tenant-isolation-testing skill), so a
+    // real seeded staff account caught this on the very first live test.
     const { data: callerProfile } = await supabase
       .from("users")
       .select("hospital_id, role")
-      .eq("id", caller.id)
+      .eq("auth_user_id", caller.id)
       .maybeSingle();
     if (!callerProfile?.hospital_id) {
       return new Response(JSON.stringify({ error: "Forbidden" }), {
@@ -134,12 +143,26 @@ serve(async (req) => {
       console.log("HMIS portal unreachable, marking for manual submission");
     }
 
-    // Update report status and acknowledgment
-    await supabase.from("hmis_reports").update({
-      status: submitStatus,
+    // Update report status and acknowledgment.
+    // The DB trigger validate_hmis_report() only ever allowed
+    // status IN ('draft','generated','submitted','accepted') — the same 4 values
+    // HMISPage.tsx's own filtering already understands (HMISPage.tsx:80-81, :613) — but this
+    // function wrote "portal_unavailable" here, a 5th value neither the trigger nor the
+    // frontend has ever recognised. Every portal-unreachable submission attempt (the exact
+    // fallback path this function exists to handle) has always been rejected by the trigger,
+    // silently (the update's error was never checked), leaving the report stuck at whatever
+    // status it already had — never actually flagged as needing manual submission. The API
+    // response's own `status` field (returned to the caller below) keeps the more
+    // descriptive "portal_unavailable" value — HMISPage.tsx's response handling only checks
+    // for `=== "submitted"` and treats anything else as the manual-upload branch, so that
+    // contract is unaffected. Found via Phase 6 edge-function testing.
+    const dbStatus = submitStatus === "submitted" ? "submitted" : "generated";
+    const { error: updateErr } = await supabase.from("hmis_reports").update({
+      status: dbStatus,
       submitted_at: new Date().toISOString(),
       acknowledgment_ref: ackRef,
     } as any).eq("id", reportId);
+    if (updateErr) console.error("hmis-portal-submit: report status update failed:", updateErr.message);
 
     return new Response(JSON.stringify({
       success: true,
@@ -151,8 +174,8 @@ serve(async (req) => {
     }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   } catch (err) {
-    console.error("HMIS submit error:", err);
-    return new Response(JSON.stringify({ error: String(err) }), {
+    console.error("HMIS submit error:", err instanceof Error ? err.message : String(err));
+    return new Response(JSON.stringify({ error: "Internal error" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

@@ -249,7 +249,7 @@ const AssetsTab: React.FC<{ hospitalId: string }> = ({ hospitalId }) => {
         document_url: logForm.document_url || null,
       })
       .select("id")
-      .single();
+      .maybeSingle();
 
     if (error) {
       toast({ title: "Failed to save log", description: error.message, variant: "destructive" });

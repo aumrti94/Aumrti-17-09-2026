@@ -44,3 +44,23 @@ export function bundlesNursingIntoRoom(payerType: string | null | undefined): bo
   if (!payerType) return false;
   return BUNDLED_NURSING_PAYER_TYPES.has(payerType.trim().toLowerCase());
 }
+
+/**
+ * Schemes that cannot be billed without a valid referral on file.
+ *
+ * CGHS and ECHS both require a referral from the parent polyclinic/ECHS centre before an
+ * empanelled hospital may treat and claim. Finalising a bill without one produces a claim
+ * the scheme will reject, after the patient has been discharged — so the check is a
+ * pre-finalisation block, not a warning.
+ *
+ * Hoisted out of BillEditor's `patient_category === "cghs" || === "echs"`, which compared
+ * raw and therefore skipped the block entirely for a `patient_category` of "CGHS" — the
+ * same case-sensitivity gap this module was created to close for payer_type.
+ */
+export const REFERRAL_REQUIRED_CATEGORIES = new Set(["cghs", "echs"]);
+
+/** True when this patient category needs a referral before a bill can be finalised. */
+export function requiresSchemeReferral(patientCategory: string | null | undefined): boolean {
+  if (!patientCategory) return false;
+  return REFERRAL_REQUIRED_CATEGORIES.has(patientCategory.trim().toLowerCase());
+}

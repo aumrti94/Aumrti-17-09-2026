@@ -18,6 +18,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -135,6 +136,21 @@ serve(async (req) => {
   const supabase           = createClient(supabaseUrl, supabaseServiceKey);
 
   try {
+    // ── Auth ────────────────────────────────────────────────────────────────
+    // This function had NO auth check at all — any request naming another
+    // hospital's id could pull its HCX gateway secret and submit a real PMJAY
+    // claim under that hospital's identity. Found in the Phase 4 isolation
+    // audit — see KNOWN_BUGS.md.
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) return json({ error: "Unauthorized" }, 401);
+    const anonClient = createClient(
+      supabaseUrl,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { Authorization: authHeader } } },
+    );
+    const { data: { user }, error: authErr } = await anonClient.auth.getUser();
+    if (authErr || !user) return json({ error: "Unauthorized" }, 401);
+
     const body = await req.json() as {
       hospital_id:        string;
       admission_id:       string;
@@ -150,11 +166,19 @@ serve(async (req) => {
       return json({ error: "Missing required fields" }, 400);
     }
 
+    const { data: staff } = await supabase
+      .from("users")
+      .select("hospital_id")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
+    if (!staff || staff.hospital_id !== hospital_id) return json({ error: "Forbidden" }, 403);
+
     // ── 1. Fetch admission + patient details ─────────────────────────────────
     const { data: admission } = await supabase
       .from("admissions")
       .select("id, admitted_at, discharged_at, patient_id, patients(full_name, abha_id), insurance_pre_auth(icd10_codes)")
       .eq("id", admission_id)
+      .eq("hospital_id", hospital_id)
       .maybeSingle();
 
     if (!admission) return json({ error: "Admission not found" }, 404);
@@ -171,14 +195,26 @@ serve(async (req) => {
     if (!pkg) return json({ error: `PMJAY package ${package_code} not found or inactive` }, 404);
 
     // ── 3. Fetch HCX configuration ────────────────────────────────────────────
+    // Was `.from("hospital_settings")` — a generic key-value table (columns: id, hospital_id,
+    // key, value) with NO `hcx_client_id`/`hcx_participant_code`/etc columns at all. PostgREST
+    // rejects a select() naming nonexistent columns, and that error was never checked (only
+    // `data`), so `hcxConfig` was always null/undefined regardless of what any hospital had
+    // actually configured — meaning `isSandbox` was always `true` and the live-HCX submission
+    // path below (lines ~260+) has been unreachable dead code since this function shipped,
+    // for every hospital, ever. The real table is `hospital_abdm_config` — confirmed against
+    // every sibling ABDM/HCX function in this codebase, which all read HCX credentials from
+    // there. Also fixed: `hcx_is_production` was read, but the real column is `is_production`
+    // (no `hcx_` prefix) — a second, independent naming mismatch on the same query, only
+    // visible once the table name itself was corrected. Found via Phase 6 edge-function
+    // testing.
     const { data: hcxConfig } = await (supabase as any)
-      .from("hospital_settings")
-      .select("hcx_participant_code, hcx_client_id, hcx_client_secret, hcx_is_production, hfr_id")
+      .from("hospital_abdm_config")
+      .select("hcx_participant_code, hcx_client_id, hcx_client_secret, is_production, hfr_id")
       .eq("hospital_id", hospital_id)
       .maybeSingle();
 
-    const isSandbox     = !hcxConfig?.hcx_client_id || !hcxConfig?.hcx_is_production;
-    const isProduction  = !!hcxConfig?.hcx_is_production;
+    const isSandbox     = !hcxConfig?.hcx_client_id || !hcxConfig?.is_production;
+    const isProduction  = !!hcxConfig?.is_production;
     const hfrId         = hcxConfig?.hfr_id || "HFR-DEFAULT";
     const hcxBaseUrl    = isProduction
       ? "https://live.nha.gov.in/hcx"
@@ -205,14 +241,24 @@ serve(async (req) => {
     });
 
     // ── 5. Submit (sandbox mock or live HCX) ──────────────────────────────────
+    // Both upserts below were stacked with two independent bugs: (a) `scheme_type: "pmjay"`
+    // (lowercase) — govt_scheme_claims_scheme_type_check only ever allowed the uppercase
+    // 'PMJAY', so every insert has always violated the CHECK; (b) `onConflict:
+    // "hospital_id,scheme_type,claim_number"` named a unique constraint that has never
+    // existed on this table (confirmed directly: no unique/exclusion constraint on any
+    // subset of those columns) — Postgres rejects an ON CONFLICT target with no matching
+    // constraint outright. Either bug alone would have failed every claim; both together
+    // meant this function has never once successfully persisted a PMJAY claim record, in
+    // sandbox OR live mode, while still returning `success: true` to the caller (the error
+    // was never checked). Found via Phase 6 edge-function testing.
     if (isSandbox) {
       // Sandbox: deterministic mock response
       const mockHcxId = `PMJAY-MOCK-${claimId.slice(0, 8).toUpperCase()}`;
 
-      await (supabase as any).from("govt_scheme_claims").upsert({
+      const { error: mockUpsertErr } = await (supabase as any).from("govt_scheme_claims").upsert({
         hospital_id,
         patient_id:       (admission as any).patient_id,
-        scheme_type:      "pmjay",
+        scheme_type:      "PMJAY",
         claim_number:     mockHcxId,
         pmjay_package_code: package_code,
         pmjay_beneficiary_id: beneficiary_id,
@@ -222,6 +268,7 @@ serve(async (req) => {
         status:           "submitted",
         submitted_at:     new Date().toISOString(),
       }, { onConflict: "hospital_id,scheme_type,claim_number" });
+      if (mockUpsertErr) console.error("pmjay-claim-submit: sandbox claim upsert failed:", mockUpsertErr.message);
 
       return json({
         success:    true,
@@ -281,10 +328,10 @@ serve(async (req) => {
     const hcxCorrelationId = hcxResponse?.correlation_id ?? hcxResponse?.x_hcx_api_call_id ?? claimId;
 
     // Persist claim record
-    await (supabase as any).from("govt_scheme_claims").upsert({
+    const { error: liveUpsertErr } = await (supabase as any).from("govt_scheme_claims").upsert({
       hospital_id,
       patient_id:       (admission as any).patient_id,
-      scheme_type:      "pmjay",
+      scheme_type:      "PMJAY",
       claim_number:     hcxCorrelationId,
       pmjay_package_code: package_code,
       pmjay_beneficiary_id: beneficiary_id,
@@ -294,6 +341,7 @@ serve(async (req) => {
       status:           "submitted",
       submitted_at:     new Date().toISOString(),
     }, { onConflict: "hospital_id,scheme_type,claim_number" });
+    if (liveUpsertErr) console.error("pmjay-claim-submit: live claim upsert failed:", liveUpsertErr.message);
 
     return json({
       success: true,
@@ -302,8 +350,8 @@ serve(async (req) => {
       package: package_code,
     });
 
-  } catch (err: any) {
-    console.error("pmjay-claim-submit error:", err);
-    return json({ error: err.message }, 500);
+  } catch (err) {
+    console.error("pmjay-claim-submit error:", sanitizeForLog(err instanceof Error ? err.message : String(err)));
+    return json({ error: "Internal error" }, 500);
   }
 });

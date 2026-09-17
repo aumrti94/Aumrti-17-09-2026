@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -137,7 +138,8 @@ serve(async (req) => {
     const { data: userRow } = await sb
       .from("users")
       .select("hospital_id")
-      .eq("id", user.id)
+      // auth_user_id, NOT id — the two diverged in migration 20260322111223.
+      .eq("auth_user_id", user.id)
       .maybeSingle();
     if (!userRow?.hospital_id) return json({ error: "user hospital not found" }, 403);
     const callerHospitalId: string = userRow.hospital_id;
@@ -213,7 +215,7 @@ serve(async (req) => {
           link_status: "unlinked",
         })
         .select("id")
-        .single();
+        .maybeSingle();
 
       if (insertErr || !inserted) {
         console.error("Failed to insert care context:", insertErr);
@@ -224,13 +226,26 @@ serve(async (req) => {
     }
 
     // ── Trigger HIP link-init to notify patient ──────────────────────────────
-    const { data: linkResult, error: linkErr } = await sb.functions.invoke("abdm-hip-link-init", {
-      body: {
+    // Was `sb.functions.invoke(...)` on `sb`, the SERVICE-ROLE client — but
+    // abdm-hip-link-init deliberately requires a real Supabase user JWT (confirmed live: it
+    // rejects the service-role key itself with 401 "unauthorized"), the same defect class as
+    // KNOWN-BUG-187(b) (submit-pre-auth-hcx → hcx-claim-submit). This meant the "notify
+    // patient" step has always failed — for every hospital, every event, ever — while still
+    // reporting overall `success: true` with `linked: false`. This function already
+    // independently verified the caller belongs to `callerHospitalId` above, so forwarding
+    // that same already-verified bearer preserves the trust chain abdm-hip-link-init's own
+    // auth check expects. Found via Phase 6 edge-function testing.
+    const linkInitRes = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/abdm-hip-link-init`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: authHeader },
+      body: JSON.stringify({
         hospital_id: callerHospitalId,
         patient_id,
         care_context_ids: [careContextId],
-      },
+      }),
     });
+    const linkResult = await linkInitRes.json().catch(() => ({}));
+    const linkErr = linkInitRes.ok ? null : (linkResult as any)?.error ?? `HTTP ${linkInitRes.status}`;
 
     if (linkErr) {
       // Care context was created — return partial success
@@ -251,7 +266,7 @@ serve(async (req) => {
       message: `Care context created and link initiated for ${event_type}.`,
     });
   } catch (err) {
-    console.error("abdm-auto-link-care-context error:", err);
+    console.error("abdm-auto-link-care-context error:", sanitizeForLog(err instanceof Error ? err.message : String(err)));
     return json({ error: "internal server error" }, 500);
   }
 });

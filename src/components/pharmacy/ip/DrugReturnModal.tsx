@@ -40,6 +40,7 @@ interface PharmacyUser {
   id: string;
   full_name: string;
   role: string;
+  email: string;
 }
 
 interface Props {
@@ -71,9 +72,20 @@ const DrugReturnModal: React.FC<Props> = ({
   const [pharmacistUsers, setPharmacistUsers] = useState<PharmacyUser[]>([]);
   const [ndpsPharmacistId, setNdpsPharmacistId] = useState("");
   const [ndpsSeniorId, setNdpsSeniorId] = useState("");
+  // Senior sign-off re-authentication (KNOWN-BUG, found live) — see the password field's own
+  // comment below for why this exists.
+  const [ndpsSeniorPassword, setNdpsSeniorPassword] = useState("");
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return;
+      supabase.from("users").select("id").eq("auth_user_id", user.id).maybeSingle()
+        .then(({ data }) => setCurrentUserId(data?.id || null));
+    });
+  }, []);
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
@@ -99,10 +111,11 @@ const DrugReturnModal: React.FC<Props> = ({
 
   const fetchPharmacists = useCallback(async () => {
     // app_role enum has no senior_pharmacist/chief_pharmacist value — querying for them
-    // throws (invalid enum literal), which silently emptied this dropdown.
+    // throws (invalid enum literal), which silently emptied this dropdown. `email` is
+    // fetched now (it wasn't before) because the senior sign-off re-authenticates by password.
     const { data, error } = await (supabase as any)
       .from("users")
-      .select("id, full_name, role")
+      .select("id, full_name, role, email")
       .eq("hospital_id", hospitalId)
       .in("role", ["pharmacist", "hospital_admin"]);
     if (error) console.error("fetchPharmacists failed:", error.message);
@@ -158,6 +171,30 @@ const DrugReturnModal: React.FC<Props> = ({
   const submitReturn = async () => {
     setSubmitting(true);
     try {
+      // NDPS senior sign-off re-authentication (KNOWN-BUG, found live) — mirrors the pattern
+      // already used for IP dispensing (NDPSDualSignoffModal.tsx) and retail (RetailPayment.tsx):
+      // sign in as the named senior pharmacist to prove the password is genuinely theirs, then
+      // restore the current user's own session regardless of outcome.
+      if (hasNdps) {
+        const senior = pharmacistUsers.find(p => p.id === ndpsSeniorId);
+        if (!senior?.email) throw new Error("Senior pharmacist not found");
+
+        const { data: { session: ownSession } } = await supabase.auth.getSession();
+        const { error: seniorAuthErr } = await supabase.auth.signInWithPassword({
+          email: senior.email,
+          password: ndpsSeniorPassword,
+        });
+        if (ownSession) {
+          await supabase.auth.setSession({
+            access_token: ownSession.access_token,
+            refresh_token: ownSession.refresh_token,
+          });
+        }
+        if (seniorAuthErr) {
+          throw new Error(`Senior pharmacist's password is incorrect: ${seniorAuthErr.message}`);
+        }
+      }
+
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
@@ -449,14 +486,20 @@ const DrugReturnModal: React.FC<Props> = ({
                 </label>
                 <Select
                   value={ndpsSeniorId}
-                  onValueChange={setNdpsSeniorId}
+                  onValueChange={(v) => { setNdpsSeniorId(v); setNdpsSeniorPassword(""); }}
                 >
                   <SelectTrigger className="h-9 text-[13px]">
                     <SelectValue placeholder="Select senior pharmacist…" />
                   </SelectTrigger>
                   <SelectContent>
                     {pharmacistUsers
-                      .filter(u => u.role === "hospital_admin")
+                      // Excludes the current user AND whoever is already picked as Confirming
+                      // Pharmacist (KNOWN-BUG, found live) — neither exclusion existed before,
+                      // so the same person could be selected in both fields, and even a
+                      // genuinely different name required no verification at all: picking a
+                      // name WAS the entire "sign-off". The password field below (with real
+                      // re-authentication in submitReturn) closes the second half of that gap.
+                      .filter(u => u.role === "hospital_admin" && u.id !== currentUserId && u.id !== ndpsPharmacistId)
                       .map(u => (
                         <SelectItem key={u.id} value={u.id} className="text-[13px]">
                           {u.full_name} ({u.role})
@@ -465,6 +508,21 @@ const DrugReturnModal: React.FC<Props> = ({
                   </SelectContent>
                 </Select>
               </div>
+
+              {ndpsSeniorId && (
+                <div>
+                  <label className="text-[12px] font-semibold text-foreground block mb-1">
+                    Senior Pharmacist's Password *
+                  </label>
+                  <Input
+                    type="password"
+                    placeholder="Enter senior pharmacist's password"
+                    value={ndpsSeniorPassword}
+                    onChange={e => setNdpsSeniorPassword(e.target.value)}
+                    className="h-9 text-[13px]"
+                  />
+                </div>
+              )}
             </div>
 
             <div className="flex gap-2 pt-1">
@@ -474,7 +532,7 @@ const DrugReturnModal: React.FC<Props> = ({
               <Button
                 size="sm"
                 className="flex-1 bg-destructive hover:bg-destructive/90"
-                disabled={!ndpsPharmacistId || !ndpsSeniorId || submitting || !canProcessReturn}
+                disabled={!ndpsPharmacistId || !ndpsSeniorId || !ndpsSeniorPassword || submitting || !canProcessReturn}
                 title={!canProcessReturn ? "You don't have permission to process returns" : undefined}
                 onClick={submitReturn}
               >

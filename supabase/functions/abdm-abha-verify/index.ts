@@ -14,6 +14,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getAbdmToken, abdmHeaders } from "../_shared/abdm-auth.ts";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -33,14 +34,42 @@ serve(async (req) => {
     });
 
   try {
+    // ── Auth ──────────────────────────────────────────────────────────────
+    // No auth check at all previously — any request naming a hospital_id
+    // could probe whether that hospital has production ABDM configured
+    // (mode: "ping") or run a live NHA existsByHealthId lookup using that
+    // hospital's real credentials/quota. Found in the Phase 4 isolation
+    // audit — see KNOWN_BUGS.md.
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) return json({ error: "Unauthorized" }, 401);
+    const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+    const anonClient = createClient(
+      SUPABASE_URL,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { Authorization: authHeader } } },
+    );
+    const { data: { user }, error: authErr } = await anonClient.auth.getUser();
+    if (authErr || !user) return json({ error: "Unauthorized" }, 401);
+
     const body = await req.json() as {
       abha_number?: string;
       mode?: string;
       hospital_id?: string;
     };
 
-    const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+    if (body.hospital_id) {
+      const sbCheck = createClient(SUPABASE_URL, SERVICE_KEY!);
+      const { data: staff } = await sbCheck
+        .from("users")
+        .select("hospital_id")
+        .eq("auth_user_id", user.id)
+        .maybeSingle();
+      if (!staff || staff.hospital_id !== body.hospital_id) {
+        return json({ error: "Forbidden" }, 403);
+      }
+    }
 
     // ── Resolve token ────────────────────────────────────────────────────────
     // Path A: hospital_id provided → use shared token manager (preferred)
@@ -142,7 +171,7 @@ serve(async (req) => {
       abha_number: abhaNumber,
     });
   } catch (error) {
-    console.error("abdm-abha-verify error:", error);
+    console.error("abdm-abha-verify error:", sanitizeForLog(error instanceof Error ? error.message : String(error)));
     return json({ verified: false, error: "Verification service unavailable" }, 500);
   }
 });

@@ -58,7 +58,7 @@ export async function activateProtocol(
     .from("epidemic_protocols")
     .select("protocol_name")
     .eq("id", protocolId)
-    .single();
+    .maybeSingle();
 
   await logNABHEvidence(
     hospitalId,

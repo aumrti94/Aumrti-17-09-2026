@@ -152,6 +152,22 @@ function mapOutcomeToStatus(outcome: string, disposition: string): string {
   return "queued";
 }
 
+// insurance_pre_auth.hcx_status / insurance_claims.hcx_status are both CHECKed to exactly
+// {submitted, acknowledged, processing, approved, rejected, error} — the same 6-value
+// HcxStatus union the frontend (HCXClaimsTab.tsx) already renders. mapOutcomeToStatus() above
+// can also return "partial" or "queued", neither of which is in that list — writing either
+// straight into hcx_status would violate the CHECK constraint on every partially-adjudicated
+// or still-processing HCX response. hcx_status is deliberately a narrower "where is this in
+// the HCX pipeline" indicator than the broader claimStatus/newStatus values derived from it
+// below (which DO have "partially_approved"/"pending_query"/"under_review" states, on columns
+// with no CHECK constraint) — so this maps only for the restricted column, without collapsing
+// the more specific business status those richer values already carry. Found via Phase 6
+// edge-function testing.
+function toHcxStatusColumn(hcxStatus: string): string {
+  if (hcxStatus === "partial" || hcxStatus === "queued") return "processing";
+  return hcxStatus;
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────────
 
 serve(async (req) => {
@@ -183,9 +199,26 @@ serve(async (req) => {
       } catch {
         fhirBundle = null;
       }
+
+      // A key IS configured — this deployment expects real encrypted responses. Do NOT fall
+      // through to the plain-JSON sandbox path below: it was previously reached whenever
+      // decryption merely failed for ANY reason, with no check on why. Concretely, that meant
+      // anyone could forge an insurance claim/pre-auth decision by POSTing a plain unencrypted
+      // FHIR bundle instead of a real JWE — decryptJwe() itself returns null for anything that
+      // isn't even JWE-shaped, so an attacker's plain JSON never needed to defeat the crypto at
+      // all, just skip sending it. Once decrypted, that forged bundle was processed exactly like
+      // a genuine NHA response: it could mark a real claim approved/rejected at an attacker-
+      // chosen amount, or auto-raise a bogus underpayment dispute. Found via Phase 6
+      // edge-function testing. With a key configured, a failed decryption is now a hard
+      // rejection, not a silent downgrade to trusting the caller's own claims.
+      if (!fhirBundle) {
+        return json({ error: "Could not decrypt HCX payload" }, 400);
+      }
     }
 
-    // Sandbox / fallback: if no key or decryption fails, try JSON direct (staging without encryption)
+    // Sandbox fallback: ONLY reachable when this deployment has no HCX private key configured
+    // at all (no hospital here has completed real HCX crypto setup yet) — never as a fallback
+    // for a failed decryption when a key DOES exist, which would defeat the point of having one.
     if (!fhirBundle && body.startsWith("{")) {
       try {
         const parsed = JSON.parse(body);
@@ -222,17 +255,18 @@ serve(async (req) => {
           : hcxStatus === "rejected" ? "rejected"
           : "under_review";
 
-        await supabase.from("insurance_pre_auth").update({
-          hcx_status:          hcxStatus,
+        const { error: preAuthUpdateErr } = await supabase.from("insurance_pre_auth").update({
+          hcx_status:          toHcxStatusColumn(hcxStatus),
           hcx_approved_amount: parsed.approvedAmount || null,
           hcx_response_at:     responseAt,
           status:              newStatus,
           approved_amount:     parsed.approvedAmount || null,
           rejection_reason:    parsed.errors.join("; ") || null,
         }).eq("id", preAuth.id);
+        if (preAuthUpdateErr) console.error("hcx-callback-receiver: insurance_pre_auth update failed:", preAuthUpdateErr.message);
 
         // Clinical alert for insurance team
-        await supabase.from("clinical_alerts").insert({
+        const { error: preAuthAlertErr } = await supabase.from("clinical_alerts").insert({
           hospital_id:   preAuth.hospital_id,
           alert_type:    "insurance_preauth_decision",
           severity:      newStatus === "rejected" ? "high" : "medium",
@@ -241,6 +275,7 @@ serve(async (req) => {
           }${parsed.errors.length ? ` | Reason: ${parsed.errors[0]}` : ""}`,
           patient_id:    null,
         });
+        if (preAuthAlertErr) console.error("hcx-callback-receiver: preauth alert insert failed:", preAuthAlertErr.message);
 
         return json({ success: true, type: "preauth", status: newStatus, preauth_id: preAuth.id });
       }
@@ -262,9 +297,9 @@ serve(async (req) => {
           ? Math.max(0, (claim.claimed_amount || 0) - parsed.approvedAmount)
           : 0;
 
-        await (supabase as any).from("insurance_claims").update({
+        const { error: claimUpdateErr } = await (supabase as any).from("insurance_claims").update({
           hcx_claim_id:         parsed.hcxClaimId,
-          hcx_status:           hcxStatus,
+          hcx_status:           toHcxStatusColumn(hcxStatus),
           hcx_approved_amount:  parsed.approvedAmount || null,
           hcx_rejection_reason: parsed.errors.join("; ") || null,
           hcx_response_at:      responseAt,
@@ -273,10 +308,11 @@ serve(async (req) => {
           approved_amount:      parsed.approvedAmount || null,
           underpayment_amount:  underpayment,
         }).eq("id", claim.id);
+        if (claimUpdateErr) console.error("hcx-callback-receiver: insurance_claims update failed:", claimUpdateErr.message);
 
         // Auto-create underpayment dispute if significant (> ₹100)
         if (underpayment > 100) {
-          await (supabase as any).from("tpa_disputes").insert({
+          const { error: disputeErr } = await (supabase as any).from("tpa_disputes").insert({
             hospital_id:      claim.hospital_id,
             claim_id:         claim.id,
             dispute_amount:   underpayment,
@@ -287,6 +323,7 @@ serve(async (req) => {
             status:           "raised",
             next_followup_at: new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0],
           });
+          if (disputeErr) console.error("hcx-callback-receiver: tpa_disputes insert failed:", disputeErr.message);
         }
 
         // Insurance team alert
@@ -294,7 +331,7 @@ serve(async (req) => {
           : underpayment > 10000 ? "high"
           : "medium";
 
-        await supabase.from("clinical_alerts").insert({
+        const { error: claimAlertErr } = await supabase.from("clinical_alerts").insert({
           hospital_id:   claim.hospital_id,
           alert_type:    "insurance_claim_decision",
           severity,
@@ -305,6 +342,7 @@ serve(async (req) => {
           }`,
           patient_id:    null,
         });
+        if (claimAlertErr) console.error("hcx-callback-receiver: claim alert insert failed:", claimAlertErr.message);
 
         return json({
           success:      true,
@@ -318,18 +356,25 @@ serve(async (req) => {
       }
     }
 
-    // HCX ID not matched — store as unmatched for manual review
-    await supabase.from("clinical_alerts").insert({
-      alert_type:    "hcx_unmatched_callback",
-      severity:      "medium",
-      alert_message: `HCX callback received but could not match claim ID: ${parsed.hcxClaimId}. Manual review required.`,
-      patient_id:    null,
+    // HCX ID not matched — store as unmatched for manual review. This used to insert into
+    // clinical_alerts with no hospital_id, a NOT NULL column on that table — the insert has
+    // never once succeeded, so "manual review required" alerts for unmatched HCX callbacks
+    // were silently dropped from day one (unchecked `.error`, the same defect class found
+    // repeatedly this session). Since an unmatched claim ID means the hospital genuinely
+    // cannot be determined, clinical_alerts (hospital-scoped by design) is not the right
+    // table; webhook_dlq allows a null hospital_id and already carries retry/review semantics.
+    const { error: dlqErr } = await supabase.from("webhook_dlq").insert({
+      source:        "hcx_callback",
+      event_type:    "unmatched_claim_id",
+      payload:       fhirBundle as Record<string, unknown>,
+      error_message: `Could not match HCX claim ID to any insurance_claims/insurance_pre_auth row: ${parsed.hcxClaimId}`,
     });
+    if (dlqErr) console.error("hcx-callback-receiver: unmatched-claim DLQ write failed:", dlqErr.message);
 
     return json({ success: false, reason: "Claim ID not found", hcx_claim_id: parsed.hcxClaimId }, 200);
 
-  } catch (err: any) {
-    console.error("hcx-callback-receiver error:", err);
-    return json({ error: err.message }, 500);
+  } catch (err) {
+    console.error("hcx-callback-receiver error:", err instanceof Error ? err.message : String(err));
+    return json({ error: "Internal error" }, 500);
   }
 });

@@ -18,6 +18,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -204,10 +205,37 @@ serve(async (req) => {
     });
 
   try {
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const sb = createClient(
       Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      serviceKey,
     );
+
+    // ── Auth ──────────────────────────────────────────────────────────────
+    // No auth check at all previously — any caller with just the public anon
+    // key could name any hospital_id/care_context and get back that
+    // hospital's patient's complete FHIR bundle (name, diagnoses, meds,
+    // lab/radiology results), encrypted to a caller-supplied key or in the
+    // clear. Found in the Phase 4 isolation audit — see KNOWN_BUGS.md.
+    //
+    // Two legitimate callers: abdm-hip-callback and abdm-sandbox-test invoke
+    // this internally with their own service-role client (bearer = the
+    // service-role key); ABDMCareContextsPanel.tsx invokes it directly from
+    // the browser with a real user's session. The gate accepts either.
+    const authHeader = req.headers.get("Authorization") ?? "";
+    if (authHeader !== `Bearer ${serviceKey}`) {
+      const token = authHeader.replace(/^Bearer /, "");
+      if (!token) return json({ error: "Unauthorized" }, 401);
+      const anonClient = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!);
+      const { data: { user }, error: authErr } = await anonClient.auth.getUser(token);
+      if (authErr || !user) return json({ error: "Unauthorized" }, 401);
+
+      const preBody = await req.clone().json().catch(() => ({})) as { hospital_id?: string };
+      const { data: staff } = await sb.from("users").select("hospital_id").eq("auth_user_id", user.id).maybeSingle();
+      if (!staff || !preBody.hospital_id || staff.hospital_id !== preBody.hospital_id) {
+        return json({ error: "Forbidden" }, 403);
+      }
+    }
 
     const body = await req.json() as {
       // Identify the care context — at least one of these groups required:
@@ -291,7 +319,7 @@ serve(async (req) => {
     // No key_material → return plain bundle (for debug view / HIP callback preview)
     return json({ bundle });
   } catch (err) {
-    console.error("abdm-fhir-package error:", err);
-    return json({ error: (err as Error).message }, 500);
+    console.error("abdm-fhir-package error:", sanitizeForLog(err instanceof Error ? err.message : String(err)));
+    return json({ error: "Internal error" }, 500);
   }
 });

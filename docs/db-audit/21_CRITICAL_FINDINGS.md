@@ -1,5 +1,9 @@
 # 21 — CRITICAL FINDINGS
 
+> **See [`00_STATUS.md`](00_STATUS.md) first.** Six of the thirteen findings below (C-01, C-02,
+> C-04, C-07, C-08, C-13) have been fixed since this audit was captured; each is marked inline
+> where it appears. The rest were not re-checked and should be read as written.
+
 **Audit date:** 2026-08-18 · **Live DB captured:** 2026-08-18T16:42:54Z
 **Target:** PostgreSQL 17.6, Supabase project `pdxvisvmnzjhsgmvygku`, schema `public`
 **Method:** read-only `pg_catalog` introspection + 568-migration static parse + full application scan.
@@ -14,6 +18,7 @@ Where the automated classifier over-flagged, the correction is stated explicitly
 
 ## C-01 · `hospital_chains` / `chain_memberships` are fully open to every authenticated user
 **Severity: CRITICAL · Confidence: HIGH · Cross-tenant read + write + delete**
+> ✅ **FIXED** 2026-10-16 in `20261016000003_sec_chain_tables_platform_only.sql` — see `00_STATUS.md`.
 
 The only policy on each table is named `*_platform_only`, but its body imposes no restriction
 whatsoever:
@@ -49,6 +54,7 @@ and is used correctly elsewhere), or drop the tables if the feature is abandoned
 
 ## C-02 · `queue_state` exposes patient names to unauthenticated callers, across all hospitals
 **Severity: CRITICAL · Confidence: HIGH · PHI disclosure**
+> ✅ **FIXED** 2026-10-16 in `20261016000004_sec_queue_state_tenant_scope.sql` — see `00_STATUS.md`.
 
 ```
 queue_state."Anyone can read queue_state" [SELECT] roles={public}
@@ -108,6 +114,8 @@ live `pg_proc` (no `get_next_journal_number`); the two source files above.
 ---
 
 ## C-04 · 20 tables and 6 RPCs are referenced by the application but do not exist
+> ✅ **LARGELY RESOLVED, and now guarded going forward** — `npm run check:db-contract` runs on
+> every PR and fails the build on this exact defect class; it passes today. See `00_STATUS.md`.
 **Severity: CRITICAL / HIGH · Confidence: HIGH · Application↔DB contract**
 
 Full list in [`12_APPLICATION_DATABASE_CONTRACT.csv`](12_APPLICATION_DATABASE_CONTRACT.csv).
@@ -187,6 +195,8 @@ This is the single most consequential instance of the pattern in § C-08.
 
 ## C-07 · Patient portal sessions are anon-writable with `WITH CHECK (true)`
 **Severity: HIGH · Confidence: HIGH · Patient account security**
+> ✅ **FIXED** 2026-10-16 in `20261016000005_sec_portal_sessions_hardening.sql`, which also closed
+> two further over-broad anon SELECT policies found during implementation. See `00_STATUS.md`.
 
 `patient_portal_sessions` carries six policies, including two overlapping anon UPDATE grants:
 
@@ -213,6 +223,7 @@ same problem with incompatible assumptions, both left installed.
 ---
 
 ## C-08 · 905 of 1,474 foreign keys have no supporting index — including 127 on `hospital_id`
+> ✅ **FIXED** 2026-10-16 in `20261016000012_perf_fk_indexes.sql` — 904 `CREATE INDEX` statements. See `00_STATUS.md`.
 **Severity: HIGH · Confidence: HIGH · Performance / availability**
 
 61% of foreign keys lack an index whose leading column is the FK column.
@@ -253,11 +264,28 @@ Complete list, with a `(MISSING)` recommendation row per unindexed FK, in
   script cannot currently connect.
 
 Two consequences: the repo's own migration/scratch tooling is broken, and a live database
-password sits in a working-tree file. `.env.local` is gitignored (verified), so this is not a
-repository leak — but the password is valid, unrotated, and grants full `postgres`-role access.
+password sits in a working-tree file.
 
-**Recommendation:** rotate `SUPABASE_DB_PASSWORD` now that its scope is known, re-issue API keys,
-and fix the pooler prefix.
+> **CORRECTION (2026-09-05).** The original text here read: *"`.env.local` is gitignored
+> (verified), so this is not a repository leak."* **That conclusion was wrong.** It was reached by
+> checking `.gitignore` rather than `git log --all --full-history`. `.env.local` was committed in
+> 8 commits and `.env.test` in 2; commit `da94b5f` ("Repo hygiene: untrack secrets/junk") ran
+> `git rm --cached` only and did not rewrite history. The blobs still resolve, and the values in
+> them are byte-identical to the current working-tree file. **This is a repository leak.**
+>
+> Recoverable from history: 4 distinct `sbp_` personal access tokens, 3 distinct service-role
+> keys, and the `SUPABASE_DB_PASSWORD` (unchanged across all 8 commits). `supabase/.temp/pooler-url`
+> is tracked and supplies the matching connection string, so no host discovery is needed.
+>
+> Scope, per this same finding: the anon key, service-role key and PAT held in `.env.local` were
+> tested on 2026-08-18 and all returned `401`. The **DB password was and remains valid**. The PAT
+> that was in `.env.example` (`sbp_461a5ab0…`) was never tested and its status is unknown. Neither
+> git remote is publicly readable, so this is not a public exposure — but it becomes one the moment
+> the repository changes hands.
+
+**Recommendation:** rotate `SUPABASE_DB_PASSWORD` now that its scope is known, revoke all 4 PATs,
+re-issue API keys, and fix the pooler prefix. Purge history only *after* rotating — and note the
+`backup` remote holds the same blobs, so rewriting `origin` alone is insufficient.
 
 ---
 
@@ -358,6 +386,8 @@ still carries an unresolved duplication.
 ---
 
 ## C-13 · Four views bypass RLS, apply no tenant filter, and are granted to `anon`
+> ✅ **FIXED** 2026-10-16 in `20261016000002_sec_views_security_invoker.sql`, which fixed all six
+> affected views (this finding named four; two more were caught during implementation). See `00_STATUS.md`.
 **Severity: CRITICAL · Confidence: HIGH · Cross-tenant PHI + financial disclosure**
 
 A PostgreSQL view runs with the privileges of its **owner** unless created with

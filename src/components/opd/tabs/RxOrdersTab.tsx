@@ -454,8 +454,19 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
     setRadSuggestions(radMaster.map(m => m.name).filter(n => n.toLowerCase().includes(q) && !labSet.has(n.toLowerCase())).slice(0, 8));
   }, [radInput, radMaster, labMaster]);
 
-  const performSafetyCheck = async (drug: DrugEntry) => {
-    if (isAntibioticByName(drug.drug_name) && !antibioticJustified) {
+  // `justJustified` bypasses the state-based `antibioticJustified` check for exactly one call —
+  // the one AntibioticJustificationModal's `onSaved` makes. Confirmed live: `onSaved` calls
+  // `setAntibioticJustified(true)` and then `performSafetyCheck(pendingDrug)` synchronously, in
+  // the same tick — React does not apply a setState call to the CURRENT closure, so this
+  // function's own `antibioticJustified` (captured when THIS render's closure was created) was
+  // still `false`, and `isAntibioticByName(...) && !antibioticJustified` re-opened the exact
+  // same modal a second time, with no visible change (same component, same position, still
+  // "open"). The net effect: no antibiotic could ever actually be prescribed through this
+  // screen — every attempt looped back to a blank justification form. Not a hypothetical: this
+  // was caught live while building Phase 7.5's Pharmacy spine E2E test, which needed to
+  // prescribe Amoxicillin and never got past this modal.
+  const performSafetyCheck = async (drug: DrugEntry, justJustified = false) => {
+    if (isAntibioticByName(drug.drug_name) && !antibioticJustified && !justJustified) {
       setPendingDrug(drug);
       setShowAntibioticModal(true);
       return;
@@ -477,9 +488,23 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
         setSafeFlash(true);
         setTimeout(() => setSafeFlash(false), 1500);
       }
-    } catch {
-      // On error, still allow adding
-      addDrugDirect(drug);
+    } catch (e) {
+      // KNOWN-BUG-108, caller facet. This used to add the drug silently on any throw — the
+      // same fail-open shape as the lookup itself, one level up. checkDrugSafety now reports
+      // a failed lookup as an incomplete result rather than throwing, so reaching here means
+      // something unexpected broke; surface it instead of prescribing past it.
+      setSafetyResult({
+        hasIssues: true,
+        interactions: [],
+        allergyConflicts: [],
+        duplicates: [],
+        worstSeverity: "major",
+        checkUnavailable: true,
+        unavailableReasons: [
+          `Drug safety check failed: ${e instanceof Error ? e.message : String(e)}`,
+        ],
+      });
+      setShowSafetyModal(true);
     } finally {
       setChecking(false);
     }
@@ -1369,7 +1394,10 @@ const RxOrdersTab: React.FC<Props> = ({ prescription, onChange, hospitalId, pati
           onSaved={() => {
             setShowAntibioticModal(false);
             setAntibioticJustified(true);
-            if (pendingDrug) performSafetyCheck(pendingDrug);
+            // `true` — see performSafetyCheck's own comment: setAntibioticJustified(true)
+            // above has not been applied to this closure yet, so the state-based check alone
+            // would re-open this same modal instead of proceeding.
+            if (pendingDrug) performSafetyCheck(pendingDrug, true);
           }}
           onCancel={() => { setShowAntibioticModal(false); setPendingDrug(null); }}
         />

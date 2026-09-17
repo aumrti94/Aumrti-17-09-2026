@@ -31,6 +31,7 @@ import { ADMISSION_BILL_TYPES, isAdmissionBill } from "@/lib/admissionBill";
 import { formatINR } from "@/lib/currency";
 import { computeBillMoney } from "@/lib/billMoney";
 import { fetchAdvanceLedger, type AdvanceLedger } from "@/lib/advanceLedger";
+import { requiresSchemeReferral } from "@/lib/payerTypes";
 import { useHospitalContext } from "@/hooks/useHospitalContext";
 import type { BillRecord } from "@/pages/billing/BillingPage";
 
@@ -282,7 +283,9 @@ const BillEditor: React.FC<Props> = ({ bill, hospitalId, onRefresh }) => {
     // CGHS/ECHS referral check
     const { data: patientData } = await (supabase as any)
       .from("patients").select("patient_category").eq("id", bill.patient_id).maybeSingle();
-    if (patientData?.patient_category === "cghs" || patientData?.patient_category === "echs") {
+    // Was an inline `=== "cghs" || === "echs"`, which skipped the block for a stored value
+    // of "CGHS". requiresSchemeReferral normalises case and trims — see payerTypes.ts.
+    if (requiresSchemeReferral(patientData?.patient_category)) {
       const { data: cghs } = await (supabase as any)
         .from("cghs_echs_beneficiaries")
         .select("referral_date, referral_hospital")

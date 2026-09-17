@@ -12,9 +12,9 @@ import { supabase } from "@/integrations/supabase/client";
  * bug: line items inserted, source rows flagged billed, then the totals UPDATE
  * rejected).
  *
- * `isLockExempt` must stay in step with the SQL predicate. lockedDay.test.ts
- * enumerates the same cases the migration header lists; if you change one,
- * change both.
+ * `isLockExempt` must stay in step with the SQL predicate. UNGUARDED as of 2026-09-05 —
+ * lockedDay.test.ts, which enumerated the same cases the migration header lists, was
+ * removed with the rest of the suite. If you change one, change both by hand.
  */
 
 export interface LockContext {

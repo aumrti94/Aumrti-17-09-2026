@@ -20,6 +20,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -244,9 +245,23 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    // Authenticate caller
+    // ── Auth ────────────────────────────────────────────────────────────────
+    // Previously only checked that an Authorization header was PRESENT, never
+    // that it belonged to a real user or that the user's own hospital matched
+    // the request's hospital_id — so any logged-in staff member of any
+    // hospital could pull another hospital's HCX gateway secret and submit a
+    // claim under its identity. Found in the Phase 4 isolation audit — see
+    // KNOWN_BUGS.md.
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) return json({ error: "Missing Authorization" }, 401);
+
+    const anonClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { Authorization: authHeader } } },
+    );
+    const { data: { user }, error: authErr } = await anonClient.auth.getUser();
+    if (authErr || !user) return json({ error: "Unauthorized" }, 401);
 
     const sb = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -261,6 +276,13 @@ serve(async (req) => {
 
     if (!hospital_id || !bill_id) return json({ error: "hospital_id and bill_id required" }, 400);
     if (claim_type !== "preauth" && claim_type !== "claim") return json({ error: "claim_type must be 'preauth' or 'claim'" }, 400);
+
+    const { data: staff } = await sb
+      .from("users")
+      .select("hospital_id")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
+    if (!staff || staff.hospital_id !== hospital_id) return json({ error: "Forbidden" }, 403);
 
     // ── Fetch HCX config ──────────────────────────────────────────────────────
     const { data: cfg } = await sb
@@ -277,7 +299,12 @@ serve(async (req) => {
     if (!cfg.hcx_participant_code || !cfg.hcx_client_id || !cfg.hcx_client_secret) {
       const mockRes = sandboxClaimResponse(claim_type, bill_id);
       // Still store a mock record for UI testing
-      await sb.from("insurance_claims").upsert({
+      // Was `.upsert(...).catch(() => {})` — the same non-existent-.catch() defect
+      // found repeatedly this session; here it crashed with a 500 before the mock
+      // response below was ever returned, so the sandbox path this comment says
+      // exists specifically "for UI testing" has never actually returned anything
+      // to the UI. Found via Phase 6 edge-function testing.
+      const { error: mockUpsertErr } = await sb.from("insurance_claims").upsert({
         hospital_id,
         bill_id,
         tpa_name: "HCX-Sandbox",
@@ -288,7 +315,8 @@ serve(async (req) => {
         hcx_status: "submitted",
         hcx_submitted_at: new Date().toISOString(),
         hcx_response_json: mockRes,
-      }, { onConflict: "bill_id" }).catch(() => {});
+      }, { onConflict: "bill_id" });
+      if (mockUpsertErr) console.error("hcx-claim-submit: sandbox mock upsert failed:", mockUpsertErr.message);
       return json(mockRes);
     }
 
@@ -484,7 +512,10 @@ serve(async (req) => {
     }
 
     // ── Audit log ─────────────────────────────────────────────────────────────
-    await sb.from("hcx_submissions").insert({
+    // Was `.insert(...).catch(() => {})` — same non-existent-.catch() defect,
+    // crashing with a 500 before the real gateway response below could ever be
+    // returned to the caller. Found via Phase 6 edge-function testing.
+    const { error: submissionLogErr } = await sb.from("hcx_submissions").insert({
       hospital_id,
       api_call_id: apiCallId,
       correlation_id: correlationId,
@@ -494,7 +525,8 @@ serve(async (req) => {
       request_fhir: fhirBundle,
       response_payload: gwBody,
       hcx_status: hcxStatus,
-    }).catch(() => {});
+    });
+    if (submissionLogErr) console.error("hcx-claim-submit: hcx_submissions insert failed:", submissionLogErr.message);
 
     if (!gwRes.ok) {
       return json({
@@ -515,7 +547,7 @@ serve(async (req) => {
     });
 
   } catch (err: unknown) {
-    console.error("hcx-claim-submit error:", err);
+    console.error("hcx-claim-submit error:", sanitizeForLog(err instanceof Error ? err.message : String(err)));
     return json({ success: false, error: (err as Error).message }, 500);
   }
 });

@@ -106,6 +106,10 @@ clinical_significance levels:
           const critical = filtered.filter(f => f.clinical_significance === "critical");
           const significant = filtered.filter(f => f.clinical_significance === "significant");
 
+          // Deduped per (order, finding) — "Re-scan" resets alertFiredRef and re-runs the AI
+          // scan against the same report, which would otherwise re-raise every finding it
+          // finds again (KNOWN-BUG-002). Keyed on the finding text, not just orderId, since a
+          // single order can legitimately raise several distinct incidental findings.
           const alerts = [
             ...critical.map(f => ({
               hospital_id: hospitalId,
@@ -113,6 +117,8 @@ clinical_significance levels:
               severity: "critical",
               alert_message: `Critical incidental: ${f.finding} (${f.anatomical_region}) on ${studyName} — Patient: ${patientName}. Action: ${f.recommended_action}`,
               patient_id: patientId,
+              radiology_order_id: orderId,
+              dedupe_key: `${orderId}:${f.finding}`,
             })),
             ...significant.map(f => ({
               hospital_id: hospitalId,
@@ -120,11 +126,15 @@ clinical_significance levels:
               severity: "high",
               alert_message: `Incidental finding: ${f.finding} (${f.anatomical_region}) on ${studyName} — Patient: ${patientName}. Action: ${f.recommended_action}`,
               patient_id: patientId,
+              radiology_order_id: orderId,
+              dedupe_key: `${orderId}:${f.finding}`,
             })),
           ];
 
           if (alerts.length > 0) {
-            supabase.from("clinical_alerts").insert(alerts as any).then(() => {}, () => {});
+            supabase.from("clinical_alerts").upsert(alerts as any, {
+              onConflict: "hospital_id,alert_type,dedupe_key", ignoreDuplicates: true,
+            }).then(() => {}, () => {});
           }
         }
       } catch {

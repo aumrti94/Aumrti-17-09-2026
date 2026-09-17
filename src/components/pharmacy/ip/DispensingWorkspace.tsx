@@ -61,6 +61,7 @@ interface PatientInfo {
   dob?: string;
   blood_group?: string;
   phone?: string;
+  address?: string;
 }
 
 interface Props {
@@ -114,7 +115,13 @@ const DispensingWorkspace: React.FC<Props> = ({ hospitalId, prescription, onDisp
     // Fetch patient
     const { data: patientData } = await supabase
       .from("patients")
-      .select("full_name, uhid, allergies, gender, dob, blood_group, phone")
+      // address is selected now (KNOWN-BUG, found live): FiveRightsPanel's NDPS check
+      // (validateNDPSDispense) requires patient.address to be non-empty before an NDPS drug
+      // can be confirmed at all — with it missing from this query, that check could NEVER
+      // pass, for any patient, regardless of whether they actually had an address on file.
+      // No NDPS/Schedule-X drug could be dispensed to an admitted patient through this
+      // screen at all.
+      .select("full_name, uhid, allergies, gender, dob, blood_group, phone, address")
       .eq("id", prescription.patient_id)
       .maybeSingle();
 
@@ -336,7 +343,13 @@ const DispensingWorkspace: React.FC<Props> = ({ hospitalId, prescription, onDisp
             .limit(1)
             .maybeSingle();
 
-          await supabase.from("ndps_register").insert({
+          // The result is checked deliberately (KNOWN-BUG, found live): this insert used to be
+          // a bare await with no error check, so the DB's own safety net — the
+          // ndps_different_pharmacists CHECK constraint — could reject it completely silently.
+          // Stock was already decremented above; throwing here (rather than swallowing) means
+          // the dispense is NOT marked "dispensed" and the pharmacist sees a real failure to
+          // act on, instead of a clean "✓ Dispensed" over a narcotic with no register entry.
+          const { error: ndpsErr } = await supabase.from("ndps_register").insert({
             hospital_id: hospitalId,
             drug_id: it.drug_id,
             drug_name: it.drug_name,
@@ -351,6 +364,9 @@ const DispensingWorkspace: React.FC<Props> = ({ hospitalId, prescription, onDisp
             countersigned_at: ndpsApprovedCountersignerId ? new Date().toISOString() : null,
             prescriber_licence: ndpsPrescriberLicence || null,
           });
+          if (ndpsErr) {
+            throw new Error(`NDPS register entry for ${it.drug_name} failed to save (${ndpsErr.message}) — this dispense has NOT been completed. Do not hand over the drug; contact your pharmacy admin.`);
+          }
         }
       }
 
@@ -550,7 +566,9 @@ const DispensingWorkspace: React.FC<Props> = ({ hospitalId, prescription, onDisp
 
           const balance = (lastEntry?.balance_after || 0) - row.dispense_qty;
 
-          await supabase
+          // Result checked deliberately (KNOWN-BUG, found live) — see the identical fix and
+          // comment at this same insert's other call site above, in handleConfirmDispense.
+          const { error: ndpsErr } = await supabase
             .from("ndps_register")
             .insert({
               hospital_id:         hospitalId,
@@ -567,6 +585,9 @@ const DispensingWorkspace: React.FC<Props> = ({ hospitalId, prescription, onDisp
               countersigned_at:    activeCountersignerId ? new Date().toISOString() : null,
               prescriber_licence:  activePrescriberLicence || null,
             });
+          if (ndpsErr) {
+            throw new Error(`NDPS register entry for ${row.drug_name} failed to save (${ndpsErr.message}) — this dispense has NOT been completed. Do not hand over the drug; contact your pharmacy admin.`);
+          }
         }
       }
 

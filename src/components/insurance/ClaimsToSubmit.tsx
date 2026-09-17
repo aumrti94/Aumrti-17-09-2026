@@ -131,6 +131,7 @@ const ClaimsToSubmit: React.FC = () => {
 
   const handleSubmitClaim = async (row: ClaimRow) => {
     setSubmitting(row.bill_id);
+    const aiScore = aiScores[row.bill_id];
     const claimData: ClaimSubmitData = {
       bill_id:      row.bill_id,
       patient_id:   row.patient_id,
@@ -141,7 +142,10 @@ const ClaimsToSubmit: React.FC = () => {
       bill_number:  row.bill_number,
       has_pre_auth: row.has_pre_auth,
       admission_id: row.admission_id,
-      ai_score:     aiScores[row.bill_id],
+      // -1 is the "AI review skipped" sentinel (KNOWN-BUG-208) — never a real score, so it must
+      // not reach the claim's stored risk figure. Omitting it here lets submitClaim's own
+      // `row.ai_score ?? row.denial_risk` fall back to the heuristic risk instead.
+      ai_score:     aiScore !== undefined && aiScore >= 0 ? aiScore : undefined,
     };
     const result = await submission.submitClaim(claimData, planTier);
     if (result?.success) loadData();
@@ -218,7 +222,12 @@ const ClaimsToSubmit: React.FC = () => {
                         className={`text-[11px] h-7 gap-1 ${aiScores[r.bill_id] !== undefined ? "" : "bg-violet-600 hover:bg-violet-700"}`}
                         onClick={() => setSelectedForReview(r)}
                       >
-                        <Bot size={12} /> {aiScores[r.bill_id] !== undefined ? `AI: ${aiScores[r.bill_id]}%` : "AI Review"}
+                        <Bot size={12} />
+                        {aiScores[r.bill_id] === undefined
+                          ? "AI Review"
+                          : aiScores[r.bill_id] < 0
+                          ? "AI: Skipped"
+                          : `AI: ${aiScores[r.bill_id]}%`}
                       </Button>
 
                       {/* Plan A — Manual */}
@@ -324,6 +333,13 @@ const ClaimsToSubmit: React.FC = () => {
             }}
             onProceedSubmit={() => {
               handleSubmitClaim(selectedForReview);
+              setSelectedForReview(null);
+            }}
+            onSkip={() => {
+              // Sentinel: no real AI score, but unblocks submission the same as a real one —
+              // KNOWN-BUG-208. Never treated as "low risk"; the high-risk confirmation checkbox
+              // simply does not apply since there is no risk figure to confirm.
+              setAiScores(prev => ({ ...prev, [selectedForReview.bill_id]: -1 }));
               setSelectedForReview(null);
             }}
           />

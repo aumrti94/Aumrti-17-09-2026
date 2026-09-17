@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import type { PortalSession } from "./PortalLogin";
+import type { PortalSession } from "./portalTypes";
 
 type TimelineEvent = {
   type: "opd" | "ipd" | "lab" | "radiology";

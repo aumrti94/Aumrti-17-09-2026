@@ -1,95 +1,65 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import {
+  OT_BILLING_SOURCE_MODULE,
+  billedOtAdmissions,
+  buildLeakageReport,
+  leakageCutoffs,
+  leakageSeverity,
+  modulesWithLeaks,
+  type LeakageReport,
+} from '../_shared/leakageScan.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-interface LeakageItem {
-  category: 'lab' | 'radiology' | 'pharmacy' | 'ot';
-  description: string;
-  entity_id: string;
-  estimated_amount: number;
-}
+type ScanResult = LeakageReport & { hospital_id: string };
 
-interface ScanResult {
-  hospital_id: string;
-  items: LeakageItem[];
-  lab_count: number;
-  radiology_count: number;
-  pharmacy_count: number;
-  ot_count: number;
-  total_items: number;
-  estimated_amount: number;
-}
-
-const LAB_FALLBACK_RATE  = 200;
-const RAD_FALLBACK_RATE  = 500;
-const OT_FALLBACK_RATE   = 15000;
-
-// ─── Core scan logic for one hospital ────────────────────────────────────────
+/**
+ * PHASE 2 EXTRACTION. The decision half of this scan — grace windows, fallback rates,
+ * categorisation, the OT billed-check and the totals — now lives in
+ * `../_shared/leakageScan.ts` and is unit tested at `src/lib/leakageScan.test.ts`.
+ *
+ * It was previously inline here, which meant no vitest run could import it and the grace
+ * windows had never been asserted. Two defects had already reached production in this
+ * function for want of that: a stale `source_module = 'surgery'` filter that flagged EVERY
+ * completed OT case as leakage, and undefined top-level counts that made every successful
+ * scan report "0 items across 0 modules".
+ *
+ * What stays here is I/O: the queries, and only the queries.
+ */
 async function scanHospital(sb: ReturnType<typeof createClient>, hospitalId: string): Promise<ScanResult> {
-  const cutoff12h = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
-  const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const items: LeakageItem[] = [];
+  const cutoffs = leakageCutoffs(Date.now());
 
-  // ── 1. Lab orders with billing_status = 'unbilled' older than 12 h ────────
+  // ── 1. Lab orders with billing_status = 'unbilled' past the grace window ──
   const { data: labOrders } = await sb
     .from('lab_orders')
     .select('id, created_at')
     .eq('hospital_id', hospitalId)
     .eq('billing_status', 'unbilled')
-    .lt('created_at', cutoff12h);
+    .lt('created_at', cutoffs.ancillary);
 
-  for (const lo of (labOrders || [])) {
-    items.push({
-      category: 'lab',
-      description: 'Lab Order — unbilled',
-      entity_id: lo.id,
-      estimated_amount: LAB_FALLBACK_RATE,
-    });
-  }
-
-  // ── 2. Radiology orders validated but unbilled, older than 12 h ───────────
+  // ── 2. Radiology orders validated but unbilled ───────────────────────────
   const { data: radOrders } = await sb
     .from('radiology_orders')
     .select('id, study_name, created_at')
     .eq('hospital_id', hospitalId)
     .eq('billing_status', 'unbilled')
     .eq('status', 'validated')
-    .lt('created_at', cutoff12h);
+    .lt('created_at', cutoffs.ancillary);
 
-  for (const ro of (radOrders || [])) {
-    items.push({
-      category: 'radiology',
-      description: `Radiology: ${ro.study_name || 'Study'}`,
-      entity_id: ro.id,
-      estimated_amount: RAD_FALLBACK_RATE,
-    });
-  }
-
-  // ── 3. Pharmacy IP dispenses with bill_linked = false, older than 12 h ────
+  // ── 3. Pharmacy IP dispenses not linked to a bill ────────────────────────
   const { data: pharmaDispenses } = await (sb as any)
     .from('pharmacy_dispensing')
     .select('id, pharmacy_dispensing_items(drug_name, unit_price, quantity_dispensed)')
     .eq('hospital_id', hospitalId)
     .eq('dispensing_type', 'ip')
     .eq('bill_linked', false)
-    .lt('created_at', cutoff12h);
+    .lt('created_at', cutoffs.ancillary);
 
-  for (const pd of (pharmaDispenses || [])) {
-    for (const di of (pd.pharmacy_dispensing_items || [])) {
-      items.push({
-        category: 'pharmacy',
-        description: `Pharmacy IP: ${di.drug_name}`,
-        entity_id: pd.id,
-        estimated_amount: Number(di.unit_price || 0) * Number(di.quantity_dispensed || 1),
-      });
-    }
-  }
-
-  // ── 4. Completed OT cases older than 24 h with no surgery billing entry ───
+  // ── 4. Completed OT cases past their longer grace window ─────────────────
   const { data: otCases } = await sb
     .from('ot_schedules')
     .select('id, surgery_name, admission_id, actual_end_time')
@@ -97,7 +67,9 @@ async function scanHospital(sb: ReturnType<typeof createClient>, hospitalId: str
     .eq('status', 'completed')
     .not('actual_end_time', 'is', null)
     .not('admission_id', 'is', null)
-    .lt('actual_end_time', cutoff24h);
+    .lt('actual_end_time', cutoffs.ot);
+
+  let billedAdmissionIds = new Set<string>();
 
   if (otCases && otCases.length > 0) {
     // Batch billing check: avoid N+1 by fetching all related data in 2 queries
@@ -113,48 +85,27 @@ async function scanHospital(sb: ReturnType<typeof createClient>, hospitalId: str
       (relatedBills || []).map((b: any) => [b.id, b.admission_id])
     );
     const billIds = (relatedBills || []).map((b: any) => b.id);
-    const billedAdmissionIds = new Set<string>();
 
     if (billIds.length > 0) {
-      // NOTE: real OT billing (serviceBilling.ts chargeOTCase/buildOTChargeLineItems) tags
-      // every OT line item with source_module='ot' — 'surgery' was a stale value that never
-      // matched, which meant this scan flagged every completed OT case as unbilled leakage
-      // regardless of actual billing status.
-      const { data: surgeryLineItems } = await sb
+      const { data: otLineItems } = await sb
         .from('bill_line_items')
-        .select('bill_id')
+        .select('bill_id, source_module')
         .in('bill_id', billIds)
-        .eq('source_module', 'ot');
+        .eq('source_module', OT_BILLING_SOURCE_MODULE);
 
-      for (const li of (surgeryLineItems || [])) {
-        const admId = billIdToAdmission.get(li.bill_id);
-        if (admId) billedAdmissionIds.add(admId);
-      }
-    }
-
-    for (const ot of otCases) {
-      if (billedAdmissionIds.has(ot.admission_id)) continue;
-      items.push({
-        category: 'ot',
-        description: `OT: ${ot.surgery_name}`,
-        entity_id: ot.id,
-        estimated_amount: OT_FALLBACK_RATE,
-      });
+      billedAdmissionIds = billedOtAdmissions(otLineItems as any[], billIdToAdmission);
     }
   }
 
-  const estimatedAmount = items.reduce((s, i) => s + i.estimated_amount, 0);
+  const report = buildLeakageReport({
+    labOrders: labOrders as any[],
+    radiologyOrders: radOrders as any[],
+    pharmacyDispenses: pharmaDispenses as any[],
+    otCases: otCases as any[],
+    billedOtAdmissionIds: billedAdmissionIds,
+  });
 
-  return {
-    hospital_id: hospitalId,
-    items,
-    lab_count:       items.filter(i => i.category === 'lab').length,
-    radiology_count: items.filter(i => i.category === 'radiology').length,
-    pharmacy_count:  items.filter(i => i.category === 'pharmacy').length,
-    ot_count:        items.filter(i => i.category === 'ot').length,
-    total_items:     items.length,
-    estimated_amount: estimatedAmount,
-  };
+  return { hospital_id: hospitalId, ...report };
 }
 
 // ─── WATI WhatsApp notification ───────────────────────────────────────────────
@@ -222,6 +173,23 @@ serve(async (req) => {
       day: '2-digit', month: '2-digit', year: 'numeric',
     }); // DD/MM/YYYY
 
+    // ── Auth ──────────────────────────────────────────────────────────────
+    // Previously had NO auth check at all. The no-body path scans and returns
+    // EVERY hospital's unbilled-revenue leakage figures — callable by anyone,
+    // no token required. The body-scoped path let any authenticated user of
+    // any hospital name another hospital's id and get its leakage figures
+    // back, plus fire a WhatsApp alert to that hospital's own CFO/billing
+    // staff. Found in the Phase 4 isolation audit — see KNOWN_BUGS.md.
+    //
+    // Two legitimate callers: the pg_cron nightly job sends no body and
+    // authenticates with the service-role key (matching insurance-daily-alerts'
+    // pattern in this same directory); the Billing UI's on-demand "Run Scan"
+    // sends { hospital_id } via a real user's session and must be checked
+    // against that user's own hospital.
+    const authHeader = req.headers.get('Authorization') ?? '';
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const isInternalCaller = authHeader === `Bearer ${serviceKey}`;
+
     // Scope: an on-demand scan from the Billing UI sends { hospital_id } and must scan
     // ONLY that hospital. Previously the body was ignored entirely, so one user clicking
     // "Run Scan" kicked off a scan for every hospital on the platform — wasteful and
@@ -232,6 +200,34 @@ serve(async (req) => {
       requestedHospitalId = body?.hospital_id ?? null;
     } catch {
       // No/!JSON body — the cron path. Scan everything.
+    }
+
+    if (!isInternalCaller) {
+      // A non-cron caller MUST name exactly one hospital, and it must be their own.
+      if (!requestedHospitalId) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const token = authHeader.replace(/^Bearer /, '');
+      if (!token) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const anonClient = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!);
+      const { data: { user }, error: authErr } = await anonClient.auth.getUser(token);
+      if (authErr || !user) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const { data: staff } = await sb.from('users').select('hospital_id').eq('auth_user_id', user.id).maybeSingle();
+      if (!staff || staff.hospital_id !== requestedHospitalId) {
+        return new Response(JSON.stringify({ error: 'Forbidden' }), {
+          status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     let hospitalQuery = sb
@@ -278,13 +274,17 @@ serve(async (req) => {
           const amountFormatted = '₹' + scan.estimated_amount.toLocaleString('en-IN');
 
           // ── In-app clinical alert ─────────────────────────────────────────
-          await sb.from('clinical_alerts').insert({
+          // Was unchecked — 'leakage_detected' had no entry in clinical_alerts_alert_type_check
+          // until this same pass, so this insert has always failed silently, forever, while
+          // the scan itself still reported ok:true.
+          const { error: alertErr } = await sb.from('clinical_alerts').insert({
             hospital_id:  hospital.id,
             alert_type:   'leakage_detected',
             alert_message: `Leakage Alert (${reportDateFormatted}): ${scan.total_items} unbilled item(s) — estimated ${amountFormatted} revenue at risk. Open Leakage Scanner to review.`,
-            severity:     scan.estimated_amount >= 50000 ? 'critical' : 'high',
+            severity:     leakageSeverity(scan.estimated_amount),
             is_acknowledged: false,
           });
+          if (alertErr) console.error(`daily-leakage-scan: clinical_alerts insert failed for hospital ${hospital.id}:`, alertErr.message);
 
           // ── Fetch CFO / billing_executive / hospital_admin phone numbers ──
           const { data: staffUsers } = await sb
@@ -320,12 +320,10 @@ serve(async (req) => {
           hospital_id:      hospital.id,
           total_items:      scan.total_items,
           estimated_amount: scan.estimated_amount,
-          modules_with_leaks: [
-            scan.lab_count, scan.radiology_count, scan.pharmacy_count, scan.ot_count,
-          ].filter((c) => c > 0).length,
+          modules_with_leaks: modulesWithLeaks(scan),
         });
       } catch (scanErr) {
-        console.error(`Scan failed for hospital ${hospital.id}:`, scanErr);
+        console.error(`Scan failed for hospital ${hospital.id}:`, scanErr instanceof Error ? scanErr.message : String(scanErr));
         failures.push(hospital.id);
       }
     }
@@ -351,9 +349,9 @@ serve(async (req) => {
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
   } catch (err: any) {
-    console.error('daily-leakage-scan fatal:', err);
+    console.error('daily-leakage-scan fatal:', err instanceof Error ? err.message : String(err));
     return new Response(
-      JSON.stringify({ error: err.message }),
+      JSON.stringify({ error: 'Internal error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
   }

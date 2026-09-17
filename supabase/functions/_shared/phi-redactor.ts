@@ -32,9 +32,12 @@ const PHI_RULES: Array<{ pattern: RegExp; replacement: string }> = [
     pattern: /"(?:aadhaar|aadhar|uid|national_id|aadhaar_enc)"\s*:\s*"[^"]+"/g,
     replacement: '"aadhaar":"[REDACTED]"',
   },
-  // Encrypted column names with their ciphertext values
+  // Encrypted column names with their ciphertext values. `signature_data_enc`/`patient_name_enc`
+  // were removed (KNOWN-BUG-124) — neither is a real column; the migration that was supposed to
+  // introduce them (20261106000010) instead added `patient_consents.patient_signature_enc` and
+  // `.witness_signature_enc`, which this pattern list never picked up.
   {
-    pattern: /"(?:name_enc|result_enc|notes_enc|prompt_enc|last_message_enc|signature_data_enc|patient_name_enc)"\s*:\s*"[^"]+"/g,
+    pattern: /"(?:name_enc|result_enc|notes_enc|prompt_enc|last_message_enc|patient_signature_enc|witness_signature_enc)"\s*:\s*"[^"]+"/g,
     replacement: '"phi_enc":"[PHI-ENCRYPTED]"',
   },
   // Hash columns (HMAC digests — 64 hex chars)

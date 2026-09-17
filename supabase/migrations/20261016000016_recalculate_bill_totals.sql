@@ -13,7 +13,9 @@
 --   * total_amount is NET OF DISCOUNT (the comment in billTotals.ts warns that breaking this
 --     lets a later line-item edit silently re-inflate an already-discounted bill);
 --   * every intermediate is clamped at zero with max(x, 0), matching roundCurrency + Math.max.
--- The existing unit tests in src/lib/billTotals.test.ts remain the specification for both.
+-- UNGUARDED as of 2026-09-05 — src/lib/billTotals.test.ts, which specified and enforced both
+-- conventions, was removed with the rest of the suite. This comment is now the only record
+-- of the two conventions; nothing currently checks the SQL and TS implementations agree.
 --
 -- SECURITY INVOKER (the default — deliberately NOT security definer): the caller's own RLS
 -- decides which bills they may touch, and the existing day-close triggers

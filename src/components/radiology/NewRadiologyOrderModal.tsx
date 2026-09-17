@@ -425,6 +425,15 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
     const today = new Date().toISOString().split("T")[0];
     const todayCompact = today.replace(/-/g, "");
 
+    // Hospital-wide (one machine/doctor registration per hospital today, not per-scan) —
+    // fetched once for the whole batch, not per study. Missing entirely for a hospital that
+    // hasn't filled in Settings → Radiology → PCPNDT yet; buildFormFRow tolerates that (KNOWN-BUG-142).
+    const { data: pcpndtSettings } = await (supabase as any)
+      .from("pcpndt_settings")
+      .select("machine_name, machine_registration_number, doctor_pcpndt_registration")
+      .eq("hospital_id", hospitalId)
+      .maybeSingle();
+
     for (let i = 0; i < selectedStudies.length; i++) {
       const study = selectedStudies[i];
 
@@ -504,6 +513,9 @@ const NewRadiologyOrderModal: React.FC<Props> = ({
             indication: clinicalHistory || null,
             signedBy: userId,
             referredBy: referringDoctorId || userId,
+            machineName: pcpndtSettings?.machine_name ?? null,
+            machineRegistrationNumber: pcpndtSettings?.machine_registration_number ?? null,
+            doctorPcpndtRegistration: pcpndtSettings?.doctor_pcpndt_registration ?? null,
           }) as never
         );
         if (formFErr) {

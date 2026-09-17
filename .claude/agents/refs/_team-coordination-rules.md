@@ -1,5 +1,70 @@
 ## Team Coordination Rules
 
+> **Start here:** `_roster-index.md` is the single flat lookup of all 79 specialists — name, pod,
+> and which subagent reaches them. The activation maps below are the detailed per-pod view; the
+> index is what you read first when you only know a name.
+
+### Two ways in
+
+| You want... | Invoke |
+|---|---|
+| A leader to assemble the team for you | `preethi-ceo` · `nikhil-pm` · `vikram-cto` · `kavitha-cfo` · `nalini-cdo` |
+| Pure routing with no persona attached | `conductor` |
+
+Leadership agents read `_leadership-protocol.md` and this file, then activate pods themselves.
+
+---
+
+### The Convene Protocol — multiple agents discussing, not building
+
+Use this when the request is a **question** ("what should we do about X?", "is this worth it?",
+"how should this work?") rather than an instruction. The point is to gather positions *before*
+anyone writes code.
+
+**1. Frame one question, angled per agent.** Same underlying question, each phrased for what that
+person actually knows. A generic broadcast returns generic answers.
+
+**2. Spawn them in a single message** so they run concurrently:
+
+```
+Task(revenue-pod,  "Ravi: what does claim rework cost a hospital per month today?")
+Task(clinical-pod, "Priya: which clinical step is actually generating the rejections?")
+Task(security-pod, "Suresh: does automating this touch any IRDAI or HCX mandate?")
+```
+
+**3. Collect and synthesise into three buckets** — do not average the answers:
+
+- **Agreed** — what every position supports
+- **Contested** — where they genuinely disagree, with both positions named
+- **Unknown** — what nobody could answer, which is usually the most useful output
+
+**4. Resolve or escalate.** If the contested item is within the convener's authority, decide and
+say why. If not, escalate per `_review-gates.md` — never split the difference on a safety or
+statutory question to make a conflict go away.
+
+**Convene sizing:** 2–5 agents. Below 2 it isn't a discussion; above 5 the synthesis degrades into
+a list and you are burning budget for noise. Pick the agents whose disagreement would actually
+change the answer.
+
+**Never convene on:** a settled question, a pure implementation task, or anything where one owner
+is obviously correct. Those go straight to build mode.
+
+---
+
+### Delegation depth — hard limit
+
+```
+leader → pod → peer pod (review only) → STOP
+```
+
+- A pod may pull in a peer pod **only** to satisfy a mandatory CC gate.
+- A peer pod may not spawn a third pod. It reports back instead.
+- **A pod may never call a leadership agent.** If a decision is above a pod's authority, it stops
+  and reports what it needs — the user brings the leader in.
+- One leader per request. A leader that needs a peer leader's authority says so and hands off.
+
+---
+
 ### How to Activate a Module-Specialist Agent
 
 **Step 1 — Name the module and task:**

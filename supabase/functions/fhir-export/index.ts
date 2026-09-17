@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -843,6 +844,20 @@ serve(async (req) => {
 
     // ── New action-based mode ──────────────────────────────────────────────
     if (action) {
+      // Had NO auth check at all — hospital_id came straight from the request body, so any
+      // caller with no authentication whatsoever could name any hospital_id + source_id and
+      // receive that record's complete FHIR bundle: patient name, DOB, gender, phone, ABHA
+      // number, diagnoses, medications, lab results, radiology reports. A fully unauthenticated
+      // cross-tenant PHI leak, the same defect class as KNOWN-BUG-126 but missed by that audit.
+      // The only real caller (grepped across src/ and supabase/functions/) is
+      // abdm-fhir-package, which invokes this via its own service-role client — so, matching
+      // the internal-only pattern KNOWN-BUG-126 already established for abdm-gateway-token and
+      // generate-invoice, this path now requires the actual service-role secret as bearer.
+      const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      if ((authHeader ?? "") !== `Bearer ${serviceRoleKey}`) {
+        return json({ error: "Unauthorized" }, 401);
+      }
+
       const sourceId = body.source_id as string;
       const hospitalId = body.hospital_id as string;
       if (!sourceId || !hospitalId) {
@@ -937,6 +952,7 @@ serve(async (req) => {
 
     return json(bundle);
   } catch (err) {
-    return json({ error: (err as Error).message }, 500);
+    console.error("[fhir-export] failed:", sanitizeForLog(err instanceof Error ? err.message : String(err)));
+    return json({ error: "Internal error" }, 500);
   }
 });

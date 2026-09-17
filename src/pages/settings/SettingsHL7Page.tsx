@@ -9,7 +9,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Network, Plus, CheckCircle2, Loader2, Download, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { format } from "date-fns";
+import EmptyState from "@/components/EmptyState";
 
 const HL7_MESSAGE_TYPES = [
   { code: "ADT^A01", desc: "Admit Patient" },
@@ -22,12 +22,6 @@ const HL7_MESSAGE_TYPES = [
 
 /** The hospital_settings key this screen owns. */
 const HL7_SETTINGS_KEY = "hl7_integration";
-
-const MOCK_LOG = [
-  { id: "1", direction: "inbound", msg_type: "ORU^R01", status: "processed", source: "LIS", created_at: new Date().toISOString() },
-  { id: "2", direction: "outbound", msg_type: "ADT^A01", status: "sent", source: "HMS", created_at: new Date(Date.now() - 3600000).toISOString() },
-  { id: "3", direction: "inbound", msg_type: "ORU^R01", status: "error", source: "LIS", created_at: new Date(Date.now() - 7200000).toISOString() },
-];
 
 export default function SettingsHL7Page() {
   const { hospitalId } = useHospitalId();
@@ -260,39 +254,19 @@ export default function SettingsHL7Page() {
         </TabsContent>
 
         {/* ── Log ── */}
+        {/* No hl7_message_log table exists yet — this tab used to render a hardcoded
+            MOCK_LOG with timestamps computed relative to now(), so it always looked like a
+            live feed. Replaced 2026-09-05 with an honest empty state; wire this up for real
+            once a backing table exists rather than restoring the mock. */}
         <TabsContent value="log" className="flex-1 overflow-auto p-6 m-0">
-          <div className="max-w-3xl">
-            <div className="flex justify-between items-center mb-3">
-              <p className="text-[13px] font-semibold text-foreground">Recent HL7 Messages</p>
-              <Button size="sm" variant="outline" className="gap-1.5 h-8"><RefreshCw size={12} /> Refresh</Button>
-            </div>
-            <div className="border border-border rounded-xl overflow-hidden">
-              <table className="w-full text-[12px]">
-                <thead className="bg-muted/50"><tr>
-                  {["Time","Direction","Type","Source","Status"].map(h => (
-                    <th key={h} className="text-left px-4 py-2.5 font-medium text-muted-foreground text-[11px]">{h}</th>
-                  ))}
-                </tr></thead>
-                <tbody>
-                  {MOCK_LOG.map(m => (
-                    <tr key={m.id} className="border-t border-border">
-                      <td className="px-4 py-2.5 text-muted-foreground">{format(new Date(m.created_at), "dd/MM HH:mm")}</td>
-                      <td className="px-4 py-2.5">
-                        <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-medium", m.direction === "outbound" ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-green-50 text-green-700 border-green-200")}>
-                          {m.direction}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 font-mono text-[11px] font-bold text-foreground">{m.msg_type}</td>
-                      <td className="px-4 py-2.5 text-muted-foreground">{m.source}</td>
-                      <td className="px-4 py-2.5">
-                        <span className={cn("text-[11px] px-2 py-0.5 rounded-full border font-medium", m.status === "processed" || m.status === "sent" ? "bg-green-50 text-green-700 border-green-200" : "bg-red-50 text-red-700 border-red-200")}>
-                          {m.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <div className="max-w-3xl h-full">
+            <p className="text-[13px] font-semibold text-foreground mb-3">Recent HL7 Messages</p>
+            <div className="border border-border rounded-xl h-[calc(100%-2rem)]">
+              <EmptyState
+                icon="📡"
+                title="No message history yet"
+                description="Message history will appear here once your Mirth Connect channel is configured and exchanging HL7 messages."
+              />
             </div>
           </div>
         </TabsContent>

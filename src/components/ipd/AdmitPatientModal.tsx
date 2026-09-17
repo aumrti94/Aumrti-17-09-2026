@@ -106,6 +106,7 @@ const AdmitPatientModal: React.FC<Props> = ({
   // MLC
   const [isMlcAdm, setIsMlcAdm] = useState(false);
   const [mlcPoliceStation, setMlcPoliceStation] = useState("");
+  const [policeActuallyInformed, setPoliceActuallyInformed] = useState(false);
 
   // Payer
   const [payerType, setPayerType] = useState("cash");
@@ -372,7 +373,9 @@ const AdmitPatientModal: React.FC<Props> = ({
       is_mlc: isMlcAdm,
       mlc_number: mlcNum,
       police_station: isMlcAdm && mlcPoliceStation.trim() ? mlcPoliceStation.trim() : null,
-      police_informed_at: isMlcAdm ? new Date().toISOString() : null,
+      // Only stamped when the admitting user separately confirms police were actually informed —
+      // this used to fire unconditionally the moment the MLC checkbox was on (KNOWN-BUG-237).
+      police_informed_at: isMlcAdm && policeActuallyInformed ? new Date().toISOString() : null,
       payer_type: payerType,
       payer_id: payerId || null,
       must_score: (mustBmi || mustWeightLoss || mustAcuteDisease) ? mustScore : null,
@@ -808,7 +811,8 @@ const AdmitPatientModal: React.FC<Props> = ({
 
               <div className="flex items-start gap-3">
                 <label className="flex items-center gap-2 cursor-pointer mt-1">
-                  <input type="checkbox" checked={isMlcAdm} onChange={e => setIsMlcAdm(e.target.checked)}
+                  <input type="checkbox" checked={isMlcAdm}
+                    onChange={e => { setIsMlcAdm(e.target.checked); if (!e.target.checked) setPoliceActuallyInformed(false); }}
                     className="rounded border-slate-300 accent-red-600" />
                   <span className="text-xs font-bold text-slate-600">Medico-Legal Case (MLC)</span>
                 </label>
@@ -822,6 +826,17 @@ const AdmitPatientModal: React.FC<Props> = ({
                   <AlertTriangle className="h-3.5 w-3.5 text-red-600 mt-0.5 shrink-0" />
                   <p className="text-[11px] text-red-700">MLC — Notify police within 24 hours. MLC number will be auto-generated. Maintain medico-legal register.</p>
                 </div>
+              )}
+              {isMlcAdm && (
+                // Separate, deliberate confirmation — marking the admission as MLC used to
+                // unconditionally stamp police_informed_at the instant this form was submitted,
+                // regardless of whether police were actually contacted (KNOWN-BUG-237). Only this
+                // checkbox now sets that timestamp.
+                <label className="flex items-center gap-2 cursor-pointer pl-1">
+                  <input type="checkbox" checked={policeActuallyInformed} onChange={e => setPoliceActuallyInformed(e.target.checked)}
+                    className="rounded border-slate-300 accent-red-600" />
+                  <span className="text-xs text-slate-600">Police have actually been informed (not just that this is an MLC)</span>
+                </label>
               )}
 
               <div className="flex justify-between pt-2">

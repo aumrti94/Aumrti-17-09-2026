@@ -96,8 +96,13 @@ Start directly with "1. 📊"`;
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
-    console.error("digest error:", e);
-    return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }), {
+    // Never log or return the raw error — this function's own request body carries
+    // aggregate financial/clinical snapshot data, and a stray thrown value could echo a
+    // fragment of it back into logs or the HTTP response. Same tidy applied to every other
+    // catch-all this phase. Found via Phase 6 AI-function-plumbing testing.
+    const name = e instanceof Error ? e.name : "UnknownError";
+    console.error(`ai-executive-digest failed: ${name}`);
+    return new Response(JSON.stringify({ error: "Could not build the digest." }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

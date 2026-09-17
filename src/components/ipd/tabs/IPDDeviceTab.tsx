@@ -172,9 +172,10 @@ const IPDDeviceTab: React.FC<Props> = ({ admissionId, hospitalId, userId, patien
       insertion_site: addForm.insertion_site || null,
       notes: addForm.notes || null,
       inserted_by: userId ?? null,
-    }).select().single();
+    }).select().maybeSingle();
     setAddSaving(false);
     if (error) { toast({ title: "Failed to add device", description: error.message, variant: "destructive" }); return; }
+    if (!device) { toast({ title: "Failed to add device", description: "No row returned.", variant: "destructive" }); return; }
 
     // If there's an insertion bundle for this device, auto-open it
     const insertBundle = INSERT_BUNDLES[addForm.device_type];

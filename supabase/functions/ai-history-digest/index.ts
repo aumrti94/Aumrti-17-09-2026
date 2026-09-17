@@ -318,6 +318,19 @@ serve(async (req) => {
   let hospitalForCleanup: string | null = null;
 
   try {
+    // Internal-only. This is the reduce step of ai-history-ingest's self-re-invoking worker
+    // (see that file's invokeFunction()) and is never called from the browser — no auth check
+    // existed at all before this. Without it, any caller holding only the public anon key
+    // (which ships in every browser bundle) could name ANOTHER hospital's job_id, forcing a
+    // digest rebuild against that hospital's AI entitlement/budget and triggering
+    // finalizeAndPurge() to delete that hospital's staged scan files early — the same "no auth
+    // check at all" defect class as KNOWN-BUG-126/-199. Found via Phase 6 AI-function-plumbing
+    // testing.
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    if (req.headers.get("Authorization") !== `Bearer ${serviceKey}`) {
+      return json({ error: "Unauthorized" }, 401);
+    }
+
     const { job_id } = await req.json().catch(() => ({}));
     if (!job_id) return json({ error: "job_id is required" }, 400);
 

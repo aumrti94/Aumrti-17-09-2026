@@ -120,15 +120,20 @@ export default function ObstetricANCPage() {
   const save = useMutation({
     mutationFn: async (signoff: "draft" | "signed") => {
       if (!hospitalId || !patientId) throw new Error("Select a patient first");
-        const { error } = await supabase.from("obstetric_records").insert({
-          hospital_id: hospitalId,
-          patient_id: patientId,
-          high_risk_status: riskFlags.length > 0,
-          risk_factors: riskFlags,
-          signoff_status: signoff,
-          anc_full_data: form,
-          ...form,
-        });
+      // Only anc_full_data + these 3 real columns are ever written — `...form` used to spread
+      // ~45 form fields as top-level insert keys, and only a handful matched real columns on
+      // obstetric_records (KNOWN-BUG-226). The free-form visit detail (vitals, symptoms, labs,
+      // the bishop_* fields as this page's own 0-10/0-100/string encoding, which does not match
+      // the table's real 0-3 integer encoding used by ObstetricSheet.tsx) lives in anc_full_data.
+      const { error } = await supabase.from("obstetric_records").insert({
+        hospital_id: hospitalId,
+        patient_id: patientId,
+        record_type: "anc",
+        high_risk_status: riskFlags.length > 0,
+        risk_factors: riskFlags,
+        signoff_status: signoff,
+        anc_full_data: form,
+      });
       if (error) throw error;
     },
     onSuccess: () => toast({ title: "ANC encounter saved ✓" }),

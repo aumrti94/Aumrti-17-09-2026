@@ -39,6 +39,36 @@ const SCAN_DIRS = ["src", "supabase/functions", "e2e", "scripts"];
 // `supabase.storage.from("<bucket>")` shares the `.from(` shape with the query builder.
 const STORAGE_BUCKETS = new Set(["dicom", "avatars", "documents", "reports", "logos", "attachments"]);
 
+// ── edge function contract ────────────────────────────────────────────────────────────────────
+// Same defect class as check 1, different surface. `supabase.functions.invoke("name")` returns
+// its error as a value exactly like the query builder, so invoking a function that was never
+// deployed fails silently at the call site. Nothing else in CI validates these names.
+const FUNCTIONS_DIR = join(ROOT, "supabase", "functions");
+const knownFunctions = new Set(
+  readdirSync(FUNCTIONS_DIR, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && !e.name.startsWith("_"))
+    .map((e) => e.name),
+);
+
+// Invoke targets that are known to be missing TODAY. These are live defects, not exemptions:
+// each is a call site whose function was never written, so the feature behind it does not work.
+// They are listed rather than fatal so that this guard could be switched on without turning main
+// red — the point of the guard is to stop a FOURTH one appearing unnoticed.
+//
+// Removing a name from this list is the definition of done for fixing it. The list must only
+// ever shrink; a new entry means someone shipped a call to a function that does not exist.
+const KNOWN_MISSING_FUNCTIONS = new Map([
+  ["send-whatsapp-alert", "insurance ActiveAdmissions — WhatsApp alert on admission"],
+  ["tpa-verify-policy", "insurance PolicyVerificationPanel — TPA policy lookup"],
+  ["test-hcx-connection", "insurance TPAConfiguration — HCX connectivity test button"],
+]);
+
+// NOT in the list above, deliberately: src/pages/kiosk/KioskCheckinPage.tsx names a
+// `kiosk-verify-otp` endpoint, but only inside a comment — there is no call site for this
+// guard to catch. The code beneath that comment sets `verified = true` unconditionally, so
+// outside simulation mode the kiosk accepts any OTP. That is an auth defect in the page, not
+// a missing edge function, and adding the name here would mislabel it as the latter.
+
 // ── parse types.ts ────────────────────────────────────────────────────────────────────────────
 const types = readFileSync(TYPES, "utf8");
 const publicStart = types.indexOf("\n  public: {");
@@ -109,6 +139,9 @@ const badFns = [];
 // Real, but the migration has not reached a database yet, so types.ts cannot know about it.
 const pendingTables = [];
 const pendingFns = [];
+// Edge function invocations naming a directory that does not exist.
+const badInvokes = [];
+const knownBadInvokes = [];
 
 for (const file of files) {
   const src = readFileSync(file, "utf8");
@@ -133,6 +166,20 @@ for (const file of files) {
       const where = `${rel}:${line}  .rpc("${m[1]}")`;
       if (migratedFns.has(m[1].toLowerCase())) pendingFns.push(where);
       else badFns.push(where);
+    }
+  }
+  // Two shapes reach an edge function: the client helper, and a raw fetch at the REST path.
+  for (const re of [
+    /\.functions\s*\.invoke\(\s*['"`]([a-zA-Z0-9-]+)['"`]/g,
+    /\/functions\/v1\/([a-zA-Z0-9-]+)/g,
+  ]) {
+    for (const m of code.matchAll(re)) {
+      if (knownFunctions.has(m[1])) continue;
+      const line = code.slice(0, m.index).split("\n").length;
+      const where = `${rel}:${line}  "${m[1]}"`;
+      if (KNOWN_MISSING_FUNCTIONS.has(m[1])) {
+        knownBadInvokes.push(`${where} — ${KNOWN_MISSING_FUNCTIONS.get(m[1])}`);
+      } else badInvokes.push(where);
     }
   }
 }
@@ -167,6 +214,33 @@ if (knownTables.size < 100) {
   );
 }
 
+if (badInvokes.length) {
+  failed = true;
+  console.error(
+    `\ncheck-db-contract FAILED — ${badInvokes.length} edge function call(s) with no matching ` +
+    "directory in supabase/functions:",
+  );
+  for (const b of badInvokes) console.error(`  - ${b}`);
+  console.error(
+    "\nsupabase.functions.invoke() returns its error as a value rather than throwing, so this\n" +
+    "fails silently at runtime — the button appears to work and nothing happens. Either create\n" +
+    "the function, or correct the name to an existing one.",
+  );
+}
+
+// Not a failure, but not acceptable either: pre-existing broken call sites, recorded so this
+// guard could be switched on without turning main red. Each is a feature that does not work.
+// Fixing one means deleting its entry from KNOWN_MISSING_FUNCTIONS.
+if (knownBadInvokes.length) {
+  console.warn(`\ncheck-db-contract — ${knownBadInvokes.length} KNOWN-BROKEN edge function call(s):`);
+  for (const k of knownBadInvokes) console.warn(`  ! ${k}`);
+  console.warn(
+    "\nThese invoke functions that do not exist in supabase/functions. They are live defects,\n" +
+    "allowlisted in KNOWN_MISSING_FUNCTIONS so this guard could be introduced without failing\n" +
+    "a build it did not break. That list must only ever shrink.",
+  );
+}
+
 // Not a failure: the name resolves against a migration, so it is a real relation whose migration
 // has not been applied yet. Surfaced loudly anyway — if it is still here after the migration is
 // pushed, types.ts was never regenerated and check 1 is running blind on those names.
@@ -188,5 +262,6 @@ if (failed) process.exit(1);
 
 console.log(
   `check-db-contract passed — ${knownTables.size} tables, ${knownViews.size} views, ` +
-  `${knownFns.size} functions declared; every .from()/.rpc() in ${files.length} files resolves.`,
+  `${knownFns.size} functions, ${knownFunctions.size} edge functions declared; ` +
+  `every .from()/.rpc()/invoke() in ${files.length} files resolves.`,
 );

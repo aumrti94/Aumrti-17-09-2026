@@ -1,7 +1,13 @@
 # 20 — DATABASE RESTRUCTURING PLAN
 
-Sequenced remediation. **Nothing in this plan has been executed** — this audit made no changes.
-Every item requires human approval before implementation.
+Sequenced remediation, as it stood at capture (2026-08-18). This audit itself made no changes.
+
+> **See [`00_STATUS.md`](00_STATUS.md) before reading further.** Phase 0 below — closing the
+> confidentiality holes — was executed on 2026-10-16, one day after capture, as migrations
+> `20261016000001`–`20261016000014`. The line that used to read "nothing in this plan has been
+> executed" was true when written and is not true now.
+
+Every remaining item still requires human approval before implementation.
 
 Ordering is by *risk-adjusted value*: close confidentiality holes first, then correctness, then
 performance, then hygiene. Within each phase, lowest-risk change first.
@@ -11,11 +17,15 @@ policies, constraints, indexes and identifiers.
 
 ---
 
-## Phase 0 — Emergency (hours) · confidentiality
+## Phase 0 — Emergency (hours) · confidentiality — ✅ DONE (2026-10-16), except 0.5
 
 Highest severity, lowest risk. All are metadata changes with no data migration.
 
-### 0.1 Close the RLS-bypassing views — [C-13](21_CRITICAL_FINDINGS.md)
+**0.1–0.4 are done**, landed as `20261016000002` through `20261016000005` the day after this
+plan was written — verified by reading each migration directly, not by trusting this note. See
+[`00_STATUS.md`](00_STATUS.md). **0.5 is not done** — see its entry below.
+
+### 0.1 Close the RLS-bypassing views — [C-13](21_CRITICAL_FINDINGS.md) — ✅ FIXED, `20261016000002_sec_views_security_invoker.sql`
 ```sql
 ALTER VIEW public.ipd_advance_balances          SET (security_invoker = true);
 ALTER VIEW public.unbilled_service_summary      SET (security_invoker = true);
@@ -31,24 +41,30 @@ REVOKE SELECT ON public.ipd_advance_balances, public.unbilled_service_summary,
 hospital — which is the intent, but any code relying on cross-tenant totals will change behaviour.
 Verify those 11 sites first. This is the only Phase 0 item with a functional side effect.
 
-### 0.2 Lock down chain tables — [C-01](21_CRITICAL_FINDINGS.md)
+### 0.2 Lock down chain tables — [C-01](21_CRITICAL_FINDINGS.md) — ✅ FIXED, `20261016000003_sec_chain_tables_platform_only.sql`
 Replace both `*_platform_only` policy bodies with `is_aumrti_admin()`, and revoke the
 `INSERT/UPDATE/DELETE/TRUNCATE` grants from `authenticated`. Both tables are empty and unreferenced
 — **zero functional risk**.
 
-### 0.3 Stop publishing patient names anonymously — [C-02](21_CRITICAL_FINDINGS.md)
-Drop `"Anyone can read queue_state"`. Replace with a tenant-scoped read, and — if the waiting-room
-display genuinely needs anonymous access — expose a `security_invoker` view carrying
-`current_token_number` and `hospital_id` **without** `current_patient_name`.
+### 0.3 Stop publishing patient names anonymously — [C-02](21_CRITICAL_FINDINGS.md) — ✅ FIXED, `20261016000004_sec_queue_state_tenant_scope.sql`
+The migration went further than the option sketched here: `current_patient_name` was found to be
+write-only (nothing reads it — verified by repo-wide grep), so it drops the anon policy, scopes
+the surviving read to `hospital_id`, and retires the column's contents to `NULL` rather than
+building a second sanitised view.
 
-### 0.4 Fix patient portal session policies — [C-07](21_CRITICAL_FINDINGS.md)
-Drop `anon_update_active_sessions`; keep a single anon UPDATE policy with a real `WITH CHECK` that
-prevents self-elevation of `otp_verified`.
+### 0.4 Fix patient portal session policies — [C-07](21_CRITICAL_FINDINGS.md) — ✅ FIXED, `20261016000005_sec_portal_sessions_hardening.sql`
+The applied fix is stricter than sketched here: two additional over-broad anon SELECT policies
+were found during implementation (`anon_select_active_sessions`, `portal_sessions_anon_select` —
+one of which exposed `otp_code` and `session_token` directly) and closed in the same migration,
+replaced by column-level grants restricting anon to exactly the columns the login flow touches.
 
-### 0.5 Rotate credentials — [C-09](21_CRITICAL_FINDINGS.md)
-Rotate `SUPABASE_DB_PASSWORD` (valid, and its scope is now known), re-issue the rejected API keys,
-and correct the pooler host in [`run_migration.cjs`](../../run_migration.cjs) from `aws-0-` to
-`aws-1-`.
+### 0.5 Rotate credentials — [C-09](21_CRITICAL_FINDINGS.md) — ⚠️ NOT DONE
+Rotate `SUPABASE_DB_PASSWORD` (valid, and its scope is now known), revoke the four `sbp_` personal
+access tokens recoverable from git history and from a since-removed value in `.env.example`,
+re-issue the API keys, and correct the pooler host in
+[`run_migration.cjs`](../../run_migration.cjs) from `aws-0-` to `aws-1-`. This is the one Phase 0
+item that is still open as of 2026-09-05 — see `00_STATUS.md` and the cleanup plan's Phase 0.
+Unlike 0.1–0.4, it requires action in the Supabase dashboard; no migration can do it.
 
 **Exit criteria:** no view runs as owner without a tenant filter; no `USING (true)`/`WITH CHECK (true)`
 on any tenant table; no PHI column readable by `anon`.

@@ -84,7 +84,7 @@ const SettingsRazorpayPage: React.FC = () => {
     // A UPI ID with no handle produces a QR code no payment app can resolve. That is
     // discovered at the billing counter with a patient waiting, not here, unless we check.
     const upi = config.upiId.trim();
-    if (upi && !/^[\w.\-]{2,}@[a-zA-Z]{2,}$/.test(upi)) {
+    if (upi && !/^[\w.-]{2,}@[a-zA-Z]{2,}$/.test(upi)) {
       toast({
         title: "UPI ID must look like name@bank",
         description: "Without a valid handle the generated QR code cannot be scanned by any payment app.",

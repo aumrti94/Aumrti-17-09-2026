@@ -3,32 +3,17 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Search, RefreshCw, ArrowUpDown } from "lucide-react";
-import { PLATFORM_STATUS_PILL, computeHealthScore } from "@/lib/platform-utils";
+import { computeHealthScore } from "@/lib/platform-utils";
 import { format } from "date-fns";
+import { PageHeader } from "@/components/shared/PageHeader";
+import { StatusBadge } from "@/components/shared/StatusBadge";
+import { ScoreBadge } from "@/components/shared/ScoreBadge";
+import { DataTable, DataTableRow } from "@/components/shared/DataTable";
 
 interface HospRow {
   id: string; name: string; state: string | null; beds_count: number;
   created_at: string; plan_name: string; status: string; plan_id: string | null;
   hasRecentOpd: boolean; hasRecentBilling: boolean; deletedAt: string | null;
-}
-
-const STATUS_PILL = PLATFORM_STATUS_PILL;
-
-// computeHealthScore imported from @/lib/platform-utils
-
-function ScoreBadge({ score }: { score: number }) {
-  const color = score >= 70 ? "text-emerald-600 bg-emerald-500/10 border-emerald-500/30"
-    : score >= 40 ? "text-amber-600 bg-amber-500/10 border-amber-500/30"
-    : "text-red-500 bg-red-500/10 border-red-500/30";
-  const label = score >= 70 ? "Healthy" : score >= 40 ? "Monitor" : "At Risk";
-  return (
-    <div className="flex items-center gap-2">
-      <span className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded-full border ${color}`}>
-        {score}
-      </span>
-      <span className="text-[10px] text-muted-foreground">{label}</span>
-    </div>
-  );
 }
 
 // ─── Data Fetcher ─────────────────────────────────────────────────────────────
@@ -126,22 +111,24 @@ export default function HospitalsListPage() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="h-14 border-b border-border flex items-center justify-between px-6 shrink-0">
-        <h1 className="text-[15px] font-semibold text-foreground">Hospitals ({data.length})</h1>
-        <div className="flex items-center gap-4">
-          {/* Health summary pills */}
-          {!isLoading && data.length > 0 && (
-            <div className="flex items-center gap-3 text-[11px]">
-              <span className="text-emerald-600">{healthyCount} healthy</span>
-              <span className="text-amber-600">{monitorCount} monitor</span>
-              {atRiskCount > 0 && <span className="text-red-500 font-semibold">{atRiskCount} at risk</span>}
-            </div>
-          )}
-          <button onClick={() => refetch()} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
-            <RefreshCw size={12} /> Refresh
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title={`Hospitals (${data.length})`}
+        actions={
+          <>
+            {/* Health summary pills */}
+            {!isLoading && data.length > 0 && (
+              <div className="flex items-center gap-3 text-[11px]">
+                <span className="text-emerald-600">{healthyCount} healthy</span>
+                <span className="text-amber-600">{monitorCount} monitor</span>
+                {atRiskCount > 0 && <span className="text-red-500 font-semibold">{atRiskCount} at risk</span>}
+              </div>
+            )}
+            <button onClick={() => refetch()} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
+              <RefreshCw size={12} /> Refresh
+            </button>
+          </>
+        }
+      />
 
       {/* Filters */}
       <div className="p-5 border-b border-border flex items-center gap-3 shrink-0">
@@ -184,73 +171,68 @@ export default function HospitalsListPage() {
       </div>
 
       <div className="flex-1 overflow-auto">
-        <table className="w-full text-sm">
-          <thead className="sticky top-0 bg-card z-10">
-            <tr className="text-[10px] uppercase font-bold text-muted-foreground border-b border-border">
-              <th className="px-5 py-3 text-left"><SortBtn k="name" label="Hospital" /></th>
-              <th className="px-5 py-3 text-left">State</th>
-              <th className="px-5 py-3 text-left"><SortBtn k="beds" label="Beds" /></th>
-              <th className="px-5 py-3 text-left">Plan</th>
-              <th className="px-5 py-3 text-left">Status</th>
-              <th className="px-5 py-3 text-left"><SortBtn k="score" label="Health Score" /></th>
-              <th className="px-5 py-3 text-left">Activity (30d)</th>
-              <th className="px-5 py-3 text-left"><SortBtn k="joined" label="Joined" /></th>
-              <th className="px-5 py-3 text-left"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading ? (
-              <tr><td colSpan={9} className="px-5 py-12 text-center text-xs text-muted-foreground">Loading…</td></tr>
-            ) : filtered.length === 0 ? (
-              <tr><td colSpan={9} className="px-5 py-12 text-center text-xs text-muted-foreground">No hospitals found</td></tr>
-            ) : filtered.map((h) => (
-              <tr key={h.id} className="border-t border-border hover:bg-muted/40 transition-colors">
-                <td className="px-5 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-foreground">{h.name}</span>
-                    {h.deletedAt && (
-                      <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-600 border border-red-500/30 whitespace-nowrap">
-                        Pending Deletion
-                      </span>
-                    )}
-                  </div>
-                </td>
-                <td className="px-5 py-3 text-xs text-muted-foreground">{h.state || "—"}</td>
-                <td className="px-5 py-3 text-xs text-muted-foreground font-mono">{h.beds_count}</td>
-                <td className="px-5 py-3 text-xs text-foreground/80">{h.plan_name}</td>
-                <td className="px-5 py-3">
-                  <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${STATUS_PILL[h.status] || STATUS_PILL.no_subscription}`}>
-                    {h.status.replace("_", " ")}
+        <DataTable
+          columns={[
+            { key: "name", header: <SortBtn k="name" label="Hospital" /> },
+            { key: "state", header: "State" },
+            { key: "beds", header: <SortBtn k="beds" label="Beds" /> },
+            { key: "plan", header: "Plan" },
+            { key: "status", header: "Status" },
+            { key: "score", header: <SortBtn k="score" label="Health Score" /> },
+            { key: "activity", header: "Activity (30d)" },
+            { key: "joined", header: <SortBtn k="joined" label="Joined" /> },
+            { key: "actions", header: "" },
+          ]}
+          loading={isLoading}
+          empty={filtered.length === 0}
+          emptyMessage="No hospitals found"
+          loadingMessage="Loading…"
+        >
+          {filtered.map((h) => (
+            <DataTableRow key={h.id}>
+              <td className="px-5 py-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-foreground">{h.name}</span>
+                  {h.deletedAt && (
+                    <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-600 border border-red-500/30 whitespace-nowrap">
+                      Pending Deletion
+                    </span>
+                  )}
+                </div>
+              </td>
+              <td className="px-5 py-3 text-xs text-muted-foreground">{h.state || "—"}</td>
+              <td className="px-5 py-3 text-xs text-muted-foreground font-mono">{h.beds_count}</td>
+              <td className="px-5 py-3 text-xs text-foreground/80">{h.plan_name}</td>
+              <td className="px-5 py-3">
+                <StatusBadge status={h.status} />
+              </td>
+              <td className="px-5 py-3">
+                <ScoreBadge score={h.score} />
+              </td>
+              <td className="px-5 py-3">
+                <div className="flex items-center gap-1.5">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${h.hasRecentOpd ? "bg-emerald-500/20 text-emerald-600" : "bg-muted text-muted-foreground"}`}>
+                    OPD
                   </span>
-                </td>
-                <td className="px-5 py-3">
-                  <ScoreBadge score={h.score} />
-                </td>
-                <td className="px-5 py-3">
-                  <div className="flex items-center gap-1.5">
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${h.hasRecentOpd ? "bg-emerald-500/20 text-emerald-600" : "bg-muted text-muted-foreground"}`}>
-                      OPD
-                    </span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${h.hasRecentBilling ? "bg-emerald-500/20 text-emerald-600" : "bg-muted text-muted-foreground"}`}>
-                      Billing
-                    </span>
-                  </div>
-                </td>
-                <td className="px-5 py-3 text-xs text-muted-foreground">
-                  {format(new Date(h.created_at), "dd MMM yyyy")}
-                </td>
-                <td className="px-5 py-3">
-                  <button
-                    onClick={() => navigate(`/platform/hospitals/${h.id}`)}
-                    className="text-xs text-blue-600 hover:text-blue-700 font-medium transition-colors"
-                  >
-                    Manage →
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${h.hasRecentBilling ? "bg-emerald-500/20 text-emerald-600" : "bg-muted text-muted-foreground"}`}>
+                    Billing
+                  </span>
+                </div>
+              </td>
+              <td className="px-5 py-3 text-xs text-muted-foreground">
+                {format(new Date(h.created_at), "dd MMM yyyy")}
+              </td>
+              <td className="px-5 py-3">
+                <button
+                  onClick={() => navigate(`/platform/hospitals/${h.id}`)}
+                  className="text-xs text-blue-600 hover:text-blue-700 font-medium transition-colors"
+                >
+                  Manage →
+                </button>
+              </td>
+            </DataTableRow>
+          ))}
+        </DataTable>
       </div>
     </div>
   );

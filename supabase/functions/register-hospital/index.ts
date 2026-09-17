@@ -305,9 +305,19 @@ serve(async (req) => {
     });
 
     // 4. Insert user record
+    // `users.id` has no DEFAULT in the schema — it must be generated explicitly, and must be
+    // a DIFFERENT value from `auth_user_id` (public.users.id and auth.users.id are deliberately
+    // separate identifiers, diverged since migration 20260322111223 — see CLAUDE.md). Omitting
+    // it meant this insert has ALWAYS failed with a NOT NULL violation on `id`, for every
+    // single hospital self-service signup, ever — the entire /register flow has never
+    // successfully created a hospital. The surrounding rollback (delete hospital + auth user
+    // on userError) correctly fired every time, so no orphaned data was ever left behind — but
+    // no hospital has ever actually been created through this endpoint. Found via Phase 6
+    // Priority-4 (tenant lifecycle) edge-function testing, reproduced with a real live call.
     const { error: userError } = await supabaseAdmin
       .from("users")
       .insert({
+        id: crypto.randomUUID(),
         auth_user_id: userId,
         hospital_id: hospitalData.id,
         full_name: admin.full_name,

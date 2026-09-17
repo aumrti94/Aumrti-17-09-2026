@@ -35,11 +35,43 @@ serve(async (req) => {
   const db = createClient(supabaseUrl, supabaseServiceKey);
 
   try {
+    // ── Auth ────────────────────────────────────────────────────────────────
+    // Previously had no auth check at all — any request naming a hospital_id
+    // and user_id could pull that user's FCM tokens and push an
+    // attacker-controlled notification (title/body are also caller-supplied)
+    // to their device. Found in the Phase 4 isolation audit — see
+    // KNOWN_BUGS.md. Same fix shape as send-sms/index.ts: require a real
+    // signed-in caller and verify hospital_id against THEIR record rather
+    // than trusting the request body.
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const { data: { user }, error: authErr } = await db.auth.getUser(authHeader.replace("Bearer ", ""));
+    if (authErr || !user) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const { hospital_id, user_id, topic, title, body, data, image_url } = await req.json();
 
     if (!hospital_id || !title || !body) {
       return new Response(JSON.stringify({ error: "hospital_id, title, body are required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const { data: staff } = await db
+      .from("users")
+      .select("hospital_id")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
+    if (!staff || staff.hospital_id !== hospital_id) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 

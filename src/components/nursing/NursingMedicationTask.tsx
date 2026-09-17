@@ -88,7 +88,7 @@ const NursingMedicationTask: React.FC<Props> = ({ task, onComplete }) => {
       outcome,
       omission_reason: omissionReason || null,
       five_rights_verified: allChecked,
-    }, { onConflict: "admission_id,medication_id,scheduled_date,scheduled_time" }).select("id").single();
+    }, { onConflict: "admission_id,medication_id,scheduled_date,scheduled_time" }).select("id").maybeSingle();
 
     setSaving(false);
     if (error) {

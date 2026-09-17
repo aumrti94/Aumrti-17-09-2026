@@ -37,7 +37,8 @@ serve(async (req) => {
     const { data: inviter } = await supabaseAdmin
       .from("users")
       .select("hospital_id")
-      .eq("id", user.id)
+      // auth_user_id, NOT id — the two diverged in migration 20260322111223.
+      .eq("auth_user_id", user.id)
       .maybeSingle();
 
     if (!inviter?.hospital_id) {

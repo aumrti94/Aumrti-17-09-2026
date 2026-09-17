@@ -701,7 +701,15 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
       setCreatedBillNumber(billNumber);
       setCreatedBillId(bill.id);
       setStep("success");
-      onCreated();
+      // onCreated() is deliberately NOT called here — every caller (LabPage.tsx,
+      // EmergencyWorkspace.tsx) wires it to immediately unmount this modal
+      // (`setShowNewOrder(false)` etc), which happens in the same render pass as the
+      // setStep("success") above and so pre-empts it: the order and bill are genuinely
+      // created (confirmed live — a direct DB read shows the paid lab_orders/bills rows), but
+      // the "Payment Collected!" / Print Bill confirmation screen never has a chance to paint.
+      // Deferred to the Done button below, matching WalkInModal's own working three-step
+      // order/payment/receipt pattern (onCreated + onClose only fire once the user
+      // acknowledges the receipt).
     } catch (err: any) {
       toast({ title: "Failed", description: err.message, variant: "destructive" });
     } finally {
@@ -1122,7 +1130,7 @@ const NewLabOrderModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, pre
               }}>
                 <Printer className="h-4 w-4 mr-1" /> Print Bill
               </Button>
-              <Button className="flex-1" onClick={onClose}>
+              <Button className="flex-1" onClick={() => { onCreated(); onClose(); }}>
                 Done
               </Button>
             </div>

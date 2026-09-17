@@ -43,7 +43,7 @@
  *       patientId: string,
  *       fields: string[],  // e.g. ["phone", "name"]
  *     }
- *     — Only callable by roles: doctor, admin, super_admin, nurse
+ *     — Only callable by roles: doctor, hospital_admin, super_admin, nurse, lab_technician, lab_tech
  *   Returns: { decryptedFields: { phone: "9876543210", name: "Ramesh Kumar" } }
  *
  * SECURITY:
@@ -62,8 +62,14 @@ import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 // ── Role access control ────────────────────────────────────────────────────
 
+// "admin" is not a real app_role value — only "hospital_admin" is (see the app_role enum,
+// 20260321162749). That typo silently locked a hospital's own admin out of PHI decryption
+// despite this file's own header documenting "admin" as an allowed role. "lab_tech" is added
+// alongside "lab_technician" for the same reason every other access-control point in this repo
+// (e.g. routeRoles.ts's ROUTE_ROLES) treats the two spellings as equivalent — they are both live,
+// separate app_role enum values (lab_tech from the original enum, lab_technician added later).
 const DECRYPT_ALLOWED_ROLES = new Set([
-  "doctor", "admin", "super_admin", "nurse", "lab_technician",
+  "doctor", "hospital_admin", "super_admin", "nurse", "lab_technician", "lab_tech",
 ]);
 
 // ── Helper: mask a phone for display ──────────────────────────────────────
@@ -135,9 +141,29 @@ serve(async (req: Request) => {
   const operation = body.operation as string;
   const hospitalId = (body.hospitalId as string) ?? callerUser.hospital_id;
 
-  // Enforce hospital isolation — user cannot act on another hospital's data
-  if (callerUser.hospital_id !== hospitalId && callerUser.role !== "super_admin") {
-    return new Response(JSON.stringify({ error: "Cross-hospital access denied" }), { status: 403 });
+  // Enforce hospital isolation — user cannot act on another hospital's data.
+  //
+  // `role !== "super_admin"` used to be the escape hatch here, but "super_admin"
+  // is a per-HOSPITAL role — every hospital's own founding admin gets it,
+  // scoped to that one hospital via role_permissions(hospital_id, role_name)
+  // (see register-hospital/index.ts:317) — not a platform-wide role. So any
+  // hospital's own super_admin could name ANY other hospital's id and decrypt,
+  // search, or overwrite its patients' PHI (phone/name/Aadhaar) through this
+  // function's own header-documented status as "the ONLY write path for
+  // encrypted PHI columns". Found in the Phase 4 isolation audit — see
+  // KNOWN_BUGS.md. The only caller who should ever cross a hospital boundary
+  // here is a genuine PLATFORM admin, checked the same way every other
+  // admin-gated function in this repo does: aumrti_admins, keyed on auth.uid().
+  if (callerUser.hospital_id !== hospitalId) {
+    const { data: adminRow } = await serviceClient
+      .from("aumrti_admins")
+      .select("id")
+      .eq("auth_user_id", user.id)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (!adminRow) {
+      return new Response(JSON.stringify({ error: "Cross-hospital access denied" }), { status: 403 });
+    }
   }
 
   // ── Operation: encrypt_and_write ─────────────────────────────────────────

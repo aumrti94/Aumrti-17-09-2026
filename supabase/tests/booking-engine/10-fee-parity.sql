@@ -1,5 +1,10 @@
--- Parity harness: the fixtures from src/lib/consultationFee.test.ts, run against the SQL
--- engine. Dr. Menon: Rs.700 full, Rs.300 follow-up, 10-day validity, 1 follow-up allowed.
+-- Parity harness: fixtures ported from src/lib/consultationFee.test.ts (removed 2026-09-05
+-- with the rest of the suite — this file is now their only surviving form), run against the
+-- SQL engine. Dr. Menon: Rs.700 full, Rs.300 follow-up, 10-day validity, 1 follow-up allowed.
+--
+-- Not wired into any npm script or CI step — run manually with `psql` or `pg_prove` against
+-- a database with the booking-engine functions loaded. A change to computeConsultationFee in
+-- src/lib/consultationFee.ts is not automatically checked against this file.
 
 \set QUIET on
 \pset pager off

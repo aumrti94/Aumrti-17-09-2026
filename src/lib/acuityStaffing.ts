@@ -85,7 +85,7 @@ export async function computeWardAcuity(
       ratio_met: ratioMet,
     })
     .select("id")
-    .single();
+    .maybeSingle();
 
   if (!ratioMet) {
     await (supabase as any).from("staffing_alerts").insert({

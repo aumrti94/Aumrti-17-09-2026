@@ -11,6 +11,7 @@
 
 import { serve }        from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin":  "*",
@@ -203,16 +204,23 @@ serve(async (req) => {
     }
 
     // ── 2. Fetch pre-auth, patient, TPA config ────────────────────────────────
+    // Was a single query embedding `tpa_config!inner(...)` off insurance_pre_auth — PostgREST
+    // can only embed across a REAL foreign-key relationship, and none exists between these two
+    // tables (they only share a `tpa_name` text value, never declared as an FK). Confirmed live
+    // against this project's own PostgREST: it returns PGRST200 "Could not find a relationship
+    // between 'insurance_pre_auth' and 'tpa_config'" for every single call. Since the code
+    // treated ANY query error as "Pre-auth not found" (`if (paErr || !pa) return 404`), this
+    // function has returned a 404 for every real pre-auth submission attempt ever made,
+    // regardless of whether the pre-auth existed — the entire feature has never worked once.
+    // Found via Phase 6 edge-function testing. Fixed by fetching each table separately, the
+    // pattern already used everywhere else in this file for admissions/patients/hospitals.
     const { data: pa, error: paErr } = await (sb as any)
       .from("insurance_pre_auth")
       .select(`
         id, patient_id, admission_id, tpa_name, policy_number,
         estimated_amount, diagnosis_codes, procedure_codes,
         icd10_codes, notes, status, hospital_id,
-        admissions(admitted_at),
-        tpa_config!inner(
-          id, tpa_name, api_endpoint, api_key_encrypted, tpa_hcx_code, submission_method
-        )
+        admissions(admitted_at)
       `)
       .eq("id", pre_auth_id)
       .eq("hospital_id", hospital_id)
@@ -234,7 +242,15 @@ serve(async (req) => {
       .eq("id", hospital_id)
       .maybeSingle();
 
-    const tpa = pa.tpa_config as any;
+    const { data: tpa } = await (sb as any)
+      .from("tpa_config")
+      .select("id, tpa_name, api_endpoint, api_key_encrypted, tpa_hcx_code, submission_method")
+      .eq("hospital_id", hospital_id)
+      .eq("tpa_name", pa.tpa_name)
+      .limit(1)
+      .maybeSingle();
+
+    if (!tpa) return json({ error: `No TPA configuration found for "${pa.tpa_name}". Add it in Settings → Insurance → TPA Configuration.` }, 422);
 
     // ── 3. Resolve ICD-10 codes (handle both formats) ─────────────────────────
     let icd10Codes: { code: string; description: string }[] = [];
@@ -304,14 +320,22 @@ serve(async (req) => {
         submissionError = `Network error: ${fetchErr.message}`;
       }
     } else {
-      // No direct API — fall back to HCX gateway via the existing function
+      // No direct API — fall back to HCX gateway via the existing function.
+      // Was called with the service-role key as bearer — hcx-claim-submit requires a real
+      // user JWT (a deliberate Phase 4 hardening: "any logged-in staff of any hospital could
+      // pull another hospital's HCX gateway secret" — see KNOWN_BUGS.md), so it has ALWAYS
+      // rejected this call with 401, regardless of hospital or configuration. This function
+      // already validated the caller belongs to `hospital_id` above (step 1), so forwarding
+      // that same already-verified bearer preserves the trust chain hcx-claim-submit's own
+      // auth check expects, instead of presenting a credential it was never going to accept.
+      // Found via Phase 6 edge-function testing.
       try {
         const hcxRes = await fetch(
           `${Deno.env.get("SUPABASE_URL")}/functions/v1/hcx-claim-submit`,
           {
             method:  "POST",
             headers: {
-              "Authorization":  `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+              "Authorization":  authHeader,
               "Content-Type":   "application/json",
             },
             body: JSON.stringify({
@@ -334,46 +358,59 @@ serve(async (req) => {
     }
 
     // ── 6. Persist result ─────────────────────────────────────────────────────
+    // The three `.insert(...).catch(() => {})` calls below were the same non-existent-.catch()
+    // defect found repeatedly this session — each threw synchronously and would have crashed
+    // this handler with a 500 before its own intended response was returned, discarding
+    // whichever real outcome (failure or success) had already been determined. Found via
+    // Phase 6 edge-function testing. `event_type: "auto_submit_preauth"` was ALSO a second,
+    // independent bug stacked on both inserts: insurance_automation_log_event_type_check has
+    // never allowed that exact string — the real, already-established value for this event
+    // (used correctly by the sibling function insurance-automation/index.ts) is
+    // "pre_auth_auto_submitted", word order swapped from what was written here.
     if (submissionError) {
       // Log failure without touching pre-auth status
-      await (sb as any).from("insurance_automation_log").insert({
+      const { error: failLogErr } = await (sb as any).from("insurance_automation_log").insert({
         hospital_id,
         pre_auth_id: pa.id,
-        event_type:  "auto_submit_preauth",
+        event_type:  "pre_auth_auto_submitted",
         status:      "failed",
         payload:     { error: submissionError, bundle_id: (fhirBundle as any).id },
         ai_used:     false,
         triggered_by: "user",
-      }).catch(() => {});
+      });
+      if (failLogErr) console.error("submit-pre-auth-hcx: automation log insert failed:", failLogErr.message);
 
-      await (sb as any).from("clinical_alerts").insert({
+      const { error: alertErr } = await (sb as any).from("clinical_alerts").insert({
         hospital_id,
         alert_type:      "pre_auth_submission_failed",
         alert_message:   `Auto-submit failed for pre-auth ${pa.id}: ${submissionError}`,
         severity:        "high",
         is_acknowledged: false,
-      }).catch(() => {});
+      });
+      if (alertErr) console.error("submit-pre-auth-hcx: alert insert failed:", alertErr.message);
 
       return json({ success: false, message: submissionError }, 502);
     }
 
     // Success: update pre-auth record
-    await (sb as any).from("insurance_pre_auth").update({
+    const { error: preAuthUpdateErr } = await (sb as any).from("insurance_pre_auth").update({
       status:               "submitted",
       submitted_at:         new Date().toISOString(),
       submission_mode:      "automated",
       tpa_reference_number: tpaReferenceNumber,
     }).eq("id", pa.id);
+    if (preAuthUpdateErr) console.error("submit-pre-auth-hcx: insurance_pre_auth update failed:", preAuthUpdateErr.message);
 
-    await (sb as any).from("insurance_automation_log").insert({
+    const { error: successLogErr } = await (sb as any).from("insurance_automation_log").insert({
       hospital_id,
       pre_auth_id:   pa.id,
-      event_type:    "auto_submit_preauth",
+      event_type:    "pre_auth_auto_submitted",
       status:        "success",
       payload:       { tpa_reference_number: tpaReferenceNumber, api_endpoint: apiEndpoint ?? "hcx_gateway" },
       ai_used:       false,
       triggered_by:  "user",
-    }).catch(() => {});
+    });
+    if (successLogErr) console.error("submit-pre-auth-hcx: automation log insert failed:", successLogErr.message);
 
     return json({
       success:              true,
@@ -381,7 +418,7 @@ serve(async (req) => {
       message:              `Pre-auth submitted successfully. TPA Reference: ${tpaReferenceNumber}`,
     });
   } catch (err: any) {
-    console.error("submit-pre-auth-hcx:", err);
+    console.error("submit-pre-auth-hcx:", sanitizeForLog(err instanceof Error ? err.message : String(err)));
     return json({ success: false, message: err.message }, 500);
   }
 });

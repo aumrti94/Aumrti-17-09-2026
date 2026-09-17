@@ -44,7 +44,14 @@ const ADRCheckPanel: React.FC<Props> = ({
 
   useEffect(() => {
     const check = async () => {
-      if (!currentMedications?.length) {
+      // Only genuinely nothing to check when there is NEITHER another current medication NOR
+      // a documented allergy. Before this fix, an empty `currentMedications` alone
+      // short-circuited to "safe" unconditionally — so a patient on no other drug, but
+      // allergic to the exact drug about to be dispensed, got "No interactions detected"
+      // with the allergy check never running at all. `patientAllergies` reaches the AI
+      // prompt below regardless of medication count, so a documented allergy alone is
+      // sufficient reason to run the real check.
+      if (!currentMedications?.length && !patientAllergies?.length) {
         setResult({ has_interaction: false, severity: "none", interactions: [], allergy_conflict: false, safe_to_dispense: true });
         setLoading(false);
         return;
@@ -90,7 +97,26 @@ Return ONLY JSON:
         );
         setResult(parsed);
       } catch {
-        setResult(null);
+        // FAIL CLOSED, not open. Before this fix, `setResult(null)` rendered identically to a
+        // genuinely clean check ("No interactions detected", CLAUDE.md's own "checks must be
+        // real, never skipped" rule notwithstanding) — a network failure or a malformed AI
+        // response looked exactly like safety clearance. Surfacing as "contraindicated" reuses
+        // the panel's own already-built major-interaction UI (Change Drug / Override with a
+        // required written reason) rather than inventing a second gate — an unverifiable check
+        // deserves the same friction as a confirmed major interaction, not a lesser one.
+        setResult({
+          has_interaction: true,
+          severity: "contraindicated",
+          interactions: [{
+            drug1: drugName,
+            drug2: "(unable to verify)",
+            type: "check_failed",
+            effect: "The drug interaction/allergy check could not be completed.",
+            recommendation: "Verify manually against the patient's chart before dispensing, or retry the check.",
+          }],
+          allergy_conflict: false,
+          safe_to_dispense: false,
+        });
       }
       setLoading(false);
     };

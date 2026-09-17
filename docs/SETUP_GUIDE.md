@@ -378,20 +378,19 @@ npm run dev
 npm run dev
 
 # Build for production
-npm build
+npm run build
 
 # Preview production build
 npm run preview
 
-# Run tests
-npm run test
-
-# Run tests in watch mode
-npm run test:watch
-
 # Lint code
 npm run lint
 ```
+
+There is currently no automated test suite (unit or end-to-end) in this repo — it was removed
+2026-09-05 pending a restart. `npm run test` / `npm run test:watch` do not exist; do not run them.
+See the README for the current state and `supabase/tests/` for the one surviving suite (pgTAP,
+run manually — see that directory).
 
 ---
 

@@ -9,8 +9,9 @@
  * IMPORTANT: evaluateDayCareClearance mirrors the SQL function
  * enforce_daycare_financial_clearance() (migration 20261008000140) exactly. The trigger is
  * the enforcement — it cannot be bypassed by a client — and this is the UI's explanation of
- * the same rule. If one changes, change both. The truth-table tests in dayCareGate.test.ts
- * lock the shared definition.
+ * the same rule. If one changes, change both. UNGUARDED as of 2026-09-05 — the truth-table
+ * tests in dayCareGate.test.ts that locked the shared definition were removed with the rest
+ * of the suite; nothing currently checks that the two stay in step.
  */
 
 import { supabase } from "@/integrations/supabase/client";

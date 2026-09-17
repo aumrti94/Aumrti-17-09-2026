@@ -127,7 +127,7 @@ const HMISPage: React.FC = () => {
         supabase.from("admissions").select("id, patient_id, admitted_at, discharged_at, status, discharge_type, ward_id").eq("hospital_id", hospitalId).gte("admitted_at", fromDate).lte("admitted_at", toDate + "T23:59:59"),
         supabase.from("beds").select("id", { count: "exact", head: true }).eq("hospital_id", hospitalId).eq("is_active", true),
         supabase.from("ot_schedules").select("id, surgery_type, status").eq("hospital_id", hospitalId).gte("scheduled_date", fromDate).lte("scheduled_date", toDate).eq("status", "completed"),
-        supabase.from("obstetric_records").select("id, record_type, delivery_mode, created_at").eq("hospital_id", hospitalId).gte("created_at", fromDate).lte("created_at", toDate + "T23:59:59").eq("record_type", "delivery"),
+        supabase.from("obstetric_records").select("id, record_type, outcome, created_at").eq("hospital_id", hospitalId).gte("created_at", fromDate).lte("created_at", toDate + "T23:59:59").eq("record_type", "delivery"),
         supabase.from("lab_orders").select("id", { count: "exact", head: true }).eq("hospital_id", hospitalId).gte("created_at", fromDate).lte("created_at", toDate + "T23:59:59"),
       ]);
 
@@ -172,8 +172,8 @@ const HMISPage: React.FC = () => {
 
       // Maternal
       const totalDeliveries = maternalData.length;
-      const normalDeliveries = maternalData.filter((m: any) => m.delivery_mode === "svd" || m.delivery_mode === "normal").length;
-      const csDeliveries = maternalData.filter((m: any) => ["lscs", "lscs_elective", "lscs_emergency", "caesarean"].includes(m.delivery_mode)).length;
+      const normalDeliveries = maternalData.filter((m: any) => m.outcome === "svd").length;
+      const csDeliveries = maternalData.filter((m: any) => m.outcome === "lscs").length;
 
       const reportData = {
         period: { month, year, month_name: MONTHS[month - 1] },
@@ -289,12 +289,14 @@ const HMISPage: React.FC = () => {
       const fromDate = `${year}-${String(month).padStart(2, "0")}-01`;
       const toDate = `${year}-${String(month).padStart(2, "0")}-${getDaysInMonth(month, year)}`;
 
-      const [maternalRes, neonatalRes, ancEarlyRes, highRiskRes, ifaRes, vaccRes] = await Promise.all([
-        supabase.from("obstetric_records").select("id, record_type, delivery_mode, created_at").eq("hospital_id", hospitalId).gte("created_at", fromDate).lte("created_at", toDate + "T23:59:59"),
-        supabase.from("neonatal_records").select("id, birth_weight_grams, apgar_1min, apgar_5min, created_at").eq("hospital_id", hospitalId).gte("created_at", fromDate).lte("created_at", toDate + "T23:59:59"),
+      // iron_prescribed dropped from this report deliberately — it lives inside ObstetricANCPage's
+      // anc_full_data jsonb blob, not a top-level column (KNOWN-BUG-226's fix), and isn't worth a
+      // dedicated column just for this one filter.
+      const [maternalRes, neonatalRes, ancEarlyRes, highRiskRes, vaccRes] = await Promise.all([
+        supabase.from("obstetric_records").select("id, record_type, outcome, created_at").eq("hospital_id", hospitalId).gte("created_at", fromDate).lte("created_at", toDate + "T23:59:59"),
+        supabase.from("neonatal_records").select("id, birth_weight_g, apgar_1min, apgar_5min, created_at").eq("hospital_id", hospitalId).gte("created_at", fromDate).lte("created_at", toDate + "T23:59:59"),
         (supabase as any).from("obstetric_records").select("id").eq("hospital_id", hospitalId).eq("record_type", "anc").lte("gestational_age_weeks", 12).gte("created_at", fromDate).lte("created_at", toDate + "T23:59:59"),
-        (supabase as any).from("obstetric_records").select("id").eq("hospital_id", hospitalId).eq("record_type", "anc").eq("is_high_risk", true).gte("created_at", fromDate).lte("created_at", toDate + "T23:59:59"),
-        (supabase as any).from("obstetric_records").select("id").eq("hospital_id", hospitalId).eq("record_type", "anc").eq("iron_prescribed", true).gte("created_at", fromDate).lte("created_at", toDate + "T23:59:59"),
+        (supabase as any).from("obstetric_records").select("id").eq("hospital_id", hospitalId).eq("record_type", "anc").eq("high_risk_status", true).gte("created_at", fromDate).lte("created_at", toDate + "T23:59:59"),
         supabase.from("vaccination_records").select("id", { count: "exact", head: true }).eq("hospital_id", hospitalId).gte("administered_date", fromDate).lte("administered_date", toDate),
       ]);
 
@@ -304,12 +306,12 @@ const HMISPage: React.FC = () => {
       const ancVisits = maternal.filter((m: any) => m.record_type === "anc").length;
       const deliveries = maternal.filter((m: any) => m.record_type === "delivery");
       const postnatal = maternal.filter((m: any) => m.record_type === "postnatal").length;
-      const normalDeliveries = deliveries.filter((d: any) => d.delivery_mode === "svd" || d.delivery_mode === "normal").length;
-      const csDeliveries = deliveries.filter((d: any) => ["lscs", "lscs_elective", "lscs_emergency", "caesarean"].includes(d.delivery_mode)).length;
+      const normalDeliveries = deliveries.filter((d: any) => d.outcome === "svd").length;
+      const csDeliveries = deliveries.filter((d: any) => d.outcome === "lscs").length;
 
-      const lbw = neonatal.filter((n: any) => n.birth_weight_grams && n.birth_weight_grams < 2500).length;
-      const vlbw = neonatal.filter((n: any) => n.birth_weight_grams && n.birth_weight_grams < 1500).length;
-      const normalWeight = neonatal.filter((n: any) => n.birth_weight_grams && n.birth_weight_grams >= 2500).length;
+      const lbw = neonatal.filter((n: any) => n.birth_weight_g && n.birth_weight_g < 2500).length;
+      const vlbw = neonatal.filter((n: any) => n.birth_weight_g && n.birth_weight_g < 1500).length;
+      const normalWeight = neonatal.filter((n: any) => n.birth_weight_g && n.birth_weight_g >= 2500).length;
       const birthAsphyxia = neonatal.filter((n: any) => n.apgar_5min !== null && n.apgar_5min !== undefined && n.apgar_5min < 7).length;
 
       const reportData = {
@@ -318,7 +320,6 @@ const HMISPage: React.FC = () => {
           total_visits: ancVisits,
           early_registration: ancEarlyRes.data?.length || 0,
           high_risk_detected: highRiskRes.data?.length || 0,
-          ifa_prescribed: ifaRes.data?.length || 0,
         },
         delivery: {
           total: deliveries.length,
@@ -845,7 +846,6 @@ const ReportViewerModal: React.FC<{ data: any; onClose: () => void; onMarkSubmit
                 <StatRow label="Total ANC Visits" value={data.anc.total_visits} />
                 <StatRow label="Early Registration (≤12 wks)" value={data.anc.early_registration ?? "—"} />
                 <StatRow label="High-Risk Cases Detected" value={data.anc.high_risk_detected ?? "—"} />
-                <StatRow label="IFA Prescribed" value={data.anc.ifa_prescribed ?? "—"} />
               </CollapsibleSection>
               <CollapsibleSection title="🏥 Deliveries" defaultOpen>
                 <StatRow label="Total Deliveries" value={data.delivery.total} />

@@ -109,9 +109,9 @@ const CreateProjectDialog: React.FC<CreateProjectProps> = ({
 
     const { data, error } = await (supabase as any)
       .from("qi_projects").insert(payload)
-      .select("*, users:project_owner_id(full_name)").single();
+      .select("*, users:project_owner_id(full_name)").maybeSingle();
     setSaving(false);
-    if (error) { toast({ title: "Save failed", description: error.message, variant: "destructive" }); return; }
+    if (error || !data) { toast({ title: "Save failed", description: error?.message, variant: "destructive" }); return; }
     toast({ title: "QI Project created", description: data.title });
     onCreated(data);
     onOpenChange(false);
@@ -410,9 +410,9 @@ const QIProjectsPage: React.FC = () => {
       qi_project_id: selected.id,
       cycle_label: label,
       started_at: new Date().toISOString(),
-    }).select().single();
+    }).select().maybeSingle();
     setAddingCycle(false);
-    if (error) { toast({ title: "Failed to create cycle", description: error.message, variant: "destructive" }); return; }
+    if (error || !data) { toast({ title: "Failed to create cycle", description: error?.message, variant: "destructive" }); return; }
     setCycles(prev => [...prev, data]);
     setExpandedCycleId(data.id);
     setEditingCycle({ plan: "", do_action: "", study: "", act: "" });

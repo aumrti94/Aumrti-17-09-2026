@@ -116,21 +116,35 @@ serve(async (req) => {
       }
     }
 
-    // Optionally persist to financial_anomalies table (best-effort, table may not exist yet)
+    // Optionally persist to financial_anomalies table (best-effort, table may not exist yet).
+    // Was `.upsert(...).catch(() => {})` directly on the query builder — supabase-js's
+    // PostgrestBuilder is thenable (implements .then()) but does not implement a real
+    // .catch(), so `X.catch` is undefined and calling it throws a TypeError SYNCHRONOUSLY,
+    // before the intended "non-blocking, ignore failure" behaviour ever runs. That throw
+    // propagated to this function's outer catch and returned 500 to the caller — discarding
+    // the anomalies array this function had already correctly computed. The bug fired
+    // precisely when the feature had something to report (anomalies.length > 0) and was
+    // invisible the rest of the time (no anomalies → this branch never runs). Same root cause
+    // as KNOWN-BUG-172 (generate-invoice). Found via Phase 6 edge-function testing.
     if (anomalies.length > 0) {
-      await (sb as any).from("financial_anomalies").upsert(
-        anomalies.map(a => ({
-          hospital_id: hospitalId,
-          anomaly_date: a.date,
-          actual_revenue: a.actual,
-          expected_revenue: a.expected,
-          z_score: a.z_score,
-          deviation_amount: a.deviation,
-          direction: a.direction,
-          detected_at: new Date().toISOString(),
-        })),
-        { onConflict: "hospital_id,anomaly_date", ignoreDuplicates: false },
-      ).catch(() => {}); // non-blocking; table may not exist yet
+      try {
+        const { error: upsertErr } = await (sb as any).from("financial_anomalies").upsert(
+          anomalies.map(a => ({
+            hospital_id: hospitalId,
+            anomaly_date: a.date,
+            actual_revenue: a.actual,
+            expected_revenue: a.expected,
+            z_score: a.z_score,
+            deviation_amount: a.deviation,
+            direction: a.direction,
+            detected_at: new Date().toISOString(),
+          })),
+          { onConflict: "hospital_id,anomaly_date", ignoreDuplicates: false },
+        );
+        if (upsertErr) console.error("financial-anomaly-check: persisting anomalies failed:", upsertErr.message);
+      } catch (e) {
+        console.error("financial-anomaly-check: persisting anomalies failed:", e instanceof Error ? e.message : String(e));
+      }
     }
 
     return new Response(
@@ -145,8 +159,8 @@ serve(async (req) => {
     );
 
   } catch (err) {
-    console.error("financial-anomaly-check error:", err);
-    return new Response(JSON.stringify({ error: String(err) }), {
+    console.error("financial-anomaly-check error:", err instanceof Error ? err.message : String(err));
+    return new Response(JSON.stringify({ error: "Internal error" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

@@ -114,12 +114,29 @@ const BookOTModal: React.FC<Props> = ({ rooms, selectedRoomId, selectedDate, pre
     const hid = (await supabase.rpc("get_user_hospital_id")) as any;
     const hospitalId = hid?.data;
 
+    // KNOWN-BUG-205: this insert never set admission_id, so an OT case booked for an already
+    // admitted patient had no way back to their IPD stay — OTBillingTab's "Push OT Charges to
+    // IPD Bill" button is gated on schedule.admission_id (`if (!schedule.admission_id) return`)
+    // and the OTImplantsConsumablesTab pre-auth-ceiling check and IPDOverviewTab's own
+    // scheduled-surgery widget both key off it too. Resolved the same way IPD elsewhere treats
+    // "this patient's current stay" — the one active admissions row for this patient, if any.
+    // A patient with no active admission (daycare/OPD referral) correctly gets null, which is
+    // what OTBillingTab's "Create Daycare Bill" alternate path already expects.
+    const { data: activeAdmission } = await supabase
+      .from("admissions")
+      .select("id")
+      .eq("hospital_id", hospitalId)
+      .eq("patient_id", form.patientId)
+      .eq("status", "active")
+      .maybeSingle();
+
     const { data: schedule, error } = await supabase
       .from("ot_schedules")
       .insert({
         hospital_id: hospitalId,
         ot_room_id: form.roomId,
         patient_id: form.patientId,
+        admission_id: activeAdmission?.id || null,
         surgeon_id: form.surgeonId,
         anaesthetist_id: form.anaesthetistId || null,
         surgery_name: form.surgeryName,
@@ -207,7 +224,7 @@ const BookOTModal: React.FC<Props> = ({ rooms, selectedRoomId, selectedDate, pre
         surgery_name: form.surgeryName,
         surgery_category: form.category,
         scheduled_date: form.date,
-        admission_id: null,
+        admission_id: activeAdmission?.id || null,
         booking_notes: form.notes,
       });
     }

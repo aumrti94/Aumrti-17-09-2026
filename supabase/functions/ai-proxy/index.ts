@@ -257,6 +257,14 @@ serve(async (req: Request) => {
       resolvedModel = cfg.model;
       apiKey = cfg.apiKey;
       usedPlatformDefault = !hospitalCfg;
+    } else if (!PROVIDER_TO_SERVICE_KEY[provider] && !ENV_KEY_NAMES[provider]) {
+      // An unrecognised provider name would otherwise fall through the API-key resolution
+      // below and call `Deno.env.get("")` (ENV_KEY_NAMES[provider] || "") — Deno's env API
+      // throws "Key is an empty string" for an empty key, rather than returning undefined,
+      // crashing this handler with a 500 before ever reaching the "Unknown provider" check
+      // that already existed further down for exactly this case. Found via Phase 6
+      // edge-function testing.
+      return json({ error: `Unknown provider: ${provider}` }, 400);
     } else {
       // Keys are global (platform-controlled) — not per hospital.
       const serviceKey = PROVIDER_TO_SERVICE_KEY[provider];
@@ -271,7 +279,8 @@ serve(async (req: Request) => {
       }
 
       if (!apiKey) {
-        apiKey = Deno.env.get(ENV_KEY_NAMES[provider] || "") || undefined;
+        const envKeyName = ENV_KEY_NAMES[provider];
+        apiKey = envKeyName ? Deno.env.get(envKeyName) || undefined : undefined;
       }
       // Admin Azure connection test with unsaved drawer values → use the inline key.
       if (!apiKey && provider === "azure_openai" && azureConfig?.apiKey) {
@@ -662,7 +671,7 @@ serve(async (req: Request) => {
           p_cost_inr:    costInr,
         });
       } catch (logErr) {
-        console.warn("ai-proxy: failed to log usage:", logErr);
+        console.warn("ai-proxy: failed to log usage:", logErr instanceof Error ? logErr.message : String(logErr));
       }
     })();
 

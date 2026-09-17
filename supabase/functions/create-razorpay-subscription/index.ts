@@ -75,6 +75,16 @@ serve(async (req) => {
     // Use service role for all internal queries
     const db = createClient(supabaseUrl, serviceKey);
 
+    // The ai_wallet_topup branch already checked this; the plain subscription
+    // flow below never did — any signed-in user of any hospital could name
+    // another hospital's id, read its negotiated pricing/add-ons/bed count,
+    // and create a real Razorpay subscription mandate against it. Checked
+    // once here, ahead of both branches. Found in the Phase 4 isolation
+    // audit — see KNOWN_BUGS.md.
+    const { data: callerRow } = await db
+      .from("users").select("hospital_id").eq("auth_user_id", user.id).maybeSingle();
+    if (!callerRow || callerRow.hospital_id !== hospital_id) return err("Forbidden", 403);
+
     // Razorpay keys: /platform-configured row first, env vars as fallback.
     const { keyId, keySecret } = await getRazorpaySubscriptionKeys(db);
     if (!keyId || !keySecret) {

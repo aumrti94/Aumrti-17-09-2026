@@ -19,6 +19,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getAbdmToken } from "../_shared/abdm-auth.ts";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -78,8 +79,9 @@ serve(async (req) => {
     const { data: userData } = await sb
       .from("users")
       .select("hospital_id")
-      .eq("id", user.id)
-      .single();
+      // auth_user_id, NOT id — the two diverged in migration 20260322111223.
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
 
     if (!userData) return json({ success: false, error: "User record not found" }, 404);
     const callerHospitalId = userData.hospital_id as string;
@@ -171,27 +173,33 @@ serve(async (req) => {
     // ── Stamp user record ─────────────────────────────────────────────────────
     // Only stamp if user_id belongs to the caller's hospital (prevent cross-hospital write)
     if (user_id) {
-      await sb
+      const { error: stampErr } = await sb
         .from("users")
         .update({ hpr_id: hprId, hpr_verified_at: new Date().toISOString() })
         .eq("id", user_id)
         .eq("hospital_id", resolvedHospitalId);
+      if (stampErr) console.error("abdm-hpr-verify: user hpr_id stamp failed:", stampErr.message);
     }
 
     // ── Log ───────────────────────────────────────────────────────────────────
-    await sb.from("abdm_gateway_logs").insert({
+    // Was `.insert(...).catch(() => {})` directly on the query-builder chain —
+    // PostgrestBuilder is thenable but has no real .catch(), so this threw
+    // synchronously on every call, discarding the successful verification response
+    // below with a 500. Found via Phase 6 edge-function testing.
+    const { error: gwLogErr } = await sb.from("abdm_gateway_logs").insert({
       hospital_id: resolvedHospitalId,
       action: "hpr_verify",
       direction: "outbound",
       request_payload: { hpr_id: hprId },
       response_payload: doctorProfile,
       status: "ok",
-    }).catch(() => {});
+    });
+    if (gwLogErr) console.error("abdm-hpr-verify: gateway log insert failed:", gwLogErr.message);
 
     return json({ success: true, doctor: doctorProfile });
 
   } catch (err: unknown) {
-    console.error("abdm-hpr-verify:", err);
+    console.error("abdm-hpr-verify:", sanitizeForLog(err instanceof Error ? err.message : String(err)));
     return json({ success: false, error: (err as Error).message }, 500);
   }
 });

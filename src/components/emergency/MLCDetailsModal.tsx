@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AlertTriangle } from "lucide-react";
+import { nextDocumentNumber } from "@/lib/documentNumber";
 
 interface Props {
   hospitalId: string;
@@ -66,19 +67,16 @@ const MLCDetailsModal: React.FC<Props> = ({
   const [medicolegalOpinion, setMedicolegalOpinion] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  // Generate MLC number on mount
+  // Generate MLC number on mount. Was a COUNT(*)+1 scheme (collision-prone — two concurrent MLC
+  // registrations land on the same number) with no DB constraint to catch it, since mlc_cases.
+  // mlc_number had no uniqueness constraint at all (KNOWN-BUG-236, fixed alongside this). Now
+  // draws from the same atomic, per-hospital `next_seq` sequence already used by
+  // MortuaryPage.tsx/edMortuary.ts/AdmitPatientModal.tsx for the "mlc" series — which also means
+  // mlc_cases and mlc_records numbers are now unique against each other, not just within each.
   useEffect(() => {
-    const generate = async () => {
-      const year = new Date().getFullYear();
-      const { count } = await (supabase as any)
-        .from("mlc_cases")
-        .select("id", { count: "exact", head: true })
-        .eq("hospital_id", hospitalId)
-        .gte("created_at", `${year}-01-01`)
-        .lt("created_at", `${year + 1}-01-01`);
-      setMlcNumber(`MLC-${year}-${String((count ?? 0) + 1).padStart(4, "0")}`);
-    };
-    generate();
+    nextDocumentNumber(hospitalId, "mlc").then(setMlcNumber).catch(() => {
+      toast({ title: "Could not generate an MLC number", variant: "destructive" });
+    });
   }, [hospitalId]);
 
   const handleSubmit = async () => {

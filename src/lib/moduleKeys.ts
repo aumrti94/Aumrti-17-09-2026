@@ -49,6 +49,7 @@ export const ROUTE_TO_MODULE_KEY: Record<string, string> = {
   "/specialty/anaesthesia":  "anaesthesia",
   "/specialty/ophthalmology":"ophthalmology",
   "/specialty/partograph":   "partograph",
+  "/specialty/delivery":     "obstetric_delivery",
   "/mental-health":          "mental_health",
   "/chronic-disease":        "chronic_disease",
   "/mrd":                    "mrd",

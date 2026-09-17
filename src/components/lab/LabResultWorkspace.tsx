@@ -58,7 +58,7 @@ interface TestItem {
   critical_acknowledged: boolean;
   notes: string | null;
   previous_value: string | null;
-  delta_flag: string | null;
+  delta_flag: boolean | null;
   verification_method: string;
   autoverify_reason: string | null;
   autoverified_at: string | null;
@@ -477,7 +477,11 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
     // Delta check (Phase 8): compare against this patient's most recent prior validated
     // numeric result for the same test. A >50% swing is flagged for the reviewer.
     let previousValue: string | null = null;
-    let deltaFlag: string | null = null;
+    // `lab_order_items.delta_flag` is boolean (20260322152823) — was written as the string
+    // "delta" here, which Postgres rejects outright (22P02), aborting the entire `.update()`
+    // below and silently discarding the result being entered along with it. Found live: any
+    // result >=50% off the patient's own prior value for the same test never saved at all.
+    let deltaFlag = false;
     if (numVal != null && !isNaN(numVal)) {
       const { data: prev } = await (supabase as any)
         .from("lab_order_items")
@@ -495,7 +499,7 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
         previousValue = String(prevNum);
         if (prevNum !== 0) {
           const pctChange = Math.abs((numVal - prevNum) / prevNum) * 100;
-          if (pctChange >= DELTA_CHECK_THRESHOLD_PCT) deltaFlag = "delta";
+          if (pctChange >= DELTA_CHECK_THRESHOLD_PCT) deltaFlag = true;
         }
       }
     }
@@ -554,14 +558,17 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
         description: `Changed from ${previousValue} to ${rawValue} ${item.unit || ""} (>${DELTA_CHECK_THRESHOLD_PCT}%). Verify before releasing.`,
       });
       if (labHospitalId) {
-        (supabase as any).from("clinical_alerts").insert({
+        // Deduped on the item itself — re-saving/editing the same result must not raise a
+        // second delta alert for it (KNOWN-BUG-002).
+        (supabase as any).from("clinical_alerts").upsert({
           hospital_id: labHospitalId,
           patient_id: order.patient_id,
           alert_type: "lab_trend",
           severity: "medium",
           alert_message: `Lab delta on ${item.test_name}: ${previousValue} → ${rawValue} ${item.unit || ""} for ${patient?.full_name} (${patient?.uhid})`,
           lab_order_item_id: item.id,
-        }).then(() => {}, () => {});
+          dedupe_key: item.id,
+        }, { onConflict: "hospital_id,alert_type,dedupe_key", ignoreDuplicates: true }).then(() => {}, () => {});
       }
     }
 
@@ -585,14 +592,19 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
     if (finalFlag === "CH" || finalFlag === "CL") {
       const { data: orderData } = await supabase.from("lab_orders").select("hospital_id").eq("id", order.id).maybeSingle();
       if (orderData) {
-        await supabase.from("clinical_alerts").insert({
+        // Deduped on the item itself — same rationale as the delta-check alert above.
+        // `dedupe_key` isn't in the generated types yet (added by this session's migration,
+        // types.ts regenerates from a live push) — cast like every other clinical_alerts
+        // write in this file already does for the same reason.
+        await (supabase as any).from("clinical_alerts").upsert({
           hospital_id: orderData.hospital_id,
           alert_type: "critical_lab_value",
           severity: "critical",
           alert_message: `Critical ${item.test_name}: ${rawValue} ${item.unit || ""} — Patient: ${patient?.full_name} (${patient?.uhid})`,
           patient_id: order.patient_id,
           lab_order_item_id: item.id,
-        });
+          dedupe_key: item.id,
+        }, { onConflict: "hospital_id,alert_type,dedupe_key", ignoreDuplicates: true });
         toast({
           title: `🚨 Critical: ${item.test_name} = ${rawValue}`,
           description: `Patient: ${patient?.full_name}`,
@@ -825,6 +837,14 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
 
     await finalizeReleasedOrder();
 
+    // KNOWN-BUG-213: this dual-validation (pathologist sign-off) path never logged NABH
+    // evidence at all — only the auto-verify path (below) did. Same criterion code the
+    // auto-verify path already uses, so a report on this admission's evidence trail does not
+    // depend on which release path happened to run.
+    if (labHospitalId) {
+      logNABHEvidence(labHospitalId, "COP.6", `Order ${orderBarcode || order.id} validated and signed by pathologist ${currentUserId}`, "compliant");
+    }
+
     setValidating(false);
     setAutoRunAnomaly(true);
     fetchItems();
@@ -885,6 +905,12 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
     await supabase.from("lab_orders").update({ status: "completed" }).eq("id", order.id);
 
     await finalizeReleasedOrder();
+
+    // KNOWN-BUG-213: the single-step release path never logged NABH evidence either — see the
+    // matching comment on handlePathologistValidate.
+    if (labHospitalId) {
+      logNABHEvidence(labHospitalId, "COP.6", `Order ${orderBarcode || order.id} validated and released${currentUserId ? ` by ${currentUserId}` : ""}`, "compliant");
+    }
 
     setValidating(false);
     setAutoRunAnomaly(true); // auto-trigger AI anomaly analysis after validation
@@ -988,14 +1014,18 @@ const LabResultWorkspace: React.FC<Props> = ({ order, onRefresh }) => {
 
     for (const p of result) {
       if (!p.stewardship_alert) continue;
-      await (supabase as any).from("clinical_alerts").insert({
+      // Deduped per (item, phenotype) — the re-clickable "Detect phenotype" button must not
+      // re-raise the same phenotype alert twice, but one item can legitimately carry more than
+      // one distinct resistant-phenotype finding, so the phenotype name is part of the key.
+      await (supabase as any).from("clinical_alerts").upsert({
         hospital_id: labHospitalId,
         patient_id: order.patient_id,
         alert_type: "antibiotic_stewardship",
         severity: p.confidence === "high" ? "critical" : "high",
         alert_message: `Possible ${p.phenotype} (${p.confidence} confidence) — ${antibiogramOrganism} in ${patient?.full_name} (${patient?.uhid}): ${p.explanation}`,
         lab_order_item_id: microItem.id,
-      });
+        dedupe_key: `${microItem.id}:${p.phenotype}`,
+      }, { onConflict: "hospital_id,alert_type,dedupe_key", ignoreDuplicates: true });
     }
     if (result.some(p => p.stewardship_alert)) {
       toast({ title: "⚠️ Possible resistant phenotype detected", description: "Antibiotic stewardship team notified." });

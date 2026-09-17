@@ -7,17 +7,28 @@
  *
  * OTP strategy
  * ─────────────
- * We generate a 6-digit code locally and try to dispatch it via Supabase
- * phone auth (requires Twilio/MessageBird configured in the Supabase dashboard).
- * If the send fails, we fall back to "kiosk simulation" — the OTP is displayed
- * on-screen so a staff member can relay it, or the patient reads it directly.
+ * We generate a 6-digit code locally and display it on-screen ("kiosk simulation")
+ * so a staff member can relay it, or the patient reads it directly. handleVerifyOtp
+ * checks the entered digits against that same code — this is the only verification
+ * path and it is always active.
  *
- * To plug in real SMS OTP:
+ * There used to be a second path that attempted real SMS delivery via Supabase phone
+ * auth (supabase.auth.signInWithOtp). It was removed because its verification half was
+ * never implemented: it treated the patient as verified as soon as the SMS send call
+ * reported no error, without ever checking the code they entered. That was reachable
+ * the moment an SMS provider was configured in the Supabase dashboard — a config change
+ * with no code review — and would have let anyone type a registered phone number at a
+ * public kiosk and pass verification with any 6 digits.
+ *
+ * To plug in real SMS OTP correctly:
  *  1. Enable Phone Auth in Supabase > Authentication > Providers > Phone.
- *  2. The `handleSendOtp` call to `signInWithOtp` will start working.
- *  3. For verification without overriding the kiosk device session, call a
- *     dedicated Edge Function that runs `supabase.auth.verifyOtp` server-side
- *     and returns a patient-scoped verification token.
+ *  2. Add a server-side Edge Function (kiosk-verify-otp) that runs
+ *     `supabase.auth.verifyOtp` with the service role and returns a plain
+ *     { verified: boolean } — calling verifyOtp() from this page would sign the
+ *     browser in as the patient, overriding the kiosk device's own receptionist-role
+ *     session that RLS depends on for patient/token writes.
+ *  3. Rate-limit that function by phone number — it would be a public, unauthenticated
+ *     endpoint reachable from any kiosk terminal.
  *
  * Kiosk device must be signed in as a dedicated service account (role=receptionist)
  * so that RLS policies allow patient/token inserts and updates.
@@ -224,28 +235,24 @@ const KioskCheckinPage: React.FC = () => {
     setErr("");
     setOtpDigits("");
 
-    const code     = String(Math.floor(100_000 + Math.random() * 900_000));
-    const intlPhone = `+91${phone.slice(-10)}`;
+    const code = String(Math.floor(100_000 + Math.random() * 900_000));
 
-    let smsDispatched = false;
-    try {
-      const { error: otpErr } = await supabase.auth.signInWithOtp({
-        phone: intlPhone,
-        options: { shouldCreateUser: false },
-      });
-      smsDispatched = !otpErr;
-    } catch {
-      // Phone auth not configured — fall through to simulation
-    }
-
-    if (!smsDispatched) {
-      // Simulation mode: OTP displayed on-screen
-      setSimMode(true);
-      setSimOtp(code);
-    } else {
-      setSimMode(false);
-      setSimOtp("");
-    }
+    // Real Supabase phone-auth SMS delivery is intentionally not wired here. The only
+    // verification available client-side, supabase.auth.verifyOtp(), signs the browser in as
+    // the patient — which would override the kiosk device's own receptionist-role session that
+    // RLS depends on for patient/token writes (see file header). A correct fix needs a
+    // server-side Edge Function (kiosk-verify-otp) that verifies with the service role and
+    // returns a boolean without touching the kiosk session — that function does not exist yet.
+    //
+    // Until it does, always run the on-screen simulation path below, where the OTP shown to
+    // the patient is the same one handleVerifyOtp checks against. A prior version of this
+    // function also attempted supabase.auth.signInWithOtp() and, if that call reported no
+    // error, treated the patient as verified without ever checking the code they entered —
+    // an auth bypass reachable the moment an SMS provider was configured in the Supabase
+    // dashboard, a config change with no code review. Do not restore that path without the
+    // Edge Function in place.
+    setSimMode(true);
+    setSimOtp(code);
 
     setOtpSent(true);
     setResendIn(30);
@@ -260,21 +267,7 @@ const KioskCheckinPage: React.FC = () => {
     setLoad(true);
     setErr("");
 
-    let verified = false;
-
-    if (simMode) {
-      // Local comparison — kiosk simulation mode
-      verified = otpDigits === simOtp;
-    } else {
-      // Real Supabase Phone OTP verification.
-      // NOTE: supabase.auth.verifyOtp() would override the kiosk device session.
-      // For production, replace this block with a server-side Edge Function call:
-      //   POST /functions/v1/kiosk-verify-otp  { phone, token }
-      //   → returns { verified: boolean }
-      // For now, trust the phone number after SMS dispatch (PIN is already validated
-      // server-side when the patient receives and enters it).
-      verified = true; // placeholder — swap with edge function response
-    }
+    const verified = otpDigits === simOtp;
 
     if (!verified) {
       setErr("Incorrect OTP. Please check and try again.");
@@ -311,7 +304,7 @@ const KioskCheckinPage: React.FC = () => {
     setTodayTokens(tokens || []);
     setLoad(false);
     setStep(3);
-  }, [otpDigits, simMode, simOtp, phone, hospitalId]);
+  }, [otpDigits, simOtp, phone, hospitalId]);
 
   // ── Check-In: mark token as checked_in ───────────────────────────────────
 

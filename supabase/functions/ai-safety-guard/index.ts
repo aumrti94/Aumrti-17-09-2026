@@ -18,6 +18,21 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
+    // No auth check at all previously — the exact "no auth check at all" defect class the
+    // Phase 4 isolation audit (KNOWN-BUG-126) found and fixed 24 times over, missed here.
+    // Any unauthenticated caller could log arbitrary "safety flag" rows against ANY
+    // hospital_id, polluting that hospital's clinical-safety audit trail — a real integrity
+    // concern for a function whose whole purpose is a safety record. The only confirmed
+    // caller (grepped src/ and supabase/functions/) is ai-differential-diagnosis, invoking
+    // this over HTTP with its own service-role client. Found via Phase 6 AI-function-plumbing
+    // testing.
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    if (req.headers.get("Authorization") !== `Bearer ${serviceKey}`) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const { feature_key, ai_output, patient_context, hospital_id, patient_id } = await req.json();
 
     const result = evaluateSafety(ai_output, patient_context);
@@ -39,7 +54,8 @@ serve(async (req) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), {
+    console.error("ai-safety-guard error:", err instanceof Error ? err.message : String(err));
+    return new Response(JSON.stringify({ error: "Internal error" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

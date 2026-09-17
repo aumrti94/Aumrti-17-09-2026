@@ -6,11 +6,13 @@ at the database level (Row-Level Security keyed on `hospital_id`).
 
 It covers the operational surface of running a hospital — outpatient and inpatient care,
 emergency, OT, nursing, lab and radiology, pharmacy, billing and GST, insurance/TPA, HR and
-payroll, and NABH/ABDM regulatory compliance — as **61 billable modules** behind a single
+payroll, and NABH/ABDM regulatory compliance — as **67 billable modules** behind a single
 subscription-gated web app, plus a companion mobile app in [mobile/](mobile/).
 
-Numbers below are generated from the codebase itself (`npm run docs:facts`), not hand-typed —
-see [docs/product/FACT_BASE.md](docs/product/FACT_BASE.md) for the sourcing rule behind each one.
+Numbers below are hand-maintained against the codebase — the `npm run docs:facts` generator this
+used to claim was never actually built (there is no `scripts/generate-fact-base.mjs`, in any
+commit). See [docs/product/FACT_BASE.md](docs/product/FACT_BASE.md) for the sourcing rule behind
+each one; treat that file as the thing to keep in sync by hand until a real generator exists.
 
 ## What's in the app
 

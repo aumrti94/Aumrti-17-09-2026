@@ -2,6 +2,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { APP_DOMAIN } from "../_shared/brand.ts";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -221,14 +222,59 @@ serve(async (req) => {
     return new Response(JSON.stringify(buildCapabilityStatement()), { headers: corsHeaders });
   }
 
+  // ── Auth ─────────────────────────────────────────────────────────────────
+  // Every resource below is PHI. This server has no OAuth/SMART token issuer
+  // implemented anywhere in supabase/functions/ despite advertising one in
+  // buildSmartConfiguration() — that discovery document is aspirational, not a
+  // live auth path. Until a real SMART token flow exists, the caller must hold
+  // a valid Aumrti staff session, the same bar every other PHI-bearing function
+  // in this repo enforces. Discovered unauthenticated (any hospital_id, any
+  // patient id, no token at all) during the Phase 4 isolation audit — see
+  // KNOWN_BUGS.md.
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader) {
+    return new Response(JSON.stringify({ resourceType: "OperationOutcome", issue: [{ severity: "error", code: "login", diagnostics: "Authorization required" }] }), { status: 401, headers: corsHeaders });
+  }
+  const anonClient = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_ANON_KEY")!,
+    { global: { headers: { Authorization: authHeader } } },
+  );
+  const { data: { user }, error: authErr } = await anonClient.auth.getUser();
+  if (authErr || !user) {
+    return new Response(JSON.stringify({ resourceType: "OperationOutcome", issue: [{ severity: "error", code: "login", diagnostics: "Authorization required" }] }), { status: 401, headers: corsHeaders });
+  }
+
   try {
     const db = sb();
+
+    const { data: callerRow } = await db
+      .from("users")
+      .select("hospital_id")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
+    const callerHospitalId: string | undefined = callerRow?.hospital_id;
+    if (!callerHospitalId) {
+      return new Response(JSON.stringify({ resourceType: "OperationOutcome", issue: [{ severity: "error", code: "forbidden", diagnostics: "caller has no hospital" }] }), { status: 403, headers: corsHeaders });
+    }
+
+    // A patient looked up by id/identifier is only ever returned once it is
+    // confirmed to belong to the CALLER's hospital — 404, not 403, so a probe
+    // cannot distinguish "not yours" from "does not exist".
+    const patientBelongsToCaller = async (patientId: string): Promise<boolean> => {
+      const { data } = await db.from("patients").select("hospital_id").eq("id", patientId).maybeSingle();
+      return !!data && data.hospital_id === callerHospitalId;
+    };
+    const notFound = () => new Response(JSON.stringify({ resourceType: "OperationOutcome", issue: [{ severity: "error", code: "not-found" }] }), { status: 404, headers: corsHeaders });
 
     // ── Bulk export: POST /fhir/$export ─────────────────────────────────────
     if ((path === "/fhir/$export" || path === "/$export") && req.method === "POST") {
       const body = await req.json().catch(() => ({}));
       const hospitalId = body.hospital_id || url.searchParams.get("hospital_id");
       if (!hospitalId) return new Response(JSON.stringify({ error: "hospital_id required" }), { status: 400, headers: jsonHeaders });
+      if (hospitalId !== callerHospitalId) {
+        return new Response(JSON.stringify({ resourceType: "OperationOutcome", issue: [{ severity: "error", code: "forbidden", diagnostics: "cross-hospital export denied" }] }), { status: 403, headers: corsHeaders });
+      }
 
       const [patientsRes, encountersRes, labRes, rxRes] = await Promise.all([
         db.from("patients").select("*").eq("hospital_id", hospitalId).limit(10000),
@@ -261,14 +307,14 @@ serve(async (req) => {
     const patientMatch = path.match(/^\/fhir\/Patient\/([^/$]+)$/);
     if (patientMatch && req.method === "GET") {
       const { data } = await db.from("patients").select("*").eq("id", patientMatch[1]).maybeSingle();
-      if (!data) return new Response(JSON.stringify({ resourceType: "OperationOutcome", issue: [{ severity: "error", code: "not-found" }] }), { status: 404, headers: corsHeaders });
+      if (!data || data.hospital_id !== callerHospitalId) return notFound();
       return new Response(JSON.stringify(buildPatientResource(data)), { headers: corsHeaders });
     }
 
     // ── GET /fhir/Patient?identifier={abha_id} ──────────────────────────
     if (path === "/fhir/Patient" && url.searchParams.get("identifier")) {
       const identifier = url.searchParams.get("identifier")!;
-      const { data } = await db.from("patients").select("*").eq("abha_id", identifier).limit(5);
+      const { data } = await db.from("patients").select("*").eq("abha_id", identifier).eq("hospital_id", callerHospitalId).limit(5);
       const resources = (data || []).map((p: any) => buildPatientResource(p));
       return new Response(JSON.stringify({ resourceType: "Bundle", type: "searchset", total: resources.length, entry: resources.map((r: any) => ({ resource: r })) }), { headers: corsHeaders });
     }
@@ -277,6 +323,7 @@ serve(async (req) => {
     const everythingMatch = path.match(/^\/fhir\/Patient\/([^/$]+)\/\$everything$/);
     if (everythingMatch && req.method === "GET") {
       const patientId = everythingMatch[1];
+      if (!(await patientBelongsToCaller(patientId))) return notFound();
       const [
         { data: patient },
         { data: encounters },
@@ -321,6 +368,7 @@ serve(async (req) => {
     if (path.startsWith("/fhir/AllergyIntolerance") && req.method === "GET") {
       const patientId = url.searchParams.get("patient");
       if (!patientId) return new Response(JSON.stringify({ error: "patient param required" }), { status: 400, headers: jsonHeaders });
+      if (!(await patientBelongsToCaller(patientId))) return notFound();
       const { data } = await db.from("patients").select("allergies").eq("id", patientId).maybeSingle();
       const allergies = data?.allergies
         ? String(data.allergies).split(",").map((a: string, i: number) => buildAllergyIntolerance(a, patientId, i))
@@ -332,6 +380,7 @@ serve(async (req) => {
     if (path.startsWith("/fhir/DiagnosticReport") && req.method === "GET") {
       const patientId = url.searchParams.get("patient");
       if (!patientId) return new Response(JSON.stringify({ error: "patient param required" }), { status: 400, headers: jsonHeaders });
+      if (!(await patientBelongsToCaller(patientId))) return notFound();
       const { data: orders } = await db.from("lab_orders").select("*, lab_order_items(*)").eq("patient_id", patientId).limit(20);
       const resources = (orders || []).map((o: any) => buildDiagnosticReport(o, patientId, o.lab_order_items || []));
       return new Response(JSON.stringify({ resourceType: "Bundle", type: "searchset", total: resources.length, entry: resources.map((r: any) => ({ resource: r })) }), { headers: corsHeaders });
@@ -341,6 +390,7 @@ serve(async (req) => {
     if (path.startsWith("/fhir/Immunization") && req.method === "GET") {
       const patientId = url.searchParams.get("patient");
       if (!patientId) return new Response(JSON.stringify({ error: "patient param required" }), { status: 400, headers: jsonHeaders });
+      if (!(await patientBelongsToCaller(patientId))) return notFound();
       const { data } = await db.from("vaccination_records").select("*").eq("patient_id", patientId).limit(30);
       const resources = (data || []).map((v: any) => buildImmunization(v, patientId));
       return new Response(JSON.stringify({ resourceType: "Bundle", type: "searchset", total: resources.length, entry: resources.map((r: any) => ({ resource: r })) }), { headers: corsHeaders });
@@ -350,6 +400,7 @@ serve(async (req) => {
     if (path.startsWith("/fhir/Condition") && req.method === "GET") {
       const patientId = url.searchParams.get("patient");
       if (!patientId) return new Response(JSON.stringify({ error: "patient param required" }), { status: 400, headers: jsonHeaders });
+      if (!(await patientBelongsToCaller(patientId))) return notFound();
       const { data } = await db.from("opd_encounters").select("*").eq("patient_id", patientId).not("diagnosis", "is", null).limit(30);
       const resources = (data || []).map((e: any) => buildCondition(e, patientId)).filter(Boolean);
       return new Response(JSON.stringify({ resourceType: "Bundle", type: "searchset", total: resources.length, entry: resources.map((r: any) => ({ resource: r })) }), { headers: corsHeaders });
@@ -359,6 +410,7 @@ serve(async (req) => {
     if (path.startsWith("/fhir/Observation") && req.method === "GET") {
       const patientId = url.searchParams.get("patient");
       if (!patientId) return new Response(JSON.stringify({ error: "patient param required" }), { status: 400, headers: jsonHeaders });
+      if (!(await patientBelongsToCaller(patientId))) return notFound();
       const { data } = await db.from("lab_order_items").select("*, lab_orders!inner(patient_id)").eq("lab_orders.patient_id", patientId).limit(50);
       const resources = (data || []).map((l: any) => buildObservation(l, patientId));
       return new Response(JSON.stringify({ resourceType: "Bundle", type: "searchset", total: resources.length, entry: resources.map((r: any) => ({ resource: r })) }), { headers: corsHeaders });
@@ -368,6 +420,7 @@ serve(async (req) => {
     if (path.startsWith("/fhir/MedicationRequest") && req.method === "GET") {
       const patientId = url.searchParams.get("patient");
       if (!patientId) return new Response(JSON.stringify({ error: "patient param required" }), { status: 400, headers: jsonHeaders });
+      if (!(await patientBelongsToCaller(patientId))) return notFound();
       const { data } = await db.from("prescriptions").select("*").eq("patient_id", patientId).limit(20);
       const resources = (data || []).flatMap((rx: any) => buildMedicationRequest(rx, patientId));
       return new Response(JSON.stringify({ resourceType: "Bundle", type: "searchset", total: resources.length, entry: resources.map((r: any) => ({ resource: r })) }), { headers: corsHeaders });
@@ -377,6 +430,7 @@ serve(async (req) => {
     if (path.startsWith("/fhir/Encounter") && req.method === "GET") {
       const patientId = url.searchParams.get("patient");
       if (!patientId) return new Response(JSON.stringify({ error: "patient param required" }), { status: 400, headers: jsonHeaders });
+      if (!(await patientBelongsToCaller(patientId))) return notFound();
       const { data } = await db.from("opd_encounters").select("*").eq("patient_id", patientId).order("created_at", { ascending: false }).limit(30);
       const resources = (data || []).map((e: any) => buildEncounter(e, patientId));
       return new Response(JSON.stringify({ resourceType: "Bundle", type: "searchset", total: resources.length, entry: resources.map((r: any) => ({ resource: r })) }), { headers: corsHeaders });
@@ -404,9 +458,12 @@ serve(async (req) => {
     }), { status: 404, headers: corsHeaders });
 
   } catch (err) {
+    // This server's own routes assemble the heaviest PHI payloads in the repo (bulk $export,
+    // Patient/$everything) — an exception message is a plausible leak vector in its own right.
+    console.error("[fhir-r4-server] failed:", sanitizeForLog(err instanceof Error ? err.message : String(err)));
     return new Response(JSON.stringify({
       resourceType: "OperationOutcome",
-      issue: [{ severity: "error", code: "exception", diagnostics: String(err) }],
+      issue: [{ severity: "error", code: "exception", diagnostics: "Internal error" }],
     }), { status: 500, headers: corsHeaders });
   }
 });

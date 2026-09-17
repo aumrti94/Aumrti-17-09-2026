@@ -6,6 +6,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Pill, FlaskConical, Scan, X } from "lucide-react";
 import { recalculateBillTotalsSafe } from "@/lib/billTotals";
+import { getInvestigationRate } from "@/lib/investigationBilling";
+import { autoSelectable, splitBilledServices, type ChargedLine } from "@/lib/billedServiceCheck";
 import type { BillRecord } from "@/pages/billing/BillingPage";
 
 interface PharmacyRow {
@@ -111,57 +113,91 @@ const UnbilledServicesModal: React.FC<Props> = ({ bill, hospitalId, onClose, onA
         });
       }
 
-      // Radiology — no fee column on radiology_orders, look up modality fee
+      // Radiology — no fee column on radiology_orders. The previous lookup priced each line
+      // from radiology_modalities.fee (by modality_id) — a column that does exist (added
+      // 20260406173423) but has been vestigial since per-study pricing arrived
+      // (radiology_study_master, 20260903000003): nothing in Settings → Radiology or the order
+      // modal has written to it since, so it sits at its column default (0) for every modality
+      // in practice, and every radiology line here silently priced at ₹0 with no error at all.
+      // Reusing getInvestigationRate (the same study_name → radiology_study_master →
+      // service_master → hard-default resolver the at-signoff auto-bill path already uses)
+      // instead of re-deriving that fallback chain keeps this discharge-time sweep from ever
+      // disagreeing with the price already charged for the same study elsewhere.
       const { data: radOrders } = await supabase
         .from("radiology_orders")
-        .select("id, study_name, modality_type, modality_id")
+        .select("id, study_name, modality_type")
         .eq("admission_id", bill.admission_id)
         .eq("billed", false);
-      const modalityIds = Array.from(new Set((radOrders || []).map((r: any) => r.modality_id).filter(Boolean)));
-      const { data: modalities } = modalityIds.length
-        // Table is radiology_modalities; "modalities" has never existed, so this lookup always
-        // returned an error and every radiology line fell back to a fee of 0 (see modMap below).
-        ? await (supabase as any).from("radiology_modalities").select("id, fee").in("id", modalityIds)
-        : { data: [] as any[] };
-      const modMap = new Map<string, number>((modalities || []).map((m: any) => [m.id as string, Number(m.fee) || 0]));
-      const radRows: RadRow[] = (radOrders || []).map((r: any) => ({
-        id: r.id,
-        study_name: r.study_name,
-        modality_type: r.modality_type,
-        fee: modMap.get(r.modality_id) || 0,
-        dedupe_key: `radiology:${r.id}`,
-      }));
+      const radRows: RadRow[] = await Promise.all(
+        (radOrders || []).map(async (r: any) => {
+          const { rate } = await getInvestigationRate(hospitalId, r.study_name, "radiology");
+          return {
+            id: r.id,
+            study_name: r.study_name,
+            modality_type: r.modality_type,
+            fee: rate,
+            dedupe_key: `radiology:${r.id}`,
+          };
+        })
+      );
 
       // Drop anything already charged. The `billed` boolean above is only one of two ways a
       // service gets paid for: orders committed from the IPD ward post their charge through
       // postAncillaryOrderCharges, which writes a source_dedupe_key. Filtering on the boolean
       // alone re-offered those here — pre-selected — and billed the patient a second time.
+      //
+      // PHASE 2: the bill's status is now joined. Previously a line on a CANCELLED bill
+      // counted as "charged", so a voided-and-not-yet-reraised service vanished from this
+      // modal entirely and was never billed again — the mirror image of the double-billing
+      // bug above, and just as silent.
       const allKeys = [
         ...pharmRows.map((r) => r.dedupe_key),
         ...labRows.map((r) => r.dedupe_key),
         ...radRows.map((r) => r.dedupe_key),
       ];
-      let chargedKeys = new Set<string>();
+      let chargedLines: ChargedLine[] = [];
       if (allKeys.length > 0) {
         const { data: existing } = await (supabase as any)
           .from("bill_line_items")
-          .select("source_dedupe_key")
+          .select("source_dedupe_key, bills!inner(bill_status)")
           .eq("hospital_id", hospitalId)
           .in("source_dedupe_key", allKeys);
-        chargedKeys = new Set((existing || []).map((e: any) => e.source_dedupe_key));
+        chargedLines = (existing || []).map((e: any) => ({
+          source_dedupe_key: e.source_dedupe_key,
+          billStatus: e.bills?.bill_status ?? null,
+        }));
       }
 
-      const freshPharm = pharmRows.filter((r) => !chargedKeys.has(r.dedupe_key));
-      const freshLabs = labRows.filter((r) => !chargedKeys.has(r.dedupe_key));
-      const freshRads = radRows.filter((r) => !chargedKeys.has(r.dedupe_key));
+      const asCandidates = <T extends { dedupe_key: string }>(rows: T[], describe: (r: T) => string) =>
+        rows.map((r) => ({ dedupeKey: r.dedupe_key, description: describe(r), row: r }));
+
+      const pharmSplit = splitBilledServices(asCandidates(pharmRows, (r) => r.drug_name), chargedLines);
+      const labSplit = splitBilledServices(asCandidates(labRows, (r) => r.test_name), chargedLines);
+      const radSplit = splitBilledServices(asCandidates(radRows, (r) => r.study_name), chargedLines);
+
+      const freshPharm = pharmSplit.unbilled.map((u) => u.candidate.row as PharmacyRow);
+      const freshLabs = labSplit.unbilled.map((u) => u.candidate.row as LabRow);
+      const freshRads = radSplit.unbilled.map((u) => u.candidate.row as RadRow);
 
       setPharmacy(freshPharm);
       setLabs(freshLabs);
       setRads(freshRads);
-      // Default all checked
-      setSelectedPharm(new Set(freshPharm.map((_, idx) => String(idx))));
-      setSelectedLab(new Set(freshLabs.map((_, idx) => String(idx))));
-      setSelectedRad(new Set(freshRads.map((r) => r.id)));
+
+      // Pre-select only what was NEVER billed. A service whose sole bill line sits on a
+      // cancelled bill is genuinely unbilled, but it looks identical to a bill a colleague is
+      // mid-way through voiding and re-raising — and this modal bills on confirm, so a ticked
+      // box is a decision made on the user's behalf. It is listed, not ticked.
+      const autoPharm = new Set(autoSelectable(pharmSplit).map((c) => c.dedupeKey));
+      const autoLab = new Set(autoSelectable(labSplit).map((c) => c.dedupeKey));
+      const autoRad = new Set(autoSelectable(radSplit).map((c) => c.dedupeKey));
+
+      setSelectedPharm(
+        new Set(freshPharm.map((r, idx) => (autoPharm.has(r.dedupe_key) ? String(idx) : "")).filter(Boolean)),
+      );
+      setSelectedLab(
+        new Set(freshLabs.map((r, idx) => (autoLab.has(r.dedupe_key) ? String(idx) : "")).filter(Boolean)),
+      );
+      setSelectedRad(new Set(freshRads.filter((r) => autoRad.has(r.dedupe_key)).map((r) => r.id)));
       setLoading(false);
     };
     load();

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Star, ExternalLink } from "lucide-react";
-import type { PortalSession } from "./PortalLogin";
+import type { PortalSession } from "./portalTypes";
 
 const LABELS = ["", "Very Poor", "Poor", "Average", "Good", "Excellent"];
 

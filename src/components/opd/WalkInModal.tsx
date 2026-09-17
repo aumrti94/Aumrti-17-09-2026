@@ -829,7 +829,7 @@ const WalkInModal: React.FC<Props> = ({ hospitalId, onClose, onCreated, defaultD
         payer_type: payerType,
         payer_id: payerId || null,
         ...(isCheckin && checkinAppointment ? { appointment_id: checkinAppointment.id } : {}),
-      }).select("token_number").single();
+      }).select("token_number").maybeSingle();
       if (tokenErr) throw tokenErr;
       const atomicToken = tokenRow?.token_number || "";
 

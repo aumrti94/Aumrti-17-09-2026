@@ -128,10 +128,27 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
 
   try {
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const db = createClient(
       Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+      serviceKey
     );
+
+    // ── Auth ──────────────────────────────────────────────────────────────
+    // The header above already documents this as "service role only," but
+    // nothing enforced it — any caller with just the public anon key could
+    // insert a fabricated `status: "paid"` subscription_invoices row for a
+    // hospital that never paid, generate a real tax invoice bearing that
+    // hospital's own name/address/GSTIN, and email its admin a fake
+    // "payment success" notice. Found in the Phase 4 isolation audit — see
+    // KNOWN_BUGS.md. The only legitimate caller is razorpay-subscription-webhook,
+    // invoked with its own service-role client — so this now actually
+    // enforces the "service role only" the header always claimed.
+    if (req.headers.get("Authorization") !== `Bearer ${serviceKey}`) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
 
     const body = await req.json();
     const {
@@ -346,29 +363,44 @@ serve(async (req) => {
     });
 
     // ── Log subscription event ────────────────────────────────────────────────
-    await db.from("subscription_events").insert({
-      hospital_id,
-      event_type: "payment_success",
-      new_status: "active",
-      razorpay_event: "subscription.charged",
-      metadata: { invoice_number: invoiceNumber, amount_inr: Number(amount_inr), plan_name },
-    }).catch(() => {});
+    // Was `.catch(() => {})` directly on the query builder — supabase-js's PostgrestBuilder is
+    // thenable (implements .then()) but does not implement a real .catch(), so this threw
+    // "db.from(...).insert(...).catch is not a function" on every single call, unconditionally.
+    // The invoice record above was already created successfully by this point, but the request
+    // still fell into the outer catch and returned 500 to razorpay-subscription-webhook — the
+    // caller sees "failed" for an invoice that was actually generated, risking a webhook retry
+    // and a duplicate invoice. Found via Phase 6 edge-function testing.
+    try {
+      await db.from("subscription_events").insert({
+        hospital_id,
+        event_type: "payment_success",
+        new_status: "active",
+        razorpay_event: "subscription.charged",
+        metadata: { invoice_number: invoiceNumber, amount_inr: Number(amount_inr), plan_name },
+      });
+    } catch (e) {
+      console.error("generate-invoice: subscription_events log failed:", e instanceof Error ? e.message : String(e));
+    }
 
     // ── Send payment success email ────────────────────────────────────────────
     if (adminUser?.email) {
-      await db.functions.invoke("send-subscription-notification", {
-        body: {
-          event:          "payment_success",
-          hospital_id,
-          email:          adminUser.email,
-          full_name:      adminUser.full_name,
-          hospital_name:  hosp?.name || "",
-          plan_name,
-          invoice_number: invoiceNumber,
-          amount_inr:     Number(amount_inr),
-          invoice_url:    signedUrl || "",
-        },
-      }).catch(() => {});
+      try {
+        await db.functions.invoke("send-subscription-notification", {
+          body: {
+            event:          "payment_success",
+            hospital_id,
+            email:          adminUser.email,
+            full_name:      adminUser.full_name,
+            hospital_name:  hosp?.name || "",
+            plan_name,
+            invoice_number: invoiceNumber,
+            amount_inr:     Number(amount_inr),
+            invoice_url:    signedUrl || "",
+          },
+        });
+      } catch (e) {
+        console.error("generate-invoice: payment-success notification failed:", e instanceof Error ? e.message : String(e));
+      }
     }
 
     console.log(`✓ Invoice generated: ${invoiceNumber} for hospital ${hospital_id}`);
@@ -378,9 +410,9 @@ serve(async (req) => {
       { status: 200, headers: { ...CORS, "Content-Type": "application/json" } }
     );
   } catch (err) {
-    console.error("generate-invoice error:", err);
+    console.error("generate-invoice error:", err instanceof Error ? err.message : String(err));
     return new Response(
-      JSON.stringify({ error: err.message }),
+      JSON.stringify({ error: "Internal error" }),
       { status: 500, headers: { ...CORS, "Content-Type": "application/json" } }
     );
   }

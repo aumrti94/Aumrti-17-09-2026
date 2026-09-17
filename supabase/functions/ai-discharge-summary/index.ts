@@ -3,6 +3,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveAiConfig, resolveAiConfigFromEnv, callAiChat } from "../_shared/ai-config.ts";
 import { sanitizeForLog } from "../_shared/phi-redactor.ts";
+import { checkAIAllowed } from "../_shared/ai-entitlement.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -36,6 +37,41 @@ serve(async (req) => {
       });
     }
 
+    // The caller was verified as SOME real user above, but every query below
+    // used to be scoped only by admission_id, with NO hospital_id filter
+    // anywhere — so any logged-in user at any hospital could name another
+    // hospital's admission_id and get back its patient's name, DOB,
+    // allergies, phone, vitals, labs, meds, radiology findings and ICD
+    // codes, wrapped in an AI-written discharge summary. Found in the Phase
+    // 4 isolation audit — see KNOWN_BUGS.md. Resolve the caller's own
+    // hospital first and filter every query by it — a foreign admission_id
+    // then resolves to nothing instead of another tenant's chart.
+    const { data: staff } = await sb.from("users").select("hospital_id").eq("auth_user_id", user.id).maybeSingle();
+    if (!staff?.hospital_id) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const callerHospitalId = staff.hospital_id;
+
+    // Entitlement is already enforced further down inside resolveAiConfig(..., "discharge_summary",
+    // ...) — it calls checkAIAllowed internally and throws AIDisabledError on a real disabled
+    // decision — but that only fires AFTER the 8-way parallel PHI fetch just below (full
+    // chart: rounds, labs, meds, OT, radiology, vitals, ICD codes), and this file's outer
+    // catch-all doesn't special-case AIDisabledError anyway (a disabled hospital got a
+    // confusing 500, not a clean 403). Checking explicitly here — matching the SAME
+    // "discharge_summary" key resolveAiConfig actually uses, not the unrelated
+    // "discharge_summary_structured" the frontend happens to also send in this same request
+    // body for a different purpose — fails fast before that fetch and gets the status/message
+    // right; the result is threaded into resolveAiConfig's `options.entitlement` below so it
+    // is not re-decided. Found via Phase 6 AI-function-plumbing testing.
+    const gate = await checkAIAllowed(sb, callerHospitalId, "discharge_summary");
+    if (!gate.allowed) {
+      return new Response(JSON.stringify({ error: gate.reason }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // Fetch all clinical data in parallel
     const [
       admRes,
@@ -50,37 +86,44 @@ serve(async (req) => {
       sb.from("admissions")
         .select("*, patients(full_name, dob, gender, blood_group, allergies, phone, chronic_conditions)")
         .eq("id", admission_id)
+        .eq("hospital_id", callerHospitalId)
         .maybeSingle(),
 
       (sb as any).from("ward_round_notes")
         .select("subjective, objective, assessment, plan, created_at")
         .eq("admission_id", admission_id)
+        .eq("hospital_id", callerHospitalId)
         .order("created_at", { ascending: false })
         .limit(12),
 
       (sb as any).from("lab_order_items")
         .select("test_name, result_value, result_unit, reference_range, result_flag, result_numeric, created_at")
         .eq("admission_id", admission_id)
+        .eq("hospital_id", callerHospitalId)
         .order("created_at", { ascending: false })
         .limit(40),
 
       (sb as any).from("ipd_medications")
         .select("drug_name, dose, frequency, route, is_active, start_date")
-        .eq("admission_id", admission_id),
+        .eq("admission_id", admission_id)
+        .eq("hospital_id", callerHospitalId),
 
       (sb as any).from("ot_schedules")
         .select("surgery_name, post_op_diagnosis, anaesthesia_type, actual_start_time, actual_end_time")
         .eq("admission_id", admission_id)
+        .eq("hospital_id", callerHospitalId)
         .maybeSingle(),
 
       (sb as any).from("radiology_reports")
         .select("impression, findings, critical_finding, is_critical, radiology_orders(study_name)")
         .eq("admission_id", admission_id)
+        .eq("hospital_id", callerHospitalId)
         .limit(6),
 
       (sb as any).from("nursing_vitals")
         .select("bp_systolic, bp_diastolic, pulse, temperature, spo2, respiratory_rate, pain_score, recorded_at")
         .eq("admission_id", admission_id)
+        .eq("hospital_id", callerHospitalId)
         .order("recorded_at", { ascending: false })
         .limit(8),
 
@@ -88,6 +131,7 @@ serve(async (req) => {
         .select("primary_icd_code, primary_icd_desc, secondary_codes, status")
         .eq("visit_id", admission_id)
         .eq("visit_type", "ipd")
+        .eq("hospital_id", callerHospitalId)
         .maybeSingle(),
     ]);
 
@@ -192,7 +236,9 @@ serve(async (req) => {
         }).join("\n\n")
       : "None";
 
-    const config = (await resolveAiConfig(admission.hospital_id, "discharge_summary", 2500))
+    // admission.hospital_id === callerHospitalId by construction (the query above filtered
+    // on it), so the gate computed above is valid to reuse here without re-deciding it.
+    const config = (await resolveAiConfig(admission.hospital_id, "discharge_summary", 2500, { entitlement: gate }))
       ?? resolveAiConfigFromEnv(2500);
 
     if (!config) {

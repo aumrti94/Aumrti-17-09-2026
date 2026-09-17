@@ -10,7 +10,13 @@ import { useHospitalId } from "@/hooks/useHospitalId";
 const defaults = {
   hrLow: 40, hrHigh: 150, spo2Critical: 90, tempLow: 35, tempHigh: 39,
   bpLow: 80, bpHigh: 180, glucoseLow: 70, glucoseHigh: 400,
-  news2Alert: 5, news2Escalate: 7, dischargeTatAlert: 3, dischargeTatEscalate: 5,
+  news2Alert: 5, news2Escalate: 7,
+  // Matches DischargeTATTimer.tsx's own hardcoded fallback exactly (2h warning colour /
+  // alert fire, 3h critical colour) — was previously 3/5 here with no relation to the real
+  // component, so the value shown on this screen for a hospital that never saved anything
+  // did not describe what was actually happening. Wiring these up (KNOWN-BUG-141) means this
+  // default now has to be the truth, not an arbitrary placeholder.
+  dischargeTatAlert: 2, dischargeTatEscalate: 3,
 };
 
 const deviceDefaults = {
@@ -39,6 +45,16 @@ const SettingsThresholdsPage: React.FC = () => {
       .then(({ data }: any) => {
         if (data?.value) setDeviceConfig({ ...deviceDefaults, ...data.value });
       });
+    // clinical_thresholds (config) was previously never saved anywhere — see KNOWN-BUG-141.
+    (supabase as any)
+      .from("hospital_settings")
+      .select("value")
+      .eq("hospital_id", hospitalId)
+      .eq("key", "clinical_thresholds")
+      .maybeSingle()
+      .then(({ data }: any) => {
+        if (data?.value) setConfig({ ...defaults, ...data.value });
+      });
   }, [hospitalId]);
 
   const set = (key: keyof typeof defaults, value: string) =>
@@ -54,6 +70,16 @@ const SettingsThresholdsPage: React.FC = () => {
         .from("hospital_settings")
         .upsert(
           { hospital_id: hospitalId, key: "device_thresholds", value: deviceConfig },
+          { onConflict: "hospital_id,key" }
+        );
+      // Previously this screen only ever saved deviceConfig — every field above it (vitals,
+      // NEWS2, discharge TAT) lived in `config` state and handleSave never referenced it, so
+      // "Thresholds saved" was true for one section of the page and silently false for the
+      // rest. See KNOWN-BUG-141.
+      await (supabase as any)
+        .from("hospital_settings")
+        .upsert(
+          { hospital_id: hospitalId, key: "clinical_thresholds", value: config },
           { onConflict: "hospital_id,key" }
         );
     }
@@ -82,7 +108,14 @@ const SettingsThresholdsPage: React.FC = () => {
     <SettingsPageWrapper title="Alert Thresholds" onSave={handleSave} saving={saving}>
       <div className="space-y-8">
         <section>
-          <h2 className="text-sm font-semibold text-foreground mb-4">Vital Signs Alerts</h2>
+          <h2 className="text-sm font-semibold text-foreground mb-1">Vital Signs Alerts</h2>
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
+            Saved, but not yet read by the nursing vitals-alerting code — it currently uses its
+            own fixed thresholds (in Fahrenheit for temperature; these fields are in Celsius).
+            Wiring this up needs the alerting code's threshold structure reconciled with this
+            screen's, not just a value copied across two mismatched units. Treat these as
+            recorded intent until that reconciliation ships.
+          </p>
           <div className="space-y-3">
             <Field label="Heart Rate Low" k="hrLow" unit="bpm" />
             <Field label="Heart Rate High" k="hrHigh" unit="bpm" />
@@ -97,7 +130,16 @@ const SettingsThresholdsPage: React.FC = () => {
         </section>
 
         <section>
-          <h2 className="text-sm font-semibold text-foreground mb-4">NEWS2 Score</h2>
+          <h2 className="text-sm font-semibold text-foreground mb-1">NEWS2 Score</h2>
+          <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-4">
+            NEWS2's 0–4 / 5–6 / 7 / ≥8 risk bands are the published Royal College of Physicians
+            standard, adopted as-is by NABH 6th Edition (see <code>src/lib/news2.ts</code>) — they
+            are not meant to vary by hospital, and this screen's fields are not wired to the
+            scoring code. A hospital lowering "Escalate at score" to reduce alert volume would be
+            weakening a validated early-warning score, not a legitimate customization. These
+            fields are saved but intentionally not read by anything; whether they should exist on
+            this screen at all is a clinical-governance question, not an engineering one.
+          </p>
           <div className="space-y-3">
             <Field label="Alert at score ≥" k="news2Alert" unit="" />
             <Field label="Escalate at score ≥" k="news2Escalate" unit="" />

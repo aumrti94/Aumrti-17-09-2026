@@ -277,8 +277,9 @@ const PatientHistoryUploadPanel: React.FC<Props> = ({
           requested_by: userId,
         })
         .select("id")
-        .single();
+        .maybeSingle();
       if (jobErr) throw jobErr;
+      if (!created) throw new Error("Could not create the ingest job — no row returned.");
       jobId = created.id as string;
 
       const sourceRows: Record<string, unknown>[] = [];

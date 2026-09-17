@@ -10,7 +10,7 @@ export interface AutoVerifyItemInput {
   autoverify_eligible: boolean;
   result_value: string | null;
   result_flag: string | null;
-  delta_flag: string | null;
+  delta_flag: boolean | null;
 }
 
 export interface AutoVerifyContext {

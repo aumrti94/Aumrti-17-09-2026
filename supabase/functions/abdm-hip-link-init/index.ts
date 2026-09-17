@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getAbdmToken, abdmHeaders } from "../_shared/abdm-auth.ts";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -40,7 +41,8 @@ serve(async (req) => {
     const { data: userRow } = await sb
       .from("users")
       .select("hospital_id")
-      .eq("id", user.id)
+      // auth_user_id, NOT id — the two diverged in migration 20260322111223.
+      .eq("auth_user_id", user.id)
       .maybeSingle();
     if (!userRow?.hospital_id) return json({ error: "user hospital not found" }, 403);
     const callerHospitalId: string = userRow.hospital_id;
@@ -166,7 +168,7 @@ serve(async (req) => {
       message: `Link initiated for ${careContexts.length} care context(s). Patient will receive a notification on their PHR app.`,
     });
   } catch (err) {
-    console.error("abdm-hip-link-init error:", err);
+    console.error("abdm-hip-link-init error:", sanitizeForLog(err instanceof Error ? err.message : String(err)));
     return json({ error: "internal server error" }, 500);
   }
 });

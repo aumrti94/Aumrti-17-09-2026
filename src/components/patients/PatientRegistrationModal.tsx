@@ -104,6 +104,32 @@ const PatientRegistrationModal: React.FC<Props> = ({ onClose, onSuccess, editPat
 
   const set = (field: string, value: string) => setForm((f) => ({ ...f, [field]: value }));
 
+  // KNOWN-BUG-123. The only sanctioned write path for Aadhaar — never a direct
+  // supabase.from("patients") call, which is how this screen ended up writing every digit in
+  // plaintext to patients.aadhaar_id. Called AFTER the base patient row exists (this function
+  // only ever UPDATEs; see upsert-patient-phi/index.ts's own comment on that), for both the
+  // create and edit flows. Best-effort: the patient record itself is already saved by the time
+  // this runs, so a failure here is surfaced but does not roll back registration.
+  const encryptAadhaarIfProvided = async (hospitalId: string, patientId: string) => {
+    const digits = form.aadhaar_id.replace(/\D/g, "");
+    if (digits.length !== 12) return;
+    const { error } = await supabase.functions.invoke("upsert-patient-phi", {
+      body: {
+        operation: "encrypt_and_write",
+        hospitalId,
+        patientId,
+        fields: { aadhaar: digits },
+      },
+    });
+    if (error) {
+      toast({
+        title: "Aadhaar not saved",
+        description: "Patient details were saved, but the Aadhaar number could not be encrypted. Please re-enter it from the patient's detail page.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleSubmit = async () => {
     const errors: Record<string, string> = {};
     if (!form.full_name.trim() || form.full_name.trim().length < 2) {
@@ -161,7 +187,12 @@ const PatientRegistrationModal: React.FC<Props> = ({ onClose, onSuccess, editPat
       chronic_conditions: chronic.length ? chronic : null,
       insurance_id: form.insurance_id || null,
       abha_id: form.abha_id || null,
-      aadhaar_id: form.aadhaar_id ? form.aadhaar_id.replace(/\D/g, "") : null,
+      // Aadhaar is deliberately NOT in this direct-write payload — KNOWN-BUG-123. This screen
+      // used to write it here in plaintext to patients.aadhaar_id, bypassing
+      // upsert-patient-phi, this codebase's own documented "ONLY write path for encrypted PHI
+      // columns". Encrypted separately below, after the base row exists, via that function's
+      // encrypt_and_write operation — the same invariant ImportWizard.tsx already documents
+      // and enforces for the bulk-import path.
       patient_gstin: form.patient_gstin ? form.patient_gstin.trim().toUpperCase() : null,
       abha_verified: !!form.abha_id && abhaVerified,
       abha_verified_at: !!form.abha_id && abhaVerified ? new Date().toISOString() : null,
@@ -173,15 +204,17 @@ const PatientRegistrationModal: React.FC<Props> = ({ onClose, onSuccess, editPat
     if (editPatient) {
       // UPDATE existing patient
       const { error } = await supabase.from("patients").update(patientFields as any).eq("id", editPatient.id);
-      setSaving(false);
       if (error) {
+        setSaving(false);
         const msg = getErrorMessage(error);
         setFormError(msg);
         toast({ title: "Update failed", description: msg, variant: "destructive" });
-      } else {
-        toast({ title: "Patient details updated" });
-        onSuccess();
+        return;
       }
+      await encryptAadhaarIfProvided(hospitalId, editPatient.id);
+      setSaving(false);
+      toast({ title: "Patient details updated" });
+      onSuccess();
       return;
     }
 
@@ -203,6 +236,7 @@ const PatientRegistrationModal: React.FC<Props> = ({ onClose, onSuccess, editPat
       const consentText = getDPDPConsentText(hospitalName);
       const { data: newPatient } = await supabase.from("patients").select("id").eq("hospital_id", hospitalId).eq("uhid", uhid).maybeSingle();
       if (newPatient) {
+        await encryptAadhaarIfProvided(hospitalId, newPatient.id);
         await supabase.from("patient_consents").insert({
           hospital_id: hospitalId,
           patient_id: newPatient.id,
@@ -556,7 +590,7 @@ const PatientRegistrationModal: React.FC<Props> = ({ onClose, onSuccess, editPat
             />
             {form.aadhaar_id && form.aadhaar_id.replace(/\D/g, "").length === 12 && (
               <p className="text-[11px] text-muted-foreground mt-0.5">
-                Stored masked: XXXX-XXXX-{form.aadhaar_id.replace(/\D/g, "").slice(-4)}
+                Will be encrypted on save — never stored or displayed in plain text (KNOWN-BUG-123).
               </p>
             )}
           </div>

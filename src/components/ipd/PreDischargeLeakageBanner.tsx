@@ -3,10 +3,18 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, CheckCircle2, Loader2, ExternalLink } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import {
+  buildDedupeKey,
+  splitBilledServices,
+  type BillableCandidate,
+  type ChargedLine,
+  type UnbilledReason,
+} from "@/lib/billedServiceCheck";
 
 interface UnbilledItem {
   type: string;
   description: string;
+  reason: UnbilledReason;
 }
 
 interface Props {
@@ -22,29 +30,44 @@ const PreDischargeLeakageBanner: React.FC<Props> = ({ admissionId, hospitalId })
 
   const scan = useCallback(async () => {
     setLoading(true);
-    const found: UnbilledItem[] = [];
 
-    // Fetch billed line item descriptions for this admission
-    const { data: bills } = await supabase
+    // PHASE 2 EXTRACTION. This used to compare a Set of lowercased bill-line DESCRIPTIONS
+    // against service names. That answer is wrong in four ways that all happen in a normal
+    // week — overlapping test names, the same drug dispensed twice, master data renamed after
+    // the order, and lines on a voided bill — and every one of them is silent. The identity
+    // question now goes through splitBilledServices on source_dedupe_key. See
+    // src/lib/billedServiceCheck.ts for why description matching is not a billing check.
+    //
+    // bill_status is selected (not filtered out) so a line on a cancelled bill is reported as
+    // unbilled with a reason, rather than silently counting as billed.
+    const { data: bills } = (await supabase
       .from("bills")
-      .select("id")
-      .eq("admission_id", admissionId)
-      .neq("bill_status", "cancelled") as any;
+      .select("id, bill_status")
+      .eq("admission_id", admissionId)) as any;
 
-    const billIds = (bills || []).map((b: any) => b.id);
+    const billStatusById = new Map<string, string | null>(
+      (bills || []).map((b: any) => [b.id, b.bill_status]),
+    );
+    const billIds = [...billStatusById.keys()];
 
     const { data: billedItems } = billIds.length
-      ? await supabase.from("bill_line_items").select("description").in("bill_id", billIds) as any
+      ? ((await supabase
+          .from("bill_line_items")
+          .select("source_dedupe_key, bill_id")
+          .in("bill_id", billIds)) as any)
       : { data: [] };
 
-    const billedDesc = new Set(
-      (billedItems || []).map((i: any) => (i.description || "").toLowerCase().trim())
-    );
+    const chargedLines: ChargedLine[] = (billedItems || []).map((i: any) => ({
+      source_dedupe_key: i.source_dedupe_key,
+      billStatus: billStatusById.get(i.bill_id) ?? null,
+    }));
+
+    const candidates: (BillableCandidate & { type: string })[] = [];
 
     // Check lab orders
     const { data: labOrders } = await (supabase as any)
       .from("lab_orders")
-      .select("id, lab_order_items(test_id, lab_test_master(test_name))")
+      .select("id, lab_order_items(id, test_id, lab_test_master(test_name))")
       .eq("admission_id", admissionId)
       .eq("hospital_id", hospitalId)
       .in("status", ["completed", "validated", "reported"]);
@@ -52,56 +75,66 @@ const PreDischargeLeakageBanner: React.FC<Props> = ({ admissionId, hospitalId })
     for (const order of labOrders || []) {
       for (const item of order.lab_order_items || []) {
         const testName = item.lab_test_master?.test_name || "";
-        if (testName && !billedDesc.has(testName.toLowerCase().trim())) {
-          found.push({ type: "Lab", description: testName });
-        }
+        if (!testName || !item.id) continue;
+        candidates.push({
+          type: "Lab",
+          description: testName,
+          dedupeKey: buildDedupeKey("lab", item.id),
+        });
       }
     }
 
     // Check radiology orders
     const { data: radOrders } = await (supabase as any)
       .from("radiology_orders")
-      .select("investigation_name, status")
+      .select("id, investigation_name, status")
       .eq("admission_id", admissionId)
       .eq("hospital_id", hospitalId)
       .in("status", ["completed", "reported"]);
 
     for (const ord of radOrders || []) {
       const name = ord.investigation_name || "";
-      if (name && !billedDesc.has(name.toLowerCase().trim())) {
-        found.push({ type: "Radiology", description: name });
-      }
+      if (!name || !ord.id) continue;
+      candidates.push({
+        type: "Radiology",
+        description: name,
+        dedupeKey: buildDedupeKey("radiology", ord.id),
+      });
     }
 
-    // Check OT procedures
+    // Check OT procedures.
     // "ot_cases" has never existed — the table is ot_schedules, and the procedure column is
-    // surgery_name. This query always errored, so completed OT procedures were never checked
-    // for billing leakage: the banner silently under-reported. Aliased back to procedure_name
-    // so the loop below is unchanged.
+    // surgery_name. That query always errored, so completed OT procedures were never checked
+    // for billing leakage and the banner silently under-reported.
+    //
+    // An OT case bills several lines (theatre charge, surgeon fee, anaesthesia, implants), so
+    // the theatre charge is the segment that stands for "this case was billed at all".
     const { data: otCases } = await (supabase as any)
       .from("ot_schedules")
-      .select("procedure_name:surgery_name, status")
+      .select("id, surgery_name, status")
       .eq("admission_id", admissionId)
       .eq("hospital_id", hospitalId)
       .eq("status", "completed");
 
     for (const ot of otCases || []) {
-      const name = ot.procedure_name || "";
-      if (name && !billedDesc.has(name.toLowerCase().trim())) {
-        found.push({ type: "OT Procedure", description: name });
-      }
+      const name = ot.surgery_name || "";
+      if (!name || !ot.id) continue;
+      candidates.push({
+        type: "OT Procedure",
+        description: name,
+        dedupeKey: buildDedupeKey("ot", ot.id, "ot_charge"),
+      });
     }
 
-    // Deduplicate
-    const seen = new Set<string>();
-    const deduped = found.filter(f => {
-      const key = `${f.type}:${f.description}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+    const split = splitBilledServices(candidates, chargedLines);
 
-    setUnbilled(deduped);
+    setUnbilled(
+      split.unbilled.map((u) => ({
+        type: String(u.candidate.type),
+        description: u.candidate.description,
+        reason: u.reason,
+      })),
+    );
     setChecked(true);
     setLoading(false);
   }, [admissionId, hospitalId]);
@@ -155,6 +188,12 @@ const PreDischargeLeakageBanner: React.FC<Props> = ({ admissionId, hospitalId })
         {unbilled.slice(0, 6).map((item, i) => (
           <span key={i} className="text-[10px] bg-amber-100 text-amber-800 border border-amber-200 rounded px-1.5 py-0.5">
             <span className="font-medium">{item.type}:</span> {item.description}
+            {/* A service whose only bill line sits on a cancelled or refunded bill is
+                genuinely unbilled, but it also looks exactly like a bill mid-correction —
+                say which it is rather than presenting both the same way. */}
+            {item.reason === "prior_bill_voided" && (
+              <span className="ml-1 italic text-amber-600">(prior bill voided)</span>
+            )}
           </span>
         ))}
         {unbilled.length > 6 && (

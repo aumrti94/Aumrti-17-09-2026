@@ -278,7 +278,7 @@ const PlanSettingsTab: React.FC<{ hospitalId: string }> = ({ hospitalId }) => {
       if (settingsId) {
         await (supabase as any).from("hospital_insurance_settings").update(payload).eq("id", settingsId);
       } else {
-        const { data } = await (supabase as any).from("hospital_insurance_settings").insert(payload).select().single();
+        const { data } = await (supabase as any).from("hospital_insurance_settings").insert(payload).select().maybeSingle();
         if (data?.id) setSettingsId(data.id);
       }
       toast({ title: "Plan settings saved ✓" });

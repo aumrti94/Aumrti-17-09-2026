@@ -102,15 +102,21 @@ Return {"anomaly_detected": false} if no significant trend.`,
         );
         setTrend(parsed);
 
-        // Create clinical alert if anomaly detected
+        // Create clinical alert if anomaly detected — deduped on (patient, test, exact
+        // result value) so remounting this panel for the same result (e.g. reopening the
+        // result view) doesn't raise a second alert (KNOWN-BUG-002). This component has no
+        // stable per-result id in scope (currentResult arrives as a plain number, not a
+        // lab_order_item id), so the composite is the strongest key available without
+        // threading a new prop through every caller.
         if (parsed?.anomaly_detected) {
-          await supabase.from("clinical_alerts").insert({
+          await supabase.from("clinical_alerts").upsert({
             hospital_id: hospitalId,
             patient_id: patientId,
             alert_type: "lab_trend",
             severity: parsed.alert_level === "critical" ? "critical" : "medium",
             alert_message: `Lab Trend Alert — ${testName}: ${parsed.clinical_significance}. Action: ${parsed.suggested_action}`,
-          });
+            dedupe_key: `${patientId}|${testName}|${currentResult}`,
+          } as any, { onConflict: "hospital_id,alert_type,dedupe_key", ignoreDuplicates: true });
         }
       } catch {
         setTrend(null);

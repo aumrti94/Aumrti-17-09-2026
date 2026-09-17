@@ -13,12 +13,22 @@
  *     -d '{"table":"patients","column":"phone","hospitalId":"<uuid>"}'
  *
  * Supported targets:
- *   { table: "patients",     column: "phone"  }  → phone_enc + phone_hash
- *   { table: "patients",     column: "name"   }  → name_enc  + name_hash
- *   { table: "patients",     column: "address" } → address_enc
- *   { table: "admissions",   column: "ec_phone" }→ ec_phone_enc + ec_phone_hash
- *   { table: "lab_reports",  column: "result" }  → result_enc
- *   { table: "prescriptions",column: "notes"  }  → notes_enc
+ *   { table: "patients",         column: "phone"             } → phone_enc + phone_hash
+ *   { table: "patients",         column: "name"              } → name_enc  + name_hash
+ *   { table: "patients",         column: "address"           } → address_enc
+ *   { table: "admissions",       column: "ec_phone"          } → ec_phone_enc + ec_phone_hash
+ *   { table: "lab_results",      column: "result"            } → result_enc
+ *   { table: "prescriptions",    column: "notes"             } → notes_enc
+ *   { table: "patient_consents", column: "patient_signature" } → patient_signature_enc
+ *   { table: "patient_consents", column: "witness_signature" } → witness_signature_enc
+ *
+ * KNOWN-BUG-121 (2026-09-12): this map previously said `lab_reports` / `result_text`, a table
+ * and column that have never existed — the real table is `lab_results`, real column
+ * `result_value`. It also had no `patient_consents` entry at all, and carried
+ * `whatsapp_bot_sessions.last_message` / `ai_usage_logs.prompt`, neither of which exists in the
+ * live schema either (the real tables never persist raw message/prompt content, so there is
+ * nothing to encrypt) — both removed rather than left to fail confusingly against a column
+ * that does not exist. See supabase/migrations/20261106000010_phi_encryption_columns_recovery.sql.
  *
  * Progress is written to phi_backfill_log.
  * The function processes rows in batches of 100 and honours a 4.5-minute
@@ -69,7 +79,10 @@ const COLUMN_MAP: Record<string, Record<string, ColConfig>> = {
       hashColumn: null,
     },
     aadhaar: {
-      srcColumn: "aadhaar_number",
+      // Not "aadhaar_number" — that column has never existed. The real column is aadhaar_id;
+      // see KNOWN-BUG-166/the correction on KNOWN-BUG-121 in docs/testing/KNOWN_BUGS.md, the
+      // same wrong-name mistake this map's own header already fixed for other tables.
+      srcColumn: "aadhaar_id",
       encColumn: "aadhaar_enc",
       hashColumn: "aadhaar_hash",
       normalise: (v) => v.replace(/[\s-]/g, ""),
@@ -83,9 +96,9 @@ const COLUMN_MAP: Record<string, Record<string, ColConfig>> = {
       normalise: (v) => v.replace(/[\s\-()]/g, "").replace(/^\+91/, "").replace(/^0/, ""),
     },
   },
-  lab_reports: {
+  lab_results: {
     result: {
-      srcColumn: "result_text",
+      srcColumn: "result_value",
       encColumn: "result_enc",
       hashColumn: null,
     },
@@ -97,29 +110,62 @@ const COLUMN_MAP: Record<string, Record<string, ColConfig>> = {
       hashColumn: null,
     },
   },
-  whatsapp_bot_sessions: {
-    last_message: {
-      srcColumn: "last_message",
-      encColumn: "last_message_enc",
+  patient_consents: {
+    patient_signature: {
+      srcColumn: "patient_signature",
+      encColumn: "patient_signature_enc",
+      hashColumn: null,
+    },
+    witness_signature: {
+      srcColumn: "witness_signature",
+      encColumn: "witness_signature_enc",
       hashColumn: null,
     },
   },
-  ai_usage_logs: {
-    prompt: {
-      srcColumn: "prompt_text",
-      encColumn: "prompt_enc",
-      hashColumn: null,
-    },
-  },
+  // whatsapp_bot_sessions.last_message and ai_usage_logs.prompt_text were removed from this
+  // map (KNOWN-BUG-121): neither column exists in the live schema. whatsapp_bot_sessions only
+  // ever stored last_message_at (a timestamp); ai_usage_logs never persisted raw prompt text
+  // at all. Re-add only alongside a migration that actually creates the source column.
 };
 
 // ── Main handler ────────────────────────────────────────────────────────────
 
 serve(async (req: Request) => {
-  // Only allow service_role or aumrti_admin invocations
+  // Only allow service_role or aumrti_admin invocations. The comment already said this, but
+  // the check below it only ever verified the header string started with "Bearer " — any
+  // garbage token, or any ordinary authenticated hospital user's own JWT, satisfied that check.
+  // Since this function encrypts PHI across every hospital when hospitalId is omitted, that
+  // was a real hole, not a documentation lag. Found via Phase 6 edge-function testing.
   const authHeader = req.headers.get("Authorization") ?? "";
   if (!authHeader.startsWith("Bearer ")) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
+  }
+  const presentedToken = authHeader.slice(7);
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+  if (presentedToken !== serviceRoleKey) {
+    // Not the raw service-role secret (the internal/manual-curl invocation path this file's own
+    // header documents) — fall back to checking the caller is a genuine platform admin, the same
+    // aumrti_admins gate every other cross-hospital admin-only function in this repo uses.
+    const anonClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { Authorization: authHeader } } },
+    );
+    const { data: { user }, error: authErr } = await anonClient.auth.getUser();
+    if (authErr || !user) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
+    }
+    const adminCheckClient = createClient(Deno.env.get("SUPABASE_URL")!, serviceRoleKey, { auth: { persistSession: false } });
+    const { data: adminRow } = await adminCheckClient
+      .from("aumrti_admins")
+      .select("id")
+      .eq("auth_user_id", user.id)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (!adminRow) {
+      return new Response(JSON.stringify({ error: "Forbidden — platform admin or service-role required" }), { status: 403 });
+    }
   }
 
   let body: { table: string; column: string; hospitalId?: string };
@@ -231,7 +277,7 @@ serve(async (req: Request) => {
             rowsEncrypted++;
           }
         } catch (cryptoErr) {
-          console.error(`[phi-backfill] Crypto error for row ${row.id}:`, cryptoErr);
+          console.error(`[phi-backfill] Crypto error for row ${row.id}:`, cryptoErr instanceof Error ? cryptoErr.message : String(cryptoErr));
           errorDetails.push(`Row ${row.id} crypto error: ${cryptoErr instanceof Error ? cryptoErr.message : String(cryptoErr)}`);
           rowsFailed++;
         }

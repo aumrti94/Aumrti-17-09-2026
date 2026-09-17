@@ -110,8 +110,16 @@ export async function findPatientByPhone(
       displayPhone: p.displayPhone,
     };
   } catch (err) {
-    console.error("findPatientByPhone via Edge Fn failed, falling back to plaintext search:", err);
-    // Fallback for local dev / pre-migration
+    // DEV-only: local dev without the Edge Function deployed still needs a way to search.
+    // This used to run unconditionally — any transient failure of the PHI edge function in
+    // PRODUCTION silently degraded to a plaintext `patients` query, defeating the encryption
+    // envelope with no environment guard despite the comment saying "local dev". Gated
+    // 2026-09-05; in production a failed lookup now returns null rather than falling back.
+    if (!import.meta.env.DEV) {
+      console.error("findPatientByPhone: search_by_phone Edge Function failed:", err instanceof Error ? err.message : err);
+      return null;
+    }
+    console.error("findPatientByPhone via Edge Fn failed, falling back to plaintext search (DEV only):", err);
     const { data, error } = await supabase
       .from("patients")
       .select("id, full_name, uhid, phone")

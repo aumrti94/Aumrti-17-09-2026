@@ -40,6 +40,23 @@ serve(async (req: Request) => {
       });
     }
 
+    // The caller was verified as SOME real user above, but nothing checked
+    // that user's own hospital against the request's hospital_id — any
+    // logged-in staff member of any hospital could name another hospital's
+    // id, pull its live Razorpay key_secret, and read that hospital's
+    // payment details from Razorpay. Found in the Phase 4 isolation audit —
+    // see KNOWN_BUGS.md.
+    const { data: staff } = await supabase
+      .from("users")
+      .select("hospital_id")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
+    if (!staff || staff.hospital_id !== hospital_id) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // Load Razorpay credentials for this hospital
     const { data: config } = await supabase
       .from("api_configurations")

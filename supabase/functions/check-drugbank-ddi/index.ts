@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -53,7 +54,7 @@ serve(async (req) => {
     });
 
   } catch (err) {
-    console.error("check-drugbank-ddi error:", err);
+    console.error("check-drugbank-ddi error:", sanitizeForLog(err instanceof Error ? err.message : String(err)));
     return new Response(JSON.stringify({ interactions: [] }), {
       status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

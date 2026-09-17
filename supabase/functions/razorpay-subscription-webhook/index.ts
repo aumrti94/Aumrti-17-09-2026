@@ -185,12 +185,13 @@ serve(async (req) => {
         p_metadata:    { razorpay_payment_id: p?.id ?? null, method: p?.method ?? null },
       });
 
-      await db.from("subscription_events").insert({
+      const { error: topupLogErr } = await db.from("subscription_events").insert({
         hospital_id: notes.hospital_id,
         event_type:  "ai_wallet_topup",
         razorpay_event: event,
         metadata: { razorpay_payment_id: p?.id ?? null, amount_inr: amountInr, balance_after_inr: newBalance ?? null },
-      }).catch(() => {});
+      });
+      if (topupLogErr) console.error("razorpay-subscription-webhook: logging ai_wallet_topup event failed:", topupLogErr.message);
 
       console.log(`✓ AI wallet top-up ₹${amountInr} → hospital ${notes.hospital_id}`);
       return new Response(JSON.stringify({ status: "processed", event, hospitalId: notes.hospital_id }), {
@@ -246,7 +247,7 @@ serve(async (req) => {
         failure_reason:           p?.error_description ?? p?.error_reason ?? null,
       });
 
-      await db.from("subscription_events").insert({
+      const { error: failLogErr } = await db.from("subscription_events").insert({
         hospital_id: hospId,
         event_type:  "payment_failed",
         razorpay_event: event,
@@ -255,7 +256,8 @@ serve(async (req) => {
           error_code: p?.error_code ?? null,
           error_description: p?.error_description ?? null,
         },
-      }).catch(() => {});
+      });
+      if (failLogErr) console.error("razorpay-subscription-webhook: logging payment_failed event failed:", failLogErr.message);
 
       console.log(`✓ ${event} → hospital ${hospId} → attempt recorded`);
       return new Response(JSON.stringify({ status: "processed", event, hospitalId: hospId }), {
@@ -318,7 +320,7 @@ serve(async (req) => {
       })
       .eq("id", original.id);
 
-    await db.from("subscription_events").insert({
+    const { error: refundLogErr } = await db.from("subscription_events").insert({
       hospital_id: original.hospital_id,
       event_type:  "refund",
       razorpay_event: event,
@@ -328,7 +330,8 @@ serve(async (req) => {
         refund_amount_inr: refundInr,
         fully_refunded: fullyRefunded,
       },
-    }).catch(() => {});
+    });
+    if (refundLogErr) console.error("razorpay-subscription-webhook: logging refund event failed:", refundLogErr.message);
 
     console.log(`✓ ${event} → hospital ${original.hospital_id} → credit note ${cnNo}`);
     return new Response(JSON.stringify({ status: "processed", event }), {
@@ -412,54 +415,77 @@ serve(async (req) => {
   }
 
   // ── Upsert hospital_subscriptions ────────────────────────────────────────
-  const { error: upsertErr } = await db.from("hospital_subscriptions")
+  // Was: check `upsertErr` alone to decide whether to fall back to an upsert for a
+  // "row might not exist yet" race. A Postgres UPDATE that matches zero rows is NOT
+  // an error — supabase-js returns `error: null` regardless of how many rows matched
+  // unless the affected rows are actually selected back. So a hospital with no
+  // pre-existing hospital_subscriptions row got a 200 "processed" / newStatus:"active"
+  // response while the update silently affected nothing and the fallback branch never
+  // ran — the exact race the comment below describes, just never actually caught.
+  // Found via Phase 6 edge-function testing (HOSPITAL_A's Tier-0 seed has no
+  // subscription row, so the very first webhook event for it hit this directly).
+  const { data: updatedRows, error: upsertErr } = await db.from("hospital_subscriptions")
     .update(update)
-    .eq("hospital_id", hospitalId);
+    .eq("hospital_id", hospitalId)
+    .select("hospital_id");
 
-  if (upsertErr) {
+  if (upsertErr || !updatedRows || updatedRows.length === 0) {
     // Fallback: row might not exist yet (race condition), try upsert
     if (planId) {
-      await db.from("hospital_subscriptions").upsert({
+      const { error: fallbackErr } = await db.from("hospital_subscriptions").upsert({
         hospital_id: hospitalId,
         plan_id: planId,
         razorpay_subscription_id: razorpaySubId,
         ...update,
       }, { onConflict: "hospital_id" });
+      if (fallbackErr) console.error("hospital_subscriptions upsert fallback failed:", fallbackErr.message);
+    } else if (upsertErr) {
+      console.error("hospital_subscriptions update failed:", upsertErr.message);
     } else {
-      console.error("hospital_subscriptions update failed:", upsertErr);
+      console.error(`hospital_subscriptions: no existing row for hospital ${hospitalId} and no plan_id in event notes to create one`);
     }
   }
 
   // ── Increment coupon used_count on first activation ───────────────────────
+  // Was `db.rpc(...).catch(fallback)` — supabase-js's PostgrestBuilder (what .rpc()
+  // returns) is thenable but has no real .catch(), so that call threw synchronously
+  // and skipped both the RPC and its own fallback. Same root cause as the
+  // subscription_events insert below and KNOWN-BUG-172/175. Found via Phase 6.
   if (event === "subscription.activated" && couponCode) {
-    await db.rpc("increment_discount_used_count" as any, { p_code: couponCode }).catch(() => {
-      // Non-fatal — increment manually as fallback
-      db.from("discount_codes")
-        .select("used_count")
-        .eq("code", couponCode)
-        .maybeSingle()
-        .then(({ data }) => {
-          if (data) {
-            db.from("discount_codes")
-              .update({ used_count: (data.used_count || 0) + 1 })
-              .eq("code", couponCode);
-          }
-        });
-    });
+    try {
+      const { error: rpcErr } = await db.rpc("increment_discount_used_count" as any, { p_code: couponCode });
+      if (rpcErr) {
+        const { data } = await db.from("discount_codes").select("used_count").eq("code", couponCode).maybeSingle();
+        if (data) {
+          await db.from("discount_codes").update({ used_count: (data.used_count || 0) + 1 }).eq("code", couponCode);
+        }
+      }
+    } catch (e) {
+      console.error("razorpay-subscription-webhook: coupon used_count increment failed:", e instanceof Error ? e.message : String(e));
+    }
   }
 
   // ── Log subscription event ────────────────────────────────────────────────
-  await db.from("subscription_events").insert({
-    hospital_id: hospitalId,
-    event_type:  event.replace("subscription.", ""),
-    new_status:  newStatus,
-    new_plan_id: planId || null,
-    razorpay_event: event,
-    metadata: {
-      razorpay_subscription_id: razorpaySubId,
-      ...(paymentEntity?.id ? { razorpay_payment_id: paymentEntity.id } : {}),
-    },
-  }).catch(() => {}); // non-fatal
+  // Was `.insert(...).catch(() => {})` directly on the query builder — the same
+  // thenable-without-.catch() bug, except here it crashed the ENTIRE webhook
+  // (500, DLQ'd) on every event that reached this line, not just a best-effort
+  // side path. Found via Phase 6 edge-function testing.
+  try {
+    const { error: eventLogErr } = await db.from("subscription_events").insert({
+      hospital_id: hospitalId,
+      event_type:  event.replace("subscription.", ""),
+      new_status:  newStatus,
+      new_plan_id: planId || null,
+      razorpay_event: event,
+      metadata: {
+        razorpay_subscription_id: razorpaySubId,
+        ...(paymentEntity?.id ? { razorpay_payment_id: paymentEntity.id } : {}),
+      },
+    });
+    if (eventLogErr) console.error("razorpay-subscription-webhook: logging subscription_events failed:", eventLogErr.message);
+  } catch (e) {
+    console.error("razorpay-subscription-webhook: logging subscription_events failed:", e instanceof Error ? e.message : String(e));
+  }
 
   // ── Generate invoice on successful charge ─────────────────────────────────
   if (event === "subscription.charged" && paymentEntity) {
@@ -471,23 +497,33 @@ serve(async (req) => {
       ? new Date(subEntity.current_end   * 1000).toISOString()
       : null;
 
-    await db.functions.invoke("generate-invoice", {
-      body: {
-        hospital_id:              hospitalId,
-        plan_name:                subEntity.notes?.plan_name || "Subscription",
-        amount_inr:               amountInr,
-        razorpay_payment_id:      paymentEntity.id || null,
-        razorpay_subscription_id: razorpaySubId,
-        billing_period_start:     periodStart,
-        billing_period_end:       periodEnd ?? computePeriodEnd(periodStart ?? new Date(), cycle).toISOString(),
-        billing_cycle:            cycle,
-        payment_method:           paymentEntity.method ?? null,
-        payment_method_detail:    paymentMethodDetail(paymentEntity),
-        payment_captured_at:      paymentEntity.created_at
-          ? new Date(paymentEntity.created_at * 1000).toISOString()
-          : new Date().toISOString(),
-      },
-    }).catch((e: Error) => console.error("generate-invoice call failed:", e.message));
+    // Was `.functions.invoke(...).catch(...)` — .functions.invoke() results are
+    // thenable like PostgrestBuilder but likewise have no real .catch(), so this
+    // threw synchronously on every successful charge instead of the intended
+    // "log and move on" behaviour. Same root cause as the .insert().catch() bugs
+    // above. Found via Phase 6 edge-function testing.
+    try {
+      const { error: invokeErr } = await db.functions.invoke("generate-invoice", {
+        body: {
+          hospital_id:              hospitalId,
+          plan_name:                subEntity.notes?.plan_name || "Subscription",
+          amount_inr:               amountInr,
+          razorpay_payment_id:      paymentEntity.id || null,
+          razorpay_subscription_id: razorpaySubId,
+          billing_period_start:     periodStart,
+          billing_period_end:       periodEnd ?? computePeriodEnd(periodStart ?? new Date(), cycle).toISOString(),
+          billing_cycle:            cycle,
+          payment_method:           paymentEntity.method ?? null,
+          payment_method_detail:    paymentMethodDetail(paymentEntity),
+          payment_captured_at:      paymentEntity.created_at
+            ? new Date(paymentEntity.created_at * 1000).toISOString()
+            : new Date().toISOString(),
+        },
+      });
+      if (invokeErr) console.error("generate-invoice call failed:", invokeErr.message);
+    } catch (e) {
+      console.error("generate-invoice call failed:", e instanceof Error ? e.message : String(e));
+    }
   }
 
   // ── Renewal amount reconciliation (pricing v3) ────────────────────────────
@@ -597,14 +633,15 @@ serve(async (req) => {
 
             if (!repriceLive) {
               // Record what WOULD have been charged; change nothing.
-              await db.from("subscription_events").insert({
+              const { error: shadowLogErr } = await db.from("subscription_events").insert({
                 hospital_id: hospitalId,
                 event_type:  "bed_reprice_preview",
                 new_status:  newStatus,
                 new_plan_id: planRow.id,
                 razorpay_event: event,
                 metadata: { ...repriceMeta, mode: "shadow", applied: false },
-              }).catch(() => {});
+              });
+              if (shadowLogErr) console.error("razorpay-subscription-webhook: logging bed_reprice_preview event failed:", shadowLogErr.message);
 
               console.log(
                 `[shadow] Amount reconciliation NOT applied for ${hospitalId}: ` +
@@ -683,14 +720,15 @@ serve(async (req) => {
                     .eq("hospital_id", hospitalId);
 
                   // Never a silent transition (Aditya's rule).
-                  await db.from("subscription_events").insert({
+                  const { error: liveLogErr } = await db.from("subscription_events").insert({
                     hospital_id: hospitalId,
                     event_type:  "bed_reprice_scheduled",
                     new_status:  newStatus,
                     new_plan_id: planRow.id,
                     razorpay_event: event,
                     metadata: { ...repriceMeta, mode: "live", applied: true, applies: "next_cycle" },
-                  }).catch(() => {});
+                  });
+                  if (liveLogErr) console.error("razorpay-subscription-webhook: logging bed_reprice_scheduled event failed:", liveLogErr.message);
 
                   console.log(`✓ Amount reconciliation scheduled for ${hospitalId}: ₹${subRow.effective_amount_inr} → ₹${desired.amountInr} (${activeBeds} beds, ₹${desired.addonsInr} add-ons) at cycle end`);
                 } else {
@@ -744,14 +782,19 @@ serve(async (req) => {
 
     if (adminUser?.email) {
       const notifEvent = event === "subscription.halted" ? "payment_failed" : "subscription_suspended";
-      await db.functions.invoke("send-subscription-notification", {
-        body: {
-          event:        notifEvent,
-          hospital_id:  hospitalId,
-          email:        adminUser.email,
-          full_name:    adminUser.full_name,
-        },
-      }).catch(() => {});
+      try {
+        const { error: notifyErr } = await db.functions.invoke("send-subscription-notification", {
+          body: {
+            event:        notifEvent,
+            hospital_id:  hospitalId,
+            email:        adminUser.email,
+            full_name:    adminUser.full_name,
+          },
+        });
+        if (notifyErr) console.error("razorpay-subscription-webhook: send-subscription-notification failed:", notifyErr.message);
+      } catch (e) {
+        console.error("razorpay-subscription-webhook: send-subscription-notification failed:", e instanceof Error ? e.message : String(e));
+      }
     }
   }
 

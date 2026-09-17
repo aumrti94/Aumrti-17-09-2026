@@ -161,18 +161,23 @@ export async function cancelDayCareBooking(opts: {
     },
   });
 
-  await (supabase as any).from("clinical_alerts").insert({
+  // Three schema bugs fixed here: `message` was never a real column (`alert_message` is);
+  // `severity: "info"` was never a valid CHECK value; `daycare_no_show`/`daycare_cancelled`
+  // were never in the alert_type whitelist, and `admission_id` never existed as a column at
+  // all — so this insert has never once succeeded, silently, since this feature shipped.
+  const { error: alertErr } = await (supabase as any).from("clinical_alerts").insert({
     hospital_id: hospitalId,
     patient_id: patientId,
     admission_id: admissionId,
     alert_type: status === "no_show" ? "daycare_no_show" : "daycare_cancelled",
-    severity: "info",
-    message:
+    severity: "low",
+    alert_message:
       `Day care booking ${status === "no_show" ? "marked no-show" : "cancelled"}` +
       `${opts.patientName ? ` for ${opts.patientName}` : ""} — ${reason}` +
       `${note ? ` (${note})` : ""}.`,
     created_by: userId,
   });
+  if (alertErr) console.error("dayCareCancel: clinical_alerts insert failed:", alertErr.message);
 
   // 4. Flip the status. The trigger re-validates reason + author server-side.
   const { error } = await (supabase as any)

@@ -132,7 +132,7 @@ serve(async (req) => {
     });
 
   } catch (err) {
-    console.error("purge-orphaned-users error:", err);
-    return json({ error: (err as Error).message }, 500);
+    console.error("purge-orphaned-users error:", err instanceof Error ? err.message : String(err));
+    return json({ error: "Internal error" }, 500);
   }
 });

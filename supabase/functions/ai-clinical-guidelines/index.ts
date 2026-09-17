@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { checkAIAllowed } from "../_shared/ai-entitlement.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -10,6 +11,29 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
+    // ── Auth ────────────────────────────────────────────────────────────────
+    // No auth check at all previously — any request naming a hospital_id,
+    // patient_id and encounter_id could write a fabricated
+    // guideline_adherence_log row into that hospital's clinical audit log.
+    // Found in the Phase 4 isolation audit — see KNOWN_BUGS.md.
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const anonClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { Authorization: authHeader } } },
+    );
+    const { data: { user }, error: authErr } = await anonClient.auth.getUser();
+    if (authErr || !user) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const {
       diagnosis, icd10_code, encounter_data, patient_context,
       hospital_id, patient_id, encounter_id,
@@ -25,6 +49,28 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
+
+    const { data: staff } = await sb
+      .from("users")
+      .select("hospital_id")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
+    if (!staff || staff.hospital_id !== hospital_id) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Server-side entitlement re-check — no dedicated per-feature key is defined for this
+    // function in AI_FEATURE_DEFS, so this enforces at least the "AI Features" master switch
+    // (checkAIAllowed with no featureKey), matching the gap and fix pattern found across 11
+    // sibling AI functions this session — see KNOWN_BUGS.md.
+    const gate = await checkAIAllowed(sb, hospital_id);
+    if (!gate.allowed) {
+      return new Response(JSON.stringify({ error: gate.reason }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     // Match guideline by ICD code or condition name
     let guidelineQuery = sb.from("clinical_guidelines")

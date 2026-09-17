@@ -12,7 +12,31 @@ import { Loader2, Eye, EyeOff, FlaskConical, Save, Plus } from "lucide-react";
 
 // AI provider + voice keys are configured GLOBALLY from /platform → API Hub.
 // This hospital page now manages only the genuinely per-hospital integration keys.
-const NON_AI_SERVICE_KEYS = ["razorpay", "wati", "abdm", "nic_irp", "pmjay"];
+//
+// "razorpay" removed 2026-09-12 (Phase 5 settings sweep): this screen and
+// /settings/razorpay (SettingsRazorpayPage.tsx) both write the SAME
+// api_configurations row (hospital_id + service_key='razorpay') with
+// incompatible shapes — this screen's saveApiKey() does a full `config`
+// REPLACE with {api_key, endpoint, mode}, silently discarding the
+// key_id/key_secret/upi_id/part_payments/auto_receipt that /settings/razorpay
+// writes and that razorpay-lookup/create-razorpay-order/
+// create-razorpay-payment-link actually read. Any hospital that touched both
+// screens could have had its live payment gateway broken by this one. See
+// KNOWN-BUG-139. /settings/razorpay is the correct, complete, working screen
+// for this integration — this one must never write to it again.
+//
+// "nic_irp" removed 2026-09-12 for the identical reason, the moment it stopped being
+// coincidentally harmless: SettingsGSTPage.tsx's NIC IRP fields were wired up to actually
+// persist to this same api_configurations row (hospital_id + service_key='nic_irp') as part
+// of the same fix (KNOWN-BUG-144) — before that, this screen's nic_irp entry was orphaned on
+// both sides (its Username/Password inputs are uncontrolled, capturing nothing; nothing read
+// the row either), so the two screens colliding didn't yet matter. Now that gst-irn-generate
+// actually reads this row, this screen's full-replace `.update(payload)` would silently wipe
+// live e-Invoice credentials exactly like the Razorpay case above.
+//
+// Exported so a test can assert razorpay/nic_irp never re-enter this list without needing to
+// render the full page.
+export const NON_AI_SERVICE_KEYS = ["wati", "abdm", "pmjay"];
 
 interface APIKeyConfig {
   id: string;
@@ -270,25 +294,12 @@ const APIConfigHubPage: React.FC = () => {
               </div>
             </div>
 
-            {editingKey?.service_key === "razorpay" && (
-              <div>
-                <Label>Key Secret</Label>
-                <Input className="mt-1" type="password" placeholder="Razorpay key secret..." />
-              </div>
-            )}
             {editingKey?.service_key === "wati" && (
               <div>
                 <Label>Phone Number</Label>
                 <Input className="mt-1" placeholder="+91..." />
               </div>
             )}
-            {editingKey?.service_key === "nic_irp" && (
-              <>
-                <div><Label>Username</Label><Input className="mt-1" placeholder="NIC IRP username" /></div>
-                <div><Label>Password</Label><Input className="mt-1" type="password" placeholder="NIC IRP password" /></div>
-              </>
-            )}
-
             <div className="flex gap-2 pt-2">
               <Button
                 className="gap-1 flex-1"

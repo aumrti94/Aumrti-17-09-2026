@@ -39,7 +39,7 @@ const WardNursingBoard: React.FC = () => {
     if (!hId) {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-        const { data: ud } = await supabase.from("users").select("hospital_id").eq("auth_user_id", session.user.id).single();
+        const { data: ud } = await supabase.from("users").select("hospital_id").eq("auth_user_id", session.user.id).maybeSingle();
         hId = ud?.hospital_id || null;
       } else {
         const { data: defaultAdmissions } = await supabase.from("admissions").select("hospital_id").eq("status", "active").limit(1);

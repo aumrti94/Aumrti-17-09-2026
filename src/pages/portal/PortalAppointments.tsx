@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import type { PortalSession } from "./PortalLogin";
+import type { PortalSession } from "./portalTypes";
 import { ArrowLeft, Check, ChevronDown, ChevronUp, Calendar } from "lucide-react";
 import { toast } from "sonner";
 import { sendAppointmentConfirmation } from "@/lib/whatsapp-notifications";

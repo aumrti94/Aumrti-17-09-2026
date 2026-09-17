@@ -6,6 +6,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveAiConfig, callAiChat } from "../_shared/ai-config.ts";
+import { sanitizeForLog } from "../_shared/phi-redactor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -434,7 +435,7 @@ async function handleAutoBundle(adminClient: any, supabaseUrl: string, serviceKe
       bundle_generated_at: now,
     })
     .select("id")
-    .single();
+    .maybeSingle();
 
   if (claimError) {
     await logEvent(adminClient, hospital_id, "claim_auto_bundled", "failed",
@@ -501,13 +502,24 @@ async function handleCheckDeadlines(adminClient: any) {
     const expiryDays = Math.ceil((new Date(pa.valid_until).getTime() - now.getTime()) / 86400000);
     const threshold = configMap[pa.hospital_id]?.pre_auth_expiry_alert_days ?? 3;
     if (expiryDays <= threshold && expiryDays >= 0) {
-      await adminClient.from("clinical_alerts").insert({
+      // Three schema bugs fixed here (see 20261106000014_clinical_alerts_dedup_and_write_fixes.sql
+      // header for the full audit): `message` was never a real column (`alert_message` is);
+      // `severity: "warning"` was never a valid CHECK value; `pre_auth_expiry_alert` was never
+      // in the alert_type whitelist. `.insert()` returns `{ error }` as data rather than
+      // throwing, so `.catch()` here was dead code and every one of these inserts has silently
+      // failed since this cron was deployed, for every hospital, while alertsCreated++ below
+      // and this function's own success log reported it as having worked. Also deduped on the
+      // pre-auth id, so re-running this 4-hourly cron before the underlying condition changes
+      // does not raise a second alert for the same expiring pre-auth.
+      const { error: alertErr } = await adminClient.from("clinical_alerts").upsert({
         hospital_id: pa.hospital_id,
         admission_id: pa.admission_id,
         alert_type: "pre_auth_expiry_alert",
-        message: `Pre-auth (${pa.tpa_name}) expires in ${expiryDays} day(s). Request extension now.`,
-        severity: expiryDays <= 1 ? "critical" : "warning",
-      }).catch(() => {});
+        alert_message: `Pre-auth (${pa.tpa_name}) expires in ${expiryDays} day(s). Request extension now.`,
+        severity: expiryDays <= 1 ? "critical" : "high",
+        dedupe_key: pa.id,
+      }, { onConflict: "hospital_id,alert_type,dedupe_key", ignoreDuplicates: true });
+      if (alertErr) console.error("insurance-automation: pre_auth_expiry_alert insert failed:", sanitizeForLog(alertErr.message));
       await logEvent(adminClient, pa.hospital_id, "pre_auth_expiry_alert", "success",
         { expiry_days: expiryDays, valid_until: pa.valid_until },
         { admissionId: pa.admission_id, preAuthId: pa.id }
@@ -528,12 +540,16 @@ async function handleCheckDeadlines(adminClient: any) {
     const daysToDeadline = Math.ceil((deadlineDate.getTime() - now.getTime()) / 86400000);
     const threshold = configMap[claim.hospital_id]?.irdai_deadline_alert_days ?? 7;
     if (daysToDeadline <= threshold && daysToDeadline >= 0) {
-      await adminClient.from("clinical_alerts").insert({
+      // Same three schema bugs as the pre-auth-expiry alert above, on a regulatory
+      // (IRDAI 45-day) deadline — see this function's other fix comment for detail.
+      const { error: alertErr } = await adminClient.from("clinical_alerts").upsert({
         hospital_id: claim.hospital_id,
         alert_type: "irdai_deadline_alert",
-        message: `Claim ${claim.claim_number} (${claim.tpa_name}): IRDAI 45-day deadline in ${daysToDeadline} day(s). Escalate if no response.`,
-        severity: daysToDeadline <= 3 ? "critical" : "warning",
-      }).catch(() => {});
+        alert_message: `Claim ${claim.claim_number} (${claim.tpa_name}): IRDAI 45-day deadline in ${daysToDeadline} day(s). Escalate if no response.`,
+        severity: daysToDeadline <= 3 ? "critical" : "high",
+        dedupe_key: claim.id,
+      }, { onConflict: "hospital_id,alert_type,dedupe_key", ignoreDuplicates: true });
+      if (alertErr) console.error("insurance-automation: irdai_deadline_alert insert failed:", sanitizeForLog(alertErr.message));
       await logEvent(adminClient, claim.hospital_id, "irdai_deadline_alert", "success",
         { days_to_deadline: daysToDeadline, claim_number: claim.claim_number },
         { claimId: claim.id }
@@ -555,13 +571,16 @@ async function handleCheckDeadlines(adminClient: any) {
     const hoursElapsed = (now.getTime() - new Date(pa.created_at).getTime()) / 3600000;
     const hoursRemaining = windowHours - hoursElapsed;
     if (hoursRemaining <= reminderThreshold && hoursRemaining > 0) {
-      await adminClient.from("clinical_alerts").insert({
+      // Same three schema bugs as the two alerts above, on the TPA intimation window.
+      const { error: alertErr } = await adminClient.from("clinical_alerts").upsert({
         hospital_id: pa.hospital_id,
         admission_id: pa.admission_id,
         alert_type: "intimation_deadline_alert",
-        message: `TPA intimation required within ${Math.ceil(hoursRemaining)} hour(s). ${pa.is_emergency_admission ? "Emergency — 24h window" : "Planned — 48h window"}`,
-        severity: hoursRemaining <= 2 ? "critical" : "warning",
-      }).catch(() => {});
+        alert_message: `TPA intimation required within ${Math.ceil(hoursRemaining)} hour(s). ${pa.is_emergency_admission ? "Emergency — 24h window" : "Planned — 48h window"}`,
+        severity: hoursRemaining <= 2 ? "critical" : "high",
+        dedupe_key: pa.id,
+      }, { onConflict: "hospital_id,alert_type,dedupe_key", ignoreDuplicates: true });
+      if (alertErr) console.error("insurance-automation: intimation_deadline_alert insert failed:", sanitizeForLog(alertErr.message));
       await logEvent(adminClient, pa.hospital_id, "intimation_deadline_alert", "success",
         { hours_remaining: hoursRemaining, is_emergency: pa.is_emergency_admission },
         { admissionId: pa.admission_id, preAuthId: pa.id }
@@ -583,9 +602,47 @@ serve(async (req: Request) => {
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const adminClient = createClient(supabaseUrl, serviceKey);
 
+  // ── Auth ────────────────────────────────────────────────────────────────
+  // No auth check at all previously — any request naming a hospital_id and
+  // admission_id could insert/update real insurance_claims and
+  // clinical_alerts rows for that hospital. Found in the Phase 4 isolation
+  // audit — see KNOWN_BUGS.md.
+  //
+  // Two legitimate callers, not one: `auto_bundle_and_submit_claim` and
+  // `check_deadlines` are internal-only (a Postgres trigger —
+  // fn_insurance_auto_intimate, 20260518000004 — and pg_cron, both via
+  // pg_net.http_post with the service-role key as bearer token, since there
+  // is no end-user session at trigger/cron time). But `auto_intimate` and
+  // `ai_generate_preauth` are ALSO invoked directly from the browser
+  // (IntimationsTab.tsx, PreAuthQueue.tsx) via a real user's session. So the
+  // gate accepts either: the service-role secret itself, or a real
+  // authenticated user whose own hospital matches the request's hospital_id.
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const isInternalCaller = authHeader === `Bearer ${serviceKey}`;
+  let callerHospitalId: string | null = null;
+
+  if (!isInternalCaller) {
+    const token = authHeader.replace(/^Bearer /, "");
+    if (!token) return json({ error: "Unauthorized" }, 401);
+    const anonClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!);
+    const { data: { user }, error: authErr } = await anonClient.auth.getUser(token);
+    if (authErr || !user) return json({ error: "Unauthorized" }, 401);
+    const { data: staff } = await adminClient
+      .from("users")
+      .select("hospital_id")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
+    if (!staff) return json({ error: "Forbidden" }, 403);
+    callerHospitalId = staff.hospital_id;
+  }
+
   try {
     const body = await req.json();
     const { action } = body;
+
+    if (!isInternalCaller && body.hospital_id !== callerHospitalId) {
+      return json({ error: "Forbidden" }, 403);
+    }
 
     switch (action) {
       case "auto_intimate":
@@ -605,7 +662,7 @@ serve(async (req: Request) => {
         return json({ error: `Unknown action: ${action}` }, 400);
     }
   } catch (err) {
-    console.error("insurance-automation error:", err);
+    console.error("insurance-automation error:", sanitizeForLog(err instanceof Error ? err.message : String(err)));
     return json({ error: String(err) }, 500);
   }
 });

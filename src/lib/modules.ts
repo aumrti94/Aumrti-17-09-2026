@@ -86,6 +86,7 @@ export const ALL_MODULES: ModuleDefinition[] = [
   { name: "Anaesthesia EMR", desc: "PAC, intraoperative chart & PACU Aldrete score", icon: "😴", route: "/specialty/anaesthesia", category: "Specialized", roles: ["anaesthetist", "doctor", "super_admin"], isNew: true },
   { name: "Ophthalmology EMR", desc: "VA, refraction, IOP, fundoscopy & IOL calc", icon: "👁️", route: "/specialty/ophthalmology", category: "Specialized", roles: ["ophthalmologist", "doctor", "super_admin"], isNew: true },
   { name: "Partograph", desc: "WHO labour progress chart with alert & action lines", icon: "📈", route: "/specialty/partograph", category: "Specialized", roles: ["obstetrician", "midwife", "nurse", "doctor", "super_admin"], isNew: true },
+  { name: "Delivery Record", desc: "Mode, outcome & complications — feeds Form 8 & HMIS", icon: "🍼", route: "/specialty/delivery", category: "Specialized", roles: ["obstetrician", "midwife", "nurse", "doctor", "super_admin"], isNew: true },
   { name: "Mental Health / Psychiatry", desc: "Consultations, psychometric scales, therapy plans & risk assessment", icon: "🧠", route: "/mental-health", category: "Specialized", roles: ["psychiatrist", "psychologist", "doctor", "nurse", "super_admin"], isNew: true },
   { name: "Chronic Disease Management", desc: "Care plans, task tracking, adherence & cohort dashboard", icon: "📋", route: "/chronic-disease", category: "Clinical", roles: ["doctor", "nurse", "super_admin"], isNew: true },
   { name: "Medical Records", desc: "MRD, ICD coding & retention", icon: "🗂️", route: "/mrd", category: "Operations", roles: ["mrd_officer", "super_admin", "billing_executive"], isNew: true },
@@ -149,6 +150,7 @@ export const MODULE_DEPARTMENT: Record<string, string> = {
   "/specialty/anaesthesia": "Anaesthesia",
   "/specialty/ophthalmology": "Ophthalmology",
   "/specialty/partograph": "Gynaecology & Obstetrics",
+  "/specialty/delivery": "Gynaecology & Obstetrics",
   "/mental-health": "Psychiatry",
   // Clinical service departments
   "/emergency": "Emergency / Casualty",

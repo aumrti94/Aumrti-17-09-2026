@@ -7,14 +7,13 @@ import {
 } from "lucide-react";
 import { useCredentialAlert } from "@/hooks/useCredentialAlert";
 import { useSubscriptionConfig, isModuleKeyAllowed } from "@/hooks/useSubscriptionConfig";
-import { cn } from "@/lib/utils";
 import { useSidebar } from "@/hooks/useSidebar";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useHospitalId } from "@/hooks/useHospitalId";
 import { hasAccess } from "@/lib/routeRoles";
 import { hasActionAccess } from "@/lib/tabPermissions";
+import SidebarChrome, { type SidebarNavGroup, type SidebarNavItem } from "./SidebarChrome";
 
 interface SidebarItem {
   label: string;
@@ -77,7 +76,6 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ isMobileOverlay, onClose }) => 
   // Entitlement comes from the Platform console only (plan + feature overrides),
   // the same decision <ModuleGate> enforces on the route itself.
   const { enabledModules, isLoading: subLoading } = useSubscriptionConfig();
-  const isCollapsed = isMobileOverlay ? false : collapsed;
 
   const filterItems = (items: SidebarItem[]) =>
     items.filter((item) =>
@@ -122,123 +120,39 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ isMobileOverlay, onClose }) => 
     if (onClose) onClose();
   };
 
-  const renderItem = (item: SidebarItem) => {
-    const Icon = item.icon;
-    const active = location.pathname === item.path;
-    const isModules = item.path === "/modules";
-    const badge = item.path === "/hr" ? expiringCount : item.path === "/abdm" ? pendingConsentCount : 0;
+  const toNavItems = (items: SidebarItem[]): SidebarNavItem[] =>
+    filterItems(items).map((item) => ({
+      key: item.path,
+      label: item.label,
+      icon: item.icon,
+      active: location.pathname === item.path,
+      onClick: () => handleNav(item.path),
+      badge: item.path === "/hr" ? expiringCount : item.path === "/abdm" ? pendingConsentCount : 0,
+      emphasize: item.path === "/modules",
+    }));
 
-    return (
-      <button
-        key={item.path}
-        onClick={() => handleNav(item.path)}
-        className={cn(
-          "flex items-center gap-3 min-h-[44px] w-full rounded-lg px-3 text-sm font-medium transition-colors text-left",
-          active
-            ? "bg-sidebar-accent text-white"
-            : "text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-white",
-          isModules && !active && "border border-sidebar-foreground/20"
-        )}
-      >
-        <div className="relative shrink-0">
-          <Icon size={18} />
-          {badge > 0 && (
-            <span className="absolute -top-1.5 -right-1.5 h-4 min-w-[16px] rounded-full bg-red-500 text-[9px] font-bold text-white flex items-center justify-center px-0.5 leading-none">
-              {badge > 99 ? "99+" : badge}
-            </span>
-          )}
-        </div>
-        {!isCollapsed && <span>{item.label}</span>}
-      </button>
-    );
-  };
+  const topGroups: SidebarNavGroup[] = [{ key: "top", items: toNavItems(topItems) }];
+  const scrollGroups: SidebarNavGroup[] = [
+    { key: "quick-access", label: "Quick Access", items: toNavItems(quickAccessItems) },
+    { key: "records", label: "Records", items: toNavItems(recordsItems) },
+  ];
+  const bottomGroups: SidebarNavGroup[] = [{ key: "bottom", items: toNavItems(bottomItems) }];
 
   return (
-    <div
-      className={cn(
-        "flex flex-col bg-sidebar text-sidebar-foreground",
-        isMobileOverlay ? "w-full h-full" : "fixed left-0 top-[56px] bottom-0 z-40 transition-[width] duration-200",
-        !isMobileOverlay && (isCollapsed ? "w-16" : "w-56")
-      )}
-    >
-      {/* Mobile close button */}
-      {isMobileOverlay && (
-        <div className="flex items-center justify-between px-3 pt-3 pb-1">
-          <span className="text-sm font-bold text-sidebar-foreground">Menu</span>
-          <button onClick={onClose} className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg hover:bg-sidebar-accent/50 text-sidebar-foreground">
-            <X size={20} />
-          </button>
-        </div>
-      )}
-
-      {/* No brand block here — the logo sits in the header directly above this
-          column, so repeating it only cost vertical space in the nav. */}
-
-      {/* Top items */}
-      <nav className="flex-shrink-0 flex flex-col gap-1 px-2 pt-3">
-        {filterItems(topItems).map(renderItem)}
-      </nav>
-
-      {/* Scrollable middle */}
-      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-sidebar-border [&::-webkit-scrollbar-thumb]:rounded-full">
-        {filterItems(quickAccessItems).length > 0 && (
-          <>
-            <div className="px-4 pt-5 pb-1">
-              {!isCollapsed && (
-                <span className="text-[10px] font-bold uppercase tracking-wider text-sidebar-foreground/40">
-                  Quick Access
-                </span>
-              )}
-            </div>
-            <nav className="flex flex-col gap-1 px-2">
-              {filterItems(quickAccessItems).map(renderItem)}
-            </nav>
-          </>
-        )}
-
-        {filterItems(recordsItems).length > 0 && (
-          <>
-            <div className="px-4 pt-4 pb-1">
-              {!isCollapsed && (
-                <span className="text-[10px] font-bold uppercase tracking-wider text-sidebar-foreground/40">
-                  Records
-                </span>
-              )}
-            </div>
-            <nav className="flex flex-col gap-1 px-2">
-              {filterItems(recordsItems).map(renderItem)}
-            </nav>
-          </>
-        )}
-      </div>
-
-      {/* Bottom items */}
-      <nav className="flex-shrink-0 flex flex-col gap-1 px-2 py-4 border-t border-sidebar-border">
-        {filterItems(bottomItems).map(renderItem)}
-      </nav>
-
-      {/* User section */}
-      <div className="flex-shrink-0 border-t border-sidebar-border px-3 py-3 flex items-center gap-3">
-        <Avatar className="h-8 w-8">
-          <AvatarFallback className="bg-sidebar-accent text-white text-xs font-semibold">
-            {userInitials}
-          </AvatarFallback>
-        </Avatar>
-        {!isCollapsed && (
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-sidebar-foreground truncate">{userName}</p>
-            <p className="text-[11px] text-sidebar-foreground/60 truncate">{(role || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}</p>
-          </div>
-        )}
-        <button
-          onClick={handleSignOut}
-          className="text-sidebar-foreground/60 hover:text-white transition-colors p-2 min-h-[44px] min-w-[44px] flex items-center justify-center active:scale-95"
-          title="Sign out"
-        >
-          <LogOut size={16} />
-        </button>
-      </div>
-    </div>
+    <SidebarChrome
+      topGroups={topGroups}
+      scrollGroups={scrollGroups}
+      bottomGroups={bottomGroups}
+      collapsed={collapsed}
+      isMobileOverlay={isMobileOverlay}
+      onClose={onClose}
+      user={{
+        name: userName,
+        initials: userInitials,
+        subtitle: (role || "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+      }}
+      onSignOut={handleSignOut}
+    />
   );
 };
 

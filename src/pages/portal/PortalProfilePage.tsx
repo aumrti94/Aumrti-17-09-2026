@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { User, Phone, Calendar, Droplets, MapPin, AlertCircle, Users, Edit2, Check, X as XIcon } from "lucide-react";
-import type { PortalSession } from "./PortalLogin";
+import type { PortalSession } from "./portalTypes";
 
 interface PatientProfile {
   full_name: string;

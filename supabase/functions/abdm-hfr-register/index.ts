@@ -59,8 +59,9 @@ serve(async (req) => {
     const { data: userData, error: userErr } = await sb
       .from("users")
       .select("hospital_id, role")
-      .eq("id", user.id)
-      .single();
+      // auth_user_id, NOT id — the two diverged in migration 20260322111223.
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
 
     if (userErr || !userData) return json({ error: "User record not found" }, 404);
 
@@ -119,16 +120,20 @@ serve(async (req) => {
     const patchStatus = patchRes.status;
     const patchData = await patchRes.json().catch(() => ({})) as Record<string, unknown>;
 
-    await sb.from("abdm_gateway_logs").insert({
+    // Was using columns that don't exist on abdm_gateway_logs at all
+    // (request_id/endpoint/payload/response/status_code/error, and uppercase
+    // direction: "OUTBOUND" against a lowercase-only CHECK constraint) — the same defect
+    // found in abdm-gateway-token (KNOWN-BUG-192). `.then(() => {})` discarded the error
+    // explicitly rather than merely leaving it unchecked. Found via Phase 6 testing.
+    const { error: patchLogErr } = await sb.from("abdm_gateway_logs").insert({
       hospital_id: hospitalId,
-      request_id: patchRequestId,
-      direction: "OUTBOUND",
-      endpoint: "/api/hiecm/gateway/v3/bridge/url",
-      payload: { url: bridgeUrl },
-      response: patchData,
-      status_code: patchStatus,
-      error: patchRes.ok ? null : (patchData?.message ?? `PATCH failed (${patchStatus})`),
-    }).then(() => {});
+      action: "hfr_bridge_url_register",
+      direction: "outbound",
+      request_payload: { request_id: patchRequestId, url: bridgeUrl },
+      response_payload: patchData,
+      status: patchRes.ok ? "ok" : "error",
+    });
+    if (patchLogErr) console.error("abdm-hfr-register: gateway log insert failed:", patchLogErr.message);
 
     if (!patchRes.ok) {
       return json(
@@ -151,20 +156,19 @@ serve(async (req) => {
     );
     const servicesData = await servicesRes.json().catch(() => ({})) as Record<string, unknown>;
 
-    await sb.from("abdm_gateway_logs").insert({
+    const { error: servicesLogErr } = await sb.from("abdm_gateway_logs").insert({
       hospital_id: hospitalId,
-      request_id: crypto.randomUUID(),
-      direction: "OUTBOUND",
-      endpoint: "/api/hiecm/gateway/v3/bridge-services",
-      payload: null,
-      response: servicesData,
-      status_code: servicesRes.status,
-      error: servicesRes.ok ? null : `GET bridge-services failed (${servicesRes.status})`,
-    }).then(() => {});
+      action: "hfr_bridge_services_check",
+      direction: "outbound",
+      request_payload: null,
+      response_payload: servicesData,
+      status: servicesRes.ok ? "ok" : "error",
+    });
+    if (servicesLogErr) console.error("abdm-hfr-register: gateway log insert failed:", servicesLogErr.message);
 
     // ── Step 3: Update DB ─────────────────────────────────────────────────────
     const now = new Date().toISOString();
-    await sb
+    const { error: updateErr } = await sb
       .from("hospital_abdm_config")
       .update({
         bridge_url: bridgeUrl,
@@ -172,6 +176,7 @@ serve(async (req) => {
         updated_at: now,
       })
       .eq("hospital_id", hospitalId);
+    if (updateErr) console.error("abdm-hfr-register: hospital_abdm_config update failed:", updateErr.message);
 
     return json({
       success: true,
@@ -180,7 +185,7 @@ serve(async (req) => {
       services: servicesData,
     });
   } catch (err) {
-    console.error("abdm-hfr-register unhandled error:", err);
+    console.error("abdm-hfr-register unhandled error:", err instanceof Error ? err.message : String(err));
     return json(
       { error: err instanceof Error ? err.message : "Unknown error" },
       500,
